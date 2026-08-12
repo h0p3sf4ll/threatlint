@@ -160,18 +160,15 @@ There are four installation paths depending on tool and scope. **Agents alone ar
 Agents and skills installed globally are available in every repository you open. **This is already done** on this machine. For a fresh setup:
 
 ```bash
-# Agents
 mkdir -p ~/.claude/agents
 cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md ~/.claude/agents/
 cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md ~/.claude/agents/
 
-# Skills (required for Word output)
 mkdir -p ~/.claude/skills
 cp /path/to/threatlint/.claude/skills/threat-model.md ~/.claude/skills/
 cp /path/to/threatlint/.claude/skills/threat-model-deep.md ~/.claude/skills/
 cp /path/to/threatlint/.claude/skills/security-review.md ~/.claude/skills/
 
-# Word document converter
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
 pip3 install python-docx
@@ -188,19 +185,15 @@ Check the files into the target repository so every teammate gets the agents and
 ```bash
 cd /path/to/your-repo
 
-# Create the directory structure
 mkdir -p .claude/agents .claude/skills
 
-# Agents
 cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md .claude/agents/
 cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md .claude/agents/
 
-# Skills — required for Word document output
 cp /path/to/threatlint/.claude/skills/threat-model.md .claude/skills/
 cp /path/to/threatlint/.claude/skills/threat-model-deep.md .claude/skills/
 cp /path/to/threatlint/.claude/skills/security-review.md .claude/skills/
 
-# Add routing to CLAUDE.md
 cat >> CLAUDE.md << 'EOF'
 
 ## Security Analysis
@@ -260,7 +253,11 @@ Copy `AGENTS.md` to the target repository root and commit it.
 
 ```bash
 cp /path/to/threatlint/AGENTS.md /path/to/your-repo/AGENTS.md
-# or append to an existing AGENTS.md:
+```
+
+Or append to an existing `AGENTS.md`:
+
+```bash
 cat /path/to/threatlint/AGENTS.md >> /path/to/your-repo/AGENTS.md
 ```
 
@@ -289,11 +286,10 @@ Every report is saved as a formatted `.docx` file. The document opens with the r
 
 ### Setup
 
-```bash
-# Install the dependency
-pip3 install python-docx
+Install the python-docx dependency, then copy the converter script to `~/.claude/scripts/`:
 
-# Install the converter script (same path for both Claude Code and Codex)
+```bash
+pip3 install python-docx
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
 ```
@@ -552,21 +548,25 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 The skills require both the converter script and the python-docx library. Check both:
 
+Verify the converter exists and python-docx is installed:
+
 ```bash
-# Verify the converter exists
 ls -l ~/.claude/scripts/md_to_docx.py
-
-# Verify python-docx is installed
 python3 -c "import docx; print('ok')"
+```
 
-# Install if missing
+If either is missing, install them:
+
+```bash
 pip3 install python-docx
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
+```
 
-# Test the converter directly
+Test the converter directly (expected output: `Usage: md_to_docx.py <input.md> <output.docx>`):
+
+```bash
 python3 ~/.claude/scripts/md_to_docx.py
-# Expected: "Usage: md_to_docx.py <input.md> <output.docx>"
 ```
 
 ### Analysis runs but no Word document (agents invoked directly, not via skill)
