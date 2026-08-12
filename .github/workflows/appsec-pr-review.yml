@@ -1,0 +1,115 @@
+name: AppSec PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: appsec-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Do not expose credentials to untrusted fork pull requests.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Set the APPSEC_PROVIDER repository variable to 'openai' or 'github-models' to switch
+      # providers without editing this file. Defaults to 'claude'.
+      PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
+      # Minimum finding severity to open a GitHub issue for. Override with APPSEC_MIN_ISSUE_SEVERITY.
+      MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
+      REPORT_FILE: /tmp/appsec-report.md
+
+    steps:
+      - name: Check out pull request history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Run AppSec code review (Claude)
+        if: env.PROVIDER == 'claude'
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the project appsec-code-reviewer to review this pull request.
+            Analyze the diff from base commit ${{ github.event.pull_request.base.sha }}
+            to head commit ${{ github.event.pull_request.head.sha }}.
+
+            Produce a two-tier Markdown report:
+
+            TIER 1 — EXECUTIVE SUMMARY: Change Risk Level (CRITICAL/HIGH/MEDIUM/LOW/CLEAN),
+            one-sentence risk statement, finding summary table with CONFIRMED/PLAUSIBLE/THEORETICAL
+            counts per severity, Top Issues (Critical and High only), and a Merge Recommendation
+            (BLOCK / MERGE WITH ACTION / MERGE).
+
+            TIER 2 — TECHNICAL REVIEW: review scope, per-finding blocks (#### [CR-NNN] — Title,
+            Severity, Confidence, OWASP/CWE, evidence-quoted changed lines, exploit path, impact,
+            likelihood, Remediation Guidance with numbered steps and before/after code snippets,
+            Test Case). End with Security-Positive Changes and Residual Risk sections.
+
+            Only report security regressions and missing controls. Exclude style, performance,
+            and maintainability feedback.
+
+            After writing the complete report in your response, save it to disk by running:
+
+            tee /tmp/appsec-report.md << 'APPSEC_END_OF_REPORT'
+            [paste the complete Markdown report here, then close with APPSEC_END_OF_REPORT on its own line]
+            APPSEC_END_OF_REPORT
+
+            Do not modify any repository source files.
+          claude_args: |
+            --agent appsec-code-reviewer
+            --max-turns 20
+            --allowedTools "Read,Grep,Glob,Bash"
+
+      # ─── OpenAI / GitHub Models ───────────────────────────────────────────
+      - name: Set up Python
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openai SDK
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        run: pip install openai
+
+      - name: Run AppSec code review (OpenAI / GitHub Models)
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/appsec_api.py \
+            --mode pr-review \
+            --provider "$PROVIDER" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --output "$REPORT_FILE"
+
+      # ─── Create GitHub issues for findings ────────────────────────────────
+      - name: Create GitHub issues for findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file found at $REPORT_FILE — skipping issue creation."
+            exit 0
+          fi
+          python .github/scripts/create_issues.py \
+            --report "$REPORT_FILE" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --min-severity "$MIN_ISSUE_SEVERITY"

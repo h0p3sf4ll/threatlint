@@ -1,0 +1,140 @@
+name: AppSec Threat Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Optional path, feature, architecture, or risk focus; leave blank for autonomous discovery
+        required: false
+        type: string
+      provider:
+        description: AI provider to use for analysis
+        required: false
+        default: claude
+        type: choice
+        options:
+          - claude
+          - openai
+          - github-models
+      create_issues:
+        description: Open GitHub issues for findings at or above the minimum severity
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      min_issue_severity:
+        description: Minimum severity to file as a GitHub issue (ignored if create_issues is false)
+        required: false
+        default: HIGH
+        type: choice
+        options:
+          - CRITICAL
+          - HIGH
+          - MEDIUM
+          - LOW
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: appsec-threat-model-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROVIDER: ${{ inputs.provider || 'claude' }}
+      REPORT_FILE: /tmp/appsec-report.md
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Run AppSec threat model (Claude)
+        if: env.PROVIDER == 'claude'
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the project appsec-threat-modeler to produce an evidence-based threat model.
+            The optional target request is: ${{ inputs.target }}
+
+            If the target is blank or vague, autonomously discover the repository, rank candidate
+            components by external exposure, privilege, sensitive-data handling, and deployment
+            reach, then select the highest-risk scope and explain the selection.
+
+            Produce a two-tier Markdown report:
+
+            TIER 1 — EXECUTIVE SUMMARY: Risk Posture (one to two sentences), Finding Summary
+            table with CONFIRMED/PLAUSIBLE/THEORETICAL counts per severity, Top Immediate Actions
+            (Critical and High findings with business risk and technical action), Regulatory and
+            Compliance Exposure when evidence supports it, and a single Recommended Next Step.
+
+            TIER 2 — TECHNICAL THREAT MODEL: Discovery and Scope Selection (when autonomously
+            selected), Scope and Assumptions with numbered assumption list, System Model (assets,
+            actors, entry points, data flows, trust boundaries, dependencies), Threat Register
+            with per-finding blocks (#### [TM-NNN] — Title, Severity, Confidence tier, Attacker
+            persona, STRIDE/OWASP/CWE, Preconditions, Attack Steps, Evidence with file:line,
+            Affected Asset, Impact, Likelihood, Mitigation, Remediation Guidance with numbered
+            steps and before/after code snippets, Validation, Effort), Prioritized Remediation
+            Roadmap table, and Residual Risk and Open Questions.
+
+            Ground every material claim in inspected source code or configuration. Label all
+            assumptions and unknowns.
+
+            After writing the complete report in your response, save it to disk by running:
+
+            tee /tmp/appsec-report.md << 'APPSEC_END_OF_REPORT'
+            [paste the complete Markdown report here, then close with APPSEC_END_OF_REPORT on its own line]
+            APPSEC_END_OF_REPORT
+
+            Do not modify any repository source files.
+          claude_args: |
+            --agent appsec-threat-modeler
+            --max-turns 24
+            --allowedTools "Read,Grep,Glob,Bash"
+
+      # ─── OpenAI / GitHub Models ───────────────────────────────────────────
+      - name: Set up Python
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openai SDK
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        run: pip install openai
+
+      - name: Run AppSec threat model (OpenAI / GitHub Models)
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/appsec_api.py \
+            --mode threat-model \
+            --provider "$PROVIDER" \
+            --target "${{ inputs.target }}" \
+            --output "$REPORT_FILE"
+
+      # ─── Create GitHub issues for findings ────────────────────────────────
+      - name: Create GitHub issues for findings
+        if: inputs.create_issues == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file found at $REPORT_FILE — skipping issue creation."
+            exit 0
+          fi
+          python .github/scripts/create_issues.py \
+            --report "$REPORT_FILE" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --min-severity "${{ inputs.min_issue_severity || 'HIGH' }}"
