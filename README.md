@@ -6,11 +6,49 @@ TTTTT H   H RRRR  EEEEE  AAA  TTTTT L     IIIII N   N TTTTT
   T   H   H R  RR EEEEE A   A   T   LLLLL IIIII N   N   T
 ```
 
+![Claude Code](https://img.shields.io/badge/Claude%20Code-supported-D97706?style=flat-square)
+![GitHub Copilot](https://img.shields.io/badge/GitHub%20Copilot-supported-1F883D?style=flat-square)
+![OpenAI](https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square)
+![LM Studio](https://img.shields.io/badge/LM%20Studio-local%20models-6D28D9?style=flat-square)
+![License](https://img.shields.io/badge/License-MIT-0284C7?style=flat-square)
+
 # threatlint
 
-`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), and GitHub Copilot Chat (via `.github/` customizations). Reports are saved as Word documents in the repository being analyzed.
+`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), GitHub Copilot Chat (via `.github/` customizations), and local models via LM Studio — with no API key required. Reports are saved as Word documents in the repository being analyzed.
 
 Analysis is grounded in the inspected source and local configuration. Assumptions and unknowns are labeled explicitly rather than hidden behind generic findings.
+
+---
+
+## Table of Contents
+
+- [What Is Included](#what-is-included)
+- [Requirements](#requirements)
+- [Quick Start With Claude Code](#quick-start-with-claude-code)
+- [Quick Start With Local Models (LM Studio)](#quick-start-with-local-models-lm-studio)
+- [Quick Start With Codex / AGENTS.md Tools](#quick-start-with-codex--agentsmd-tools)
+- [Quick Start With GitHub Copilot Chat](#quick-start-with-github-copilot-chat)
+- [Installing on Another Repository](#installing-on-another-repository)
+  - [Claude Code — Global](#claude-code--global-no-per-repo-import-required)
+  - [Claude Code — Per-Repository](#claude-code--per-repository-team-use)
+  - [Local Models (LM Studio)](#local-models-lm-studio)
+  - [Codex / AGENTS.md — Global](#codex--agentsmd--global-no-per-repo-import-required)
+  - [Codex / AGENTS.md — Per-Repository](#codex--agentsmd--per-repository-team-use)
+  - [GitHub Copilot Chat](#installing-copilot-chat-agents-in-another-repository)
+  - [Verifying Any Installation](#verifying-any-installation)
+- [Word Document Output](#word-document-output)
+- [Analysis Posture](#analysis-posture)
+- [Start Without Application Context](#start-without-application-context)
+- [AppSec Threat Modeler](#appsec-threat-modeler)
+- [AppSec Code Reviewer](#appsec-code-reviewer)
+- [Read-Only Safety Boundaries](#read-only-safety-boundaries)
+- [GitHub Actions](#github-actions)
+- [Suggested Team Workflows](#suggested-team-workflows)
+- [Customization](#customization)
+- [Repository Layout](#repository-layout)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## What Is Included
 
@@ -19,30 +57,39 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 | [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any other tool that reads `AGENTS.md`. Self-contained: includes threat modeling, code review, and Word document output instructions. |
 | [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent for threat modeling with autonomous repository discovery. |
 | [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent for security review of a diff or pull request. |
-| [`.claude/commands/threat-model.md`](.claude/commands/threat-model.md) | `/threat-model` slash command. Invokes the threat modeler and saves output as a Word document. **Required for Word output in Claude Code.** |
+| [`.claude/commands/threat-model.md`](.claude/commands/threat-model.md) | `/threat-model` slash command. Invokes the threat modeler and saves output as a Word document. |
 | [`.claude/commands/threat-model-deep.md`](.claude/commands/threat-model-deep.md) | `/threat-model-deep` slash command. Aggressive deep-dive with bypass chain analysis, chained kill chains, and coverage audit. |
+| [`.claude/commands/threat-model-local.md`](.claude/commands/threat-model-local.md) | `/threat-model-local` slash command. Threat model using a local LM Studio model — no API key required. |
+| [`.claude/commands/threat-model-deep-local.md`](.claude/commands/threat-model-deep-local.md) | `/threat-model-deep-local` slash command. Deep-dive threat model using a local LM Studio model. |
 | [`.claude/commands/security-review.md`](.claude/commands/security-review.md) | `/security-review` slash command. Reviews a diff, branch, or PR and saves output as a Word document. |
+| [`.claude/commands/security-review-local.md`](.claude/commands/security-review-local.md) | `/security-review-local` slash command. Security review using a local LM Studio model — no API key required. |
 | [`CLAUDE.md`](CLAUDE.md) | Routes Claude Code to the project security subagents when working in the threatlint directory. |
 | [`.github/agents/appsec-threat-modeler.agent.md`](.github/agents/appsec-threat-modeler.agent.md) | Threat-modeling agent for GitHub Copilot Chat. |
 | [`.github/agents/appsec-code-reviewer.agent.md`](.github/agents/appsec-code-reviewer.agent.md) | Code review agent for GitHub Copilot Chat. |
 | [`.github/prompts/discover-application-threat-model.prompt.md`](.github/prompts/discover-application-threat-model.prompt.md) | Slash prompt for discovery-mode threat modeling in Copilot Chat. |
 | [`.github/prompts/threat-model-report.prompt.md`](.github/prompts/threat-model-report.prompt.md) | Slash prompt for standardized threat-model reports in Copilot Chat. |
-| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | Analysis runner for OpenAI and GitHub Models providers in Actions. |
+| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | Analysis runner for OpenAI, GitHub Models, and LM Studio providers. Used by Actions and local-model slash commands. |
 | [`.github/scripts/create_issues.py`](.github/scripts/create_issues.py) | Parses a completed report and opens GitHub issues for qualifying findings. |
 | [`docs/github-actions.md`](docs/github-actions.md) | Provider setup, issue filing configuration, and troubleshooting for GitHub Actions. |
 
 ### Word Document Converter
 
-`~/.claude/scripts/md_to_docx.py` is a helper script used by the Claude Code skills and Codex agents to convert the markdown report to a formatted `.docx` file. It is installed to the user's home directory — not checked into target repositories. See [Word Document Output](#word-document-output) for setup.
+`~/.claude/scripts/md_to_docx.py` is a helper script used by the slash commands and Codex agents to convert the Markdown report to a formatted `.docx` file. It is installed to the user's home directory — not checked into target repositories. See [Word Document Output](#word-document-output) for setup.
 
 ---
 
 ## Requirements
 
-**For Claude Code:**
+**For Claude Code (cloud models):**
 - Claude Code CLI or IDE extension
-- Python 3 + python-docx: `pip3 install python-docx` (required for Word document output)
+- Python 3 + python-docx: `pip3 install python-docx`
 - `~/.claude/scripts/md_to_docx.py` installed (see [Word Document Output](#word-document-output))
+
+**For Claude Code (local models via LM Studio):**
+- Claude Code CLI or IDE extension
+- LM Studio running with a model loaded and the local server started
+- Python 3 + openai + python-docx: `pip3 install openai python-docx`
+- `~/.claude/scripts/appsec_api.py` and `~/.claude/scripts/md_to_docx.py` installed (see [Local Models (LM Studio)](#local-models-lm-studio))
 
 **For Codex / AGENTS.md tools:**
 - OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, or any tool that reads `AGENTS.md`
@@ -78,7 +125,26 @@ claude --agent appsec-threat-modeler   # threat modeling session
 claude --agent appsec-code-reviewer    # code review session
 ```
 
-Using `@` or `--agent` directly produces the report in chat but **does not save a Word document** — that step is handled by the skills. Use the slash commands when you need file output.
+Using `@` or `--agent` directly produces the report in chat but **does not save a Word document** — that step is handled by the commands. Use the slash commands when you need file output.
+
+---
+
+## Quick Start With Local Models (LM Studio)
+
+Run threat modeling and security reviews entirely on your machine — no API key, no cloud, no data leaving your environment.
+
+**Before running:** open LM Studio, load a model, then go to Developer → Local Server → Start Server.
+
+```text
+/threat-model-local                    # auto-discover using the loaded local model
+/threat-model-local src/api/auth       # local model, specific component
+/threat-model-deep-local               # aggressive deep-dive with local model
+/security-review-local                 # review working-tree diff with local model
+/security-review-local main..feature   # review a branch with local model
+/security-review-local 42              # review PR #42 with local model
+```
+
+The commands auto-detect whichever model is currently loaded in LM Studio. No model name needs to be specified. See [Local Models (LM Studio)](#local-models-lm-studio) for one-time setup.
 
 ---
 
@@ -99,7 +165,7 @@ The agent reads `AGENTS.md`, performs the analysis, and saves the report as a Wo
 
 ## Quick Start With GitHub Copilot Chat
 
-The `.github/agents/` files register two custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. Both the agents and the prompts are available as soon as the repository is open in a trusted VS Code workspace.
+The `.github/agents/` files register two custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. Both are available as soon as the repository is open in a trusted VS Code workspace.
 
 ### Agents
 
@@ -128,36 +194,17 @@ Type `/` in Copilot Chat to open the prompt picker:
 
 **Copilot Chat does not save Word documents.** The report is returned in the chat window only. To get a `.docx` file, use Claude Code (`/threat-model`, `/threat-model-deep`, `/security-review`) or Codex instead.
 
-### Installing Copilot Chat Agents in Another Repository
-
-Copy the `.github/` files into the target repository and commit them:
-
-```bash
-cd /path/to/your-repo
-mkdir -p .github/agents .github/prompts
-
-cp /path/to/threatlint/.github/agents/appsec-threat-modeler.agent.md .github/agents/
-cp /path/to/threatlint/.github/agents/appsec-code-reviewer.agent.md .github/agents/
-cp /path/to/threatlint/.github/prompts/discover-application-threat-model.prompt.md .github/prompts/
-cp /path/to/threatlint/.github/prompts/threat-model-report.prompt.md .github/prompts/
-
-git add .github
-git commit -m "Add threatlint Copilot Chat security agents and prompts"
-```
-
-There is no global equivalent for Copilot Chat agents — the `.github/` files must be present in the repository that VS Code has open as its workspace root. After committing, reload the VS Code window once to pick up the new agents and prompts.
-
 ---
 
 ## Installing on Another Repository
 
-There are four installation paths depending on tool and scope. **Agents alone are not sufficient for Word document output in Claude Code** — the skills are what wire up the conversion pipeline.
+There are five installation paths depending on tool, scope, and whether you want cloud or local models. **Agents alone are not sufficient for Word document output in Claude Code** — the commands wire up the conversion pipeline.
 
 ---
 
 ### Claude Code — Global (No Per-Repo Import Required)
 
-Agents and skills installed globally are available in every repository you open. **This is already done** on this machine. For a fresh setup:
+Agents and commands installed globally are available in every repository you open. **This is already done** on this machine. For a fresh setup:
 
 ```bash
 mkdir -p ~/.claude/agents
@@ -221,10 +268,49 @@ The converter script is a local runtime tool — not source code — so it stays
 
 | What you copy | Effect |
 | --- | --- |
-| `.claude/agents/` only | `/threat-model` etc. appear in the skill picker; analysis runs; **no Word document is saved** |
+| `.claude/agents/` only | `@appsec-threat-modeler` etc. appear in the `@` picker; analysis runs; **no Word document is saved** |
 | `.claude/agents/` + `.claude/commands/` | Full pipeline: analysis runs and `.docx` is saved to the repo root |
 | `CLAUDE.md` routing | Claude Code automatically routes security requests to the right agent without needing `@` |
-| Personal: `md_to_docx.py` + `python-docx` | Required for the skills to write the `.docx` file |
+| Personal: `md_to_docx.py` + `python-docx` | Required for the commands to write the `.docx` file |
+
+---
+
+### Local Models (LM Studio)
+
+The local slash commands (`/threat-model-local`, `/threat-model-deep-local`, `/security-review-local`) call `appsec_api.py` with `--provider lmstudio`. They use the model currently loaded in LM Studio — no API key is required.
+
+**Step 1 — Install LM Studio**
+
+Download and install LM Studio from [https://lmstudio.ai](https://lmstudio.ai). Load a model (models with at least 7B parameters and strong instruction-following capability work best for security analysis). Open LM Studio → Developer → Local Server → Start Server. The API becomes available at `http://localhost:1234/v1`.
+
+**Step 2 — Install the command files and scripts**
+
+```bash
+mkdir -p ~/.claude/commands
+cp /path/to/threatlint/.claude/commands/threat-model-local.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/threat-model-deep-local.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/security-review-local.md ~/.claude/commands/
+
+mkdir -p ~/.claude/scripts
+cp /path/to/threatlint/.github/scripts/appsec_api.py ~/.claude/scripts/
+cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
+pip3 install openai python-docx
+```
+
+**Step 3 — Verify**
+
+```bash
+curl -s http://localhost:1234/v1/models
+```
+
+The response should list the model currently loaded in LM Studio. Then open any repository in Claude Code and run `/threat-model-local` — the command will auto-detect the loaded model and begin the analysis.
+
+**Optional environment variables:**
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | Override LM Studio server address |
+| `LMSTUDIO_MODEL` | auto-detected | Pin a specific model ID instead of using the first loaded model |
 
 ---
 
@@ -271,12 +357,34 @@ pip3 install python-docx
 
 ---
 
+### Installing Copilot Chat Agents in Another Repository
+
+Copy the `.github/` files into the target repository and commit them:
+
+```bash
+cd /path/to/your-repo
+mkdir -p .github/agents .github/prompts
+
+cp /path/to/threatlint/.github/agents/appsec-threat-modeler.agent.md .github/agents/
+cp /path/to/threatlint/.github/agents/appsec-code-reviewer.agent.md .github/agents/
+cp /path/to/threatlint/.github/prompts/discover-application-threat-model.prompt.md .github/prompts/
+cp /path/to/threatlint/.github/prompts/threat-model-report.prompt.md .github/prompts/
+
+git add .github
+git commit -m "Add threatlint Copilot Chat security agents and prompts"
+```
+
+There is no global equivalent for Copilot Chat agents — the `.github/` files must be present in the repository that VS Code has open as its workspace root. After committing, reload the VS Code window once to pick up the new agents and prompts.
+
+---
+
 ### Verifying Any Installation
 
-1. **Claude Code**: type `@` — `appsec-threat-modeler` and `appsec-code-reviewer` should appear. Type `/` — `threat-model`, `threat-model-deep`, and `security-review` should appear.
-2. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask the agent to "threat model this repository" — it should begin discovery immediately.
-3. **GitHub Copilot Chat**: type `@` in the Copilot Chat input — `AppSec Threat Modeler` and `AppSec Code Reviewer` should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear. Requires the `.github/agents/` and `.github/prompts/` files to be present in the open workspace.
-4. **End-to-end (Claude Code / Codex)**: run `/threat-model` (Claude Code) or ask for a threat model (Codex) with no arguments. A `threat-model-YYYY-MM-DD.docx` should appear in the current directory when the report completes.
+1. **Claude Code (cloud)**: type `@` — `appsec-threat-modeler` and `appsec-code-reviewer` should appear. Type `/` — `threat-model`, `threat-model-deep`, and `security-review` should appear.
+2. **Claude Code (local)**: type `/` — `threat-model-local`, `threat-model-deep-local`, and `security-review-local` should appear. LM Studio must be running with a model loaded.
+3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask the agent to "threat model this repository" — it should begin discovery immediately.
+4. **GitHub Copilot Chat**: type `@` — `AppSec Threat Modeler` and `AppSec Code Reviewer` should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
+5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local` with no arguments. A `threat-model-YYYY-MM-DD.docx` should appear in the current directory when the report completes.
 
 ---
 
@@ -294,7 +402,14 @@ mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
 ```
 
-This is a one-time personal setup. The script lives in `~/.claude/scripts/` and is referenced by both the Claude Code skills and the Codex `AGENTS.md` instructions.
+For local model commands, also install the `openai` package and the API script:
+
+```bash
+pip3 install openai
+cp /path/to/threatlint/.github/scripts/appsec_api.py ~/.claude/scripts/
+```
+
+This is a one-time personal setup. The scripts live in `~/.claude/scripts/` and are referenced by the Claude Code commands and the Codex `AGENTS.md` instructions.
 
 ### Output Locations and Filenames
 
@@ -303,13 +418,16 @@ This is a one-time personal setup. The script lives in `~/.claude/scripts/` and 
 | `/threat-model` | `threat-model-YYYY-MM-DD.docx` | Current working directory |
 | `/threat-model src/auth` | `threat-model-src-auth-YYYY-MM-DD.docx` | Current working directory |
 | `/threat-model-deep` | `threat-model-deep-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model-local` | `threat-model-local-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model-deep-local` | `threat-model-deep-local-YYYY-MM-DD.docx` | Current working directory |
 | `/security-review` | `security-review-YYYY-MM-DD.docx` | Repository root |
 | `/security-review main..feature` | `security-review-main-feature-YYYY-MM-DD.docx` | Repository root |
 | `/security-review 42` | `security-review-pr42-YYYY-MM-DD.docx` | Repository root |
+| `/security-review-local` | `security-review-local-YYYY-MM-DD.docx` | Repository root |
 
 Codex follows the same filename and directory conventions defined in `AGENTS.md`.
 
-**Copilot Chat does not save Word documents.** Reports stay in the chat window. Use Claude Code skills or Codex when a `.docx` file is required.
+**Copilot Chat does not save Word documents.** Reports stay in the chat window. Use Claude Code commands or Codex when a `.docx` file is required.
 
 ### What the Converter Handles
 
@@ -321,13 +439,13 @@ The converter (`md_to_docx.py`) renders the full report structure:
 - Bold, italic, and inline-code runs
 - Horizontal rules as styled section separators
 
-If the converter is not installed, the skills fall back to saving the report as a `.md` file and note the missing dependency.
+If the converter is not installed, the commands fall back to saving the report as a `.md` file and note the missing dependency.
 
 ---
 
 ## Analysis Posture
 
-Both agents use an **aggressive-by-default** posture. The same posture is encoded in `AGENTS.md` for Codex.
+Both agents use an **aggressive-by-default** posture. The same posture is encoded in `AGENTS.md` for Codex and in `appsec_api.py` for the local-model commands.
 
 - Borderline THEORETICAL/PLAUSIBLE findings are escalated to PLAUSIBLE when the preconditions are realistic for a production deployment.
 - Every defensive control — authentication, authorization, input validation, rate limiting — is examined for bypass paths. A clean result is stated explicitly, not silently omitted.
@@ -335,13 +453,13 @@ Both agents use an **aggressive-by-default** posture. The same posture is encode
 - Source code, configuration, and documentation are all treated as known to the attacker. "Requires internals knowledge" is not a downgrade reason.
 - An attack path is only excluded if a defensive control is verifiably correct in the reviewed code, or the prerequisite is architecturally impossible.
 
-Use `/threat-model-deep` for maximum coverage: additionally requires bypass chain analysis per control, multi-step kill chains, per-category breadth coverage, and a runtime blindspot inventory.
+Use `/threat-model-deep` or `/threat-model-deep-local` for maximum coverage: additionally requires bypass chain analysis per control, multi-step kill chains, per-category breadth coverage, and a runtime blindspot inventory.
 
 ---
 
 ## Start Without Application Context
 
-Run `/threat-model` with no arguments (Claude Code), ask "threat model this repository" (Codex), or type `/Discover Application Threat Model` in Copilot Chat. The agent:
+Run `/threat-model` or `/threat-model-local` with no arguments, ask "threat model this repository" (Codex), or type `/Discover Application Threat Model` in Copilot Chat. The agent:
 
 1. Inventories documentation, manifests, source roots, Dockerfiles, IaC, and CI/CD workflows.
 2. Maps entry points, trust boundaries, identities, sensitive data, and privileged operations.
@@ -356,7 +474,8 @@ The report ends with **Suggested Focused Follow-Ups**: three to five ready-to-se
 
 Use before implementation, before a release, after an architectural change, or while investigating an application-security concern.
 
-**Claude Code:** `/threat-model [target]` or `/threat-model-deep [target]` or `@appsec-threat-modeler`  
+**Claude Code (cloud):** `/threat-model [target]` or `/threat-model-deep [target]` or `@appsec-threat-modeler`  
+**Claude Code (local):** `/threat-model-local [target]` or `/threat-model-deep-local [target]`  
 **Codex:** ask naturally — "threat model src/api/auth", "analyze this service for injection risks"  
 **Copilot Chat:** `@AppSec Threat Modeler` from the agent picker, or `/Discover Application Threat Model` / `/Threat Model Report` slash prompts
 
@@ -399,7 +518,8 @@ Threat-model the payment webhook handler and its Terraform resources.
 
 Use when a change exists and the question is whether it introduces a security regression.
 
-**Claude Code:** `/security-review [diff target]` or `@appsec-code-reviewer`  
+**Claude Code (cloud):** `/security-review [diff target]` or `@appsec-code-reviewer`  
+**Claude Code (local):** `/security-review-local [diff target]`  
 **Codex:** ask naturally — "security review the current diff", "review PR #42 for auth bypasses"  
 **Copilot Chat:** `@AppSec Code Reviewer` from the agent picker
 
@@ -411,6 +531,13 @@ Use when a change exists and the question is whether it introduces a security re
 /security-review abc123..def456     # commit range
 /security-review 42                 # pull request number (uses gh pr diff)
 /security-review -- src/api/billing # path-scoped diff
+```
+
+The local variants accept the same arguments:
+
+```text
+/security-review-local main..feature/x
+/security-review-local 42
 ```
 
 ### Report Contents
@@ -425,7 +552,7 @@ Use when a change exists and the question is whether it introduces a security re
 
 ## Read-Only Safety Boundaries
 
-Both agents do not alter source files, install dependencies, stage changes, or create commits. Word document output is handled by the calling skill (Claude Code) or by the agent itself running the converter script (Codex) — not by modifying any source file.
+Both agents do not alter source files, install dependencies, stage changes, or create commits. Word document output is handled by the calling command (Claude Code) or by the agent itself running the converter script (Codex) — not by modifying any source file.
 
 | Agent | Permitted shell commands |
 | --- | --- |
@@ -473,6 +600,8 @@ Fork pull requests are intentionally skipped to prevent secret exposure. See [do
 
 **Before release** — run `/threat-model` on production-facing paths. Use `/threat-model-deep` for high-value or regulated components. Compare with the original threat model to surface risk added during implementation.
 
+**Air-gapped or confidential repos** — use `/threat-model-local` and `/security-review-local` so analysis runs entirely on-device with no data leaving the machine.
+
 ---
 
 ## Customization
@@ -493,26 +622,32 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 ```text
 .
-├── AGENTS.md                                  ← Codex / AGENTS.md-compatible tools
-├── CLAUDE.md                                  ← Claude Code routing (threatlint project)
+├── AGENTS.md                                       ← Codex / AGENTS.md-compatible tools
+├── CLAUDE.md                                       ← Claude Code routing (threatlint project)
+├── LICENSE
 ├── .claude
 │   ├── agents
-│   │   ├── appsec-code-reviewer.md            ← Claude Code security review agent
-│   │   └── appsec-threat-modeler.md           ← Claude Code threat modeling agent
-│   └── commands
-│       ├── security-review.md                 ← /security-review (+ Word output)
-│       ├── threat-model.md                    ← /threat-model (+ Word output)
-│       └── threat-model-deep.md               ← /threat-model-deep (+ Word output)
+│   │   ├── appsec-code-reviewer.md                ← Claude Code security review agent
+│   │   └── appsec-threat-modeler.md               ← Claude Code threat modeling agent
+│   ├── commands
+│   │   ├── security-review.md                     ← /security-review (cloud, + Word output)
+│   │   ├── security-review-local.md               ← /security-review-local (LM Studio)
+│   │   ├── threat-model.md                        ← /threat-model (cloud, + Word output)
+│   │   ├── threat-model-deep.md                   ← /threat-model-deep (cloud, + Word output)
+│   │   ├── threat-model-deep-local.md             ← /threat-model-deep-local (LM Studio)
+│   │   └── threat-model-local.md                  ← /threat-model-local (LM Studio)
+│   └── scripts
+│       └── md_to_docx.py                          ← Markdown → Word converter
 ├── .github
 │   ├── agents
-│   │   ├── appsec-code-reviewer.agent.md      ← Copilot Chat code review agent
-│   │   └── appsec-threat-modeler.agent.md     ← Copilot Chat threat modeling agent
+│   │   ├── appsec-code-reviewer.agent.md          ← Copilot Chat code review agent
+│   │   └── appsec-threat-modeler.agent.md         ← Copilot Chat threat modeling agent
 │   ├── prompts
 │   │   ├── discover-application-threat-model.prompt.md
 │   │   └── threat-model-report.prompt.md
 │   ├── scripts
-│   │   ├── appsec_api.py                      ← OpenAI / GitHub Models analysis runner
-│   │   └── create_issues.py                   ← Findings → GitHub issues
+│   │   ├── appsec_api.py                          ← OpenAI / GitHub Models / LM Studio runner
+│   │   └── create_issues.py                       ← Findings → GitHub issues
 │   └── workflows
 │       ├── appsec-pr-review.yml
 │       └── appsec-threat-model.yml
@@ -521,10 +656,11 @@ Keep each customization focused. Add instructions that improve scope or analysis
 └── README.md
 
 # Installed globally on each user's machine (not in any repo):
-~/.claude/scripts/md_to_docx.py               ← Markdown-to-Word converter
-~/.claude/agents/                              ← Global Claude Code agents (optional)
-~/.claude/commands/                              ← Global Claude Code commands (optional)
-~/.codex/AGENTS.md                             ← Global Codex instructions (optional)
+~/.claude/scripts/md_to_docx.py                    ← Markdown-to-Word converter
+~/.claude/scripts/appsec_api.py                    ← Local-model analysis runner (LM Studio)
+~/.claude/agents/                                  ← Global Claude Code agents (optional)
+~/.claude/commands/                                ← Global Claude Code commands (optional)
+~/.codex/AGENTS.md                                 ← Global Codex instructions (optional)
 ```
 
 ---
@@ -544,18 +680,16 @@ Keep each customization focused. Add instructions that improve scope or analysis
 2. Start Claude Code from the repository root.
 3. Restart the session if the directory was added while Claude Code was already running.
 
-### Word document is not saved — skill completes but no .docx appears
+### Word document is not saved — command completes but no .docx appears
 
-The skills require both the converter script and the python-docx library. Check both:
-
-Verify the converter exists and python-docx is installed:
+The commands require both the converter script and the python-docx library. Check both:
 
 ```bash
 ls -l ~/.claude/scripts/md_to_docx.py
 python3 -c "import docx; print('ok')"
 ```
 
-If either is missing, install them:
+If either is missing:
 
 ```bash
 pip3 install python-docx
@@ -569,9 +703,45 @@ Test the converter directly (expected output: `Usage: md_to_docx.py <input.md> <
 python3 ~/.claude/scripts/md_to_docx.py
 ```
 
-### Analysis runs but no Word document (agents invoked directly, not via skill)
+### Local model commands fail — LM Studio not reachable
 
-Using `@appsec-threat-modeler` or `claude --agent appsec-threat-modeler` runs the agent directly. The agent produces the report in chat but does not save a file — that step is owned by the skills. Use `/threat-model` or `/security-review` instead.
+Verify LM Studio is running:
+
+```bash
+curl -s http://localhost:1234/v1/models
+```
+
+If the command fails or returns an empty list:
+1. Open LM Studio.
+2. Load a model from the Discover or My Models tab.
+3. Go to Developer → Local Server → Start Server.
+4. Retry the curl command — it should now return the loaded model's ID.
+
+If LM Studio runs on a non-default port, set `LMSTUDIO_BASE_URL`:
+
+```bash
+export LMSTUDIO_BASE_URL=http://localhost:5678/v1
+```
+
+### Local model commands fail — appsec_api.py not found
+
+The local-model commands require `~/.claude/scripts/appsec_api.py`:
+
+```bash
+ls -l ~/.claude/scripts/appsec_api.py
+```
+
+If missing:
+
+```bash
+mkdir -p ~/.claude/scripts
+cp /path/to/threatlint/.github/scripts/appsec_api.py ~/.claude/scripts/
+pip3 install openai
+```
+
+### Analysis runs but no Word document (agents invoked directly, not via command)
+
+Using `@appsec-threat-modeler` or `claude --agent appsec-threat-modeler` runs the agent directly. The agent produces the report in chat but does not save a file — that step is owned by the commands. Use `/threat-model` or `/security-review` instead.
 
 ### Codex does not follow the analysis instructions
 
@@ -588,7 +758,7 @@ Using `@appsec-threat-modeler` or `claude --agent appsec-threat-modeler` runs th
 
 ### The report lacks evidence or is too generic
 
-Give the agent the relevant files, paths, diff, or architecture details. It marks missing information as an assumption or unknown rather than inventing implementation details. For a more exhaustive review, use `/threat-model-deep`.
+Give the agent the relevant files, paths, diff, or architecture details. It marks missing information as an assumption or unknown rather than inventing implementation details. For a more exhaustive review, use `/threat-model-deep` or `/threat-model-deep-local`. Local models with fewer than 7B parameters may produce shorter, less detailed reports — try a larger model in LM Studio if output quality is insufficient.
 
 ### A finding needs confirmation
 

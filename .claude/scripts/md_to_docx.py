@@ -94,8 +94,8 @@ def convert(md_text: str, output_path: str) -> None:
 
     # Base style
     normal = doc.styles["Normal"]
-    normal.font.name = "Calibri"
-    normal.font.size = Pt(11)
+    normal.font.name = "Aptos"
+    normal.font.size = Pt(10)
 
     lines = md_text.splitlines()
     i = 0
