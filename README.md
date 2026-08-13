@@ -8,7 +8,7 @@ TTTTT H   H RRRR  EEEEE  AAA  TTTTT L     IIIII N   N TTTTT
 
 # threatlint
 
-`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash-command skills), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), and GitHub Copilot Chat (via `.github/` customizations). Reports are saved as Word documents in the repository being analyzed.
+`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), and GitHub Copilot Chat (via `.github/` customizations). Reports are saved as Word documents in the repository being analyzed.
 
 Analysis is grounded in the inspected source and local configuration. Assumptions and unknowns are labeled explicitly rather than hidden behind generic findings.
 
@@ -19,9 +19,9 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 | [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any other tool that reads `AGENTS.md`. Self-contained: includes threat modeling, code review, and Word document output instructions. |
 | [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent for threat modeling with autonomous repository discovery. |
 | [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent for security review of a diff or pull request. |
-| [`.claude/skills/threat-model.md`](.claude/skills/threat-model.md) | `/threat-model` slash-command skill. Invokes the threat modeler and saves output as a Word document. **Required for Word output in Claude Code.** |
-| [`.claude/skills/threat-model-deep.md`](.claude/skills/threat-model-deep.md) | `/threat-model-deep` slash-command skill. Aggressive deep-dive with bypass chain analysis, chained kill chains, and coverage audit. |
-| [`.claude/skills/security-review.md`](.claude/skills/security-review.md) | `/security-review` slash-command skill. Reviews a diff, branch, or PR and saves output as a Word document. |
+| [`.claude/commands/threat-model.md`](.claude/commands/threat-model.md) | `/threat-model` slash command. Invokes the threat modeler and saves output as a Word document. **Required for Word output in Claude Code.** |
+| [`.claude/commands/threat-model-deep.md`](.claude/commands/threat-model-deep.md) | `/threat-model-deep` slash command. Aggressive deep-dive with bypass chain analysis, chained kill chains, and coverage audit. |
+| [`.claude/commands/security-review.md`](.claude/commands/security-review.md) | `/security-review` slash command. Reviews a diff, branch, or PR and saves output as a Word document. |
 | [`CLAUDE.md`](CLAUDE.md) | Routes Claude Code to the project security subagents when working in the threatlint directory. |
 | [`.github/agents/appsec-threat-modeler.agent.md`](.github/agents/appsec-threat-modeler.agent.md) | Threat-modeling agent for GitHub Copilot Chat. |
 | [`.github/agents/appsec-code-reviewer.agent.md`](.github/agents/appsec-code-reviewer.agent.md) | Code review agent for GitHub Copilot Chat. |
@@ -60,7 +60,7 @@ No project dependency, service account, or external scanner is required. `threat
 
 ## Quick Start With Claude Code
 
-The slash-command skills are the fastest way to get a report and a Word document.
+The slash commands are the fastest way to get a report and a Word document.
 
 ```text
 /threat-model                    # auto-discover the repo and threat model it
@@ -164,10 +164,10 @@ mkdir -p ~/.claude/agents
 cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md ~/.claude/agents/
 cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md ~/.claude/agents/
 
-mkdir -p ~/.claude/skills
-cp /path/to/threatlint/.claude/skills/threat-model.md ~/.claude/skills/
-cp /path/to/threatlint/.claude/skills/threat-model-deep.md ~/.claude/skills/
-cp /path/to/threatlint/.claude/skills/security-review.md ~/.claude/skills/
+mkdir -p ~/.claude/commands
+cp /path/to/threatlint/.claude/commands/threat-model.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/threat-model-deep.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/security-review.md ~/.claude/commands/
 
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
@@ -180,19 +180,19 @@ Open any repository in Claude Code. No further setup is needed. `/threat-model`,
 
 ### Claude Code — Per-Repository (Team Use)
 
-Check the files into the target repository so every teammate gets the agents and skills when they open the repo.
+Check the files into the target repository so every teammate gets the agents and commands when they open the repo.
 
 ```bash
 cd /path/to/your-repo
 
-mkdir -p .claude/agents .claude/skills
+mkdir -p .claude/agents .claude/commands
 
 cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md .claude/agents/
 cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md .claude/agents/
 
-cp /path/to/threatlint/.claude/skills/threat-model.md .claude/skills/
-cp /path/to/threatlint/.claude/skills/threat-model-deep.md .claude/skills/
-cp /path/to/threatlint/.claude/skills/security-review.md .claude/skills/
+cp /path/to/threatlint/.claude/commands/threat-model.md .claude/commands/
+cp /path/to/threatlint/.claude/commands/threat-model-deep.md .claude/commands/
+cp /path/to/threatlint/.claude/commands/security-review.md .claude/commands/
 
 cat >> CLAUDE.md << 'EOF'
 
@@ -204,7 +204,7 @@ cat >> CLAUDE.md << 'EOF'
 EOF
 
 git add .claude CLAUDE.md
-git commit -m "Add threatlint security agents and skills"
+git commit -m "Add threatlint security agents and commands"
 ```
 
 **Each team member** then does the personal setup once (not committed to the repo):
@@ -222,7 +222,7 @@ The converter script is a local runtime tool — not source code — so it stays
 | What you copy | Effect |
 | --- | --- |
 | `.claude/agents/` only | `/threat-model` etc. appear in the skill picker; analysis runs; **no Word document is saved** |
-| `.claude/agents/` + `.claude/skills/` | Full pipeline: analysis runs and `.docx` is saved to the repo root |
+| `.claude/agents/` + `.claude/commands/` | Full pipeline: analysis runs and `.docx` is saved to the repo root |
 | `CLAUDE.md` routing | Claude Code automatically routes security requests to the right agent without needing `@` |
 | Personal: `md_to_docx.py` + `python-docx` | Required for the skills to write the `.docx` file |
 
@@ -499,7 +499,7 @@ Keep each customization focused. Add instructions that improve scope or analysis
 │   ├── agents
 │   │   ├── appsec-code-reviewer.md            ← Claude Code security review agent
 │   │   └── appsec-threat-modeler.md           ← Claude Code threat modeling agent
-│   └── skills
+│   └── commands
 │       ├── security-review.md                 ← /security-review (+ Word output)
 │       ├── threat-model.md                    ← /threat-model (+ Word output)
 │       └── threat-model-deep.md               ← /threat-model-deep (+ Word output)
@@ -523,7 +523,7 @@ Keep each customization focused. Add instructions that improve scope or analysis
 # Installed globally on each user's machine (not in any repo):
 ~/.claude/scripts/md_to_docx.py               ← Markdown-to-Word converter
 ~/.claude/agents/                              ← Global Claude Code agents (optional)
-~/.claude/skills/                              ← Global Claude Code skills (optional)
+~/.claude/commands/                              ← Global Claude Code commands (optional)
 ~/.codex/AGENTS.md                             ← Global Codex instructions (optional)
 ```
 
@@ -531,12 +531,12 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 ## Troubleshooting
 
-### Skills do not appear in the `/` picker
+### Commands do not appear in the `/` picker
 
-1. Confirm skill files are in `.claude/skills/` (project) or `~/.claude/skills/` (global).
-2. Skills in a project directory are only available when Claude Code is opened from that directory root.
-3. For availability across all projects without per-repo imports, use the global path `~/.claude/skills/`.
-4. Restart Claude Code after adding skill files.
+1. Confirm command files are in `.claude/commands/` (project) or `~/.claude/commands/` (global).
+2. Commands in a project directory are only available when Claude Code is opened from that directory root.
+3. For availability across all projects without per-repo imports, use the global path `~/.claude/commands/`.
+4. Restart Claude Code after adding command files.
 
 ### Agents do not appear in the `@` picker
 
