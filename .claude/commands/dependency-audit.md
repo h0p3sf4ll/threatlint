@@ -15,15 +15,20 @@ After the agent completes, save the report as a Word document.
 
 ## Output
 
-Determine the repository root: `git rev-parse --show-toplevel 2>/dev/null || pwd`
+Determine the repository root and set a timestamp:
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+TIMESTAMP=$(date +%s)
+```
 
 Filename:
 - No argument: `dependency-audit-YYYY-MM-DD.docx`
 - With path: `dependency-audit-<sanitized>-YYYY-MM-DD.docx`
 
-Convert using:
+Write the full report text to `/tmp/dep_${TIMESTAMP}.md`. Then convert to Word and remove the temp file:
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/dep-report.md <repo-root>/<filename>.docx
+python3 ~/.claude/scripts/md_to_docx.py /tmp/dep_${TIMESTAMP}.md "${REPO_ROOT}/<filename>.docx"
+rm /tmp/dep_${TIMESTAMP}.md
 ```
 
 Report the saved path. Do not modify any repository source files.

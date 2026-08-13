@@ -32,4 +32,6 @@ python3 ~/.claude/scripts/md_to_docx.py /tmp/api_local_${TIMESTAMP}.md <repo-roo
 rm /tmp/api_local_${TIMESTAMP}.md
 ```
 
+If `md_to_docx.py` or `python-docx` is not installed, save as `.md` instead by omitting the conversion step.
+
 Report the saved path. Do not modify any repository source files.

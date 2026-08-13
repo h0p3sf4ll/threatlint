@@ -22,6 +22,7 @@ import sys
 MAX_DIFF_CHARS = 80_000
 MAX_FILE_BYTES = 6_000
 MAX_CONTEXT_FILES = 6
+MAX_TOTAL_PARTS = 15
 # Local models often have smaller context windows; use a tighter cap by default.
 MAX_DIFF_CHARS_LOCAL = 40_000
 MAX_FILE_BYTES_LOCAL = 4_000
@@ -65,19 +66,26 @@ def gather_repo_context(max_file_bytes=MAX_FILE_BYTES):
 
     for fname in [
         'README.md', 'readme.md', 'ARCHITECTURE.md',
-        'package.json', 'go.mod', 'requirements.txt', 'Cargo.toml',
+        'package.json', 'package-lock.json', 'yarn.lock',
+        'go.mod', 'go.sum',
+        'requirements.txt', 'Pipfile.lock', 'poetry.lock',
+        'Cargo.toml', 'Cargo.lock',
         'pom.xml', 'build.gradle', 'pyproject.toml',
+        'Gemfile', 'Gemfile.lock',
+        'composer.json', 'composer.lock',
         'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
         '.env.example', '.env.sample',
     ]:
+        if len(parts) >= MAX_TOTAL_PARTS:
+            break
         if os.path.isfile(fname):
             content = read_file_safe(fname, max_bytes=max_file_bytes)
             if content:
                 parts.append(f'## {fname}\n```\n{content}\n```')
-            if len(parts) >= MAX_CONTEXT_FILES + 1:
-                break
 
     for search_dir in ['infra', 'terraform', 'k8s', 'helm', 'deploy', '.github/workflows']:
+        if len(parts) >= MAX_TOTAL_PARTS:
+            break
         if not os.path.isdir(search_dir):
             continue
         found = run([
@@ -86,6 +94,8 @@ def gather_repo_context(max_file_bytes=MAX_FILE_BYTES):
             '-type', 'f',
         ]).stdout.strip().split('\n')
         for fpath in found[:3]:
+            if len(parts) >= MAX_TOTAL_PARTS:
+                break
             if fpath and os.path.isfile(fpath):
                 content = read_file_safe(fpath, max_bytes=max_file_bytes)
                 if content:

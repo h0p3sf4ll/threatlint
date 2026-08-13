@@ -38,6 +38,7 @@ on:
 permissions:
   contents: read
   issues: write
+  security-events: write
   id-token: write
 
 concurrency:
@@ -118,7 +119,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          python .github/scripts/appsec_api.py \
+          python3 .github/scripts/appsec_api.py \
             --mode threat-model \
             --provider "$PROVIDER" \
             --target "${{ inputs.target }}" \
@@ -139,7 +140,7 @@ jobs:
         if: always()
         run: |
           if [ -f "$REPORT_FILE" ]; then
-            python .github/scripts/to_sarif.py \
+            python3 .github/scripts/to_sarif.py \
               --report "$REPORT_FILE" \
               --output /tmp/appsec-threat-model.sarif \
               --tool "appsec-threat-modeler" \
@@ -163,7 +164,7 @@ jobs:
             echo "No report file found at $REPORT_FILE — skipping issue creation."
             exit 0
           fi
-          python .github/scripts/create_issues.py \
+          python3 .github/scripts/create_issues.py \
             --report "$REPORT_FILE" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --min-severity "${{ inputs.min_issue_severity || 'HIGH' }}"

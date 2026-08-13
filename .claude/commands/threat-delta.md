@@ -17,7 +17,7 @@ From `$ARGUMENTS`:
 - If blank: look for the most recent report file in the current directory and repo root
 
 ```bash
-find . -maxdepth 2 -name "threat-model-*.md" 2>/dev/null | sort | tail -2
+find . -maxdepth 2 \( -name "threat-model-*.md" -o -name "threat-model-*.docx" \) 2>/dev/null | sort | tail -2
 ```
 
 ### 2. Locate the current report
@@ -53,7 +53,13 @@ Filename: `threat-delta-YYYY-MM-DD.docx`
 Directory: current working directory
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/delta-report.md ./threat-delta-YYYY-MM-DD.docx
+TIMESTAMP=$(date +%s)
+```
+
+Write the full report text to `/tmp/delta_${TIMESTAMP}.md`. Then convert and clean up:
+```bash
+python3 ~/.claude/scripts/md_to_docx.py /tmp/delta_${TIMESTAMP}.md ./threat-delta-YYYY-MM-DD.docx
+rm /tmp/delta_${TIMESTAMP}.md
 ```
 
 Report the saved path. Do not modify any repository source files.

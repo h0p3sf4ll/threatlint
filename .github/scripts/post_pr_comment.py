@@ -33,6 +33,22 @@ MERGE_REC_STYLE = {
 }
 
 
+def _detect_report_type(report_text):
+    for prefix, report_type in [
+        ('[TM-', 'threat-model'),
+        ('[DA-', 'dependency-audit'),
+        ('[SS-', 'secrets-scan'),
+        ('[IC-', 'iac-review'),
+        ('[CI-', 'cicd-audit'),
+        ('[AR-', 'api-security'),
+        ('[AU-', 'auth-review'),
+        ('[CR-', 'code-review'),
+    ]:
+        if prefix in report_text:
+            return report_type
+    return 'code-review'
+
+
 def extract_summary(report_text):
     """Parse the executive summary section of a threatlint report."""
     summary = {
@@ -40,7 +56,7 @@ def extract_summary(report_text):
         'merge_recommendation': None,
         'findings_by_severity': {},
         'top_issues': [],
-        'report_type': 'threat-model' if '[TM-' in report_text else 'code-review',
+        'report_type': _detect_report_type(report_text),
     }
 
     # Risk level / Change Risk Level
@@ -85,7 +101,16 @@ def build_comment(summary, run_url):
     risk = summary['risk_level']
     emoji = SEVERITY_EMOJI.get(risk, '⚪')
 
-    report_type_label = 'Code Review' if summary['report_type'] == 'code-review' else 'Threat Model'
+    report_type_label = {
+        'threat-model': 'Threat Model',
+        'code-review': 'Code Review',
+        'dependency-audit': 'Dependency Audit',
+        'secrets-scan': 'Secrets Scan',
+        'iac-review': 'IaC Review',
+        'cicd-audit': 'CI/CD Audit',
+        'api-security': 'API Security Review',
+        'auth-review': 'Auth Review',
+    }.get(summary['report_type'], 'Security Review')
     lines.append(f'## {emoji} AppSec {report_type_label}: **{risk}**')
     lines.append('')
 

@@ -47,6 +47,7 @@ permissions:
   contents: read
   pull-requests: read
   issues: write
+  security-events: write
   id-token: write
 
 concurrency:
@@ -116,7 +117,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          python .github/scripts/appsec_api.py \
+          python3 .github/scripts/appsec_api.py \
             --mode dependency-audit \
             --provider "$PROVIDER" \
             --output "$REPORT_FILE"
@@ -131,6 +132,25 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # ─── SARIF upload to GitHub Code Scanning ────────────────────────────
+      - name: Convert report to SARIF
+        if: always()
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$REPORT_FILE" \
+              --output /tmp/appsec-dependency.sarif \
+              --tool "appsec-dependency-auditor" \
+              --commit-sha "${{ github.sha }}"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: /tmp/appsec-dependency.sarif
+        continue-on-error: true
+
       # ─── Create GitHub issues ─────────────────────────────────────────────
       - name: Create GitHub issues for findings
         if: always()
@@ -141,7 +161,7 @@ jobs:
             echo "No report file — skipping issue creation."
             exit 0
           fi
-          python .github/scripts/create_issues.py \
+          python3 .github/scripts/create_issues.py \
             --report "$REPORT_FILE" \
             --pr "${{ github.event.pull_request.number }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
