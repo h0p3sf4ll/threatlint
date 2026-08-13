@@ -227,7 +227,7 @@ The agent reads `AGENTS.md`, performs the analysis, and saves the report as a Wo
 
 ## Quick Start With GitHub Copilot Chat
 
-The `.github/agents/` files register eight custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. All are available as soon as the repository is open in a trusted VS Code workspace.
+The `.github/agents/` files register nine custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. All are available as soon as the repository is open in a trusted VS Code workspace.
 
 ### Agents
 
@@ -235,6 +235,13 @@ Open Copilot Chat and select an agent from the agent picker (the `@` icon or the
 
 - **AppSec Threat Modeler** — threat model a component, feature, or the entire repository.
 - **AppSec Code Reviewer** — security review a pull request, diff, or set of changed files.
+- **AppSec Dependency Auditor** — audit third-party dependencies and supply chain risk.
+- **AppSec Secrets Scanner** — scan for hardcoded credentials, keys, and high-entropy tokens.
+- **AppSec IaC Reviewer** — review Terraform, Kubernetes, Helm, and Dockerfile configurations.
+- **AppSec CI/CD Auditor** — audit GitHub Actions, Jenkins, and other pipeline configurations.
+- **AppSec API Security Reviewer** — review REST, GraphQL, and gRPC APIs against OWASP API Top 10.
+- **AppSec Auth Reviewer** — deep-dive review of authentication and authorization implementations.
+- **AppSec False Positive Reviewer** — triage scanner findings and generate Semgrep rule tuning.
 
 Then describe what to analyze:
 
@@ -501,6 +508,7 @@ This is a one-time personal setup. The scripts live in `~/.claude/scripts/` and 
 | `/red-team-local` | `red-team-local-YYYY-MM-DD.docx` | Current working directory |
 | `/threat-delta` | `threat-delta-YYYY-MM-DD.docx` | Current working directory |
 | `/verify-fix <ID>` | `verify-<finding-id>-YYYY-MM-DD.docx` | Current working directory |
+| `/fp-review [file]` | `fp-review-YYYY-MM-DD.docx` | Repository root |
 
 Codex follows the same filename and directory conventions defined in `AGENTS.md`.
 
@@ -580,6 +588,7 @@ All agents do not alter source files, install dependencies, stage changes, or cr
 | CI/CD auditor | Same as code reviewer |
 | API security reviewer | Same as code reviewer |
 | Auth reviewer | Same as code reviewer |
+| False positive reviewer | Same as code reviewer |
 
 `Write` and `Edit` are explicitly denied for Claude Code agents. For Codex, the same constraint is stated directly in `AGENTS.md`.
 
