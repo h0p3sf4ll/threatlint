@@ -154,6 +154,15 @@ git remote get-url origin 2>/dev/null | sed 's/.*[:/]\([^/]*\)\(\.git\)\{0,1\}$/
 **Reviewed by**: appsec-auth-reviewer
 ```
 
+**False positive review header:**
+```
+# False Positive Review: <Repo Name>
+**Date**: YYYY-MM-DD
+**Input**: <path to SARIF file, Semgrep JSON, or threatlint report>
+**Findings reviewed**: N
+**Reviewed by**: appsec-fp-reviewer
+```
+
 ---
 
 ## Word Document Output
@@ -183,6 +192,7 @@ Filename convention:
 - CI/CD audit: `cicd-audit-YYYY-MM-DD.docx`
 - API security review: `api-security-review-YYYY-MM-DD.docx`
 - Auth review: `auth-review-YYYY-MM-DD.docx`
+- False positive review: `fp-review-YYYY-MM-DD.docx`
 
 The converter script requires `python-docx` (`pip3 install python-docx`). If the converter is unavailable, save the report as a `.md` file instead and note that the converter is not installed.
 

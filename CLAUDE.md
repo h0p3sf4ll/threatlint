@@ -12,6 +12,7 @@ This project provides read-only application-security subagents for Claude Code.
 - Delegate CI/CD pipeline security audits (GitHub Actions, Jenkins, GitLab CI, CircleCI) to `appsec-cicd-auditor`.
 - Delegate API security reviews (REST, GraphQL, gRPC, WebSocket) to `appsec-api-security-reviewer`.
 - Delegate authentication and authorization reviews (OAuth, JWT, RBAC, session management, MFA) to `appsec-auth-reviewer`.
+- Delegate false positive triage and Semgrep rule tuning to `appsec-fp-reviewer`.
 - When a threat-modeling request has no target or application context, use `appsec-threat-modeler` anyway. It must autonomously discover the repository, select an evidence-supported initial scope, and explain that choice.
 
 ## Boundaries

@@ -122,6 +122,56 @@ During analysis, explicitly inspect and document findings for:
 - Debug endpoints enabled in production
 - Overly permissive IAM roles, security groups, or network policies
 
+**Security Event Logging Coverage**
+
+Absence of security logging is itself a HIGH-severity finding under OWASP A09:2021 and ASVS §7.1. For each component in scope, explicitly check whether the following events are logged. A missing log entry on any HIGH-priority category is a standalone finding.
+
+*Authentication events* — log and verify presence for:
+- Login success (user ID, timestamp, source IP, method)
+- Login failure (user ID or attempted identifier, failure reason, source IP) — required for brute-force detection
+- MFA challenge issued, MFA succeeded, MFA failed
+- Password or credential reset initiated and completed
+- Session token issued, session expired, session invalidated
+- Concurrent session detection and enforcement
+
+*Authorization events* — log and verify presence for:
+- Access denied by RBAC/ABAC check (user ID, attempted resource, reason)
+- Failed ownership check (IDOR attempt)
+- Privilege escalation attempt (user requesting higher role or out-of-scope resource)
+- Role or permission change (who changed, what was changed, who authorized)
+- Admin API or admin panel access
+
+*Sensitive data access* — log and verify presence for:
+- Read of PII fields (name, email, SSN, date of birth, health identifiers)
+- Read or write of financial records, payment data, or cryptographic material
+- Bulk data export or API pagination sweep (potential data exfiltration pattern)
+
+*Administrative operations* — log and verify presence for:
+- User account created, modified, suspended, or deleted
+- Permission grants and revocations
+- Configuration changes (feature flags, security settings, rate limit changes)
+- Secret rotation or API key issuance
+
+*Security control triggers* — log and verify presence for:
+- Rate limiter threshold exceeded (attacker enumeration signal)
+- Repeated authentication failures from a single source (brute force)
+- Input rejected by validation (injection attempt signal)
+- Anomalous request pattern detected
+
+*Logging anti-patterns* — these are findings in their own right:
+- **Sensitive data in logs**: passwords, session tokens, PII, payment card data, private keys, full OAuth codes. Severity: HIGH (logs become a breach surface). STRIDE: Information Disclosure.
+- **Insufficient log detail**: events logged without user ID, timestamp, or source context — unusable for incident response. Severity: MEDIUM.
+- **Missing correlation ID**: no request or trace ID linking events across services — prevents attack reconstruction in distributed systems. Severity: MEDIUM.
+- **Log injection**: user-supplied data written to log without newline escaping — allows attackers to forge log entries. Severity: MEDIUM.
+
+When a logging gap is found, construct a finding with:
+- **Severity**: HIGH for authentication, authorization, and sensitive data events; MEDIUM for admin ops and systemic issues
+- **STRIDE**: Repudiation (logging gaps) or Information Disclosure (over-logging)
+- **OWASP**: A09:2021 Security Logging and Monitoring Failures
+- **OWASP ASVS**: §7.1.1 through §7.1.4 (log content), §7.2.1 (log processing)
+- **Evidence**: the specific file and function where the logged operation occurs but no log call is present
+- **Mitigation**: the exact log call to add, including the minimum required fields (timestamp, user_id, action, resource, outcome, source_ip, request_id)
+
 ## Report Format
 
 ### Document Header
