@@ -98,6 +98,50 @@ jobs:
             --head "${{ github.event.pull_request.head.sha }}" \
             --output "$REPORT_FILE"
 
+      # ─── Upload report artifact ───────────────────────────────────────────
+      - name: Upload PR security review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appsec-pr-review-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ─── Post PR comment with summary ────────────────────────────────────
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file — skipping PR comment."
+          else
+            python .github/scripts/post_pr_comment.py \
+              --report "$REPORT_FILE" \
+              --pr "${{ github.event.pull_request.number }}" \
+              --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+      # ─── SARIF upload to GitHub Code Scanning ────────────────────────────
+      - name: Convert report to SARIF
+        if: always()
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            python .github/scripts/to_sarif.py \
+              --report "$REPORT_FILE" \
+              --output /tmp/appsec-results.sarif \
+              --tool "appsec-code-reviewer" \
+              --commit-sha "${{ github.event.pull_request.head.sha }}"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: /tmp/appsec-results.sarif
+        continue-on-error: true
+
       # ─── Create GitHub issues for findings ────────────────────────────────
       - name: Create GitHub issues for findings
         if: always()

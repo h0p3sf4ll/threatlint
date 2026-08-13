@@ -130,6 +130,89 @@ THREAT_MODEL_DEEP_SYSTEM = (
     'produce an explicit Runtime Blindspot entry in Residual Risk.'
 )
 
+SECRETS_SCAN_SYSTEM = (
+    'You are an expert application security engineer specializing in secrets detection and credential management. '
+    'Search exhaustively for hardcoded credentials, API keys, private keys, connection strings, and secret management '
+    'anti-patterns. Flag any value that would grant access if exfiltrated. '
+    'Scan git history hints, environment variable handling, config files, and CI/CD configuration, not just source code. '
+    'Label every finding with the exact file and line. Report only security findings — no style or performance issues.'
+)
+
+IAC_REVIEW_SYSTEM = (
+    'You are an expert cloud and infrastructure security engineer. '
+    'Review all Infrastructure as Code for security misconfigurations: overly permissive IAM policies, '
+    'open network policies, missing encryption, privileged container settings, insecure default configurations, '
+    'and secrets embedded in infrastructure definitions. '
+    'Apply an aggressive posture: flag any resource whose misconfiguration could enable lateral movement, '
+    'data exfiltration, or privilege escalation, even if a separate compensating control might exist. '
+    'Cite the exact resource name, file, and attribute for every finding.'
+)
+
+CICD_AUDIT_SYSTEM = (
+    'You are an expert CI/CD and DevSecOps security engineer. '
+    'Audit all pipeline configuration for security weaknesses: script injection via untrusted context values '
+    '(github.head_ref, github.event.pull_request.body, github.event.issue.title, etc.), '
+    'pull_request_target misuse, workflow permissions, action pinning, self-hosted runner exposure, '
+    'fork PR secret exposure, artifact integrity, and pipeline secret handling. '
+    'Be exhaustive: enumerate every untrusted context value interpolated into a run: block. '
+    'Cite the workflow file, job name, step name, and line for every finding.'
+)
+
+DEPENDENCY_AUDIT_SYSTEM = (
+    'You are an expert supply chain security engineer. '
+    'Audit package manifests and lockfiles for supply chain risks: '
+    'known CVE version ranges, dependency confusion attack surfaces, typosquatting targets, '
+    'malicious install hooks (postinstall, prepare), abandoned packages, unpinned version ranges, '
+    'missing lockfile integrity (checksums, signatures), and package manager configuration secrets. '
+    'Distinguish between direct and transitive dependencies. '
+    'Cite the manifest file, package name, and version for every finding.'
+)
+
+API_SECURITY_SYSTEM = (
+    'You are an expert API security engineer with deep knowledge of the OWASP API Security Top 10 (2023). '
+    'Review all API endpoints — REST, GraphQL, gRPC, WebSocket — for: '
+    'BOLA (Broken Object Level Authorization), Broken Authentication, BOPLA (Broken Object Property Level Authorization), '
+    'Unrestricted Resource Consumption, Broken Function Level Authorization, Unrestricted Business Flow, '
+    'Server-Side Request Forgery, Security Misconfiguration, Improper Inventory Management, and Unsafe Consumption. '
+    'Also check for mass assignment, excessive data exposure, and weak input validation. '
+    'Trace authorization checks from route definitions through to data access. '
+    'Cite the endpoint path, HTTP method, and file location for every finding.'
+)
+
+AUTH_REVIEW_SYSTEM = (
+    'You are an expert authentication and authorization security engineer. '
+    'Perform a deep-dive review of all auth/authz code: '
+    'OAuth 2.0/OIDC (state parameter, PKCE, redirect URI validation, scope minimization, ID token validation), '
+    'JWT (algorithm confusion, claims validation, secret strength, expiry), '
+    'session management (entropy, fixation, revocation, cookie flags), '
+    'CSRF protection, MFA (TOTP bypass, recovery code entropy), '
+    'RBAC/ABAC enforcement, multi-tenancy isolation, password hashing (bcrypt/Argon2id), '
+    'brute-force protection, and account enumeration. '
+    'Trace every privilege decision from request receipt to data access. '
+    'Cite the exact file, function, and line for every finding.'
+)
+
+RED_TEAM_SYSTEM = (
+    'You are an expert red team operator and application security researcher. '
+    'Generate realistic, detailed adversarial attack scenarios against the highest-risk components '
+    'in the repository. Each scenario must include: attacker persona, full kill chain '
+    '(Recon → Initial Access → Execution → Persistence → Escalation → Lateral Movement → Exfiltration/Impact), '
+    'proof-of-concept description (not working exploit code, but technical detail sufficient for blue team testing), '
+    'detection gaps, and purple team test cases. '
+    'Assume full source-code knowledge. Focus on realistic, high-impact scenarios, not theoretical edge cases.'
+)
+
+ATTACK_TREE_SYSTEM = (
+    'You are an expert threat modeling engineer specializing in formal attack tree analysis. '
+    'Produce a structured AND/OR attack tree for the specified target. '
+    'Each tree must have: a root goal node (attacker objective), intermediate attack nodes, '
+    'and leaf nodes representing individual, concrete attacker actions. '
+    'AND-nodes require all children; OR-nodes require any child. '
+    'Annotate each leaf with: feasibility (HIGH/MEDIUM/LOW), required attacker capability, '
+    'existing mitigating control (or NONE), and control bypass path if one exists. '
+    'Conclude with a leaf node priority ranking (highest feasibility × highest impact first).'
+)
+
 # ─── Prompt templates ────────────────────────────────────────────────────────
 
 PR_REVIEW_TEMPLATE = '''\
@@ -344,8 +427,498 @@ Runtime Blindspot entry for every security decision deferred to runtime (env var
 **Suggested Focused Follow-Ups**: 3–5 ready-to-send prompts naming specific discovered components.
 '''
 
+SECRETS_SCAN_TEMPLATE = '''\
+{target_line}
 
-# ─── API callers ─────────────────────────────────────────────────────────────
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown secrets scan report.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Secrets Exposure Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+| Critical | | | | |
+| High | | | | |
+| Medium | | | | |
+| Low | | | | |
+
+**Top Issues** (Critical and High only):
+- **[SS-NNN]** *Title* — credential type and exposure risk. Required action.
+
+**Recommended Actions**: rotation priority, gitignore additions, secret manager migration.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+For each finding:
+
+#### [SS-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Secret Type | e.g. AWS Access Key, GitHub PAT, RSA Private Key |
+| Location | `path/to/file.ext:NN` |
+| Exposure | committed / env file staged / log output / error response |
+| Entropy | high / medium (for unrecognized patterns) |
+| Active Risk | credential still valid / unknown / likely rotated |
+| Impact | |
+| Mitigation | rotation steps + prevention |
+
+---
+
+**Secret Management Assessment**:
+| Category | Finding |
+|----------|---------|
+| Vault / secrets manager in use | |
+| .gitignore coverage | |
+| CI/CD secret hygiene | |
+| Rotation policy evidence | |
+| Recommended tooling | |
+'''
+
+IAC_REVIEW_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown IaC security review.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Infrastructure Risk Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+
+**Top Issues** (Critical and High only):
+- **[IC-NNN]** *Title* — misconfiguration and blast radius. Required fix.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+**IaC Inventory**:
+| Tool | Files Found | Resources Defined | Issues |
+|------|-------------|-------------------|--------|
+
+For each finding:
+
+#### [IC-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Tool | Terraform / Kubernetes / Helm / Dockerfile / CloudFormation |
+| Resource | resource type and name |
+| File | `path/to/file.tf:NN` |
+| Misconfiguration | what is wrong |
+| Evidence | quoted attribute and value |
+| Blast Radius | impact if exploited |
+| Mitigation | corrected HCL/YAML/Dockerfile snippet |
+| Validation | `terraform plan` / `kubectl auth can-i` / etc. |
+
+---
+
+**Prioritized Remediation Roadmap**:
+| Priority | ID | Title | Severity | Tool | Effort |
+|----------|----|-------|----------|------|--------|
+'''
+
+CICD_AUDIT_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown CI/CD security audit.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Pipeline Security Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+
+**Top Issues** (Critical and High only):
+- **[CI-NNN]** *Title* — injection/exposure risk. Required fix.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+**Secret Exposure Map**:
+| Secret / Variable | Accessible to Fork PRs? | Exposed in Logs? | Scope |
+|-------------------|------------------------|-----------------|-------|
+
+For each finding:
+
+#### [CI-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Workflow | `.github/workflows/filename.yml` |
+| Job / Step | job name → step name |
+| Injection Vector | exact `${{ github.context_value }}` or similar |
+| Evidence | quoted workflow snippet |
+| Attack Scenario | how an attacker exploits this |
+| Impact | |
+| Mitigation | corrected workflow YAML snippet |
+
+---
+
+**Action Provenance Audit**:
+| Action | Pinned to SHA? | Verified? | Recommendation |
+|--------|----------------|-----------|----------------|
+'''
+
+DEPENDENCY_AUDIT_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown dependency supply chain audit.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Supply Chain Risk Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+
+**Top Issues** (Critical and High only):
+- **[DA-NNN]** *Title* — package, risk type, required action.
+
+**Recommended Actions**: update priorities and audit commands.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+**Manifests Reviewed**:
+| File | Ecosystem | Direct Deps | Lockfile Present | Risk |
+|------|-----------|-------------|-----------------|------|
+
+For each finding:
+
+#### [DA-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Package | name@version |
+| Manifest | `path/to/manifest:NN` |
+| Attack Vector | CVE / confusion / typosquat / malicious hook / abandoned |
+| Evidence | CVE ID or pattern match |
+| Impact | |
+| Mitigation | version pin / replacement / removal |
+
+---
+
+**Dependency Inventory**:
+| Package | Version | Ecosystem | Direct/Transitive | Risk Flag |
+|---------|---------|-----------|-------------------|-----------|
+
+**Recommended Audit Commands**:
+```
+npm audit / pip-audit / cargo audit / etc.
+```
+'''
+
+API_SECURITY_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown API security review (OWASP API Security Top 10, 2023).
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**API Security Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+
+**Top Issues** (Critical and High only):
+- **[AR-NNN]** *Title* — API category and risk. Required fix.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+**API Endpoint Inventory**:
+| Endpoint | Method | Auth Required | Auth Type | OWASP Category Risk |
+|----------|--------|---------------|-----------|---------------------|
+
+For each finding:
+
+#### [AR-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| OWASP API Category | API1:2023 – API10:2023 |
+| CWE | |
+| Endpoint | `METHOD /path/to/endpoint` |
+| File | `path/to/file.ext:NN` |
+| Evidence | quoted code snippet |
+| Exploit Path | 1. → 2. → 3. |
+| Impact | |
+| Mitigation | corrected code snippet |
+
+---
+
+**OWASP API Security Coverage Matrix**:
+| Category | Checked | Findings | Status |
+|----------|---------|----------|--------|
+| API1:2023 BOLA | ✓ | | |
+| API2:2023 Broken Auth | ✓ | | |
+| API3:2023 BOPLA | ✓ | | |
+| API4:2023 Resource Consumption | ✓ | | |
+| API5:2023 Function Auth | ✓ | | |
+| API6:2023 Business Flow | ✓ | | |
+| API7:2023 SSRF | ✓ | | |
+| API8:2023 Misconfiguration | ✓ | | |
+| API9:2023 Inventory | ✓ | | |
+| API10:2023 Unsafe Consumption | ✓ | | |
+'''
+
+AUTH_REVIEW_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown authentication and authorization security review.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Auth Security Level**: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
+
+One-sentence summary.
+
+**Finding Summary**:
+| Severity | Count | CONFIRMED | PLAUSIBLE | THEORETICAL |
+|----------|-------|-----------|-----------|-------------|
+
+**Top Issues** (Critical and High only):
+- **[AU-NNN]** *Title* — auth category and risk. Required fix.
+
+---
+
+### TIER 2 — TECHNICAL FINDINGS
+
+**Auth Coverage Matrix**:
+| Category | Reviewed | Findings | Library/Pattern Used |
+|----------|---------|----------|----------------------|
+| OAuth 2.0 / OIDC | | | |
+| JWT handling | | | |
+| Session management | | | |
+| CSRF protection | | | |
+| MFA | | | |
+| RBAC / ABAC | | | |
+| Password hashing | | | |
+| Brute-force protection | | | |
+| Account enumeration | | | |
+| Multi-tenancy isolation | | | |
+
+For each finding:
+
+#### [AU-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Auth Category | OAuth / JWT / Session / CSRF / MFA / RBAC / Password / etc. |
+| CWE | |
+| File | `path/to/file.ext:NN` |
+| Evidence | quoted code snippet |
+| Exploit Path | 1. → 2. → 3. |
+| Impact | |
+| Mitigation | corrected code snippet with library reference |
+
+---
+
+**Privilege Escalation Paths**:
+| From Role | To Role | Path Found | Feasibility |
+|-----------|---------|------------|-------------|
+'''
+
+RED_TEAM_TEMPLATE = '''\
+{target_line}
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a red team scenario report with 5 adversarial scenarios against the highest-risk components.
+
+### RED TEAM REPORT HEADER
+
+**Repository**: [derived from git remote]
+**Date**: [today's date]
+**Scope**: [components analyzed]
+
+---
+
+For each scenario (produce exactly 5):
+
+### Scenario N: *Title*
+
+**Attacker Persona**: External / Authenticated User / Privileged Insider / Supply-Chain / Nation-State
+**Primary Objective**: data exfiltration / account takeover / RCE / etc.
+**Difficulty**: LOW / MEDIUM / HIGH
+
+**Kill Chain**:
+1. **Recon**: what the attacker discovers and how
+2. **Initial Access**: how they gain a foothold
+3. **Execution**: what they run or send
+4. **Persistence**: how they maintain access
+5. **Privilege Escalation**: how they gain higher privileges
+6. **Lateral Movement**: where they pivot to
+7. **Exfiltration / Impact**: what they achieve
+
+**PoC Description**: technical steps sufficient for authorized reproduction — not working exploit code.
+
+**Evidence**: `path/to/file.ext:NN` — quoted code or config snippet.
+
+**Detection Gaps**: what monitoring, alerting, or audit logging would need to exist to detect this scenario.
+
+**Purple Team Test Cases**:
+- [ ] Test case 1: what to simulate and what alert/log to verify.
+- [ ] Test case 2
+- [ ] Test case 3
+
+---
+
+### Cross-Scenario Analysis
+
+**Common Entry Points**: components appearing across multiple scenarios.
+
+**Highest-Priority Controls**: three controls whose absence enables the most scenarios.
+
+**Detection Coverage Summary**: overall detection maturity assessment.
+'''
+
+ATTACK_TREE_TEMPLATE = '''\
+Attack tree target: **{target}**
+
+## Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a formal AND/OR attack tree for the specified target.
+
+### ATTACK TREE HEADER
+
+**Target Goal**: [attacker's objective against the target]
+**Date**: [today's date]
+**Root Node**: [target name]
+
+---
+
+### Attack Tree Structure
+
+Present the tree in indented notation:
+
+```
+[ROOT] Achieve: <attacker objective> (OR)
+├── [OR] Path A: <high-level approach>
+│   ├── [AND] Sub-goal A.1: <action>
+│   │   ├── [LEAF] A.1.1: <atomic attacker action>
+│   │   └── [LEAF] A.1.2: <atomic attacker action>
+│   └── [LEAF] A.2: <atomic attacker action>
+└── [OR] Path B: <high-level approach>
+    └── [LEAF] B.1: <atomic attacker action>
+```
+
+Use AND (all children required) and OR (any child sufficient) consistently.
+
+---
+
+### Leaf Node Analysis
+
+| Node ID | Description | Feasibility | Required Capability | Existing Control | Control Bypass |
+|---------|-------------|-------------|---------------------|-----------------|----------------|
+| A.1.1 | | HIGH/MED/LOW | | | |
+
+---
+
+### Leaf Node Priority Ranking
+
+Ranked by (Feasibility × Impact):
+
+| Rank | Node | Feasibility | Impact | Priority Score | Recommended Control |
+|------|------|-------------|--------|----------------|---------------------|
+| 1 | | | | | |
+
+---
+
+### Control Gaps
+
+Controls that are absent or inadequate and enable the highest-priority paths.
+'''
+
+
+
 
 def _openai_client_and_model(provider, model_override):
     from openai import OpenAI
@@ -407,7 +980,11 @@ def main():
     parser = argparse.ArgumentParser(
         description='Run AppSec analysis via OpenAI, GitHub Models, or LM Studio'
     )
-    parser.add_argument('--mode', choices=['pr-review', 'threat-model'], required=True)
+    parser.add_argument('--mode', choices=[
+        'pr-review', 'threat-model', 'secrets-scan', 'iac-review',
+        'cicd-audit', 'dependency-audit', 'api-security', 'auth-review',
+        'red-team', 'attack-tree',
+    ], required=True)
     parser.add_argument('--provider', choices=['openai', 'github-models', 'lmstudio'], required=True)
     parser.add_argument('--base',   default='', help='Base commit SHA (pr-review only)')
     parser.add_argument('--head',   default='', help='Head commit SHA (pr-review only)')
@@ -431,7 +1008,8 @@ def main():
         files_str    = '\n'.join(f'- {f}' for f in changed[:60])
         user_prompt  = PR_REVIEW_TEMPLATE.format(files=files_str, diff=diff)
         system_prompt = PR_REVIEW_SYSTEM
-    else:
+
+    elif args.mode == 'threat-model':
         context = gather_repo_context(max_file_bytes=max_file)
         target_line = (
             f'Threat model target: **{args.target}**'
@@ -449,6 +1027,79 @@ def main():
         else:
             user_prompt   = THREAT_MODEL_TEMPLATE.format(target_line=target_line, context=context)
             system_prompt = THREAT_MODEL_SYSTEM
+
+    elif args.mode == 'secrets-scan':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Secrets scan target: **{args.target}**' if args.target
+            else 'Scan the entire repository for hardcoded secrets and credential management issues.'
+        )
+        user_prompt   = SECRETS_SCAN_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = SECRETS_SCAN_SYSTEM
+
+    elif args.mode == 'iac-review':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'IaC review target: **{args.target}**' if args.target
+            else 'Review all Infrastructure as Code in the repository.'
+        )
+        user_prompt   = IAC_REVIEW_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = IAC_REVIEW_SYSTEM
+
+    elif args.mode == 'cicd-audit':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'CI/CD audit target: **{args.target}**' if args.target
+            else 'Audit all CI/CD pipeline configuration in the repository.'
+        )
+        user_prompt   = CICD_AUDIT_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = CICD_AUDIT_SYSTEM
+
+    elif args.mode == 'dependency-audit':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Dependency audit target: **{args.target}**' if args.target
+            else 'Audit all package manifests and lockfiles in the repository.'
+        )
+        user_prompt   = DEPENDENCY_AUDIT_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = DEPENDENCY_AUDIT_SYSTEM
+
+    elif args.mode == 'api-security':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'API security review target: **{args.target}**' if args.target
+            else 'Review all API endpoints discovered in the repository.'
+        )
+        user_prompt   = API_SECURITY_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = API_SECURITY_SYSTEM
+
+    elif args.mode == 'auth-review':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Auth review target: **{args.target}**' if args.target
+            else 'Review all authentication and authorization code in the repository.'
+        )
+        user_prompt   = AUTH_REVIEW_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = AUTH_REVIEW_SYSTEM
+
+    elif args.mode == 'red-team':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Red team target: **{args.target}**' if args.target
+            else 'Select the 5 highest-risk attack surfaces from the repository.'
+        )
+        user_prompt   = RED_TEAM_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = RED_TEAM_SYSTEM
+
+    elif args.mode == 'attack-tree':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target = args.target or 'the highest-risk component in the repository'
+        user_prompt   = ATTACK_TREE_TEMPLATE.format(target=target, context=context)
+        system_prompt = ATTACK_TREE_SYSTEM
+
+    else:
+        print(f'ERROR: Unknown mode: {args.mode}', file=sys.stderr)
+        sys.exit(1)
 
     report = call_api(args.provider, system_prompt, user_prompt, args.model)
 

@@ -1,16 +1,34 @@
 # Application Security Analysis
 
-This file configures AI coding agents to perform evidence-based application security work: threat modeling and security code review. Instructions apply to all AGENTS.md-compatible tools (OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and others).
+This file configures AI coding agents to perform evidence-based application security work. Instructions apply to all AGENTS.md-compatible tools (OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and others).
 
 ---
 
 ## Routing
 
-**Threat modeling** — when asked to: threat-model, analyze security risks, review security posture, discover threats, or produce a threat model report.
+**Threat modeling** — "threat-model", "analyze security risks", "review security posture", "discover threats".
 → Follow the [Threat Modeling](#threat-modeling) instructions below.
 
-**Security code review** — when asked to: security-review a diff, pull request, branch, commit range, or code change.
+**Security code review** — "security-review a diff / pull request / branch / commit range / code change".
 → Follow the [Security Code Review](#security-code-review) instructions below.
+
+**Dependency supply chain audit** — "audit dependencies", "check supply chain", "scan packages".
+→ Follow the [Dependency Audit](#dependency-audit) instructions below.
+
+**Secrets detection** — "scan for secrets", "find hardcoded credentials", "check for API keys".
+→ Follow the [Secrets Scan](#secrets-scan) instructions below.
+
+**IaC security review** — "review infrastructure", "audit Terraform", "review Kubernetes manifests", "review Dockerfile".
+→ Follow the [IaC Review](#iac-review) instructions below.
+
+**CI/CD security audit** — "audit pipeline", "review GitHub Actions", "check CI/CD security", "review workflows".
+→ Follow the [CI/CD Audit](#cicd-audit) instructions below.
+
+**API security review** — "review API security", "OWASP API Top 10", "check REST endpoints".
+→ Follow the [API Security Review](#api-security-review) instructions below.
+
+**Auth security review** — "review authentication", "audit authorization", "check OAuth", "review JWT handling".
+→ Follow the [Auth Review](#auth-review) instructions below.
 
 **No target given** — when a security task is requested with no specified component or scope.
 → Use the threat modeler with autonomous repository discovery. Do not ask for a target before beginning.
@@ -319,3 +337,119 @@ Produce a two-tier report beginning with the document header.
 **Security-Positive Changes** — controls added, hardened, or correctly introduced. Cite file and lines.
 
 **Residual Risk and Open Questions** — THEORETICAL findings needing confirmation, changed signatures with invisible callers, coverage gaps, follow-up actions for accepted residual risk.
+
+---
+
+## Dependency Audit
+
+### Protocol
+
+1. Locate all package manifests and lockfiles: `package.json`, `yarn.lock`, `go.mod`, `go.sum`, `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pyproject.toml`, `Cargo.toml`, `Cargo.lock`, `pom.xml`, `build.gradle`, `Gemfile`, `Gemfile.lock`, `composer.json`.
+2. For each manifest, inventory direct dependencies and note version constraints.
+3. Check for: known CVE version ranges (consult embedded knowledge), dependency confusion attack surfaces (internal-looking names on public registries), typosquatting (names within one edit-distance of top packages), malicious install hooks (`postinstall`, `prepare`), abandoned packages (no recent release), floating version ranges without lockfile, missing integrity hashes.
+4. Note the package manager security configuration: `.npmrc`, `pip.conf` custom registry settings.
+
+### Report Format
+
+Use the DA-NNN finding prefix. Produce a two-tier report using the [Dependency Audit report format in docs/agents.md](docs/agents.md#appsec-dependency-auditor).
+
+### Word Document Output
+
+Save the completed report as `dependency-audit-YYYY-MM-DD.docx` in the current working directory using the standard converter steps.
+
+---
+
+## Secrets Scan
+
+### Protocol
+
+1. Scan all source files, configuration files, CI/CD YAML, `.env` files, Dockerfile, and IaC for known secret patterns.
+2. Check git history hints: look for files committed then deleted, files named `.env`, `credentials`, `secrets`, `*.pem`, `*.key`.
+3. Apply entropy analysis for unrecognized high-entropy strings near assignment operators.
+4. Known patterns to check: AWS access keys (`AKIA…`), GitHub PATs (`ghp_`, `github_pat_`), Anthropic (`sk-ant-`), OpenAI (`sk-`), Stripe, SendGrid, Slack tokens, PEM private keys, JDBC/database URLs with embedded passwords.
+
+### Report Format
+
+Use the SS-NNN finding prefix. Produce a two-tier report using the [Secrets Scan report format in docs/agents.md](docs/agents.md#appsec-secrets-scanner).
+
+### Word Document Output
+
+Save the completed report as `secrets-scan-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## IaC Review
+
+### Protocol
+
+1. Locate all IaC files: `*.tf`, `*.tfvars`, `terraform/`, `k8s/`, `helm/`, `infra/`, `deploy/`, `Dockerfile*`, `docker-compose*.yml`, `**cloudformation**.yml`.
+2. For Terraform: check IAM policies (wildcard actions/resources), security groups (open to `0.0.0.0/0`), encryption settings, secrets in defaults.
+3. For Kubernetes: check pod security (`privileged`, `runAsRoot`, `hostPID/hostNetwork`), RBAC (ClusterRoleBinding to `system:masters`), network policies, image tags.
+4. For Dockerfile: check base image tag, USER instruction, sensitive file inclusion, `ADD` vs `COPY`.
+
+### Report Format
+
+Use the IC-NNN finding prefix. Produce a two-tier report using the [IaC Review report format in docs/agents.md](docs/agents.md#appsec-iac-reviewer).
+
+### Word Document Output
+
+Save the completed report as `iac-review-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## CI/CD Audit
+
+### Protocol
+
+1. Locate all CI/CD configuration: `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, `.circleci/config.yml`.
+2. For GitHub Actions: check every `run:` step for untrusted context value interpolation (`github.head_ref`, `github.event.pull_request.title`, `.body`, `.head.ref`, `github.event.issue.title`, `.body`, `github.event.comment.body`).
+3. Check for `pull_request_target` with `actions/checkout` of the PR head branch.
+4. Check `permissions:` blocks — missing means `write-all`.
+5. Check all `uses:` references — actions not pinned to a full commit SHA are unpinned.
+6. Check whether secrets are accessible to fork-triggered workflows.
+
+### Report Format
+
+Use the CI-NNN finding prefix. Produce a two-tier report using the [CI/CD Audit report format in docs/agents.md](docs/agents.md#appsec-cicd-auditor).
+
+### Word Document Output
+
+Save the completed report as `cicd-audit-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## API Security Review
+
+### Protocol
+
+1. Locate all API route definitions and handler functions.
+2. For each endpoint, trace from route definition through middleware to the data access layer.
+3. Check against all OWASP API Security Top 10 (2023) categories: BOLA, Broken Auth, BOPLA, Resource Consumption, Function Auth, Business Flow, SSRF, Misconfiguration, Inventory, Unsafe Consumption.
+4. Check for mass assignment (request body bound directly to ORM model), excessive data exposure, and missing input validation.
+
+### Report Format
+
+Use the AR-NNN finding prefix. Produce a two-tier report using the [API Security Review report format in docs/agents.md](docs/agents.md#appsec-api-security-reviewer).
+
+### Word Document Output
+
+Save the completed report as `api-security-review-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Auth Review
+
+### Protocol
+
+1. Locate all authentication and authorization code: OAuth/OIDC flows, JWT handling, session management, CSRF protection, MFA, RBAC/ABAC, password handling.
+2. For each auth mechanism, apply the relevant checklist from [docs/agents.md](docs/agents.md#appsec-auth-reviewer).
+3. Trace every privilege decision from request receipt to data access.
+4. Pay particular attention to: JWT algorithm confusion, missing `state` parameter in OAuth, session fixation, TOTP bypass paths, and multi-tenancy isolation.
+
+### Report Format
+
+Use the AU-NNN finding prefix. Produce a two-tier report using the [Auth Review report format in docs/agents.md](docs/agents.md#appsec-auth-reviewer).
+
+### Word Document Output
+
+Save the completed report as `auth-review-YYYY-MM-DD.docx` in the current working directory.

@@ -1,0 +1,148 @@
+name: AppSec Dependency Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - '.yarn/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'requirements.txt'
+      - 'Pipfile'
+      - 'Pipfile.lock'
+      - 'poetry.lock'
+      - 'pyproject.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pom.xml'
+      - 'build.gradle'
+      - '*.gemspec'
+      - 'Gemfile'
+      - 'Gemfile.lock'
+      - 'composer.json'
+      - 'composer.lock'
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'go.mod'
+      - 'go.sum'
+      - 'requirements.txt'
+      - 'Pipfile.lock'
+      - 'poetry.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pom.xml'
+      - 'build.gradle'
+      - 'Gemfile'
+      - 'Gemfile.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: appsec-dependency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    # Skip fork PRs to prevent secret exposure
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
+      MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
+      REPORT_FILE: /tmp/appsec-dependency-report.md
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Run dependency audit (Claude)
+        if: env.PROVIDER == 'claude'
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the project appsec-dependency-auditor to audit all package manifests
+            and lockfiles in this repository for supply chain risk.
+
+            Produce a two-tier Markdown dependency audit report:
+            TIER 1: Supply Chain Risk Level, Finding Summary table, Top Issues, Recommended Actions.
+            TIER 2: Manifests Reviewed table, per-finding blocks ([DA-NNN] — Title, Package,
+            Manifest location, Attack Vector, Evidence, Impact, Mitigation), Dependency Inventory,
+            Recommended Audit Commands.
+
+            After writing the report, save it:
+            tee /tmp/appsec-dependency-report.md << 'APPSEC_END_OF_REPORT'
+            [paste complete report, then close with APPSEC_END_OF_REPORT]
+            APPSEC_END_OF_REPORT
+
+            Do not modify any repository source files.
+          claude_args: |
+            --agent appsec-dependency-auditor
+            --max-turns 16
+            --allowedTools "Read,Grep,Glob,Bash"
+
+      # ─── OpenAI / GitHub Models ───────────────────────────────────────────
+      - name: Set up Python
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openai SDK
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        run: pip install openai
+
+      - name: Run dependency audit (OpenAI / GitHub Models)
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/appsec_api.py \
+            --mode dependency-audit \
+            --provider "$PROVIDER" \
+            --output "$REPORT_FILE"
+
+      # ─── Upload artifact ──────────────────────────────────────────────────
+      - name: Upload dependency audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appsec-dependency-report-${{ github.run_id }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ─── Create GitHub issues ─────────────────────────────────────────────
+      - name: Create GitHub issues for findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file — skipping issue creation."
+            exit 0
+          fi
+          python .github/scripts/create_issues.py \
+            --report "$REPORT_FILE" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --min-severity "$MIN_ISSUE_SEVERITY"

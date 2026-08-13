@@ -124,6 +124,35 @@ jobs:
             --target "${{ inputs.target }}" \
             --output "$REPORT_FILE"
 
+      # ─── Upload report artifact ───────────────────────────────────────────
+      - name: Upload threat model report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appsec-threat-model-${{ github.run_id }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ─── SARIF upload to GitHub Code Scanning ────────────────────────────
+      - name: Convert report to SARIF
+        if: always()
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            python .github/scripts/to_sarif.py \
+              --report "$REPORT_FILE" \
+              --output /tmp/appsec-threat-model.sarif \
+              --tool "appsec-threat-modeler" \
+              --commit-sha "${{ github.sha }}"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: /tmp/appsec-threat-model.sarif
+        continue-on-error: true
+
       # ─── Create GitHub issues for findings ────────────────────────────────
       - name: Create GitHub issues for findings
         if: inputs.create_issues == 'true'
