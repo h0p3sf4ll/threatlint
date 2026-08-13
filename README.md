@@ -39,8 +39,8 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 - [Word Document Output](#word-document-output)
 - [Analysis Posture](#analysis-posture)
 - [Start Without Application Context](#start-without-application-context)
-- [AppSec Threat Modeler](#appsec-threat-modeler)
-- [AppSec Code Reviewer](#appsec-code-reviewer)
+- [Agents](#agents)
+- [Slash Commands](#slash-commands)
 - [Read-Only Safety Boundaries](#read-only-safety-boundaries)
 - [GitHub Actions](#github-actions)
 - [Suggested Team Workflows](#suggested-team-workflows)
@@ -54,27 +54,67 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 
 | File | Use it for |
 | --- | --- |
-| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any other tool that reads `AGENTS.md`. Self-contained: includes threat modeling, code review, and Word document output instructions. |
-| [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent for threat modeling with autonomous repository discovery. |
-| [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent for security review of a diff or pull request. |
-| [`.claude/commands/threat-model.md`](.claude/commands/threat-model.md) | `/threat-model` slash command. Invokes the threat modeler and saves output as a Word document. |
-| [`.claude/commands/threat-model-deep.md`](.claude/commands/threat-model-deep.md) | `/threat-model-deep` slash command. Aggressive deep-dive with bypass chain analysis, chained kill chains, and coverage audit. |
-| [`.claude/commands/threat-model-local.md`](.claude/commands/threat-model-local.md) | `/threat-model-local` slash command. Threat model using a local LM Studio model — no API key required. |
-| [`.claude/commands/threat-model-deep-local.md`](.claude/commands/threat-model-deep-local.md) | `/threat-model-deep-local` slash command. Deep-dive threat model using a local LM Studio model. |
-| [`.claude/commands/security-review.md`](.claude/commands/security-review.md) | `/security-review` slash command. Reviews a diff, branch, or PR and saves output as a Word document. |
-| [`.claude/commands/security-review-local.md`](.claude/commands/security-review-local.md) | `/security-review-local` slash command. Security review using a local LM Studio model — no API key required. |
-| [`CLAUDE.md`](CLAUDE.md) | Routes Claude Code to the project security subagents when working in the threatlint directory. |
-| [`.github/agents/appsec-threat-modeler.agent.md`](.github/agents/appsec-threat-modeler.agent.md) | Threat-modeling agent for GitHub Copilot Chat. |
-| [`.github/agents/appsec-code-reviewer.agent.md`](.github/agents/appsec-code-reviewer.agent.md) | Code review agent for GitHub Copilot Chat. |
-| [`.github/prompts/discover-application-threat-model.prompt.md`](.github/prompts/discover-application-threat-model.prompt.md) | Slash prompt for discovery-mode threat modeling in Copilot Chat. |
-| [`.github/prompts/threat-model-report.prompt.md`](.github/prompts/threat-model-report.prompt.md) | Slash prompt for standardized threat-model reports in Copilot Chat. |
-| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | Analysis runner for OpenAI, GitHub Models, and LM Studio providers. Used by Actions and local-model slash commands. |
-| [`.github/scripts/create_issues.py`](.github/scripts/create_issues.py) | Parses a completed report and opens GitHub issues for qualifying findings. |
-| [`docs/github-actions.md`](docs/github-actions.md) | Provider setup, issue filing configuration, and troubleshooting for GitHub Actions. |
+| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any tool that reads `AGENTS.md`. Covers all 8 security agents with routing, protocols, and report formats. |
+| [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent — evidence-based threat modeling with autonomous repository discovery, crown jewel analysis, attack chains, and MITRE ATT&CK/DREAD scoring. |
+| [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent — security review of a diff or pull request with merge recommendation. |
+| [`.claude/agents/appsec-dependency-auditor.md`](.claude/agents/appsec-dependency-auditor.md) | Claude Code subagent — supply chain security: CVEs, dependency confusion, typosquatting, malicious install hooks, abandoned packages, lockfile integrity. |
+| [`.claude/agents/appsec-secrets-scanner.md`](.claude/agents/appsec-secrets-scanner.md) | Claude Code subagent — secrets detection: API keys, private keys, connection strings, high-entropy patterns, git history scanning. |
+| [`.claude/agents/appsec-iac-reviewer.md`](.claude/agents/appsec-iac-reviewer.md) | Claude Code subagent — IaC security: Terraform, Kubernetes, Helm, Dockerfile, CloudFormation. |
+| [`.claude/agents/appsec-cicd-auditor.md`](.claude/agents/appsec-cicd-auditor.md) | Claude Code subagent — CI/CD security: script injection, workflow permissions, action pinning, fork secret exposure, artifact integrity. |
+| [`.claude/agents/appsec-api-security-reviewer.md`](.claude/agents/appsec-api-security-reviewer.md) | Claude Code subagent — OWASP API Security Top 10 (2023): BOLA, broken auth, mass assignment, SSRF, resource consumption, and more. |
+| [`.claude/agents/appsec-auth-reviewer.md`](.claude/agents/appsec-auth-reviewer.md) | Claude Code subagent — auth/authz deep-dive: OAuth 2.0/OIDC, JWT, sessions, CSRF, MFA, RBAC, multi-tenancy, password hashing, brute-force protection. |
+| [`docs/agents.md`](docs/agents.md) | Comprehensive per-agent documentation: protocols, coverage areas, frameworks applied, and complete report format for all 8 agents. |
+
+### Slash Commands
+
+| Command | Description |
+| --- | --- |
+| `/threat-model` | Threat model (cloud, + Word doc) |
+| `/threat-model-deep` | Deep-dive threat model with bypass chains and kill chains (cloud) |
+| `/threat-model-local` | Threat model via LM Studio (local, no API key) |
+| `/threat-model-deep-local` | Deep-dive threat model via LM Studio (local) |
+| `/security-review` | Security code review of a diff/branch/PR (cloud, + Word doc) |
+| `/security-review-local` | Security code review via LM Studio (local) |
+| `/dependency-audit` | Supply chain dependency audit (cloud, + Word doc) |
+| `/dependency-audit-local` | Dependency audit via LM Studio (local) |
+| `/secrets-scan` | Secrets and credential detection scan (cloud, + Word doc) |
+| `/secrets-scan-local` | Secrets scan via LM Studio (local) |
+| `/iac-review` | IaC security review — Terraform, K8s, Dockerfile (cloud, + Word doc) |
+| `/iac-review-local` | IaC review via LM Studio (local) |
+| `/cicd-audit` | CI/CD pipeline security audit (cloud, + Word doc) |
+| `/cicd-audit-local` | CI/CD audit via LM Studio (local) |
+| `/api-security-review` | OWASP API Security Top 10 review (cloud, + Word doc) |
+| `/api-security-review-local` | API security review via LM Studio (local) |
+| `/auth-review` | Auth/authz deep-dive review (cloud, + Word doc) |
+| `/auth-review-local` | Auth review via LM Studio (local) |
+| `/compliance-check` | Map findings to OWASP ASVS, PCI-DSS v4, HIPAA, SOC 2, ISO 27001, NIST CSF, CIS (cloud) |
+| `/attack-tree` | Formal AND/OR attack tree with bypass analysis and leaf node ranking (cloud) |
+| `/attack-tree-local` | Attack tree via LM Studio (local) |
+| `/red-team` | 5 adversarial scenarios with full kill chains and purple-team test cases (cloud) |
+| `/red-team-local` | Red team scenarios via LM Studio (local) |
+| `/threat-delta` | Compare previous report to current state: New/Resolved/Regressed/Unchanged (cloud) |
+| `/verify-fix` | Verify a specific finding was remediated: REMEDIATED/PARTIALLY FIXED/STILL PRESENT/REGRESSED (cloud) |
+
+### GitHub Integrations
+
+| File | Purpose |
+| --- | --- |
+| [`.github/agents/`](.github/agents/) | 8 Copilot Chat agents — one per security domain |
+| [`.github/workflows/appsec-pr-review.yml`](.github/workflows/appsec-pr-review.yml) | Runs on every non-draft PR: security review + PR comment + SARIF upload + issues |
+| [`.github/workflows/appsec-threat-model.yml`](.github/workflows/appsec-threat-model.yml) | Manual: threat model + SARIF upload + issues |
+| [`.github/workflows/appsec-scheduled.yml`](.github/workflows/appsec-scheduled.yml) | Weekly + on IaC/Dockerfile changes: automated threat model + issues |
+| [`.github/workflows/appsec-dependency-audit.yml`](.github/workflows/appsec-dependency-audit.yml) | On manifest/lockfile changes: dependency audit + issues |
+| [`.github/workflows/appsec-iac-review.yml`](.github/workflows/appsec-iac-review.yml) | On IaC changes: IaC security review + issues |
+| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | OpenAI / GitHub Models / LM Studio runner (10 modes) |
+| [`.github/scripts/create_issues.py`](.github/scripts/create_issues.py) | Parses reports and opens deduplicated GitHub issues |
+| [`.github/scripts/to_sarif.py`](.github/scripts/to_sarif.py) | Converts threatlint reports to SARIF 2.1.0 for GitHub Code Scanning |
+| [`.github/scripts/post_pr_comment.py`](.github/scripts/post_pr_comment.py) | Posts risk summary as a PR comment with merge recommendation |
+| [`.claude/hooks/pre-commit`](.claude/hooks/pre-commit) | Optional git pre-commit hook: blocks secrets staged for commit |
+| [`docs/github-actions.md`](docs/github-actions.md) | Provider setup, issue configuration, and GitHub Actions troubleshooting |
 
 ### Word Document Converter
 
-`~/.claude/scripts/md_to_docx.py` is a helper script used by the slash commands and Codex agents to convert the Markdown report to a formatted `.docx` file. It is installed to the user's home directory — not checked into target repositories. See [Word Document Output](#word-document-output) for setup.
+`~/.claude/scripts/md_to_docx.py` converts reports to formatted `.docx` files. It is installed to the user's home directory — not checked into target repositories.
 
 ---
 
@@ -110,41 +150,63 @@ No project dependency, service account, or external scanner is required. `threat
 The slash commands are the fastest way to get a report and a Word document.
 
 ```text
-/threat-model                    # auto-discover the repo and threat model it
-/threat-model src/api/auth       # threat model a specific component
-/threat-model-deep               # aggressive deep-dive (maximum coverage)
-/security-review                 # review the current working-tree diff
-/security-review main..feature   # review a branch
-/security-review 42              # review PR #42
+# Threat modeling
+/threat-model                        # auto-discover the repo
+/threat-model src/api/auth           # specific component
+/threat-model-deep                   # aggressive deep-dive (maximum coverage)
+
+# Code review
+/security-review                     # working-tree diff
+/security-review main..feature       # branch comparison
+/security-review 42                  # PR number
+
+# Specialized audits
+/dependency-audit                    # supply chain — all manifests
+/secrets-scan                        # credential and API key detection
+/iac-review                          # Terraform, Kubernetes, Dockerfile
+/cicd-audit                          # GitHub Actions and CI pipeline
+/api-security-review                 # OWASP API Security Top 10
+/auth-review                         # OAuth, JWT, sessions, MFA, RBAC
+
+# Analysis and scenario tooling
+/compliance-check                    # OWASP ASVS, PCI-DSS, HIPAA, SOC 2, ISO 27001
+/attack-tree <component>             # formal AND/OR attack tree
+/red-team                            # 5 adversarial scenarios with kill chains
+/threat-delta <previous-report.docx> # compare to a prior report
+/verify-fix CR-042                   # confirm a specific finding was fixed
 ```
 
-You can also address the agents directly via the `@` picker or `--agent` flag:
-
-```bash
-claude --agent appsec-threat-modeler   # threat modeling session
-claude --agent appsec-code-reviewer    # code review session
-```
-
-Using `@` or `--agent` directly produces the report in chat but **does not save a Word document** — that step is handled by the commands. Use the slash commands when you need file output.
+You can also address agents directly via the `@` picker or `--agent` flag — this produces the report in chat but **does not save a Word document**.
 
 ---
 
 ## Quick Start With Local Models (LM Studio)
 
-Run threat modeling and security reviews entirely on your machine — no API key, no cloud, no data leaving your environment.
+Run all analysis entirely on your machine — no API key, no cloud, no data leaving your environment.
 
 **Before running:** open LM Studio, load a model, then go to Developer → Local Server → Start Server.
 
 ```text
-/threat-model-local                    # auto-discover using the loaded local model
-/threat-model-local src/api/auth       # local model, specific component
-/threat-model-deep-local               # aggressive deep-dive with local model
-/security-review-local                 # review working-tree diff with local model
-/security-review-local main..feature   # review a branch with local model
-/security-review-local 42              # review PR #42 with local model
+# Threat modeling
+/threat-model-local                  # auto-discover with local model
+/threat-model-deep-local             # deep-dive with local model
+
+# Code review
+/security-review-local               # working-tree diff
+/security-review-local main..feature # branch comparison
+
+# Specialized audits (all local)
+/dependency-audit-local
+/secrets-scan-local
+/iac-review-local
+/cicd-audit-local
+/api-security-review-local
+/auth-review-local
+/attack-tree-local <component>
+/red-team-local
 ```
 
-The commands auto-detect whichever model is currently loaded in LM Studio. No model name needs to be specified. See [Local Models (LM Studio)](#local-models-lm-studio) for one-time setup.
+Commands auto-detect the loaded model. No model name needs to be specified.
 
 ---
 
@@ -208,20 +270,17 @@ Agents and commands installed globally are available in every repository you ope
 
 ```bash
 mkdir -p ~/.claude/agents
-cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md ~/.claude/agents/
-cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md ~/.claude/agents/
+cp /path/to/threatlint/.claude/agents/*.md ~/.claude/agents/
 
 mkdir -p ~/.claude/commands
-cp /path/to/threatlint/.claude/commands/threat-model.md ~/.claude/commands/
-cp /path/to/threatlint/.claude/commands/threat-model-deep.md ~/.claude/commands/
-cp /path/to/threatlint/.claude/commands/security-review.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/*.md ~/.claude/commands/
 
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.claude/scripts/md_to_docx.py ~/.claude/scripts/
 pip3 install python-docx
 ```
 
-Open any repository in Claude Code. No further setup is needed. `/threat-model`, `/threat-model-deep`, and `/security-review` appear in the `/` picker and write `.docx` output to the repo root.
+Open any repository in Claude Code. All 8 agents and all slash commands are immediately available.
 
 ---
 
@@ -380,11 +439,11 @@ There is no global equivalent for Copilot Chat agents — the `.github/` files m
 
 ### Verifying Any Installation
 
-1. **Claude Code (cloud)**: type `@` — `appsec-threat-modeler` and `appsec-code-reviewer` should appear. Type `/` — `threat-model`, `threat-model-deep`, and `security-review` should appear.
-2. **Claude Code (local)**: type `/` — `threat-model-local`, `threat-model-deep-local`, and `security-review-local` should appear. LM Studio must be running with a model loaded.
-3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask the agent to "threat model this repository" — it should begin discovery immediately.
-4. **GitHub Copilot Chat**: type `@` — `AppSec Threat Modeler` and `AppSec Code Reviewer` should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
-5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local` with no arguments. A `threat-model-YYYY-MM-DD.docx` should appear in the current directory when the report completes.
+1. **Claude Code (cloud)**: type `@` — all 8 agents should appear. Type `/` — all slash commands should appear in the picker.
+2. **Claude Code (local)**: type `/` — `threat-model-local`, `security-review-local`, `dependency-audit-local`, `secrets-scan-local`, `iac-review-local`, `cicd-audit-local`, `api-security-review-local`, `auth-review-local`, `attack-tree-local`, `red-team-local` should appear. LM Studio must be running with a model loaded.
+3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask "threat model this repository" — it should begin discovery immediately.
+4. **GitHub Copilot Chat**: type `@` — 8 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
+5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `threat-model-YYYY-MM-DD.docx` should appear in the current directory.
 
 ---
 
@@ -470,83 +529,22 @@ The report ends with **Suggested Focused Follow-Ups**: three to five ready-to-se
 
 ---
 
-## AppSec Threat Modeler
+## Agents
 
-Use before implementation, before a release, after an architectural change, or while investigating an application-security concern.
+threatlint includes 8 specialized security agents. Each is read-only and produces a structured two-tier report saved as a Word document. For full per-agent documentation, see [docs/agents.md](docs/agents.md).
 
-**Claude Code (cloud):** `/threat-model [target]` or `/threat-model-deep [target]` or `@appsec-threat-modeler`  
-**Claude Code (local):** `/threat-model-local [target]` or `/threat-model-deep-local [target]`  
-**Codex:** ask naturally — "threat model src/api/auth", "analyze this service for injection risks"  
-**Copilot Chat:** `@AppSec Threat Modeler` from the agent picker, or `/Discover Application Threat Model` / `/Threat Model Report` slash prompts
+| Agent | Finding Prefix | Coverage |
+| --- | --- | --- |
+| `appsec-threat-modeler` | `TM-` | Full repository threat model: STRIDE, OWASP, CWE, ATT&CK, DREAD, crown jewel analysis, attack chains |
+| `appsec-code-reviewer` | `CR-` | Security review of code changes: regression detection, secrets, dependencies, merge recommendation |
+| `appsec-dependency-auditor` | `DA-` | Supply chain: CVEs, dependency confusion, typosquatting, malicious hooks, lockfile integrity |
+| `appsec-secrets-scanner` | `SS-` | Credential detection: API keys, private keys, connection strings, entropy analysis |
+| `appsec-iac-reviewer` | `IC-` | IaC misconfigurations: Terraform IAM/network, Kubernetes pod security, Dockerfile, CloudFormation |
+| `appsec-cicd-auditor` | `CI-` | CI/CD pipeline: script injection, workflow permissions, action pinning, fork secret exposure |
+| `appsec-api-security-reviewer` | `AR-` | OWASP API Security Top 10 (2023): BOLA, broken auth, mass assignment, SSRF, resource consumption |
+| `appsec-auth-reviewer` | `AU-` | Auth/authz deep-dive: OAuth 2.0/OIDC, JWT, sessions, CSRF, MFA, RBAC, multi-tenancy, brute-force |
 
-### Review Scope
-
-- Application source code and nearby implementation context.
-- HTTP, CLI, event, queue, file, and other entry points.
-- Authentication, authorization, tenancy, secrets, and privilege transitions.
-- Sensitive data flows, persistence, external services, dependency boundaries.
-- IaC, CI/CD workflows, deployment controls, and dependency manifests.
-
-### Report Contents
-
-1. Document header: repository name, date, scope.
-2. Tier 1 executive summary: risk posture, finding summary table (CONFIRMED / PLAUSIBLE / THEORETICAL), top immediate actions, compliance exposure, recommended next step.
-3. Tier 2 technical threat model: discovery and scope selection, system model, full threat register with STRIDE / OWASP / CWE, prioritized remediation roadmap, residual risk.
-4. Per-finding **Remediation Guidance**: numbered steps, before/after code snippets, specific library/API references, follow-up hardening.
-5. Per-finding **Validation**: a curl command, unit test, or manual check that confirms the fix.
-6. Suggested Focused Follow-Ups.
-
-### Example Prompts
-
-```text
-/threat-model src/auth
-```
-
-```text
-/threat-model-deep services/media
-Threat-model the file-upload API. Focus on tenant isolation,
-malicious file payloads, signed URLs, and the object-storage policy.
-```
-
-```text
-Threat-model the payment webhook handler and its Terraform resources.
-```
-
----
-
-## AppSec Code Reviewer
-
-Use when a change exists and the question is whether it introduces a security regression.
-
-**Claude Code (cloud):** `/security-review [diff target]` or `@appsec-code-reviewer`  
-**Claude Code (local):** `/security-review-local [diff target]`  
-**Codex:** ask naturally — "security review the current diff", "review PR #42 for auth bypasses"  
-**Copilot Chat:** `@AppSec Code Reviewer` from the agent picker
-
-### Targeting the Review
-
-```text
-/security-review                    # working-tree diff (staged + unstaged)
-/security-review main..feature/x    # branch comparison
-/security-review abc123..def456     # commit range
-/security-review 42                 # pull request number (uses gh pr diff)
-/security-review -- src/api/billing # path-scoped diff
-```
-
-The local variants accept the same arguments:
-
-```text
-/security-review-local main..feature/x
-/security-review-local 42
-```
-
-### Report Contents
-
-1. Document header: repository name, date, change identifier.
-2. Tier 1 executive summary: change risk level, finding summary, top issues, merge recommendation (BLOCK / MERGE WITH ACTION / MERGE).
-3. Tier 2 technical review: review scope, findings with exploit paths and evidence, security-positive changes, residual risk.
-4. Per-finding **Remediation Guidance**: exact lines to change, before/after snippets, library references, follow-up actions.
-5. Per-finding **Test Case**: reproduction payload, curl command, or unit test for both the vulnerability and the fix.
+All agents are available in Claude Code (cloud), LM Studio (local), GitHub Copilot Chat, and AGENTS.md-compatible tools.
 
 ---
 
@@ -565,30 +563,40 @@ Both agents do not alter source files, install dependencies, stage changes, or c
 
 ## GitHub Actions
 
-Both workflows support three AI providers. Choose the one that fits your team.
+All workflows support three AI providers. Choose the one that fits your team.
 
-| Provider | How it authenticates | Analysis depth |
+| Provider | Authentication | Analysis depth |
 | --- | --- | --- |
 | `claude` (default) | `ANTHROPIC_API_KEY` secret | Fully agentic — reads any file, follows call chains, browses the whole codebase |
-| `openai` | `OPENAI_API_KEY` secret | Prompt-based — receives the diff or a curated snapshot as static context |
-| `github-models` | `GITHUB_TOKEN` (built-in, no secret needed) | Same as OpenAI; uses the GitHub Models API endpoint |
+| `openai` | `OPENAI_API_KEY` secret | Prompt-based — receives a curated snapshot as static context |
+| `github-models` | `GITHUB_TOKEN` (built-in, no extra secret) | Same as OpenAI; uses the GitHub Models API endpoint |
 
-| Workflow | Trigger | Provider selection | Output |
-| --- | --- | --- | --- |
-| [AppSec PR Review](.github/workflows/appsec-pr-review.yml) | Non-draft pull requests from same-repo branches | `APPSEC_PROVIDER` repository variable (default `claude`) | Workflow run log + GitHub issues |
-| [AppSec Threat Model](.github/workflows/appsec-threat-model.yml) | Manual Actions-tab run | Dispatch input (default `claude`) | Workflow run log + GitHub issues |
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| `appsec-pr-review.yml` | Non-draft PRs from same-repo branches | Security code review + PR comment + SARIF upload + GitHub issues |
+| `appsec-threat-model.yml` | Manual Actions dispatch | Threat model + SARIF upload + GitHub issues |
+| `appsec-scheduled.yml` | Weekly (Monday 06:00 UTC) + IaC/Dockerfile push to main | Automated threat model + issues |
+| `appsec-dependency-audit.yml` | Push/PR touching manifests or lockfiles | Dependency supply chain audit + issues |
+| `appsec-iac-review.yml` | Push/PR touching Terraform, K8s, or Dockerfile | IaC security review + issues |
+
+### PR Comment
+
+On every analyzed PR, the workflow posts a summary comment with: risk level, per-severity finding counts (CONFIRMED / PLAUSIBLE / THEORETICAL), top 5 issues, and merge recommendation (BLOCK / MERGE WITH ACTION / MERGE).
+
+### GitHub Code Scanning (SARIF)
+
+All workflows convert the report to SARIF 2.1.0 and upload to GitHub Code Scanning. Findings appear in the Security tab, inline in PR diffs, and in the repository's code scanning alerts.
 
 ### GitHub Issues for Findings
 
-After each analysis, the workflow automatically opens one GitHub issue per qualifying finding. Findings are filtered before filing:
-
-- Severity at or above the threshold (`APPSEC_MIN_ISSUE_SEVERITY` variable for PR review, or the dispatch input for threat model; default: **HIGH**)
+After each analysis, the workflow opens one GitHub issue per qualifying finding:
+- Severity at or above the threshold (`APPSEC_MIN_ISSUE_SEVERITY` variable, default: **HIGH**)
 - Confidence is **CONFIRMED** or **PLAUSIBLE** — THEORETICAL findings are skipped
-- No existing open issue with the same finding ID already exists (deduplication by title search)
+- No existing open issue with the same finding ID (deduplicated by title search)
 
-Each issue gets `security` and `severity:<level>` labels (created automatically if absent) and includes the full finding block — evidence, exploit path, Remediation Guidance, and a link to the workflow run.
+Each issue gets `security` and `severity:<level>` labels and includes the full finding block with evidence, exploit path, Remediation Guidance, and a link to the workflow run.
 
-Fork pull requests are intentionally skipped to prevent secret exposure. See [docs/github-actions.md](docs/github-actions.md) for full setup, provider configuration, and troubleshooting.
+Fork pull requests are skipped to prevent secret exposure. See [docs/github-actions.md](docs/github-actions.md) for full setup and troubleshooting.
 
 ---
 
@@ -622,45 +630,84 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 ```text
 .
-├── AGENTS.md                                       ← Codex / AGENTS.md-compatible tools
-├── CLAUDE.md                                       ← Claude Code routing (threatlint project)
+├── AGENTS.md                                         ← Codex / AGENTS.md-compatible tools (all 8 agents)
+├── CLAUDE.md                                         ← Claude Code routing for this project
 ├── LICENSE
 ├── .claude
 │   ├── agents
-│   │   ├── appsec-code-reviewer.md                ← Claude Code security review agent
-│   │   └── appsec-threat-modeler.md               ← Claude Code threat modeling agent
+│   │   ├── appsec-threat-modeler.md                 ← Threat modeling agent
+│   │   ├── appsec-code-reviewer.md                  ← Code review agent
+│   │   ├── appsec-dependency-auditor.md             ← Supply chain audit agent
+│   │   ├── appsec-secrets-scanner.md                ← Secrets detection agent
+│   │   ├── appsec-iac-reviewer.md                   ← IaC security agent
+│   │   ├── appsec-cicd-auditor.md                   ← CI/CD audit agent
+│   │   ├── appsec-api-security-reviewer.md          ← OWASP API Security agent
+│   │   └── appsec-auth-reviewer.md                  ← Auth/authz deep-dive agent
 │   ├── commands
-│   │   ├── security-review.md                     ← /security-review (cloud, + Word output)
-│   │   ├── security-review-local.md               ← /security-review-local (LM Studio)
-│   │   ├── threat-model.md                        ← /threat-model (cloud, + Word output)
-│   │   ├── threat-model-deep.md                   ← /threat-model-deep (cloud, + Word output)
-│   │   ├── threat-model-deep-local.md             ← /threat-model-deep-local (LM Studio)
-│   │   └── threat-model-local.md                  ← /threat-model-local (LM Studio)
+│   │   ├── threat-model.md                          ← /threat-model (cloud)
+│   │   ├── threat-model-deep.md                     ← /threat-model-deep (cloud)
+│   │   ├── threat-model-local.md                    ← /threat-model-local (LM Studio)
+│   │   ├── threat-model-deep-local.md               ← /threat-model-deep-local (LM Studio)
+│   │   ├── security-review.md                       ← /security-review (cloud)
+│   │   ├── security-review-local.md                 ← /security-review-local (LM Studio)
+│   │   ├── dependency-audit.md                      ← /dependency-audit (cloud)
+│   │   ├── dependency-audit-local.md                ← /dependency-audit-local (LM Studio)
+│   │   ├── secrets-scan.md                          ← /secrets-scan (cloud)
+│   │   ├── secrets-scan-local.md                    ← /secrets-scan-local (LM Studio)
+│   │   ├── iac-review.md                            ← /iac-review (cloud)
+│   │   ├── iac-review-local.md                      ← /iac-review-local (LM Studio)
+│   │   ├── cicd-audit.md                            ← /cicd-audit (cloud)
+│   │   ├── cicd-audit-local.md                      ← /cicd-audit-local (LM Studio)
+│   │   ├── api-security-review.md                   ← /api-security-review (cloud)
+│   │   ├── api-security-review-local.md             ← /api-security-review-local (LM Studio)
+│   │   ├── auth-review.md                           ← /auth-review (cloud)
+│   │   ├── auth-review-local.md                     ← /auth-review-local (LM Studio)
+│   │   ├── compliance-check.md                      ← /compliance-check (cloud)
+│   │   ├── attack-tree.md                           ← /attack-tree (cloud)
+│   │   ├── attack-tree-local.md                     ← /attack-tree-local (LM Studio)
+│   │   ├── red-team.md                              ← /red-team (cloud)
+│   │   ├── red-team-local.md                        ← /red-team-local (LM Studio)
+│   │   ├── threat-delta.md                          ← /threat-delta (cloud)
+│   │   └── verify-fix.md                            ← /verify-fix (cloud)
+│   ├── hooks
+│   │   └── pre-commit                               ← Optional git hook: blocks staged secrets
 │   └── scripts
-│       └── md_to_docx.py                          ← Markdown → Word converter
+│       └── md_to_docx.py                            ← Markdown → Word converter
 ├── .github
 │   ├── agents
-│   │   ├── appsec-code-reviewer.agent.md          ← Copilot Chat code review agent
-│   │   └── appsec-threat-modeler.agent.md         ← Copilot Chat threat modeling agent
+│   │   ├── appsec-threat-modeler.agent.md           ← Copilot Chat threat modeling agent
+│   │   ├── appsec-code-reviewer.agent.md            ← Copilot Chat code review agent
+│   │   ├── appsec-dependency-auditor.agent.md       ← Copilot Chat dependency audit agent
+│   │   ├── appsec-secrets-scanner.agent.md          ← Copilot Chat secrets scanner agent
+│   │   ├── appsec-iac-reviewer.agent.md             ← Copilot Chat IaC review agent
+│   │   ├── appsec-cicd-auditor.agent.md             ← Copilot Chat CI/CD audit agent
+│   │   ├── appsec-api-security-reviewer.agent.md   ← Copilot Chat API security agent
+│   │   └── appsec-auth-reviewer.agent.md            ← Copilot Chat auth review agent
 │   ├── prompts
 │   │   ├── discover-application-threat-model.prompt.md
 │   │   └── threat-model-report.prompt.md
 │   ├── scripts
-│   │   ├── appsec_api.py                          ← OpenAI / GitHub Models / LM Studio runner
-│   │   └── create_issues.py                       ← Findings → GitHub issues
+│   │   ├── appsec_api.py                            ← OpenAI / GitHub Models / LM Studio runner
+│   │   ├── create_issues.py                         ← Findings → GitHub issues
+│   │   ├── to_sarif.py                              ← Report → SARIF 2.1.0 (Code Scanning)
+│   │   └── post_pr_comment.py                       ← Posts PR summary comment
 │   └── workflows
-│       ├── appsec-pr-review.yml
-│       └── appsec-threat-model.yml
+│       ├── appsec-pr-review.yml                     ← PR security review
+│       ├── appsec-threat-model.yml                  ← Manual threat model
+│       ├── appsec-scheduled.yml                     ← Weekly automated threat model
+│       ├── appsec-dependency-audit.yml              ← Manifest-triggered dependency audit
+│       └── appsec-iac-review.yml                    ← IaC-triggered infrastructure review
 ├── docs
-│   └── github-actions.md
+│   ├── agents.md                                    ← Per-agent documentation for all 8 agents
+│   └── github-actions.md                            ← Provider setup and Actions troubleshooting
 └── README.md
 
 # Installed globally on each user's machine (not in any repo):
-~/.claude/scripts/md_to_docx.py                    ← Markdown-to-Word converter
-~/.claude/scripts/appsec_api.py                    ← Local-model analysis runner (LM Studio)
-~/.claude/agents/                                  ← Global Claude Code agents (optional)
-~/.claude/commands/                                ← Global Claude Code commands (optional)
-~/.codex/AGENTS.md                                 ← Global Codex instructions (optional)
+~/.claude/scripts/md_to_docx.py                      ← Markdown-to-Word converter
+~/.claude/scripts/appsec_api.py                      ← Local-model analysis runner (LM Studio)
+~/.claude/agents/                                    ← Global Claude Code agents (optional)
+~/.claude/commands/                                  ← Global Claude Code commands (optional)
+~/.codex/AGENTS.md                                   ← Global Codex instructions (optional)
 ```
 
 ---

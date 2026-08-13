@@ -1,0 +1,126 @@
+name: AppSec Scheduled Review
+
+on:
+  schedule:
+    # Weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  # Also trigger on architectural file changes
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'infra/**'
+      - 'k8s/**'
+      - 'helm/**'
+      - 'deploy/**'
+      - '.github/workflows/**'
+      - 'Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'docker-compose*.yaml'
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: appsec-scheduled-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scheduled-threat-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
+      MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
+      REPORT_FILE: /tmp/appsec-scheduled-report.md
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Run scheduled threat model (Claude)
+        if: env.PROVIDER == 'claude'
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the project appsec-threat-modeler to produce a full threat model.
+            No specific target — autonomously discover the repository and select the
+            highest-risk scope. After producing the report, save it to disk:
+
+            tee /tmp/appsec-scheduled-report.md << 'APPSEC_END_OF_REPORT'
+            [paste complete Markdown report, then close with APPSEC_END_OF_REPORT]
+            APPSEC_END_OF_REPORT
+
+            Do not modify any repository source files.
+          claude_args: |
+            --agent appsec-threat-modeler
+            --max-turns 24
+            --allowedTools "Read,Grep,Glob,Bash"
+
+      # ─── OpenAI / GitHub Models ───────────────────────────────────────────
+      - name: Set up Python
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openai SDK
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        run: pip install openai
+
+      - name: Run scheduled threat model (OpenAI / GitHub Models)
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/appsec_api.py \
+            --mode threat-model \
+            --provider "$PROVIDER" \
+            --output "$REPORT_FILE"
+
+      # ─── Upload report artifact ───────────────────────────────────────────
+      - name: Upload threat model report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appsec-scheduled-report-${{ github.run_id }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ─── Create GitHub issues for findings ────────────────────────────────
+      - name: Create GitHub issues for findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file found — skipping issue creation."
+            exit 0
+          fi
+          python .github/scripts/create_issues.py \
+            --report "$REPORT_FILE" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --min-severity "$MIN_ISSUE_SEVERITY"
+
+      # ─── Post workflow summary ────────────────────────────────────────────
+      - name: Write workflow summary
+        if: always()
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            echo "## AppSec Scheduled Threat Model" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            head -50 "$REPORT_FILE" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "_Full report available as workflow artifact._" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## AppSec Scheduled Threat Model" >> $GITHUB_STEP_SUMMARY
+            echo "No report generated." >> $GITHUB_STEP_SUMMARY
+          fi

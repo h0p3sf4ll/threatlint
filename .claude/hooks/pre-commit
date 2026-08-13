@@ -1,0 +1,123 @@
+#!/bin/sh
+# threatlint pre-commit security hook
+#
+# Installation (one-time, per repository):
+#   ln -sf /path/to/threatlint/.claude/hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# Or with a pre-commit framework (pre-commit.com), add to .pre-commit-config.yaml:
+#   repos:
+#     - repo: local
+#       hooks:
+#         - id: threatlint-secrets
+#           name: threatlint secrets scan
+#           entry: /path/to/threatlint/.claude/hooks/pre-commit
+#           language: script
+#           pass_filenames: false
+#
+# Environment variables:
+#   THREATLINT_SKIP=1    Skip all checks (for emergency commits)
+#   THREATLINT_SECRETS_ONLY=1   Only run the secret pattern check (faster)
+#
+# Requirements: git (standard), grep (standard), python3 + detect-secrets (optional)
+
+set -e
+
+# Honour emergency bypass
+if [ "${THREATLINT_SKIP:-0}" = "1" ]; then
+  echo "[threatlint] Pre-commit checks skipped (THREATLINT_SKIP=1)."
+  exit 0
+fi
+
+# ─── Gather staged files ─────────────────────────────────────────────────────
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+STAGED_DIFF=$(git diff --cached)
+FAIL=0
+
+echo "[threatlint] Running pre-commit security checks..."
+
+# ─── Secret patterns ─────────────────────────────────────────────────────────
+# Quick regex pass over the staged diff for known high-signal secret formats.
+
+SECRET_PATTERNS='
+AKIA[0-9A-Z]{16}
+-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY
+ghp_[A-Za-z0-9]{36}
+github_pat_[A-Za-z0-9_]{82}
+sk-ant-[A-Za-z0-9_-]{90,}
+sk-[A-Za-z0-9]{48}
+SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}
+xox[bpas]-[0-9A-Za-z-]+
+AIza[0-9A-Za-z_-]{35}
+[Pp]assword\s*[=:]\s*['"'"'"][^'"'"'"]{8,}['"'"'"]
+[Aa]pi_?[Kk]ey\s*[=:]\s*['"'"'"][A-Za-z0-9+/_-]{16,}['"'"'"]
+'
+
+echo "$SECRET_PATTERNS" | while IFS= read -r pattern; do
+  [ -z "$pattern" ] && continue
+  if echo "$STAGED_DIFF" | grep -qP "^\+.*$pattern" 2>/dev/null; then
+    printf '[threatlint] \033[0;31mPOSSIBLE SECRET DETECTED\033[0m: pattern matched: %s\n' "$pattern"
+    FAIL=1
+  fi
+done
+
+# ─── Secrets in .env files ────────────────────────────────────────────────────
+
+for f in $STAGED_FILES; do
+  case "$f" in
+    .env|.env.*|*/.env|*/.env.*)
+      printf '[threatlint] \033[0;31mSTAGED ENV FILE\033[0m: %s — ensure this file is in .gitignore and contains no production secrets\n' "$f"
+      FAIL=1
+      ;;
+  esac
+done
+
+# ─── Private key files ────────────────────────────────────────────────────────
+
+for f in $STAGED_FILES; do
+  case "$f" in
+    *.pem|*.p12|*.pfx|*.key|*id_rsa|*id_ed25519|*id_ecdsa)
+      printf '[threatlint] \033[0;31mPRIVATE KEY FILE STAGED\033[0m: %s\n' "$f"
+      FAIL=1
+      ;;
+  esac
+done
+
+# ─── detect-secrets (optional enhanced scan) ─────────────────────────────────
+
+if [ "${THREATLINT_SECRETS_ONLY:-0}" != "1" ] && command -v detect-secrets >/dev/null 2>&1; then
+  if ! detect-secrets scan --list-all-plugins > /dev/null 2>&1; then
+    :
+  else
+    TMP_BASELINE=$(mktemp)
+    git stash show -p --include-untracked 2>/dev/null | detect-secrets scan --stdin > "$TMP_BASELINE" 2>/dev/null || true
+    SECRETS_FOUND=$(python3 -c "
+import json, sys
+data = json.load(open('$TMP_BASELINE'))
+count = sum(len(v) for v in data.get('results', {}).values())
+print(count)
+" 2>/dev/null || echo 0)
+    rm -f "$TMP_BASELINE"
+    if [ "$SECRETS_FOUND" -gt 0 ] 2>/dev/null; then
+      printf '[threatlint] \033[0;31mdetect-secrets found %s potential secret(s)\033[0m — run: detect-secrets scan > .secrets.baseline && review\n' "$SECRETS_FOUND"
+      FAIL=1
+    fi
+  fi
+fi
+
+# ─── Result ───────────────────────────────────────────────────────────────────
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "[threatlint] Pre-commit checks FAILED."
+  echo "  Fix the issues above, or set THREATLINT_SKIP=1 to bypass (use sparingly)."
+  exit 1
+fi
+
+echo "[threatlint] Pre-commit checks passed."
+exit 0
