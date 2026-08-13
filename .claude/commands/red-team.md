@@ -38,7 +38,13 @@ Filename:
 Directory: current working directory
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/red-team-report.md ./<filename>.docx
+TIMESTAMP=$(date +%s)
+```
+
+Write the full report text to `/tmp/red_team_${TIMESTAMP}.md`. Then convert and clean up:
+```bash
+python3 ~/.claude/scripts/md_to_docx.py /tmp/red_team_${TIMESTAMP}.md ./<filename>.docx
+rm /tmp/red_team_${TIMESTAMP}.md
 ```
 
 Report the saved path. Do not modify any repository source files.

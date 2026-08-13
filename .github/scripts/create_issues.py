@@ -39,7 +39,7 @@ def extract_findings(report_path):
 
     # Split on finding headings; keep the heading in the block
     heading_re = re.compile(
-        r'(?m)^#{4}\s+\[([TC][MR]-\d+)\]\s+[—\-–—]+\s+(.+)$'
+        r'(?m)^#{4}\s+\[((?:TM|CR|DA|IC|CI|AR|AU|SS)-\d+)\]\s+[—\-–—]+\s+(.+)$'
     )
     positions = [(m.start(), m.group(1), m.group(2).strip()) for m in heading_re.finditer(content)]
 

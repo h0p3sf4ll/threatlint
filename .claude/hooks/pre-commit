@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # threatlint pre-commit security hook
 #
 # Installation (one-time, per repository):
@@ -58,13 +58,13 @@ AIza[0-9A-Za-z_-]{35}
 [Aa]pi_?[Kk]ey\s*[=:]\s*['"'"'"][A-Za-z0-9+/_-]{16,}['"'"'"]
 '
 
-echo "$SECRET_PATTERNS" | while IFS= read -r pattern; do
+while IFS= read -r pattern; do
   [ -z "$pattern" ] && continue
   if echo "$STAGED_DIFF" | grep -qP "^\+.*$pattern" 2>/dev/null; then
     printf '[threatlint] \033[0;31mPOSSIBLE SECRET DETECTED\033[0m: pattern matched: %s\n' "$pattern"
     FAIL=1
   fi
-done
+done <<< "$SECRET_PATTERNS"
 
 # ─── Secrets in .env files ────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ if [ "${THREATLINT_SECRETS_ONLY:-0}" != "1" ] && command -v detect-secrets >/dev
     :
   else
     TMP_BASELINE=$(mktemp)
-    git stash show -p --include-untracked 2>/dev/null | detect-secrets scan --stdin > "$TMP_BASELINE" 2>/dev/null || true
+    echo "$STAGED_DIFF" | detect-secrets scan --stdin > "$TMP_BASELINE" 2>/dev/null || true
     SECRETS_FOUND=$(python3 -c "
 import json, sys
 data = json.load(open('$TMP_BASELINE'))

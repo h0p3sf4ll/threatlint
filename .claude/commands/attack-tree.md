@@ -48,7 +48,13 @@ Filename: `attack-tree-<sanitized-asset>-YYYY-MM-DD.docx`
 Directory: current working directory
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/attack-tree.md ./<filename>.docx
+TIMESTAMP=$(date +%s)
+```
+
+Write the full report text to `/tmp/attack_tree_${TIMESTAMP}.md`. Then convert and clean up:
+```bash
+python3 ~/.claude/scripts/md_to_docx.py /tmp/attack_tree_${TIMESTAMP}.md ./<filename>.docx
+rm /tmp/attack_tree_${TIMESTAMP}.md
 ```
 
 Report the saved path. Do not modify any repository source files.

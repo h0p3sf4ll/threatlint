@@ -227,7 +227,7 @@ The agent reads `AGENTS.md`, performs the analysis, and saves the report as a Wo
 
 ## Quick Start With GitHub Copilot Chat
 
-The `.github/agents/` files register two custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. Both are available as soon as the repository is open in a trusted VS Code workspace.
+The `.github/agents/` files register eight custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. All are available as soon as the repository is open in a trusted VS Code workspace.
 
 ### Agents
 
@@ -293,12 +293,8 @@ cd /path/to/your-repo
 
 mkdir -p .claude/agents .claude/commands
 
-cp /path/to/threatlint/.claude/agents/appsec-threat-modeler.md .claude/agents/
-cp /path/to/threatlint/.claude/agents/appsec-code-reviewer.md .claude/agents/
-
-cp /path/to/threatlint/.claude/commands/threat-model.md .claude/commands/
-cp /path/to/threatlint/.claude/commands/threat-model-deep.md .claude/commands/
-cp /path/to/threatlint/.claude/commands/security-review.md .claude/commands/
+cp /path/to/threatlint/.claude/agents/*.md .claude/agents/
+cp /path/to/threatlint/.claude/commands/*.md .claude/commands/
 
 cat >> CLAUDE.md << 'EOF'
 
@@ -306,6 +302,12 @@ cat >> CLAUDE.md << 'EOF'
 
 - Delegate threat-modeling requests to `appsec-threat-modeler`.
 - Delegate security reviews of diffs and risky configuration changes to `appsec-code-reviewer`.
+- Delegate dependency and supply chain audits to `appsec-dependency-auditor`.
+- Delegate secrets and credential scanning to `appsec-secrets-scanner`.
+- Delegate IaC security reviews (Terraform, Kubernetes, Dockerfile) to `appsec-iac-reviewer`.
+- Delegate CI/CD pipeline audits to `appsec-cicd-auditor`.
+- Delegate API security reviews to `appsec-api-security-reviewer`.
+- Delegate authentication and authorization reviews to `appsec-auth-reviewer`.
 - When no target is given, use `appsec-threat-modeler` — it will discover the repository automatically.
 EOF
 
@@ -336,7 +338,7 @@ The converter script is a local runtime tool — not source code — so it stays
 
 ### Local Models (LM Studio)
 
-The local slash commands (`/threat-model-local`, `/threat-model-deep-local`, `/security-review-local`) call `appsec_api.py` with `--provider lmstudio`. They use the model currently loaded in LM Studio — no API key is required.
+All local slash commands call `appsec_api.py` with `--provider lmstudio`. They use the model currently loaded in LM Studio — no API key is required.
 
 **Step 1 — Install LM Studio**
 
@@ -346,9 +348,7 @@ Download and install LM Studio from [https://lmstudio.ai](https://lmstudio.ai). 
 
 ```bash
 mkdir -p ~/.claude/commands
-cp /path/to/threatlint/.claude/commands/threat-model-local.md ~/.claude/commands/
-cp /path/to/threatlint/.claude/commands/threat-model-deep-local.md ~/.claude/commands/
-cp /path/to/threatlint/.claude/commands/security-review-local.md ~/.claude/commands/
+cp /path/to/threatlint/.claude/commands/*-local.md ~/.claude/commands/
 
 mkdir -p ~/.claude/scripts
 cp /path/to/threatlint/.github/scripts/appsec_api.py ~/.claude/scripts/
@@ -424,8 +424,7 @@ Copy the `.github/` files into the target repository and commit them:
 cd /path/to/your-repo
 mkdir -p .github/agents .github/prompts
 
-cp /path/to/threatlint/.github/agents/appsec-threat-modeler.agent.md .github/agents/
-cp /path/to/threatlint/.github/agents/appsec-code-reviewer.agent.md .github/agents/
+cp /path/to/threatlint/.github/agents/*.agent.md .github/agents/
 cp /path/to/threatlint/.github/prompts/discover-application-threat-model.prompt.md .github/prompts/
 cp /path/to/threatlint/.github/prompts/threat-model-report.prompt.md .github/prompts/
 
@@ -483,6 +482,25 @@ This is a one-time personal setup. The scripts live in `~/.claude/scripts/` and 
 | `/security-review main..feature` | `security-review-main-feature-YYYY-MM-DD.docx` | Repository root |
 | `/security-review 42` | `security-review-pr42-YYYY-MM-DD.docx` | Repository root |
 | `/security-review-local` | `security-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/dependency-audit` | `dependency-audit-YYYY-MM-DD.docx` | Repository root |
+| `/dependency-audit-local` | `dependency-audit-local-YYYY-MM-DD.docx` | Repository root |
+| `/secrets-scan` | `secrets-scan-YYYY-MM-DD.docx` | Repository root |
+| `/secrets-scan-local` | `secrets-scan-local-YYYY-MM-DD.docx` | Repository root |
+| `/iac-review` | `iac-review-YYYY-MM-DD.docx` | Repository root |
+| `/iac-review-local` | `iac-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/cicd-audit` | `cicd-audit-YYYY-MM-DD.docx` | Repository root |
+| `/cicd-audit-local` | `cicd-audit-local-YYYY-MM-DD.docx` | Repository root |
+| `/api-security-review` | `api-security-review-YYYY-MM-DD.docx` | Repository root |
+| `/api-security-review-local` | `api-security-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/auth-review` | `auth-review-YYYY-MM-DD.docx` | Repository root |
+| `/auth-review-local` | `auth-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/compliance-check <framework>` | `compliance-<framework>-YYYY-MM-DD.docx` | Repository root |
+| `/attack-tree <asset>` | `attack-tree-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
+| `/attack-tree-local <asset>` | `attack-tree-local-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
+| `/red-team` | `red-team-YYYY-MM-DD.docx` | Current working directory |
+| `/red-team-local` | `red-team-local-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-delta` | `threat-delta-YYYY-MM-DD.docx` | Current working directory |
+| `/verify-fix <ID>` | `verify-<finding-id>-YYYY-MM-DD.docx` | Current working directory |
 
 Codex follows the same filename and directory conventions defined in `AGENTS.md`.
 
@@ -504,7 +522,7 @@ If the converter is not installed, the commands fall back to saving the report a
 
 ## Analysis Posture
 
-Both agents use an **aggressive-by-default** posture. The same posture is encoded in `AGENTS.md` for Codex and in `appsec_api.py` for the local-model commands.
+All agents use an **aggressive-by-default** posture. The same posture is encoded in `AGENTS.md` for Codex and in `appsec_api.py` for the local-model commands.
 
 - Borderline THEORETICAL/PLAUSIBLE findings are escalated to PLAUSIBLE when the preconditions are realistic for a production deployment.
 - Every defensive control — authentication, authorization, input validation, rate limiting — is examined for bypass paths. A clean result is stated explicitly, not silently omitted.
@@ -550,12 +568,18 @@ All agents are available in Claude Code (cloud), LM Studio (local), GitHub Copil
 
 ## Read-Only Safety Boundaries
 
-Both agents do not alter source files, install dependencies, stage changes, or create commits. Word document output is handled by the calling command (Claude Code) or by the agent itself running the converter script (Codex) — not by modifying any source file.
+All agents do not alter source files, install dependencies, stage changes, or create commits. Word document output is handled by the calling command (Claude Code) or by the agent itself running the converter script (Codex) — not by modifying any source file.
 
 | Agent | Permitted shell commands |
 | --- | --- |
 | Threat modeler | `git log`, `git show`, `git ls-files`, `git status`, `find`, `grep`, `cat`, `head`, `wc`, `ls` |
 | Code reviewer | Same as above plus `git diff`, `git blame` |
+| Dependency auditor | Same as code reviewer |
+| Secrets scanner | Same as code reviewer |
+| IaC reviewer | Same as code reviewer |
+| CI/CD auditor | Same as code reviewer |
+| API security reviewer | Same as code reviewer |
+| Auth reviewer | Same as code reviewer |
 
 `Write` and `Edit` are explicitly denied for Claude Code agents. For Codex, the same constraint is stated directly in `AGENTS.md`.
 
@@ -609,6 +633,8 @@ Fork pull requests are skipped to prevent secret exposure. See [docs/github-acti
 **Before release** — run `/threat-model` on production-facing paths. Use `/threat-model-deep` for high-value or regulated components. Compare with the original threat model to surface risk added during implementation.
 
 **Air-gapped or confidential repos** — use `/threat-model-local` and `/security-review-local` so analysis runs entirely on-device with no data leaving the machine.
+
+**Supply chain and infrastructure checks** — run `/dependency-audit` when adding or updating packages. Run `/iac-review` and `/cicd-audit` when changing Terraform, Kubernetes, or workflow files. Run `/secrets-scan` before committing sensitive configuration changes or onboarding new contributors.
 
 ---
 

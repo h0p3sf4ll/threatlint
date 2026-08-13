@@ -106,6 +106,54 @@ git remote get-url origin 2>/dev/null | sed 's/.*[:/]\([^/]*\)\(\.git\)\{0,1\}$/
 **Reviewed by**: appsec-code-reviewer
 ```
 
+**Dependency audit header:**
+```
+# Dependency Audit: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific manifest or "all manifests">
+**Reviewed by**: appsec-dependency-auditor
+```
+
+**Secrets scan header:**
+```
+# Secrets Scan: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific path or "full repository">
+**Reviewed by**: appsec-secrets-scanner
+```
+
+**IaC review header:**
+```
+# IaC Security Review: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific path or "all IaC">
+**Reviewed by**: appsec-iac-reviewer
+```
+
+**CI/CD audit header:**
+```
+# CI/CD Security Audit: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific workflow or "all pipeline config">
+**Reviewed by**: appsec-cicd-auditor
+```
+
+**API security review header:**
+```
+# API Security Review: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific API or "all endpoints">
+**Reviewed by**: appsec-api-security-reviewer
+```
+
+**Auth review header:**
+```
+# Auth Security Review: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scope**: <specific component or "full auth system">
+**Reviewed by**: appsec-auth-reviewer
+```
+
 ---
 
 ## Word Document Output
@@ -129,6 +177,12 @@ Filename convention:
 - Code review, working tree: `security-review-YYYY-MM-DD.docx`
 - Code review, branch/range: `security-review-<sanitized-ref>-YYYY-MM-DD.docx`
 - Code review, PR number: `security-review-pr<N>-YYYY-MM-DD.docx`
+- Dependency audit: `dependency-audit-YYYY-MM-DD.docx`
+- Secrets scan: `secrets-scan-YYYY-MM-DD.docx`
+- IaC review: `iac-review-YYYY-MM-DD.docx`
+- CI/CD audit: `cicd-audit-YYYY-MM-DD.docx`
+- API security review: `api-security-review-YYYY-MM-DD.docx`
+- Auth review: `auth-review-YYYY-MM-DD.docx`
 
 The converter script requires `python-docx` (`pip3 install python-docx`). If the converter is unavailable, save the report as a `.md` file instead and note that the converter is not installed.
 

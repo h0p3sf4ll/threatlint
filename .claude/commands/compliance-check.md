@@ -55,7 +55,14 @@ Filename: `compliance-<framework>-YYYY-MM-DD.docx`
 Directory: repository root (`git rev-parse --show-toplevel 2>/dev/null || pwd`)
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/compliance-report.md <repo-root>/compliance-<framework>-YYYY-MM-DD.docx
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+TIMESTAMP=$(date +%s)
+```
+
+Write the full report text to `/tmp/compliance_${TIMESTAMP}.md`. Then convert and clean up:
+```bash
+python3 ~/.claude/scripts/md_to_docx.py /tmp/compliance_${TIMESTAMP}.md "${REPO_ROOT}/compliance-<framework>-YYYY-MM-DD.docx"
+rm /tmp/compliance_${TIMESTAMP}.md
 ```
 
 Report the saved path. Do not modify any repository source files.

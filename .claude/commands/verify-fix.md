@@ -20,7 +20,8 @@ From `$ARGUMENTS`, extract:
 Search recent report files for the finding ID:
 
 ```bash
-grep -r "\[TM-003\]\|\[CR-003\]" . --include="*.md" -l 2>/dev/null | head -5
+FINDING_ID=$(echo "$ARGUMENTS" | grep -oE '(TM|CR|DA|IC|CI|AR|AU|SS)-[0-9]+' | head -1)
+grep -r "\[${FINDING_ID}\]" . --include="*.md" -l 2>/dev/null | head -5
 ```
 
 Read the original finding block: evidence file path, line number, exploit path, and remediation steps.
@@ -68,6 +69,15 @@ REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED
 [Reproduce the original exploit path and confirm it is blocked]
 ```
 
-Save as `verify-<finding-id>-YYYY-MM-DD.md` in the current directory. If python-docx is available, also save as `.docx`.
+Save the report to a temp file and convert to Word:
+```bash
+TIMESTAMP=$(date +%s)
+```
+
+Write the report text to `/tmp/verify_${TIMESTAMP}.md`. Then convert and clean up:
+```bash
+python3 ~/.claude/scripts/md_to_docx.py /tmp/verify_${TIMESTAMP}.md verify-<finding-id>-YYYY-MM-DD.docx
+rm /tmp/verify_${TIMESTAMP}.md
+```
 
 Report the verdict and saved path. Do not modify any repository source files.
