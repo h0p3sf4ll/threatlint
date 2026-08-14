@@ -39,13 +39,18 @@ After the agent delivers its report:
 
 1. **Output directory**: the root of the current git repository (`git rev-parse --show-toplevel`), or current working directory if not in a git repo.
 
-2. **Filename**: `fp-review-YYYY-MM-DD.docx` (use today's date).
+2. **Filename**: `<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx` (use today's date), where `<repo-name>` and `<branch>` are derived from:
+   ```
+   REPO_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+   BRANCH=${BRANCH:-no-branch}
+   ```
 
 3. **Convert to Word document**:
    ```
    TIMESTAMP=$(date +%s)
    Write the full report text to /tmp/fp_review_${TIMESTAMP}.md
-   python3 ~/.claude/scripts/md_to_docx.py /tmp/fp_review_${TIMESTAMP}.md <output-dir>/fp-review-YYYY-MM-DD.docx
+   python3 ~/.claude/scripts/md_to_docx.py /tmp/fp_review_${TIMESTAMP}.md <output-dir>/<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx
    rm /tmp/fp_review_${TIMESTAMP}.md
    ```
 

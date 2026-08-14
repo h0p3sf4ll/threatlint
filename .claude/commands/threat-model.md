@@ -29,9 +29,14 @@ After the agent delivers its report, save the full report to a Word document:
    - If `$ARGUMENTS` is an existing directory path: use that directory.
    - Otherwise (component name, service name, or blank): use the current working directory.
 
-2. **Choose a filename.**
-   - No target argument: `threat-model-YYYY-MM-DD.docx`
-   - Named target: `threat-model-<sanitized-target>-YYYY-MM-DD.docx` (lowercase, spaces → hyphens, strip slashes)
+2. **Choose a filename** — prefix with `<repo-name>-<branch>-` where `<repo-name>` is the lowercased basename of the repo root (spaces → hyphens) and `<branch>` is the current branch name (lowercased, `/` → `-`). Derive them with:
+   ```
+   REPO_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+   BRANCH=${BRANCH:-no-branch}
+   ```
+   - No target argument: `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx`
+   - Named target: `<repo-name>-<branch>-threat-model-<sanitized-target>-YYYY-MM-DD.docx` (lowercase, spaces → hyphens, strip slashes)
    - Use today's date.
 
 3. **Convert to Word document** by running these shell steps:

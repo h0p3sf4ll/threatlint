@@ -51,17 +51,20 @@ Status values:
 
 ### 5. Save output
 
-Filename: `compliance-<framework>-YYYY-MM-DD.docx`
+Filename: `<repo-name>-<branch>-compliance-<framework>-YYYY-MM-DD.docx`
 Directory: repository root (`git rev-parse --show-toplevel 2>/dev/null || pwd`)
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 
 Write the full report text to `/tmp/compliance_${TIMESTAMP}.md`. Then convert and clean up:
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/compliance_${TIMESTAMP}.md "${REPO_ROOT}/compliance-<framework>-YYYY-MM-DD.docx"
+python3 ~/.claude/scripts/md_to_docx.py /tmp/compliance_${TIMESTAMP}.md "${REPO_ROOT}/${REPO_NAME}-${BRANCH}-compliance-<framework>-YYYY-MM-DD.docx"
 rm /tmp/compliance_${TIMESTAMP}.md
 ```
 

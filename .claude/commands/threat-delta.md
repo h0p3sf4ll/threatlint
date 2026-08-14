@@ -49,16 +49,20 @@ One paragraph summarizing whether the overall risk posture improved, regressed, 
 
 ### 4. Save output
 
-Filename: `threat-delta-YYYY-MM-DD.docx`
+Filename: `<repo-name>-<branch>-threat-delta-YYYY-MM-DD.docx`
 Directory: current working directory
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 
 Write the full report text to `/tmp/delta_${TIMESTAMP}.md`. Then convert and clean up:
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/delta_${TIMESTAMP}.md ./threat-delta-YYYY-MM-DD.docx
+python3 ~/.claude/scripts/md_to_docx.py /tmp/delta_${TIMESTAMP}.md ./${REPO_NAME}-${BRANCH}-threat-delta-YYYY-MM-DD.docx
 rm /tmp/delta_${TIMESTAMP}.md
 ```
 

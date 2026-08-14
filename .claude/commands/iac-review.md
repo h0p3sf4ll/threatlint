@@ -18,12 +18,15 @@ After the agent completes, save the report as a Word document.
 Determine the repository root and set a timestamp:
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 
 Filename:
-- No argument: `iac-review-YYYY-MM-DD.docx`
-- With path: `iac-review-<sanitized-path>-YYYY-MM-DD.docx`
+- No argument: `<repo-name>-<branch>-iac-review-YYYY-MM-DD.docx`
+- With path: `<repo-name>-<branch>-iac-review-<sanitized-path>-YYYY-MM-DD.docx`
 
 Write the full report text to `/tmp/iac_${TIMESTAMP}.md`. Then convert to Word and remove the temp file:
 ```bash

@@ -24,11 +24,15 @@ python3 ~/.claude/scripts/appsec_api.py \
 ```
 
 ### 3. Save output
-Filename: `dependency-audit-local-YYYY-MM-DD.docx` (or with sanitized target)
+Filename: `<repo-name>-<branch>-dependency-audit-local-YYYY-MM-DD.docx` (or with sanitized target)
 Directory: repository root
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/dep_local_${TIMESTAMP}.md <dir>/<filename>.docx
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+python3 ~/.claude/scripts/md_to_docx.py /tmp/dep_local_${TIMESTAMP}.md "${REPO_ROOT}/${REPO_NAME}-${BRANCH}-<filename>.docx"
 rm /tmp/dep_local_${TIMESTAMP}.md
 ```
 

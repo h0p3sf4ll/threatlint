@@ -180,19 +180,19 @@ After completing the report, save it as a Word document:
 4. Delete the temp file.
 5. Confirm the saved path.
 
-Filename convention:
-- Threat model, no target: `threat-model-YYYY-MM-DD.docx`
-- Threat model, named target: `threat-model-<sanitized-target>-YYYY-MM-DD.docx`
-- Code review, working tree: `security-review-YYYY-MM-DD.docx`
-- Code review, branch/range: `security-review-<sanitized-ref>-YYYY-MM-DD.docx`
-- Code review, PR number: `security-review-pr<N>-YYYY-MM-DD.docx`
-- Dependency audit: `dependency-audit-YYYY-MM-DD.docx`
-- Secrets scan: `secrets-scan-YYYY-MM-DD.docx`
-- IaC review: `iac-review-YYYY-MM-DD.docx`
-- CI/CD audit: `cicd-audit-YYYY-MM-DD.docx`
-- API security review: `api-security-review-YYYY-MM-DD.docx`
-- Auth review: `auth-review-YYYY-MM-DD.docx`
-- False positive review: `fp-review-YYYY-MM-DD.docx`
+Filename convention — all filenames are prefixed with `<repo-name>-<branch>-`, where `<repo-name>` is `basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)` (lowercased, spaces → hyphens) and `<branch>` is `git rev-parse --abbrev-ref HEAD 2>/dev/null` (lowercased, `/` → `-`):
+- Threat model, no target: `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx`
+- Threat model, named target: `<repo-name>-<branch>-threat-model-<sanitized-target>-YYYY-MM-DD.docx`
+- Code review, working tree: `<repo-name>-<branch>-security-review-YYYY-MM-DD.docx`
+- Code review, branch/range: `<repo-name>-<branch>-security-review-<sanitized-ref>-YYYY-MM-DD.docx`
+- Code review, PR number: `<repo-name>-<branch>-security-review-pr<N>-YYYY-MM-DD.docx`
+- Dependency audit: `<repo-name>-<branch>-dependency-audit-YYYY-MM-DD.docx`
+- Secrets scan: `<repo-name>-<branch>-secrets-scan-YYYY-MM-DD.docx`
+- IaC review: `<repo-name>-<branch>-iac-review-YYYY-MM-DD.docx`
+- CI/CD audit: `<repo-name>-<branch>-cicd-audit-YYYY-MM-DD.docx`
+- API security review: `<repo-name>-<branch>-api-security-review-YYYY-MM-DD.docx`
+- Auth review: `<repo-name>-<branch>-auth-review-YYYY-MM-DD.docx`
+- False positive review: `<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx`
 
 The converter script requires `python-docx` (`pip3 install python-docx`). If the converter is unavailable, save the report as a `.md` file instead and note that the converter is not installed.
 
@@ -419,7 +419,7 @@ Use the DA-NNN finding prefix. Produce a two-tier report using the [Dependency A
 
 ### Word Document Output
 
-Save the completed report as `dependency-audit-YYYY-MM-DD.docx` in the current working directory using the standard converter steps.
+Save the completed report as `<repo-name>-<branch>-dependency-audit-YYYY-MM-DD.docx` in the current working directory using the standard converter steps.
 
 ---
 
@@ -438,7 +438,7 @@ Use the SS-NNN finding prefix. Produce a two-tier report using the [Secrets Scan
 
 ### Word Document Output
 
-Save the completed report as `secrets-scan-YYYY-MM-DD.docx` in the current working directory.
+Save the completed report as `<repo-name>-<branch>-secrets-scan-YYYY-MM-DD.docx` in the current working directory.
 
 ---
 
@@ -457,7 +457,7 @@ Use the IC-NNN finding prefix. Produce a two-tier report using the [IaC Review r
 
 ### Word Document Output
 
-Save the completed report as `iac-review-YYYY-MM-DD.docx` in the current working directory.
+Save the completed report as `<repo-name>-<branch>-iac-review-YYYY-MM-DD.docx` in the current working directory.
 
 ---
 
@@ -478,7 +478,7 @@ Use the CI-NNN finding prefix. Produce a two-tier report using the [CI/CD Audit 
 
 ### Word Document Output
 
-Save the completed report as `cicd-audit-YYYY-MM-DD.docx` in the current working directory.
+Save the completed report as `<repo-name>-<branch>-cicd-audit-YYYY-MM-DD.docx` in the current working directory.
 
 ---
 
@@ -497,7 +497,7 @@ Use the AR-NNN finding prefix. Produce a two-tier report using the [API Security
 
 ### Word Document Output
 
-Save the completed report as `api-security-review-YYYY-MM-DD.docx` in the current working directory.
+Save the completed report as `<repo-name>-<branch>-api-security-review-YYYY-MM-DD.docx` in the current working directory.
 
 ---
 
@@ -516,4 +516,4 @@ Use the AU-NNN finding prefix. Produce a two-tier report using the [Auth Review 
 
 ### Word Document Output
 
-Save the completed report as `auth-review-YYYY-MM-DD.docx` in the current working directory.
+Save the completed report as `<repo-name>-<branch>-auth-review-YYYY-MM-DD.docx` in the current working directory.

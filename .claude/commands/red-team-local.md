@@ -24,11 +24,15 @@ python3 ~/.claude/scripts/appsec_api.py \
 ```
 
 ### 3. Save output
-Filename: `red-team-local-YYYY-MM-DD.docx` (or with sanitized target)
+Filename: `<repo-name>-<branch>-red-team-local-YYYY-MM-DD.docx` (or with sanitized target)
 Directory: current working directory
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/redteam_local_${TIMESTAMP}.md ./<filename>.docx
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+python3 ~/.claude/scripts/md_to_docx.py /tmp/redteam_local_${TIMESTAMP}.md ./${REPO_NAME}-${BRANCH}-<filename>.docx
 rm /tmp/redteam_local_${TIMESTAMP}.md
 ```
 
