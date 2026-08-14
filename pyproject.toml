@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "threatlint"
+version = "1.0.0"
+description = "Application security agents for Claude Code: threat modeling, code review, secrets scanning, IaC review, dependency auditing, and more"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+authors = [
+  {name = "h0p3sf4ll"}
+]
+keywords = [
+  "security", "appsec", "threat-modeling", "claude", "claude-code",
+  "sast", "code-review", "devsecops", "ai-security"
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Topic :: Security",
+  "Topic :: Software Development :: Quality Assurance",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["build", "twine"]
+
+[project.scripts]
+threatlint = "threatlint.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/h0p3sf4ll/threatlint"
+Repository = "https://github.com/h0p3sf4ll/threatlint"
+"Bug Tracker" = "https://github.com/h0p3sf4ll/threatlint/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"threatlint" = ["data/**/*", "data/*"]

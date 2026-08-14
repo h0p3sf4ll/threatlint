@@ -9,3 +9,10 @@ __pycache__/
 web/node_modules/
 web/npm-debug.log*
 web/*.log
+
+# Python packaging
+dist/
+build/
+src/*.egg-info/
+__pycache__/
+*.pyc
