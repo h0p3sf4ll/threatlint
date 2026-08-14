@@ -1,29 +1,6 @@
 name: AppSec Dependency Audit
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - 'yarn.lock'
-      - '.yarn/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'requirements.txt'
-      - 'Pipfile'
-      - 'Pipfile.lock'
-      - 'poetry.lock'
-      - 'pyproject.toml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'pom.xml'
-      - 'build.gradle'
-      - '*.gemspec'
-      - 'Gemfile'
-      - 'Gemfile.lock'
-      - 'composer.json'
-      - 'composer.lock'
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
@@ -59,7 +36,6 @@ jobs:
     # Skip fork PRs to prevent secret exposure
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
