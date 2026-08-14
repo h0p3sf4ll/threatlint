@@ -449,7 +449,7 @@ There is no global equivalent for Copilot Chat agents — the `.github/` files m
 2. **Claude Code (local)**: type `/` — `threat-model-local`, `security-review-local`, `dependency-audit-local`, `secrets-scan-local`, `iac-review-local`, `cicd-audit-local`, `api-security-review-local`, `auth-review-local`, `attack-tree-local`, `red-team-local` should appear. LM Studio must be running with a model loaded.
 3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask "threat model this repository" — it should begin discovery immediately.
 4. **GitHub Copilot Chat**: type `@` — 8 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
-5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `threat-model-YYYY-MM-DD.docx` should appear in the current directory.
+5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx` should appear in the current directory.
 
 ---
 
@@ -478,37 +478,39 @@ This is a one-time personal setup. The scripts live in `~/.claude/scripts/` and 
 
 ### Output Locations and Filenames
 
+All filenames are prefixed with `<repo-name>-<branch>-`, where `<repo-name>` is the lowercased repository directory name (spaces → hyphens) and `<branch>` is the current git branch name (lowercased, `/` → `-`). For example, running `/threat-model` on the `myapp` repo on branch `main` produces `myapp-main-threat-model-YYYY-MM-DD.docx`.
+
 | Invocation | Filename | Directory |
 | --- | --- | --- |
-| `/threat-model` | `threat-model-YYYY-MM-DD.docx` | Current working directory |
-| `/threat-model src/auth` | `threat-model-src-auth-YYYY-MM-DD.docx` | Current working directory |
-| `/threat-model-deep` | `threat-model-deep-YYYY-MM-DD.docx` | Current working directory |
-| `/threat-model-local` | `threat-model-local-YYYY-MM-DD.docx` | Current working directory |
-| `/threat-model-deep-local` | `threat-model-deep-local-YYYY-MM-DD.docx` | Current working directory |
-| `/security-review` | `security-review-YYYY-MM-DD.docx` | Repository root |
-| `/security-review main..feature` | `security-review-main-feature-YYYY-MM-DD.docx` | Repository root |
-| `/security-review 42` | `security-review-pr42-YYYY-MM-DD.docx` | Repository root |
-| `/security-review-local` | `security-review-local-YYYY-MM-DD.docx` | Repository root |
-| `/dependency-audit` | `dependency-audit-YYYY-MM-DD.docx` | Repository root |
-| `/dependency-audit-local` | `dependency-audit-local-YYYY-MM-DD.docx` | Repository root |
-| `/secrets-scan` | `secrets-scan-YYYY-MM-DD.docx` | Repository root |
-| `/secrets-scan-local` | `secrets-scan-local-YYYY-MM-DD.docx` | Repository root |
-| `/iac-review` | `iac-review-YYYY-MM-DD.docx` | Repository root |
-| `/iac-review-local` | `iac-review-local-YYYY-MM-DD.docx` | Repository root |
-| `/cicd-audit` | `cicd-audit-YYYY-MM-DD.docx` | Repository root |
-| `/cicd-audit-local` | `cicd-audit-local-YYYY-MM-DD.docx` | Repository root |
-| `/api-security-review` | `api-security-review-YYYY-MM-DD.docx` | Repository root |
-| `/api-security-review-local` | `api-security-review-local-YYYY-MM-DD.docx` | Repository root |
-| `/auth-review` | `auth-review-YYYY-MM-DD.docx` | Repository root |
-| `/auth-review-local` | `auth-review-local-YYYY-MM-DD.docx` | Repository root |
-| `/compliance-check <framework>` | `compliance-<framework>-YYYY-MM-DD.docx` | Repository root |
-| `/attack-tree <asset>` | `attack-tree-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
-| `/attack-tree-local <asset>` | `attack-tree-local-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
-| `/red-team` | `red-team-YYYY-MM-DD.docx` | Current working directory |
-| `/red-team-local` | `red-team-local-YYYY-MM-DD.docx` | Current working directory |
-| `/threat-delta` | `threat-delta-YYYY-MM-DD.docx` | Current working directory |
-| `/verify-fix <ID>` | `verify-<finding-id>-YYYY-MM-DD.docx` | Current working directory |
-| `/fp-review [file]` | `fp-review-YYYY-MM-DD.docx` | Repository root |
+| `/threat-model` | `<repo>-<branch>-threat-model-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model src/auth` | `<repo>-<branch>-threat-model-src-auth-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model-deep` | `<repo>-<branch>-threat-model-deep-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model-local` | `<repo>-<branch>-threat-model-local-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-model-deep-local` | `<repo>-<branch>-threat-model-deep-local-YYYY-MM-DD.docx` | Current working directory |
+| `/security-review` | `<repo>-<branch>-security-review-YYYY-MM-DD.docx` | Repository root |
+| `/security-review main..feature` | `<repo>-<branch>-security-review-main-feature-YYYY-MM-DD.docx` | Repository root |
+| `/security-review 42` | `<repo>-<branch>-security-review-pr42-YYYY-MM-DD.docx` | Repository root |
+| `/security-review-local` | `<repo>-<branch>-security-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/dependency-audit` | `<repo>-<branch>-dependency-audit-YYYY-MM-DD.docx` | Repository root |
+| `/dependency-audit-local` | `<repo>-<branch>-dependency-audit-local-YYYY-MM-DD.docx` | Repository root |
+| `/secrets-scan` | `<repo>-<branch>-secrets-scan-YYYY-MM-DD.docx` | Repository root |
+| `/secrets-scan-local` | `<repo>-<branch>-secrets-scan-local-YYYY-MM-DD.docx` | Repository root |
+| `/iac-review` | `<repo>-<branch>-iac-review-YYYY-MM-DD.docx` | Repository root |
+| `/iac-review-local` | `<repo>-<branch>-iac-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/cicd-audit` | `<repo>-<branch>-cicd-audit-YYYY-MM-DD.docx` | Repository root |
+| `/cicd-audit-local` | `<repo>-<branch>-cicd-audit-local-YYYY-MM-DD.docx` | Repository root |
+| `/api-security-review` | `<repo>-<branch>-api-security-review-YYYY-MM-DD.docx` | Repository root |
+| `/api-security-review-local` | `<repo>-<branch>-api-security-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/auth-review` | `<repo>-<branch>-auth-review-YYYY-MM-DD.docx` | Repository root |
+| `/auth-review-local` | `<repo>-<branch>-auth-review-local-YYYY-MM-DD.docx` | Repository root |
+| `/compliance-check <framework>` | `<repo>-<branch>-compliance-<framework>-YYYY-MM-DD.docx` | Repository root |
+| `/attack-tree <asset>` | `<repo>-<branch>-attack-tree-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
+| `/attack-tree-local <asset>` | `<repo>-<branch>-attack-tree-local-<sanitized>-YYYY-MM-DD.docx` | Current working directory |
+| `/red-team` | `<repo>-<branch>-red-team-YYYY-MM-DD.docx` | Current working directory |
+| `/red-team-local` | `<repo>-<branch>-red-team-local-YYYY-MM-DD.docx` | Current working directory |
+| `/threat-delta` | `<repo>-<branch>-threat-delta-YYYY-MM-DD.docx` | Current working directory |
+| `/verify-fix <ID>` | `<repo>-<branch>-verify-<finding-id>-YYYY-MM-DD.docx` | Current working directory |
+| `/fp-review [file]` | `<repo>-<branch>-fp-review-YYYY-MM-DD.docx` | Repository root |
 
 Codex follows the same filename and directory conventions defined in `AGENTS.md`.
 

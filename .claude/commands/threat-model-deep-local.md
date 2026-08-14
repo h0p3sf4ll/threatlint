@@ -37,9 +37,17 @@ python3 ~/.claude/scripts/appsec_api.py \
 - If `$ARGUMENTS` is an existing directory path: use that directory.
 - Otherwise (component name or blank): use the current working directory.
 
-Filename:
-- No target: `threat-model-deep-local-YYYY-MM-DD.docx`
-- Named target: `threat-model-deep-local-<sanitized-target>-YYYY-MM-DD.docx` (lowercase, spaces → hyphens)
+Resolve repo name and branch:
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+```
+
+Filename (prefix with `${REPO_NAME}-${BRANCH}-`):
+- No target: `<repo-name>-<branch>-threat-model-deep-local-YYYY-MM-DD.docx`
+- Named target: `<repo-name>-<branch>-threat-model-deep-local-<sanitized-target>-YYYY-MM-DD.docx` (lowercase, spaces → hyphens)
 
 ### 4. Convert to Word document
 

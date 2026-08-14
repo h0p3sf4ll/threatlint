@@ -44,10 +44,14 @@ For each leaf node:
 
 ### 3. Save output
 
-Filename: `attack-tree-<sanitized-asset>-YYYY-MM-DD.docx`
+Filename: `<repo-name>-<branch>-attack-tree-<sanitized-asset>-YYYY-MM-DD.docx`
 Directory: current working directory
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 

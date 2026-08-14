@@ -47,10 +47,18 @@ python3 ~/.claude/scripts/appsec_api.py \
 
 Output directory: the root of the current git repository (`git rev-parse --show-toplevel`), or cwd if not in a git repo.
 
-Filename:
-- No argument: `security-review-local-YYYY-MM-DD.docx`
-- Branch/range: `security-review-local-<sanitized-ref>-YYYY-MM-DD.docx`
-- PR number: `security-review-local-pr<N>-YYYY-MM-DD.docx`
+Resolve repo name and branch:
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+```
+
+Filename (prefix with `${REPO_NAME}-${BRANCH}-`):
+- No argument: `<repo-name>-<branch>-security-review-local-YYYY-MM-DD.docx`
+- Branch/range: `<repo-name>-<branch>-security-review-local-<sanitized-ref>-YYYY-MM-DD.docx`
+- PR number: `<repo-name>-<branch>-security-review-local-pr<N>-YYYY-MM-DD.docx`
 
 ### 5. Convert to Word document
 

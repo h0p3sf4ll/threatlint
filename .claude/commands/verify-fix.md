@@ -71,12 +71,16 @@ REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED
 
 Save the report to a temp file and convert to Word:
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 
 Write the report text to `/tmp/verify_${TIMESTAMP}.md`. Then convert and clean up:
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/verify_${TIMESTAMP}.md verify-<finding-id>-YYYY-MM-DD.docx
+python3 ~/.claude/scripts/md_to_docx.py /tmp/verify_${TIMESTAMP}.md ${REPO_NAME}-${BRANCH}-verify-<finding-id>-YYYY-MM-DD.docx
 rm /tmp/verify_${TIMESTAMP}.md
 ```
 

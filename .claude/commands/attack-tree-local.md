@@ -24,11 +24,15 @@ python3 ~/.claude/scripts/appsec_api.py \
 ```
 
 ### 3. Save output
-Filename: `attack-tree-local-<sanitized-target>-YYYY-MM-DD.docx`
+Filename: `<repo-name>-<branch>-attack-tree-local-<sanitized-target>-YYYY-MM-DD.docx`
 Directory: current working directory
 
 ```bash
-python3 ~/.claude/scripts/md_to_docx.py /tmp/atree_local_${TIMESTAMP}.md ./<filename>.docx
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+python3 ~/.claude/scripts/md_to_docx.py /tmp/atree_local_${TIMESTAMP}.md ./${REPO_NAME}-${BRANCH}-<filename>.docx
 rm /tmp/atree_local_${TIMESTAMP}.md
 ```
 

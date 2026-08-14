@@ -31,13 +31,17 @@ After generating scenarios, also produce:
 
 ## Output
 
-Filename:
-- No argument: `red-team-YYYY-MM-DD.docx`
-- With target: `red-team-<sanitized-target>-YYYY-MM-DD.docx`
+Filename (prefix with `<repo-name>-<branch>-`):
+- No argument: `<repo-name>-<branch>-red-team-YYYY-MM-DD.docx`
+- With target: `<repo-name>-<branch>-red-team-<sanitized-target>-YYYY-MM-DD.docx`
 
 Directory: current working directory
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
 TIMESTAMP=$(date +%s)
 ```
 
