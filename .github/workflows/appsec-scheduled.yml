@@ -4,6 +4,19 @@ on:
   schedule:
     # Weekly on Monday at 06:00 UTC
     - cron: '0 6 * * 1'
+  # Also trigger on architectural file changes
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'infra/**'
+      - 'k8s/**'
+      - 'helm/**'
+      - 'deploy/**'
+      - '.github/workflows/**'
+      - 'Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'docker-compose*.yaml'
 
 permissions:
   contents: read

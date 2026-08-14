@@ -1,6 +1,22 @@
 name: AppSec IaC Review
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - 'terraform/**'
+      - 'infra/**'
+      - 'k8s/**'
+      - 'helm/**'
+      - 'deploy/**'
+      - 'Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'docker-compose*.yaml'
+      - '**cloudformation**.yml'
+      - '**cloudformation**.yaml'
+      - '**cloudformation**.json'
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
@@ -36,6 +52,7 @@ jobs:
   iac-review:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
