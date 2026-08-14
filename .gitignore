@@ -4,3 +4,8 @@ __pycache__/
 *.docx
 *.tmp
 /tmp/
+
+# Web UI
+web/node_modules/
+web/npm-debug.log*
+web/*.log
