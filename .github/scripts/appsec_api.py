@@ -930,7 +930,60 @@ Controls that are absent or inadequate and enable the highest-priority paths.
 
 
 
-def _openai_client_and_model(provider, model_override):
+def _lmstudio_call(system_prompt, user_prompt, model_override):
+    """Call LM Studio using only stdlib — no openai package required."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    base_url = os.environ.get('LMSTUDIO_BASE_URL', 'http://localhost:1234/v1')
+    model = model_override or os.environ.get('LMSTUDIO_MODEL', '')
+
+    if not model:
+        try:
+            with urllib.request.urlopen(f'{base_url}/models', timeout=5) as resp:
+                data = json.loads(resp.read())
+            loaded = [m['id'] for m in data.get('data', [])]
+            if not loaded:
+                print('ERROR: No model loaded in LM Studio. '
+                      'Open LM Studio, load a model, and start the local server.',
+                      file=sys.stderr)
+                sys.exit(1)
+            model = loaded[0]
+            print(f'Auto-detected LM Studio model: {model}', flush=True)
+        except (urllib.error.URLError, OSError) as exc:
+            print(f'ERROR: Cannot reach LM Studio at {base_url}: {exc}\n'
+                  'Make sure LM Studio is running and the local server is started.',
+                  file=sys.stderr)
+            sys.exit(1)
+
+    payload = json.dumps({
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user',   'content': user_prompt},
+        ],
+        'max_tokens': 8_000,
+    }).encode()
+
+    req = urllib.request.Request(
+        f'{base_url}/chat/completions',
+        data=payload,
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    print(f'Calling lmstudio with model {model}...', flush=True)
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            result = json.loads(resp.read())
+        return result['choices'][0]['message']['content']
+    except (urllib.error.URLError, KeyError, json.JSONDecodeError) as exc:
+        print(f'ERROR: LM Studio request failed: {exc}', file=sys.stderr)
+        sys.exit(1)
+
+
+def _openai_call(provider, system_prompt, user_prompt, model_override):
+    """Call OpenAI or GitHub Models using the openai package."""
     from openai import OpenAI
 
     if provider == 'github-models':
@@ -939,49 +992,28 @@ def _openai_client_and_model(provider, model_override):
             print('ERROR: GH_TOKEN or GITHUB_TOKEN must be set for github-models provider.',
                   file=sys.stderr)
             sys.exit(1)
-        return OpenAI(base_url='https://models.inference.ai.azure.com', api_key=token), \
-               model_override or 'openai/gpt-4o'
-
-    if provider == 'lmstudio':
-        base_url = os.environ.get('LMSTUDIO_BASE_URL', 'http://localhost:1234/v1')
-        client = OpenAI(base_url=base_url, api_key='lm-studio')
-        model = model_override or os.environ.get('LMSTUDIO_MODEL', '')
-        if not model:
-            try:
-                models = client.models.list()
-                loaded = [m.id for m in models.data]
-                if not loaded:
-                    print('ERROR: No model loaded in LM Studio. '
-                          'Open LM Studio, load a model, and start the local server.',
-                          file=sys.stderr)
-                    sys.exit(1)
-                model = loaded[0]
-                print(f'Auto-detected LM Studio model: {model}', flush=True)
-            except Exception as exc:
-                print(f'ERROR: Cannot reach LM Studio at {base_url}: {exc}\n'
-                      'Make sure LM Studio is running and the local server is started.',
-                      file=sys.stderr)
-                sys.exit(1)
-        return client, model
-
-    # openai
-    return OpenAI(), model_override or 'gpt-4o'
-
-
-def call_api(provider, system_prompt, user_prompt, model_override):
-    client, model = _openai_client_and_model(provider, model_override)
-    max_tokens = 8_000 if provider == 'lmstudio' else 16_000
+        client = OpenAI(base_url='https://models.inference.ai.azure.com', api_key=token)
+        model = model_override or 'openai/gpt-4o'
+    else:
+        client = OpenAI()
+        model = model_override or 'gpt-4o'
 
     print(f'Calling {provider} with model {model}...', flush=True)
     response = client.chat.completions.create(
         model=model,
         messages=[
             {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_prompt},
+            {'role': 'user',   'content': user_prompt},
         ],
-        max_tokens=max_tokens,
+        max_tokens=16_000,
     )
     return response.choices[0].message.content
+
+
+def call_api(provider, system_prompt, user_prompt, model_override):
+    if provider == 'lmstudio':
+        return _lmstudio_call(system_prompt, user_prompt, model_override)
+    return _openai_call(provider, system_prompt, user_prompt, model_override)
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────

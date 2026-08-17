@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from threatlint import __version__
@@ -100,11 +103,17 @@ def cmd_install(args: argparse.Namespace) -> int:
         else:
             print("  Restart Claude Code (or open a new session) to pick up the agents.")
             print()
-            print("  Quick-start:")
+            print("  Claude Code quick-start (requires Claude license):")
             print("    /threat-model          — full two-tier threat model")
             print("    /security-review       — security code review of the current diff")
             print("    /secrets-scan          — scan for hardcoded credentials")
             print("    /dependency-audit      — supply-chain security audit")
+            print()
+            print("  Local analysis via LM Studio (no Claude required):")
+            print("    threatlint run threat-model")
+            print("    threatlint run secrets-scan")
+            print("    threatlint run security-review --base HEAD~1 --head HEAD")
+            print("    threatlint run dependency-audit")
     return 0
 
 
@@ -136,6 +145,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         base / "agents",
         base / "commands",
         base / "scripts" / "md_to_docx.py",
+        base / "scripts" / "appsec_api.py",
     ]
 
     print(_bold("\nthreatlint uninstall"))
@@ -162,10 +172,129 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             else:
                 t.unlink()
                 if not args.quiet:
-                    print(f"  {_red('removed')}  scripts/md_to_docx.py")
+                    print(f"  {_red('removed')}  scripts/{t.name}")
 
     print()
     print(_green("✓ Uninstall complete"))
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run an AppSec analysis directly via LM Studio — no Claude required."""
+
+    # Locate appsec_api.py: bundled in package data is authoritative
+    appsec_script = _SCRIPTS_SRC / "appsec_api.py"
+    if not appsec_script.exists():
+        # Fallback: previously installed to ~/.claude/scripts
+        appsec_script = Path.home() / ".claude" / "scripts" / "appsec_api.py"
+    if not appsec_script.exists():
+        print(_red("ERROR: appsec_api.py not found."))
+        print("Run `threatlint install` or reinstall the package.")
+        return 1
+
+    docx_script = _SCRIPTS_SRC / "md_to_docx.py"
+    if not docx_script.exists():
+        docx_script = Path.home() / ".claude" / "scripts" / "md_to_docx.py"
+
+    base_url = args.base_url
+
+    # Verify LM Studio is reachable
+    probe = subprocess.run(
+        ["curl", "-sf", f"{base_url}/models"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0 or not probe.stdout.strip() or probe.stdout.strip() == "{}":
+        print(_red("ERROR: LM Studio is not running or no model is loaded."))
+        print("Open LM Studio, load a model, and start the local server")
+        print("(Developer › Local Server › Start Server), then retry.")
+        return 1
+
+    # Derive output filename from git context
+    repo_root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    repo_root = repo_root_result.stdout.strip() or str(Path.cwd())
+    repo_name = Path(repo_root).name.lower().replace(" ", "-")
+    branch_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True,
+    )
+    branch = (branch_result.stdout.strip() or "no-branch").lower().replace("/", "-")
+
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    mode = args.mode
+    target = getattr(args, "target", "") or ""
+    sanitized = target.lower().replace(" ", "-")[:40] if target else ""
+
+    base_name = f"{repo_name}-{branch}-{mode}-local"
+    if sanitized:
+        base_name += f"-{sanitized}"
+    base_name += f"-{today}"
+
+    # Build subprocess command — map CLI mode names to appsec_api.py mode names
+    deep = getattr(args, "deep", False) or (mode == "threat-model-deep")
+    api_mode = {
+        "security-review": "pr-review",
+        "threat-model-deep": "threat-model",
+    }.get(mode, mode)
+
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False, prefix=f"{mode}_") as tf:
+        tmp_md = tf.name
+
+    cmd = [
+        sys.executable, str(appsec_script),
+        "--mode", api_mode,
+        "--provider", "lmstudio",
+        "--output", tmp_md,
+    ]
+    if target:
+        cmd += ["--target", target]
+    if api_mode == "pr-review":
+        base_sha = getattr(args, "base", "") or ""
+        head_sha = getattr(args, "head", "") or ""
+        if base_sha:
+            cmd += ["--base", base_sha]
+        if head_sha:
+            cmd += ["--head", head_sha]
+    if deep:
+        cmd += ["--deep"]
+    model = getattr(args, "model", "") or ""
+    if model:
+        cmd += ["--model", model]
+
+    env = os.environ.copy()
+    env["LMSTUDIO_BASE_URL"] = base_url
+
+    print(_bold(f"\nthreatlint run {mode}"))
+    print(f"  Provider  : LM Studio ({base_url})")
+    if target:
+        print(f"  Target    : {target}")
+    print()
+
+    result = subprocess.run(cmd, env=env)
+    if result.returncode != 0:
+        print(_red(f"\nERROR: Analysis failed (exit {result.returncode})."))
+        Path(tmp_md).unlink(missing_ok=True)
+        return 1
+
+    out_dir = Path(getattr(args, "output_dir", None) or repo_root)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_docx = out_dir / f"{base_name}.docx"
+
+    if docx_script.exists():
+        r = subprocess.run([sys.executable, str(docx_script), tmp_md, str(out_docx)])
+        if r.returncode == 0:
+            Path(tmp_md).unlink(missing_ok=True)
+            print(_green(f"\n✓ Report saved to {out_docx}"))
+            return 0
+
+    # Fallback: keep as Markdown
+    out_md = out_dir / f"{base_name}.md"
+    Path(tmp_md).rename(out_md)
+    print(_green(f"\n✓ Report saved to {out_md}"))
+    if not docx_script.exists():
+        print(_yellow("  (Install python-docx for .docx output: pip install python-docx)"))
     return 0
 
 
@@ -189,6 +318,31 @@ def main() -> None:
     p_install.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     p_install.add_argument("-q", "--quiet", action="store_true", help="Suppress file-by-file output")
 
+    # run
+    _MODES = [
+        "threat-model", "threat-model-deep", "security-review",
+        "secrets-scan", "iac-review", "cicd-audit",
+        "dependency-audit", "api-security", "auth-review",
+        "red-team", "attack-tree",
+    ]
+    p_run = sub.add_parser("run", help="Run an AppSec analysis via LM Studio (no Claude required)")
+    p_run.add_argument("mode", choices=_MODES, metavar="MODE",
+        help=f"Analysis type: {{{', '.join(_MODES)}}}")
+    p_run.add_argument("--target", metavar="TARGET",
+        help="Component, path, or service name to analyze (default: auto-discover)")
+    p_run.add_argument("--deep", action="store_true",
+        help="Aggressive deep-dive mode (threat-model only)")
+    p_run.add_argument("--base", metavar="SHA",
+        help="Base commit SHA (security-review only)")
+    p_run.add_argument("--head", metavar="SHA",
+        help="Head commit SHA (security-review only)")
+    p_run.add_argument("--model", metavar="MODEL",
+        help="Override model name (default: auto-detect from LM Studio)")
+    p_run.add_argument("--base-url", metavar="URL", default="http://localhost:1234/v1",
+        help="LM Studio API base URL (default: http://localhost:1234/v1)")
+    p_run.add_argument("--output-dir", metavar="DIR",
+        help="Directory for the output report (default: repository root)")
+
     # list
     sub.add_parser("list", help="List bundled agents and commands")
 
@@ -201,7 +355,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "install":
+    if args.command == "run":
+        sys.exit(cmd_run(args))
+    elif args.command == "install":
         sys.exit(cmd_install(args))
     elif args.command == "list":
         sys.exit(cmd_list(args))
