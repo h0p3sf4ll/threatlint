@@ -144,9 +144,9 @@ platforms = [
     ("Claude Code",        NAVY,                          ["14 agents via @ picker", "24 slash commands", "Word doc output"]),
     ("Copilot Chat",       RGBColor(0x1F,0x88,0x3D),     ["Commit .github/agents/", "No install — reload VS Code", "All 14 agents in @ picker"]),
     ("Microsoft Teams",    RGBColor(0x62,0x64,0xA7),     ["Node.js Bot Framework bot", "14 commands + /help", "Claude API powered"]),
-    ("GitHub Actions",     RGBColor(0x23,0x8B,0x9D),     ["PR review on every non-draft PR", "Weekly threat model schedule", "SARIF → Code Scanning"]),
-    ("OpenAI / GPT",       RGBColor(0x41,0x29,0x91),     ["gpt-5.6 family", "--provider openai flag", "Same agents, same output"]),
-    ("LM Studio (local)",  RGBColor(0x6D,0x28,0xD9),     ["100% on-device, no API key", "Air-gap / confidential repos", "Any 7B+ instruction model"]),
+    ("GitHub Actions",     RGBColor(0x23,0x8B,0x9D),     ["13 workflows — all 14 agents", "SARIF → Code Scanning + gating", "Auto-fix: AI-applied PRs"]),
+    ("Azure Pipelines",    RGBColor(0x00,0x78,0xD4),     ["12 reusable YAML templates", "Same agents, same gating logic", "template: azure-pipelines/x.yml"]),
+    ("OpenAI / LM Studio", RGBColor(0x6D,0x28,0xD9),     ["gpt-5.6 family + local models", "--provider openai / lmstudio", "100% on-device option"]),
 ]
 
 for i, (name, color, bullets) in enumerate(platforms):
@@ -169,31 +169,33 @@ light_slide(s, "How to Use It")
 panels = [
     ("Claude Code", NAVY,
 """/threat-model
-/threat-model-deep
 /security-review main..feature
 /compliance-check
 /attack-tree src/payments
 /red-team
 /verify-fix CR-042"""),
-    ("Copilot Chat / Teams", RGBColor(0x1F,0x88,0x3D),
-"""@AppSec Threat Modeler
-  threat model the payments service
-
-@AppSec Red Team
-  generate adversarial scenarios
-
-@threatlint /compliance-check
-@threatlint /help"""),
     ("GitHub Actions (auto)", RGBColor(0x23,0x8B,0x9D),
-"""# Every non-draft PR:
-appsec-pr-review.yml → PR comment + SARIF
+"""# PR opened → security review
+appsec-pr-review.yml → gate + SARIF
 
-# Weekly + IaC push to main:
-appsec-scheduled.yml → GitHub Issues
+# Push → secrets / cicd / iac scan
+appsec-secrets-scan.yml
+appsec-cicd-audit.yml
 
-# Secrets: ANTHROPIC_API_KEY
-# or OPENAI_API_KEY
-# or GITHUB_TOKEN (free, no key)"""),
+# Auto-fix: /appsec-fix CR-001
+appsec-auto-fix.yml → branch + PR"""),
+    ("Azure Pipelines (template)", RGBColor(0x00,0x78,0xD4),
+"""resources:
+  repositories:
+    - repository: threatlint
+      type: github
+      name: h0p3sf4ll/threatlint
+
+jobs:
+  - template: azure-pipelines/
+      pr-review.yml@threatlint
+    parameters:
+      gateSeverity: HIGH"""),
 ]
 
 for i, (title, color, code) in enumerate(panels):
@@ -219,8 +221,8 @@ steps = [
      "cp threatlint/.claude/agents/*.md\n   ~/.claude/agents/\n\ncp threatlint/.claude/commands/*.md\n   ~/.claude/commands/"),
     ("2  Open any repo",
      "claude code .   →   /threat-model\n\nOr commit .github/agents/ for Copilot\nOr run teams-app/bot.js for Teams"),
-    ("3  Automate",
-     "cp .github/workflows/*.yml\n   your-repo/.github/workflows/\n\nAdd ANTHROPIC_API_KEY secret.\nEvery PR → automatic security review."),
+    ("3  Automate (CI/CD)",
+     "cp .github/workflows/*.yml\n   your-repo/.github/workflows/\n\nAdd ANTHROPIC_API_KEY secret.\nSet APPSEC_GATE_SEVERITY=HIGH\nto block PRs on high findings.\n/appsec-fix <ID> → auto-fix PR."),
 ]
 
 for i, (title, body) in enumerate(steps):
