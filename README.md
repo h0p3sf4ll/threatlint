@@ -50,6 +50,26 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 - [Customization](#customization)
 - [Repository Layout](#repository-layout)
 - [Troubleshooting](#troubleshooting)
+- [Building the Business Case](#building-the-business-case)
+
+---
+
+## Building the Business Case
+
+Selling an AppSec tooling investment to leadership often requires a concise, visual summary of what the tool does and why it matters. [`build_pptx.py`](build_pptx.py) generates a 6-slide executive overview deck covering capabilities, integrations, compatibility, usage, and how to get started.
+
+```bash
+pip3 install python-pptx
+python3 build_pptx.py
+# → threatlint-executive-overview.pptx (excluded from git via .gitignore)
+```
+
+The generated deck is designed for:
+
+- **Pitching to security leadership** — a single slide per audience concern: the problem, the agents, where it runs, how teams invoke it, and how to roll it out.
+- **Onboarding engineering managers** — shows the 14 agents and their domains so teams understand coverage before asking "does it do X?"
+- **Procurement and compliance reviews** — platform breadth (Claude, OpenAI, local LLMs, Teams, CI/CD), read-only safety boundary, and compliance framework coverage (ASVS, PCI-DSS, HIPAA, SOC 2, ISO 27001) are all on one slide.
+- **Demonstrating ROI** — the problem/answer slide maps each manual security pain point directly to the agent that removes it.
 
 ---
 
