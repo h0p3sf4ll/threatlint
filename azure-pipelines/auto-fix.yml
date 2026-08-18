@@ -1,0 +1,189 @@
+# threatlint/azure-pipelines/auto-fix.yml
+# Reusable template: AI-assisted remediation of AppSec findings.
+#
+# IMPORTANT: This template MODIFIES repository source files and opens a pull request.
+# Human review and approval is required before merging.
+#
+# Usage:
+#   - template: azure-pipelines/auto-fix.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+#       findingIds: 'CR-001,CR-002'      # optional — fixes all CRITICAL/HIGH if omitted
+#       reportArtifact: 'appsec-pr-report-$(Build.BuildId)'  # artifact to download
+
+parameters:
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: model
+    type: string
+    default: ''
+  - name: reportArtifact
+    type: string
+    default: ''
+  - name: findingIds
+    type: string
+    default: ''
+  - name: baseBranch
+    type: string
+    default: main
+  - name: targetSeverity
+    type: string
+    default: HIGH
+    values: [CRITICAL, HIGH, MEDIUM]
+
+jobs:
+  - job: AppsecAutoFix
+    displayName: AppSec Auto-Fix
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 30
+
+    steps:
+      - checkout: self
+        persistCredentials: true
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+
+      - task: DownloadPipelineArtifact@2
+        displayName: Download AppSec report artifact
+        condition: ne('${{ parameters.reportArtifact }}', '')
+        inputs:
+          artifactName: ${{ parameters.reportArtifact }}
+          targetPath: $(Agent.TempDirectory)/appsec-reports
+
+      - script: |
+          BRANCH="appsec/auto-fix-$(Build.BuildId)"
+          git checkout -b "$BRANCH"
+          echo "##vso[task.setvariable variable=FIX_BRANCH]$BRANCH"
+        displayName: Create fix branch
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, glob, subprocess
+          import anthropic
+
+          reports_dir = os.path.join(os.environ['AGENT_TEMPDIRECTORY'], 'appsec-reports')
+          finding_ids = '${{ parameters.findingIds }}'
+          target_severity = '${{ parameters.targetSeverity }}'
+
+          report_content = ''
+          for fpath in glob.glob(os.path.join(reports_dir, '*.md')):
+              with open(fpath, errors='replace') as f:
+                  report_content += f"\n\n---\n## Report: {os.path.basename(fpath)}\n" + f.read()
+
+          if not report_content:
+              print("No reports found — nothing to fix.")
+              exit(0)
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          source_context = ''
+          for fname in ['package.json', 'requirements.txt', 'go.mod']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      source_context += f"\n\n## {fname}\n```\n{f.read(2000)}\n```"
+
+          ids_clause = f"Focus only on these finding IDs: {finding_ids}." if finding_ids else \
+              f"Fix all CRITICAL and {target_severity} findings."
+
+          prompt = f"""You are an expert security engineer performing remediation.
+          {ids_clause}
+
+          ## AppSec Reports
+          {report_content[:16000]}
+
+          ## Repository Files
+          ```
+          {files}
+          ```
+          {source_context}
+
+          Your task:
+          1. Read the relevant source files for each finding.
+          2. Implement the minimal, correct fix for each finding.
+          3. Write corrected files to disk using their original paths.
+          4. Do NOT change logic unrelated to the security findings.
+          5. Do NOT add comments referencing this fix or task.
+          6. Stage all modified files: run `git add -u` after writing.
+          7. Report what you changed in a CHANGES.md file placed at the root.
+
+          Output a CHANGES.md with sections:
+          ## Findings Fixed
+          | ID | Title | File | Change Summary |
+          |---|---|---|---|
+
+          ## Files Modified
+          (list)
+
+          ## Human Review Required
+          List any findings that need manual review because the automated fix is uncertain.
+          """
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert security engineer implementing security fixes.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          response = message.content[0].text
+          with open('CHANGES.md', 'w') as f:
+              f.write(response)
+          subprocess.run(['git', 'add', '-u'], check=True)
+          subprocess.run(['git', 'add', 'CHANGES.md'], check=True)
+          print("Fix step complete.")
+          print(response[:2000])
+          PYEOF
+        displayName: Apply AI-assisted fixes
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
+
+      - script: |
+          STAGED=$(git diff --cached --name-only)
+          if [ -z "$STAGED" ]; then
+            echo "No changes staged — nothing to commit."; exit 0
+          fi
+          git config user.email "appsec-autofix@pipeline"
+          git config user.name "AppSec Auto-Fix"
+          git commit -m "fix(appsec): automated remediation of security findings
+
+          Applied by appsec-auto-fix template (Build $(Build.BuildId)).
+          Human review required before merge."
+          echo "##vso[task.setvariable variable=HAS_CHANGES]true"
+        displayName: Commit fixes
+
+      - script: |
+          if [ "$(HAS_CHANGES)" != "true" ]; then
+            echo "No changes — skipping push and PR."; exit 0
+          fi
+          git push origin "$(FIX_BRANCH)"
+        displayName: Push fix branch
+        condition: eq(variables['HAS_CHANGES'], 'true')
+
+      - script: |
+          if [ "$(HAS_CHANGES)" != "true" ]; then exit 0; fi
+          # Create pull request via Azure DevOps REST API
+          PR_TITLE="fix(appsec): automated security remediation (Build $(Build.BuildId))"
+          PR_BODY="## Automated AppSec Remediation\n\nThis PR was automatically generated by the appsec-auto-fix pipeline template.\n\n**Human review and approval is required before merging.**\n\nSee CHANGES.md for a list of findings addressed.\n\n---\n*Generated by threatlint appsec-auto-fix — Build $(Build.BuildId)*"
+
+          curl -s -X POST \
+            "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/git/repositories/$(Build.Repository.ID)/pullrequests?api-version=7.1" \
+            -H "Authorization: Bearer $(System.AccessToken)" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"title\": \"$PR_TITLE\",
+              \"description\": \"$PR_BODY\",
+              \"sourceRefName\": \"refs/heads/$(FIX_BRANCH)\",
+              \"targetRefName\": \"refs/heads/${{ parameters.baseBranch }}\",
+              \"isDraft\": false
+            }" | python3 -c "import sys,json; r=json.load(sys.stdin); print('PR created:', r.get('pullRequestId','?'), r.get('url',''))"
+        displayName: Create pull request
+        condition: eq(variables['HAS_CHANGES'], 'true')
+
+      - publish: CHANGES.md
+        artifact: appsec-auto-fix-changes-$(Build.BuildId)
+        displayName: Publish changes summary
+        condition: always()

@@ -1,0 +1,136 @@
+name: AppSec Attack Tree
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target component for attack tree (e.g. "authentication service", "payments API"). Leave blank for auto-select.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+  id-token: write
+
+jobs:
+  attack-tree:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
+      MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
+      GATE_SEVERITY: ${{ vars.APPSEC_GATE_SEVERITY || 'CRITICAL' }}
+      REPORT_FILE: /tmp/appsec-attack-tree-report.md
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Run attack tree analysis (Claude)
+        if: env.PROVIDER == 'claude'
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the project appsec-attack-tree to construct a formal AND/OR attack tree
+            for the specified target component.
+            Target: ${{ github.event.inputs.target || 'the highest-risk component in the repository (auto-select)' }}
+
+            Produce an attack tree report with:
+            - Attack Tree Structure in indented notation (AND/OR/LEAF nodes)
+            - Leaf Node Analysis table (Feasibility, Required Capability, Existing Control, Bypass)
+            - Leaf Node Priority Ranking (Feasibility × Impact)
+            - Control Gaps section
+
+            After writing the report, save it:
+            tee /tmp/appsec-attack-tree-report.md << 'APPSEC_END_OF_REPORT'
+            [paste complete report, then close with APPSEC_END_OF_REPORT]
+            APPSEC_END_OF_REPORT
+
+            Do not modify any repository source files.
+          claude_args: |
+            --agent appsec-attack-tree
+            --max-turns 20
+            --allowedTools "Read,Grep,Glob,Bash"
+
+      # ─── OpenAI / GitHub Models ───────────────────────────────────────────
+      - name: Set up Python
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openai SDK
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        run: pip install openai
+
+      - name: Run attack tree analysis (OpenAI / GitHub Models)
+        if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/appsec_api.py \
+            --mode attack-tree \
+            --provider "$PROVIDER" \
+            --target "${{ github.event.inputs.target }}" \
+            --output "$REPORT_FILE"
+
+      # ─── Upload artifact ──────────────────────────────────────────────────
+      - name: Upload attack tree report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appsec-attack-tree-report-${{ github.run_id }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ─── SARIF upload to GitHub Code Scanning ────────────────────────────
+      - name: Convert report to SARIF
+        if: always()
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$REPORT_FILE" \
+              --output /tmp/appsec-attack-tree.sarif \
+              --tool "appsec-attack-tree" \
+              --commit-sha "${{ github.sha }}"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: /tmp/appsec-attack-tree.sarif
+        continue-on-error: true
+
+      # ─── Gate: fail if leaf nodes ranked HIGH feasibility exist ───────────
+      - name: Gate on severity threshold
+        if: always() && env.GATE_SEVERITY != ''
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file — skipping gate."
+            exit 0
+          fi
+          python3 .github/scripts/gate_report.py \
+            --report "$REPORT_FILE" \
+            --severity "$GATE_SEVERITY"
+
+      # ─── Create GitHub issues ─────────────────────────────────────────────
+      - name: Create GitHub issues for findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file — skipping issue creation."
+            exit 0
+          fi
+          python3 .github/scripts/create_issues.py \
+            --report "$REPORT_FILE" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --min-severity "$MIN_ISSUE_SEVERITY"

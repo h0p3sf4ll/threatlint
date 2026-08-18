@@ -1,0 +1,164 @@
+# threatlint/azure-pipelines/threat-model.yml
+# Reusable template: evidence-based threat model of the repository.
+#
+# Usage:
+#   - template: azure-pipelines/threat-model.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+#       target: 'payments service'   # optional
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: CRITICAL
+  - name: minIssueSeverity
+    type: string
+    default: HIGH
+  - name: createWorkItems
+    type: boolean
+    default: false
+  - name: target
+    type: string
+    default: ''
+  - name: deep
+    type: boolean
+    default: false
+
+jobs:
+  - job: AppsecThreatModel
+    displayName: AppSec Threat Model
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 30
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-threat-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess
+          import anthropic
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          context = f"## Repository files\n```\n{files}\n```"
+          for fname in ['README.md', 'package.json', 'requirements.txt', 'go.mod', 'Dockerfile',
+                        'docker-compose.yml', '.github/workflows']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      context += f"\n\n## {fname}\n```\n{f.read(4000)}\n```"
+
+          target = '${{ parameters.target }}' or 'auto-discover and select highest-risk component'
+          mode = 'AGGRESSIVE DEEP-DIVE ' if '${{ parameters.deep }}' == 'True' else ''
+          prompt = f"""Target: {target}\n\n## Repository Context\n{context}\n\n
+          You are performing a {mode}threat model of this repository. Produce a two-tier Markdown
+          threat model: TIER 1 with Risk Posture, Finding Summary table (Severity/Count/CONFIRMED/
+          PLAUSIBLE/THEORETICAL), Top Immediate Actions for Critical/High findings; TIER 2 with
+          Scope, System Model, per-finding [TM-NNN] blocks (Severity, Confidence, STRIDE, OWASP,
+          CWE, Preconditions, Attack Steps, Evidence file:line, Remediation with before/after
+          code snippets, Validation step), Remediation Roadmap, Residual Risk.
+          Do not modify any repository source files."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert application security engineer. Apply aggressive posture.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run threat model (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          DEEP_FLAG=""
+          if [ "${{ parameters.deep }}" = "True" ]; then DEEP_FLAG="--deep"; fi
+          python3 .github/scripts/appsec_api.py \
+            --mode threat-model \
+            --provider "$PROVIDER" \
+            --target "${{ parameters.target }}" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}" \
+            $DEEP_FLAG
+        displayName: Run threat model (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      - publish: $(REPORT_FILE)
+        artifact: appsec-threat-report-$(Build.BuildId)
+        displayName: Publish threat model report
+        condition: always()
+
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-threat.sarif" \
+              --tool "appsec-threat-modeler" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-threat.sarif
+          artifactName: CodeAnalysisLogs
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then echo "No report — skipping gate."; exit 0; fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))

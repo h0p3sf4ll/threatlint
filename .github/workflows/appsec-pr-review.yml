@@ -29,6 +29,9 @@ jobs:
       PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
       # Minimum finding severity to open a GitHub issue for. Override with APPSEC_MIN_ISSUE_SEVERITY.
       MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
+      # Gate severity: fail the workflow if any finding at or above this level is found.
+      # Set APPSEC_GATE_SEVERITY='' to disable gating. Default: CRITICAL (blocks only critical findings).
+      GATE_SEVERITY: ${{ vars.APPSEC_GATE_SEVERITY || 'CRITICAL' }}
       REPORT_FILE: /tmp/appsec-report.md
 
     steps:
@@ -142,6 +145,18 @@ jobs:
         with:
           sarif_file: /tmp/appsec-results.sarif
         continue-on-error: true
+
+      # ─── Gate: fail if findings at or above threshold ─────────────────────
+      - name: Gate on severity threshold
+        if: always() && env.GATE_SEVERITY != ''
+        run: |
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "No report file — skipping gate."
+            exit 0
+          fi
+          python3 .github/scripts/gate_report.py \
+            --report "$REPORT_FILE" \
+            --severity "$GATE_SEVERITY"
 
       # ─── Create GitHub issues for findings ────────────────────────────────
       - name: Create GitHub issues for findings

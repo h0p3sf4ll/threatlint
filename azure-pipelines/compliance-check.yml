@@ -1,0 +1,155 @@
+# threatlint/azure-pipelines/compliance-check.yml
+# Reusable template: map findings to ASVS, PCI-DSS, HIPAA, SOC 2, ISO 27001, NIST CSF, CIS.
+#
+# Usage:
+#   - template: azure-pipelines/compliance-check.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+#       frameworks: 'PCI-DSS,HIPAA'   # optional — defaults to all
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: CRITICAL
+  - name: minIssueSeverity
+    type: string
+    default: HIGH
+  - name: createWorkItems
+    type: boolean
+    default: false
+  - name: frameworks
+    type: string
+    default: ''
+
+jobs:
+  - job: AppsecComplianceCheck
+    displayName: AppSec Compliance Check
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 25
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-compliance-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess
+          import anthropic
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          context = f"## Repository files\n```\n{files}\n```"
+          for fname in ['README.md', 'package.json', 'requirements.txt', 'go.mod']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      context += f"\n\n## {fname}\n```\n{f.read(4000)}\n```"
+
+          frameworks = '${{ parameters.frameworks }}' or 'OWASP ASVS 4.0, PCI-DSS v4.0, HIPAA, SOC 2, ISO 27001:2022, NIST CSF 2.0, CIS Controls v8'
+          prompt = f"""Frameworks: {frameworks}\n\n## Repository Context\n{context}\n\n
+          You are performing a compliance mapping for this repository. Produce a two-tier
+          Markdown compliance report: TIER 1 with Overall Compliance Posture, Framework Coverage
+          table (Controls Checked/Failed/Partial/Passed/N/A per framework), Top Compliance Gaps;
+          TIER 2 with per-finding compliance mapping table (Framework, Control ID, Control Text,
+          Status FAILED/PARTIAL/PASSED, Gap and Remediation), Remediation Priority by Framework table.
+          Do not modify any repository source files."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert security compliance engineer. Apply aggressive posture.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run compliance check (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          python3 .github/scripts/appsec_api.py \
+            --mode compliance-check \
+            --provider "$PROVIDER" \
+            --target "${{ parameters.frameworks }}" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}"
+        displayName: Run compliance check (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      - publish: $(REPORT_FILE)
+        artifact: appsec-compliance-report-$(Build.BuildId)
+        displayName: Publish compliance report
+        condition: always()
+
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-compliance.sarif" \
+              --tool "appsec-compliance-checker" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-compliance.sarif
+          artifactName: CodeAnalysisLogs
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then echo "No report — skipping gate."; exit 0; fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))

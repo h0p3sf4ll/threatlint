@@ -223,6 +223,39 @@ ATTACK_TREE_SYSTEM = (
     'Conclude with a leaf node priority ranking (highest feasibility × highest impact first).'
 )
 
+COMPLIANCE_CHECK_SYSTEM = (
+    'You are an expert security compliance engineer with deep knowledge of OWASP ASVS 4.0, '
+    'PCI-DSS v4.0, HIPAA Security Rule, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8. '
+    'Map every provided security finding to one or more specific controls in each applicable framework. '
+    'For each control, state: control ID, control text, finding that triggers it, current status '
+    '(FAILED / PARTIAL / PASSED / NOT APPLICABLE), and the remediation action required. '
+    'Produce a per-framework compliance gap table and an overall compliance posture summary.'
+)
+
+THREAT_DELTA_SYSTEM = (
+    'You are an expert application security engineer performing a threat-delta analysis. '
+    'Compare the provided prior security report against the current repository state. '
+    'For each finding in the prior report, classify it as: '
+    'RESOLVED (fix confirmed in code), PARTIALLY FIXED (control added but bypass exists), '
+    'STILL PRESENT (no meaningful change), REGRESSED (was fixed, now re-introduced), '
+    'WONT FIX / ACCEPTED (documented exception), or CANT ASSESS (insufficient evidence). '
+    'Also identify NEW findings present in the current code that were absent from the prior report. '
+    'Ground every verdict in specific code evidence. Label all assumptions explicitly.'
+)
+
+VERIFY_FIX_SYSTEM = (
+    'You are an expert application security engineer performing fix verification. '
+    'Given a specific finding (ID, title, description, and original evidence location), '
+    'verify whether the fix has been applied correctly in the current codebase. '
+    'Return one of four verdicts: '
+    'REMEDIATED (fix present, no equivalent bypass), '
+    'PARTIALLY FIXED (fix present but at least one equivalent exploit path remains), '
+    'STILL PRESENT (no meaningful change from the original finding), or '
+    'REGRESSED (fix was present in a prior version but has been removed or weakened). '
+    'Cite exact file:line evidence for the verdict. Be conservative: '
+    'only return REMEDIATED when the fix is verifiably correct and no bypass exists.'
+)
+
 # ─── Prompt templates ────────────────────────────────────────────────────────
 
 PR_REVIEW_TEMPLATE = '''\
@@ -928,6 +961,175 @@ Controls that are absent or inadequate and enable the highest-priority paths.
 '''
 
 
+COMPLIANCE_CHECK_TEMPLATE = '''\
+{target_line}
+
+## Repository Context / Prior Findings
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown compliance mapping report.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Overall Compliance Posture**: HIGH RISK / MEDIUM RISK / LOW RISK / COMPLIANT
+
+One-sentence summary.
+
+**Framework Coverage**:
+| Framework | Controls Checked | Failed | Partial | Passed | N/A |
+|-----------|-----------------|--------|---------|--------|-----|
+| OWASP ASVS 4.0 | | | | | |
+| PCI-DSS v4.0 | | | | | |
+| HIPAA Security Rule | | | | | |
+| SOC 2 Type II | | | | | |
+| ISO 27001:2022 | | | | | |
+| NIST CSF 2.0 | | | | | |
+| CIS Controls v8 | | | | | |
+
+**Top Compliance Gaps** (FAILED controls with CRITICAL or HIGH findings):
+- **[Framework § Control]** *Title* — finding driving the gap. Required action.
+
+---
+
+### TIER 2 — CONTROL-BY-CONTROL MAPPING
+
+For each finding, map to applicable frameworks:
+
+#### Finding: [Finding ID or Description]
+
+| Framework | Control ID | Control Text | Status | Gap / Remediation |
+|-----------|-----------|--------------|--------|-------------------|
+| OWASP ASVS | V?.?.? | | FAILED/PARTIAL/PASSED | |
+| PCI-DSS | Req ?.? | | | |
+| HIPAA | § 164.3?? | | | |
+| SOC 2 | CC?.? | | | |
+| ISO 27001 | A.?? | | | |
+| NIST CSF | [Function].[Category].[Subcategory] | | | |
+| CIS Controls | Control ?.? | | | |
+
+---
+
+**Remediation Priority by Framework**:
+| Priority | Framework | Control | Severity | Effort |
+|----------|-----------|---------|----------|--------|
+'''
+
+THREAT_DELTA_TEMPLATE = '''\
+{target_line}
+
+## Current Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown threat-delta report comparing the prior report to current state.
+
+### TIER 1 — DELTA SUMMARY
+
+**Net Risk Change**: INCREASED / DECREASED / UNCHANGED
+
+**Finding Delta**:
+| Verdict | Count |
+|---------|-------|
+| RESOLVED | |
+| PARTIALLY FIXED | |
+| STILL PRESENT | |
+| REGRESSED | |
+| NEW | |
+| WONT FIX / ACCEPTED | |
+| CANT ASSESS | |
+
+**Key Changes** (Regressed and New findings only):
+- **[ID]** *Title* — what changed and why it matters.
+
+---
+
+### TIER 2 — FINDING-BY-FINDING DELTA
+
+For each finding from the prior report:
+
+#### [Prior ID] — *Finding Title*
+
+**Prior Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Verdict**: RESOLVED / PARTIALLY FIXED / STILL PRESENT / REGRESSED / WONT FIX / CANT ASSESS
+
+| Field | Detail |
+|-------|--------|
+| Prior Evidence | original `path/to/file:NN` |
+| Current State | what the code looks like now |
+| Evidence | `path/to/file:NN` — quoted current code |
+| Rationale | why this verdict was assigned |
+| Remaining Risk | if PARTIALLY FIXED: remaining bypass path |
+
+---
+
+### NEW FINDINGS
+
+Findings present in the current code not in the prior report:
+
+#### [NEW-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Evidence | `path/to/file:NN` |
+| Introduced By | commit hash or change description if determinable |
+| Remediation | |
+
+---
+
+**Updated Remediation Roadmap**:
+| Priority | ID | Title | Verdict | Action Required |
+|----------|----|-------|---------|-----------------|
+'''
+
+VERIFY_FIX_TEMPLATE = '''\
+Finding to verify:
+- **ID**: {finding_id}
+- **Title**: {finding_title}
+- **Original Evidence**: {finding_evidence}
+- **Description**: {finding_description}
+
+## Current Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a concise fix-verification report.
+
+### VERDICT: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED
+
+**Verdict**: (one of the four above)
+
+**Confidence**: CONFIRMED / PLAUSIBLE
+
+### Evidence
+
+| Field | Detail |
+|-------|--------|
+| Original Location | `path/to/file:NN` |
+| Current Code | quoted current code at that location |
+| Fix Applied | yes / no / partial |
+| Equivalent Bypass | if PARTIALLY FIXED: describe the remaining attack path |
+| Regression Evidence | if REGRESSED: what was removed or weakened |
+
+### Rationale
+
+2–4 sentences explaining the verdict, citing specific code evidence.
+
+### Recommended Next Step
+
+One sentence: what the developer should do (if not REMEDIATED).
+'''
+
+
 
 
 def _lmstudio_call(system_prompt, user_prompt, model_override):
@@ -1025,7 +1227,7 @@ def main():
     parser.add_argument('--mode', choices=[
         'pr-review', 'threat-model', 'secrets-scan', 'iac-review',
         'cicd-audit', 'dependency-audit', 'api-security', 'auth-review',
-        'red-team', 'attack-tree',
+        'red-team', 'attack-tree', 'compliance-check', 'threat-delta', 'verify-fix',
     ], required=True)
     parser.add_argument('--provider', choices=['openai', 'github-models', 'lmstudio'], required=True)
     parser.add_argument('--base',   default='', help='Base commit SHA (pr-review only)')
@@ -1035,6 +1237,9 @@ def main():
                         help='Use aggressive deep-dive mode (threat-model only)')
     parser.add_argument('--output', required=True, help='Output path for the Markdown report')
     parser.add_argument('--model',  default='', help='Model override')
+    parser.add_argument('--gate',   default='',
+                        choices=['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                        help='Exit 1 if any finding at or above this severity (CONFIRMED/PLAUSIBLE)')
     args = parser.parse_args()
 
     is_local = args.provider == 'lmstudio'
@@ -1139,6 +1344,37 @@ def main():
         user_prompt   = ATTACK_TREE_TEMPLATE.format(target=target, context=context)
         system_prompt = ATTACK_TREE_SYSTEM
 
+    elif args.mode == 'compliance-check':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Compliance check target: **{args.target}**' if args.target
+            else 'Map all security findings in the repository to applicable compliance frameworks.'
+        )
+        user_prompt   = COMPLIANCE_CHECK_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = COMPLIANCE_CHECK_SYSTEM
+
+    elif args.mode == 'threat-delta':
+        context = gather_repo_context(max_file_bytes=max_file)
+        target_line = (
+            f'Prior report for delta analysis: **{args.target}**' if args.target
+            else 'Compare the prior security findings to the current repository state.'
+        )
+        user_prompt   = THREAT_DELTA_TEMPLATE.format(target_line=target_line, context=context)
+        system_prompt = THREAT_DELTA_SYSTEM
+
+    elif args.mode == 'verify-fix':
+        context = gather_repo_context(max_file_bytes=max_file)
+        # --target format: "FINDING_ID|Title|file:line|description"
+        parts = args.target.split('|') if args.target else ['', '', '', '']
+        user_prompt = VERIFY_FIX_TEMPLATE.format(
+            finding_id=parts[0] if len(parts) > 0 else 'unspecified',
+            finding_title=parts[1] if len(parts) > 1 else 'unspecified',
+            finding_evidence=parts[2] if len(parts) > 2 else 'unspecified',
+            finding_description=parts[3] if len(parts) > 3 else 'Verify the finding is remediated.',
+            context=context,
+        )
+        system_prompt = VERIFY_FIX_SYSTEM
+
     else:
         print(f'ERROR: Unknown mode: {args.mode}', file=sys.stderr)
         sys.exit(1)
@@ -1149,6 +1385,19 @@ def main():
         f.write(report)
 
     print(f'Report written to {args.output} ({len(report):,} characters).', flush=True)
+
+    if args.gate:
+        import importlib.util, pathlib
+        gate_path = pathlib.Path(__file__).parent / 'gate_report.py'
+        spec = importlib.util.spec_from_file_location('gate_report', gate_path)
+        gate_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate_mod)
+        from unittest.mock import patch
+        with patch('sys.argv', ['gate_report', '--report', args.output, '--severity', args.gate]):
+            try:
+                gate_mod.main()
+            except SystemExit as exc:
+                sys.exit(exc.code)
 
 
 if __name__ == '__main__':
