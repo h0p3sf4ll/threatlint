@@ -5,7 +5,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test tests/agents.test.cjs tests/tools.test.cjs tests/api.test.cjs tests/copilot-agents.test.cjs tests/teams-bot.test.cjs",
+    "test:agents": "node --test tests/agents.test.cjs",
+    "test:tools": "node --test tests/tools.test.cjs",
+    "test:api": "node --test tests/api.test.cjs",
+    "test:copilot": "node --test tests/copilot-agents.test.cjs",
+    "test:teams": "node --test tests/teams-bot.test.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.53.0",

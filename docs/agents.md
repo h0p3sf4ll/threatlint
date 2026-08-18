@@ -1,6 +1,6 @@
 # Agent Reference
 
-Detailed documentation for all eight threatlint security agents.
+Detailed documentation for all fourteen threatlint security agents.
 
 ---
 
@@ -14,6 +14,12 @@ Detailed documentation for all eight threatlint security agents.
 - [appsec-cicd-auditor](#appsec-cicd-auditor)
 - [appsec-api-security-reviewer](#appsec-api-security-reviewer)
 - [appsec-auth-reviewer](#appsec-auth-reviewer)
+- [appsec-fp-reviewer](#appsec-fp-reviewer)
+- [appsec-compliance-checker](#appsec-compliance-checker)
+- [appsec-attack-tree](#appsec-attack-tree)
+- [appsec-red-team](#appsec-red-team)
+- [appsec-threat-delta](#appsec-threat-delta)
+- [appsec-verify-fix](#appsec-verify-fix)
 
 ---
 
@@ -454,6 +460,244 @@ Performs a deep-dive security review of all authentication and authorization cod
 - Auth Coverage Matrix table (category, reviewed, findings, library/pattern used)
 - Per-finding blocks: `AU-NNN`, auth category, CWE, file/line, evidence, exploit path, impact, corrected code snippet with library reference
 - Privilege Escalation Paths table (from role → to role → path → feasibility)
+
+---
+
+*All agents are read-only. They do not modify workspace files, install dependencies, stage changes, or create commits.*
+
+---
+
+## appsec-fp-reviewer
+
+**Finding prefix**: `FP-NNN`  
+**Slash command**: `/fp-review`  
+**GitHub Copilot Chat**: `@AppSec False Positive Reviewer`  
+**AGENTS.md routing**: "triage findings", "false positive", "semgrep tuning"
+
+### Purpose
+
+Triages security scanner findings as true or false positives and generates precise Semgrep rule tuning to suppress noise without hiding real vulnerabilities. Accepts SARIF 2.1.0, Semgrep JSON (`--json`), or pasted finding descriptions.
+
+### What It Reviews
+
+- Scanner findings: rule ID, matched file, line, snippet
+- Surrounding code context (±30 lines) for each flagged location
+- Whether the pattern is reachable by attacker-controlled input
+- Whether safe sinks, sanitizers, or allowlists are in scope
+- Alternative Semgrep patterns to narrow or widen the rule
+
+### Frameworks Applied
+
+- **Semgrep** rule syntax (pattern, pattern-not, pattern-inside, focus-metavariable, taint mode)
+- **SARIF 2.1.0** for structured input parsing
+
+### Report Structure
+
+- **Summary Table**: finding ID, rule, verdict (True Positive / False Positive / Needs Review)
+- **Per-Finding Blocks**: code evidence, verdict rationale, FP type (safe sink, safe value, unreachable), rewritten Semgrep YAML if FP
+- **Rule Tuning Output**: ready-to-apply Semgrep YAML rules or `.semgrepignore` entries
+- **True Positive Escalations**: findings confirmed as real that should be tracked as security issues
+
+---
+
+## appsec-compliance-checker
+
+**Finding prefix**: `CC-NNN`  
+**Slash command**: `/compliance-check`  
+**GitHub Copilot Chat**: `@AppSec Compliance Checker`  
+**AGENTS.md routing**: "compliance", "ASVS", "PCI-DSS", "HIPAA", "SOC 2", "ISO 27001", "NIST CSF"
+
+### Purpose
+
+Maps concrete technical security findings to specific control requirements in OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8. Detects applicable frameworks from repository evidence and labels only the controls that apply to the codebase under review.
+
+### What It Reviews
+
+- Prior findings from threat model, code review, or other agents (accepted via chain context)
+- Repository evidence for framework scope detection (payment code, health data, multi-tenancy, IaC, policies)
+- Per-finding control mapping with gap type: Missing / Partial / Met
+- Compliance roadmap to reach each framework's baseline
+
+### Frameworks Applied
+
+- **OWASP ASVS 4.0** — always applicable for web applications
+- **PCI-DSS v4** — when payment card data or payment SDKs are detected
+- **HIPAA** — when health records, ePHI, or medical terminology is detected
+- **SOC 2 Type II** — when SaaS/cloud service, customer data, or uptime SLAs are detected
+- **ISO 27001:2022** — when formal information asset registers or policy references are detected
+- **NIST CSF 2.0** — when critical infrastructure signals or government context is detected
+- **CIS Controls v8** — always applicable as a foundational baseline
+
+### Report Structure
+
+**Tier 1 — Framework Readiness Summary**
+- Applicable frameworks with scope rationale
+- Readiness table (Controls Evaluated, Gaps Identified, Critical Gaps, Readiness status)
+- Top compliance gaps (Critical only)
+
+**Tier 2 — Per-Finding Control Mapping**
+- Control mapping table per finding: Framework, Section, Control ID, Control Title, Gap Type
+- Remediation steps targeting the specific control requirement
+
+**Tier 3 — Remediation Priority Matrix**
+- Prioritized gap table by framework
+- Compliance roadmap grouped by framework
+- Residual gaps requiring runtime or policy evidence
+
+---
+
+## appsec-attack-tree
+
+**Finding prefix**: `AT-NNN`  
+**Slash command**: `/attack-tree`, `/attack-tree-local`  
+**GitHub Copilot Chat**: `@AppSec Attack Tree`  
+**AGENTS.md routing**: "attack tree", "attack paths", "formal threat tree", "AND/OR tree"
+
+### Purpose
+
+Constructs a formal AND/OR attack tree for the most critical threat in the repository. Produces a Mermaid-rendered tree, bypass analysis for each defense node, a ranked leaf node table by exploitability and impact, and purple-team test cases. Best used after `appsec-threat-modeler` has identified the primary target.
+
+### Node Types
+
+- **OR** — attacker needs to succeed at ONE child (any path works)
+- **AND** — attacker needs to succeed at ALL children (all must be overcome)
+- **LEAF** — atomic attack step with direct code evidence
+- **DEFENSE** — existing control that must be bypassed
+
+### Frameworks Applied
+
+- **MITRE ATT&CK** — techniques mapped to each LEAF node
+- **CVSS v3.1** — exploitability score informing Difficulty ratings
+
+### Report Structure
+
+**Tier 1 — Attack Tree (Mermaid)**
+- Complete `graph TD` tree with OR/AND/LEAF/DEF node styling
+
+**Tier 2 — Leaf Node Ranking**
+- Ranking table: Difficulty (1–5), Impact (1–5), Risk = Impact × (6 − Difficulty)
+- Top 3 highest-risk complete paths
+
+**Tier 3 — Defense Bypass Analysis**
+- Per DEFENSE node: implementation, bypass status (BYPASSABLE / ROBUST / UNVERIFIABLE), bypass path with evidence, hardening recommendation
+
+**Tier 4 — Purple-Team Test Cases**
+- Per top-3 path: prerequisites, steps, expected result, detection opportunity
+
+---
+
+## appsec-red-team
+
+**Finding prefix**: `RT-NNN`  
+**Slash command**: `/red-team`, `/red-team-local`  
+**GitHub Copilot Chat**: `@AppSec Red Team`  
+**AGENTS.md routing**: "red team", "adversarial scenarios", "kill chains", "attacker simulation"
+
+### Purpose
+
+Generates exactly 5 adversarial attack scenarios against the repository, each grounded in actual codebase evidence. Each scenario covers a distinct attacker profile and includes a complete ATT&CK-mapped kill chain, IoCs, detection gaps, and a purple-team test case.
+
+### Attacker Profiles
+
+Each of the 5 scenarios covers exactly one profile:
+1. **Opportunistic** — automated / script-kiddie
+2. **Motivated External** — skilled targeted attacker
+3. **Malicious Insider** — authenticated employee/contractor
+4. **Nation-State / APT** — persistent, high-capability
+5. **Supply-Chain** — compromised dependency, Action, or image
+
+### Frameworks Applied
+
+- **MITRE ATT&CK** — technique IDs for every kill chain step
+- **OWASP Top 10** — for web-layer initial access techniques
+- **Cyber Kill Chain** — for structuring scenario phases
+
+### Report Structure
+
+- **Scenario Overview Table**: profile, entry point, objective, highest ATT&CK tactic, severity
+- **Per Scenario**: kill chain table (Phase, ATT&CK Technique, Action, Evidence), narrative, IoCs table, Detection Gaps, Purple-Team Test Case
+- **Consolidated Findings**: detection coverage summary, top 5 hardening recommendations, ATT&CK coverage heat map
+
+---
+
+## appsec-threat-delta
+
+**Finding prefix**: `TD-NNN`  
+**Slash command**: `/threat-delta`  
+**GitHub Copilot Chat**: `@AppSec Threat Delta`  
+**AGENTS.md routing**: "compare reports", "what changed", "resolved findings", "regressions"
+
+### Purpose
+
+Compares a previous threat model or security report to the current repository state. Classifies each prior finding with a verdict and surfaces new attack surfaces introduced since the prior report.
+
+### Verdict Taxonomy
+
+- **RESOLVED** — fix present and verifiable; no equivalent bypass
+- **PARTIALLY FIXED** — specific variant patched; underlying class still exploitable
+- **STILL PRESENT** — no material change; finding carries over unchanged
+- **REGRESSED** — was fixed; reintroduced in current code
+- **NEW** — not in prior report; discovered during current inspection
+- **WONT FIX / ACCEPTED** — documented acceptance in codebase
+- **CANT ASSESS** — insufficient evidence (runtime-only, infrastructure-only)
+
+### What It Reviews
+
+- All finding IDs, titles, severity, and evidence locations from the prior report
+- Current code at each cited location
+- Git history for intentional fixes and reverts
+- Changed files since the prior report date for new attack surfaces
+
+### Report Structure
+
+**Tier 1 — Delta Summary**
+- Net risk change (IMPROVED / UNCHANGED / DEGRADED)
+- Verdict counts by severity
+- Regressions list (highest priority)
+- New findings list
+
+**Tier 2 — Finding-by-Finding Delta**
+- Per finding: prior evidence, verdict, current code quote, rationale, residual risk (PARTIALLY FIXED), regression source (REGRESSED)
+- New findings as full finding blocks
+
+**Tier 3 — Remediation Roadmap Update**
+- Close/reopen/open ticket recommendations
+- Updated priority matrix
+
+---
+
+## appsec-verify-fix
+
+**Finding prefix**: `VF-NNN`  
+**Slash command**: `/verify-fix`  
+**GitHub Copilot Chat**: `@AppSec Verify Fix`  
+**AGENTS.md routing**: "was this fixed", "confirm remediation", "verify finding", "check if patched"
+
+### Purpose
+
+Verifies with precision whether a specific security finding has been remediated in the current codebase. Accepts a finding ID, title, or description and returns a verdict with code-level proof. Strictly single-finding scope — does not expand to report other observations.
+
+### Verdict Taxonomy
+
+- **REMEDIATED** — fix present and correct; no equivalent bypass in same component
+- **PARTIALLY FIXED** — specific variant patched; underlying class still exploitable via different path/input
+- **STILL PRESENT** — no material change; vulnerability exploitable as described
+- **REGRESSED** — the fix was applied but subsequently removed or overwritten
+
+### What It Verifies
+
+- Vulnerable code location (file and line) from the original finding
+- Current code at that location versus the vulnerable pattern
+- All input paths and caller-supplied parameters in the same component
+- Git history for intentional fix and any subsequent reverts
+
+### Report Structure
+
+- **Verdict block**: verdict, confidence (HIGH / MEDIUM / LOW)
+- **Evidence section**: original finding details, current code quote, fix assessment table (5 checks)
+- **Verdict rationale**: 2–3 sentences with specific code evidence
+- **Residual Risk** (if not REMEDIATED): remaining attack surface and completion steps
+- **Validation**: concrete test to confirm REMEDIATED status once remaining steps are complete
 
 ---
 

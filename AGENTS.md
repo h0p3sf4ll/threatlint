@@ -30,6 +30,21 @@ This file configures AI coding agents to perform evidence-based application secu
 **Auth security review** — "review authentication", "audit authorization", "check OAuth", "review JWT handling".
 → Follow the [Auth Review](#auth-review) instructions below.
 
+**Compliance mapping** — "map to compliance", "check ASVS", "PCI-DSS controls", "HIPAA requirements", "SOC 2 controls", "ISO 27001", "NIST CSF".
+→ Follow the [Compliance Check](#compliance-check) instructions below.
+
+**Attack tree** — "build attack tree", "attack paths", "formal threat tree", "AND/OR tree".
+→ Follow the [Attack Tree](#attack-tree) instructions below.
+
+**Red team** — "red team", "adversarial scenarios", "kill chains", "attacker simulation".
+→ Follow the [Red Team](#red-team) instructions below.
+
+**Threat delta** — "compare reports", "what changed", "resolved findings", "regressions", "new threats since last review".
+→ Follow the [Threat Delta](#threat-delta) instructions below.
+
+**Verify fix** — "was this fixed", "confirm remediation", "verify finding", "check if patched".
+→ Follow the [Verify Fix](#verify-fix) instructions below.
+
 **No target given** — when a security task is requested with no specified component or scope.
 → Use the threat modeler with autonomous repository discovery. Do not ask for a target before beginning.
 
@@ -163,6 +178,46 @@ git remote get-url origin 2>/dev/null | sed 's/.*[:/]\([^/]*\)\(\.git\)\{0,1\}$/
 **Reviewed by**: appsec-fp-reviewer
 ```
 
+**Compliance check header:**
+```
+# Compliance Mapping: <Repo Name>
+**Date**: YYYY-MM-DD
+**Frameworks**: <detected frameworks>
+**Reviewed by**: appsec-compliance-checker
+```
+
+**Attack tree header:**
+```
+# Attack Tree: <Target> — <Repo Name>
+**Date**: YYYY-MM-DD
+**Root Goal**: <goal statement>
+**Reviewed by**: appsec-attack-tree
+```
+
+**Red team header:**
+```
+# Red Team Scenarios: <Repo Name>
+**Date**: YYYY-MM-DD
+**Scenarios**: 5
+**Reviewed by**: appsec-red-team
+```
+
+**Threat delta header:**
+```
+# Threat Delta: <Repo Name>
+**Date**: YYYY-MM-DD
+**Prior Report**: <filename or "from context">
+**Reviewed by**: appsec-threat-delta
+```
+
+**Verify fix header:**
+```
+# Fix Verification: [Finding ID] — <Finding Title>
+**Date**: YYYY-MM-DD
+**Repository**: <repo name>
+**Reviewed by**: appsec-verify-fix
+```
+
 ---
 
 ## Word Document Output
@@ -193,6 +248,11 @@ Filename convention — all filenames are prefixed with `<repo-name>-<branch>-`,
 - API security review: `<repo-name>-<branch>-api-security-review-YYYY-MM-DD.docx`
 - Auth review: `<repo-name>-<branch>-auth-review-YYYY-MM-DD.docx`
 - False positive review: `<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx`
+- Compliance check: `<repo-name>-<branch>-compliance-<framework>-YYYY-MM-DD.docx`
+- Attack tree: `<repo-name>-<branch>-attack-tree-<sanitized-target>-YYYY-MM-DD.docx`
+- Red team: `<repo-name>-<branch>-red-team-YYYY-MM-DD.docx`
+- Threat delta: `<repo-name>-<branch>-threat-delta-YYYY-MM-DD.docx`
+- Verify fix: `<repo-name>-<branch>-verify-<finding-id>-YYYY-MM-DD.docx`
 
 The converter script requires `python-docx` (`pip3 install python-docx`). If the converter is unavailable, save the report as a `.md` file instead and note that the converter is not installed.
 
@@ -517,3 +577,138 @@ Use the AU-NNN finding prefix. Produce a two-tier report using the [Auth Review 
 ### Word Document Output
 
 Save the completed report as `<repo-name>-<branch>-auth-review-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Compliance Check
+
+### Protocol
+
+1. Detect applicable frameworks from repository evidence (PCI-DSS: payment code; HIPAA: health data; SOC 2: SaaS/multi-tenant; CIS Controls and OWASP ASVS always apply).
+2. If no prior findings are provided in the chain context, inspect the repository and produce a lightweight threat inventory first.
+3. Map each finding to specific control IDs in OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8.
+4. Classify each control gap as Missing, Partial, or Met.
+5. Produce a Framework Readiness Summary table and a per-finding control mapping matrix.
+
+### Report Format
+
+Use the CC-NNN finding prefix. Produce a two-tier report:
+- **Tier 1**: Framework Readiness Summary, top compliance gaps, readiness table per framework.
+- **Tier 2**: Per-finding control mapping blocks, remediation priority matrix, compliance roadmap, residual gaps.
+
+### Word Document Output
+
+Save the completed report as `<repo-name>-<branch>-compliance-<framework>-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Attack Tree
+
+### Protocol
+
+1. Identify the root goal from the target (e.g., "Exfiltrate PII", "Achieve RCE", "Escalate to admin"). If no target is supplied, select the most exposed crown jewel.
+2. Inventory all defenses on the path: authentication, authorization, input validation, rate limiting, encryption.
+3. Decompose recursively using AND/OR node types. Ground each LEAF node in specific code evidence (file:line).
+4. Analyse bypass paths for every DEFENSE node.
+5. Rank LEAF nodes by Difficulty (1–5) and Impact (1–5); compute Risk = Impact × (6 − Difficulty).
+6. Generate purple-team test cases for the top 3 highest-risk paths.
+
+Node types: **OR** (any child succeeds), **AND** (all children must succeed), **LEAF** (atomic step with code evidence), **DEFENSE** (existing control + bypass status).
+
+### Report Format
+
+Produce a four-tier report:
+- **Tier 1**: Mermaid `graph TD` attack tree using OR/AND/LEAF/DEF node styles.
+- **Tier 2**: LEAF node ranking table by Risk Score.
+- **Tier 3**: Defense bypass analysis per DEFENSE node.
+- **Tier 4**: Purple-team test cases for top 3 paths.
+
+### Word Document Output
+
+Save the completed report as `<repo-name>-<branch>-attack-tree-<sanitized-target>-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Red Team
+
+### Protocol
+
+1. Inspect the repository to identify all attack surfaces: endpoints, authentication, authorization, secrets handling, supply chain, IaC, CI/CD.
+2. Select five attack scenarios, one per attacker profile: Opportunistic, Motivated External, Malicious Insider, Nation-State/APT, Supply-Chain.
+3. For each scenario, construct a complete kill chain (Initial Access → Execution → Persistence → Privilege Escalation → Defense Evasion → Credential Access → Discovery → Lateral Movement → Collection → Exfiltration/Impact). Include only phases supported by code evidence.
+4. Map each kill chain step to a MITRE ATT&CK technique ID.
+5. List Indicators of Compromise and Detection Gaps for each scenario.
+6. Produce a purple-team test case per scenario.
+
+### Report Format
+
+Produce a consolidated report:
+- **Scenario Overview** table: profile, entry point, objective, highest ATT&CK tactic, severity.
+- **Per Scenario**: kill chain table, narrative, IoCs, detection gaps, purple-team test case.
+- **Consolidated Findings**: detection coverage summary, top 5 hardening recommendations, ATT&CK coverage heat map.
+
+### Word Document Output
+
+Save the completed report as `<repo-name>-<branch>-red-team-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Threat Delta
+
+### Protocol
+
+1. Ingest the prior report from chain context, a file path, or pasted content. Extract all finding IDs, titles, severity, and evidence locations.
+2. Run `git log --oneline -20` to understand recent commits.
+3. For each prior finding, read the currently-cited file at the cited line and compare to the reported vulnerable pattern.
+4. Assign a verdict: RESOLVED, PARTIALLY FIXED, STILL PRESENT, REGRESSED, WONT FIX/ACCEPTED, or CANT ASSESS.
+5. Inspect changed files (`git diff <prior-date>..HEAD --stat`) for NEW findings not in the prior report.
+6. Compute net risk delta and flag all REGRESSED findings prominently.
+
+Verdict definitions:
+- **RESOLVED** — fix present and verifiable; no equivalent bypass.
+- **PARTIALLY FIXED** — specific variant patched; underlying class still exploitable.
+- **STILL PRESENT** — no material change; finding carries over.
+- **REGRESSED** — was fixed; reintroduced in current code.
+- **NEW** — not in prior report; discovered during current inspection.
+
+### Report Format
+
+Produce a three-tier report:
+- **Tier 1**: Delta Summary (net risk change, verdict counts, regressions list, new findings list).
+- **Tier 2**: Finding-by-finding delta blocks with current code evidence.
+- **Tier 3**: Remediation roadmap update (close/reopen/open tickets, updated priority matrix).
+
+### Word Document Output
+
+Save the completed report as `<repo-name>-<branch>-threat-delta-YYYY-MM-DD.docx` in the current working directory.
+
+---
+
+## Verify Fix
+
+### Protocol
+
+1. Extract finding details: ID, title, evidence location (`path/to/file.ext:NN`), vulnerable pattern, attack path.
+2. Read the cited file at the cited line. Quote the current code.
+3. Search for the expected fix pattern (parameterization, access control check, sanitization, removed dangerous call).
+4. Grep for the vulnerable pattern in the same file and related files to check for bypass paths.
+5. Run `git log -p path/to/file.ext` to verify the fix is intentional and not reverted.
+6. Assign a verdict: REMEDIATED, PARTIALLY FIXED, STILL PRESENT, or REGRESSED.
+
+Verdict definitions:
+- **REMEDIATED** — fix present and correct; no equivalent bypass in same component.
+- **PARTIALLY FIXED** — specific variant patched; underlying class still exploitable via different path.
+- **STILL PRESENT** — no material change; vulnerability exploitable as described.
+- **REGRESSED** — was fixed; the fix was subsequently removed or overwritten.
+
+### Report Format
+
+Produce a focused, single-finding report:
+- **Verdict block**: verdict, confidence, evidence table.
+- **Evidence section**: original finding, current code quote, fix assessment table.
+- **Residual Risk** (if not REMEDIATED): what remains exploitable and completion steps.
+- **Validation**: concrete test (curl, assertion, grep) to confirm REMEDIATED status.
+
+### Word Document Output
+
+Save the completed report as `<repo-name>-<branch>-verify-<finding-id>-YYYY-MM-DD.docx` in the current working directory.

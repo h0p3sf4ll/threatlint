@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "{{BOT_APP_ID}}",
+  "packageName": "com.threatlint.teams",
+  "developer": {
+    "name": "threatlint",
+    "websiteUrl": "https://github.com/h0p3sf4ll/threatlint",
+    "privacyUrl": "https://github.com/h0p3sf4ll/threatlint/blob/main/docs/privacy.md",
+    "termsOfUseUrl": "https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE"
+  },
+  "icons": {
+    "outline": "icon-outline.png",
+    "color": "icon-color.png"
+  },
+  "name": {
+    "short": "threatlint",
+    "full": "threatlint — AppSec Agents"
+  },
+  "description": {
+    "short": "Application security analysis via Claude AI agents",
+    "full": "threatlint runs 14 specialized application security agents powered by Claude AI. Threat modeling, code review, secrets scanning, dependency auditing, compliance mapping, and adversarial red-team scenarios — all from Microsoft Teams."
+  },
+  "accentColor": "#D97706",
+  "bots": [
+    {
+      "botId": "{{BOT_APP_ID}}",
+      "scopes": ["personal", "team", "groupchat"],
+      "isNotificationOnly": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
+      "supportsFiles": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupchat"],
+          "commands": [
+            { "title": "threat-model", "description": "Threat model a component or the full repository" },
+            { "title": "security-review", "description": "Security code review of a diff, PR, or branch" },
+            { "title": "dependency-audit", "description": "Supply chain and dependency security audit" },
+            { "title": "secrets-scan", "description": "Scan for hardcoded credentials and secrets" },
+            { "title": "iac-review", "description": "IaC security review (Terraform, K8s, Dockerfile)" },
+            { "title": "cicd-audit", "description": "CI/CD pipeline security audit" },
+            { "title": "api-security-review", "description": "OWASP API Security Top 10 review" },
+            { "title": "auth-review", "description": "Auth/authz deep-dive (OAuth, JWT, RBAC)" },
+            { "title": "compliance-check", "description": "Map findings to ASVS, PCI-DSS, HIPAA, SOC 2" },
+            { "title": "attack-tree", "description": "Formal AND/OR attack tree with bypass analysis" },
+            { "title": "red-team", "description": "5 adversarial scenarios with kill chains" },
+            { "title": "threat-delta", "description": "Compare prior report to current state" },
+            { "title": "verify-fix", "description": "Verify a specific finding was remediated" },
+            { "title": "fp-review", "description": "Triage scanner findings and tune Semgrep rules" },
+            { "title": "help", "description": "Show all available commands" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

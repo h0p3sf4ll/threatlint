@@ -13,6 +13,138 @@ const { promisify } = require('util');
 
 const execAsync = promisify(exec);
 
+// ── LM Studio helpers ──────────────────────────────────────────────────────
+
+function httpGetJson(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? require('https') : http;
+    const req = mod.get(url, { timeout: timeoutMs }, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function streamLmStudio({ baseUrl, model, systemPrompt, messages, maxTokens, onChunk, onDone, onError, apiKey }) {
+  const url = new URL(`${baseUrl}/chat/completions`);
+  const payload = Buffer.from(JSON.stringify({
+    model,
+    messages: [{ role: 'system', content: systemPrompt }, ...messages],
+    stream: true,
+    max_tokens: maxTokens || 4096,
+  }));
+
+  const headers = { 'Content-Type': 'application/json', 'Content-Length': payload.length };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  const options = {
+    hostname: url.hostname,
+    port: parseInt(url.port) || (url.protocol === 'https:' ? 443 : 80),
+    path: url.pathname,
+    method: 'POST',
+    headers,
+    timeout: 600_000,
+  };
+
+  const mod = url.protocol === 'https:' ? require('https') : http;
+  const req = mod.request(options, res => {
+    let buf = '';
+    res.on('data', chunk => {
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') { onDone(); return; }
+        try {
+          const parsed = JSON.parse(data);
+          const text = parsed.choices?.[0]?.delta?.content;
+          if (text) onChunk(text);
+        } catch { /* skip malformed SSE line */ }
+      }
+    });
+    res.on('end', () => {
+      if (buf.startsWith('data: ') && buf.slice(6).trim() !== '[DONE]') {
+        try { const t = JSON.parse(buf.slice(6)).choices?.[0]?.delta?.content; if (t) onChunk(t); } catch {}
+      }
+      onDone();
+    });
+    res.on('error', onError);
+  });
+  req.on('error', onError);
+  req.on('timeout', () => { req.destroy(); onError(new Error('LM Studio request timed out')); });
+  req.write(payload);
+  req.end();
+}
+
+function callLmStudioChat({ baseUrl, model, messages, tools, signal, onTextChunk, apiKey }) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return resolve({ text: '', toolCalls: [], finishReason: 'stop' });
+    const url = new URL(`${baseUrl}/chat/completions`);
+    const payload = Buffer.from(JSON.stringify({ model, messages, tools, stream: true, max_tokens: 16000 }));
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': payload.length };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    const options = {
+      hostname: url.hostname,
+      port: parseInt(url.port) || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname, method: 'POST',
+      headers,
+      timeout: 600_000,
+    };
+    const mod = url.protocol === 'https:' ? require('https') : http;
+    let text = '', buf = '', finishReason = 'stop';
+    const tcMap = {};
+
+    function buildToolCalls() {
+      return Object.values(tcMap).map(tc => ({
+        id: tc.id, name: tc.name,
+        args: (() => { try { return JSON.parse(tc.args || '{}'); } catch { return {}; } })(),
+      }));
+    }
+
+    const abortHandler = () => { req.destroy(); resolve({ text, toolCalls: buildToolCalls(), finishReason }); };
+    signal?.addEventListener('abort', abortHandler);
+
+    const req = mod.request(options, res => {
+      res.on('data', chunk => {
+        buf += chunk.toString();
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') continue;
+          try {
+            const p = JSON.parse(raw);
+            const c = p.choices?.[0]; if (!c) continue;
+            if (c.finish_reason) finishReason = c.finish_reason;
+            const d = c.delta; if (!d) continue;
+            if (d.content) { text += d.content; onTextChunk(d.content); }
+            if (d.tool_calls) {
+              for (const tc of d.tool_calls) {
+                if (!tcMap[tc.index]) tcMap[tc.index] = { id: tc.id || `call_${tc.index}`, name: '', args: '' };
+                if (tc.id) tcMap[tc.index].id = tc.id;
+                if (tc.function?.name) tcMap[tc.index].name += tc.function.name;
+                if (tc.function?.arguments) tcMap[tc.index].args += tc.function.arguments;
+              }
+            }
+          } catch { /* skip malformed */ }
+        }
+      });
+      res.on('end', () => { signal?.removeEventListener('abort', abortHandler); resolve({ text, toolCalls: buildToolCalls(), finishReason }); });
+      res.on('error', err => { signal?.removeEventListener('abort', abortHandler); reject(err); });
+    });
+    req.on('error', err => { signal?.removeEventListener('abort', abortHandler); reject(err); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('LM Studio request timed out')); });
+    req.write(payload); req.end();
+  });
+}
+
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -66,15 +198,20 @@ function loadAgents() {
 const AGENTS = loadAgents();
 
 const AGENT_META = {
-  'appsec-threat-modeler':        { label: 'Threat Model',    color: '#ff6b6b', emoji: '🎯', category: 'Analysis' },
-  'appsec-code-reviewer':         { label: 'Code Review',     color: '#ffd93d', emoji: '🔍', category: 'Analysis' },
-  'appsec-dependency-auditor':    { label: 'Dependencies',    color: '#6bcb77', emoji: '📦', category: 'Supply Chain' },
-  'appsec-secrets-scanner':       { label: 'Secrets Scan',    color: '#4d96ff', emoji: '🔑', category: 'Exposure' },
-  'appsec-iac-reviewer':          { label: 'IaC Review',      color: '#c77dff', emoji: '☁️', category: 'Infrastructure' },
-  'appsec-cicd-auditor':          { label: 'CI/CD Audit',     color: '#ff9671', emoji: '⚙️', category: 'Supply Chain' },
-  'appsec-api-security-reviewer': { label: 'API Security',    color: '#00c9a7', emoji: '🌐', category: 'Analysis' },
-  'appsec-auth-reviewer':         { label: 'Auth Review',     color: '#f9c74f', emoji: '🛡️', category: 'Analysis' },
-  'appsec-fp-reviewer':           { label: 'FP Triage',       color: '#90e0ef', emoji: '⚖️', category: 'Analysis' },
+  'appsec-threat-modeler':        { label: 'Threat Model',       color: '#ff6b6b', emoji: '🎯', category: 'Analysis' },
+  'appsec-code-reviewer':         { label: 'Code Review',        color: '#ffd93d', emoji: '🔍', category: 'Analysis' },
+  'appsec-dependency-auditor':    { label: 'Dependencies',       color: '#6bcb77', emoji: '📦', category: 'Supply Chain' },
+  'appsec-secrets-scanner':       { label: 'Secrets Scan',       color: '#4d96ff', emoji: '🔑', category: 'Exposure' },
+  'appsec-iac-reviewer':          { label: 'IaC Review',         color: '#c77dff', emoji: '☁️', category: 'Infrastructure' },
+  'appsec-cicd-auditor':          { label: 'CI/CD Audit',        color: '#ff9671', emoji: '⚙️', category: 'Supply Chain' },
+  'appsec-api-security-reviewer': { label: 'API Security',       color: '#00c9a7', emoji: '🌐', category: 'Analysis' },
+  'appsec-auth-reviewer':         { label: 'Auth Review',        color: '#f9c74f', emoji: '🛡️', category: 'Analysis' },
+  'appsec-fp-reviewer':           { label: 'FP Triage',          color: '#90e0ef', emoji: '⚖️', category: 'Analysis' },
+  'appsec-compliance-checker':    { label: 'Compliance Map',     color: '#a8dadc', emoji: '📋', category: 'Compliance' },
+  'appsec-attack-tree':           { label: 'Attack Tree',        color: '#e63946', emoji: '🌳', category: 'Adversarial' },
+  'appsec-red-team':              { label: 'Red Team',           color: '#d62828', emoji: '⚔️', category: 'Adversarial' },
+  'appsec-threat-delta':          { label: 'Threat Delta',       color: '#b5838d', emoji: '📊', category: 'Analysis' },
+  'appsec-verify-fix':            { label: 'Verify Fix',         color: '#52b788', emoji: '✅', category: 'Analysis' },
 };
 
 // ── Tool execution ─────────────────────────────────────────────────────────
@@ -251,6 +388,11 @@ const CLAUDE_TOOLS = [
   },
 ];
 
+const OPENAI_TOOLS = CLAUDE_TOOLS.map(t => ({
+  type: 'function',
+  function: { name: t.name, description: t.description, parameters: t.input_schema },
+}));
+
 // ── Agent execution ────────────────────────────────────────────────────────
 
 function buildUserMessage(repoPath, target, chainContexts) {
@@ -347,6 +489,47 @@ async function runAgent({ agentId, repoPath, target, chainContexts, apiKey, mode
   return fullText;
 }
 
+async function runAgentLmStudio({ agentId, repoPath, target, chainContexts, model, baseUrl, apiKey, onEvent, signal }) {
+  const agent = AGENTS[agentId];
+  if (!agent) throw new Error(`Unknown agent: ${agentId}`);
+
+  const messages = [
+    { role: 'system', content: agent.systemPrompt },
+    { role: 'user', content: buildUserMessage(repoPath, target, chainContexts) },
+  ];
+  let fullText = '';
+
+  for (let iter = 0; iter < 80; iter++) {
+    if (signal?.aborted) throw new Error('Cancelled');
+    onEvent({ type: 'iteration', n: iter + 1 });
+
+    const { text, toolCalls, finishReason } = await callLmStudioChat({
+      baseUrl, model, messages, tools: OPENAI_TOOLS, signal, apiKey,
+      onTextChunk: chunk => { fullText += chunk; onEvent({ type: 'text_chunk', text: chunk }); },
+    });
+
+    const assistantMsg = { role: 'assistant', content: text || null };
+    if (toolCalls.length > 0) {
+      assistantMsg.tool_calls = toolCalls.map(tc => ({
+        id: tc.id, type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+      }));
+    }
+    messages.push(assistantMsg);
+
+    if (finishReason !== 'tool_calls' || toolCalls.length === 0) break;
+
+    for (const tc of toolCalls) {
+      onEvent({ type: 'tool_call_start', tool: tc.name, id: tc.id });
+      onEvent({ type: 'tool_executing', tool: tc.name, input: tc.args, id: tc.id });
+      const result = await executeTool(tc.name, tc.args, repoPath);
+      onEvent({ type: 'tool_result', tool: tc.name, id: tc.id, preview: String(result).slice(0, 400) });
+      messages.push({ role: 'tool', tool_call_id: tc.id, content: String(result) });
+    }
+  }
+
+  return fullText;
+}
+
 // ── Report generation ──────────────────────────────────────────────────────
 
 async function generateReport(agentId, markdown, sessionId) {
@@ -392,6 +575,48 @@ function extractSummary(markdown) {
 }
 
 // ── HTTP API ───────────────────────────────────────────────────────────────
+
+app.get('/api/lmstudio/models', async (req, res) => {
+  const baseUrl = (req.query.baseUrl || 'http://localhost:1234/v1').replace(/\/$/, '');
+  try {
+    const data = await httpGetJson(`${baseUrl}/models`, 5000);
+    const models = (data.data || []).map(m => m.id);
+    res.json({ models });
+  } catch (err) {
+    res.status(503).json({ error: `Cannot reach LM Studio at ${baseUrl}: ${err.message}` });
+  }
+});
+
+app.get('/api/fs/browse', (req, res) => {
+  const raw = req.query.path || os.homedir();
+  const requested = path.normalize(raw.replace(/^~(?=\/|$)/, os.homedir()));
+  try {
+    if (!fs.statSync(requested).isDirectory()) {
+      return res.status(400).json({ error: 'Not a directory' });
+    }
+    const raw = fs.readdirSync(requested, { withFileTypes: true });
+    const entries = raw
+      .filter(e => e.isDirectory())
+      .sort((a, b) => {
+        // repos first, then alphabetical; hidden dirs last unless they're repos
+        const aRepo = fs.existsSync(path.join(requested, a.name, '.git'));
+        const bRepo = fs.existsSync(path.join(requested, b.name, '.git'));
+        if (aRepo !== bRepo) return aRepo ? -1 : 1;
+        const aHidden = a.name.startsWith('.');
+        const bHidden = b.name.startsWith('.');
+        if (aHidden !== bHidden) return aHidden ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      })
+      .map(e => ({
+        name: e.name,
+        isRepo: fs.existsSync(path.join(requested, e.name, '.git')),
+      }));
+    const parent = path.dirname(requested);
+    res.json({ path: requested, parent: parent !== requested ? parent : null, entries });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/agents', (_req, res) => {
   const list = Object.values(AGENTS).map(a => ({
@@ -498,9 +723,13 @@ wss.on('connection', ws => {
 
     // ── Run pipeline ────────────────────────────────────────────────────────
     if (msg.action === 'run_pipeline') {
-      const { sessionId, agentIds, target, apiKey, model } = msg;
-      const key = apiKey || process.env.ANTHROPIC_API_KEY;
-      if (!key) return send({ type: 'error', message: 'Anthropic API key required' });
+      const { sessionId, agentIds, target, apiKey, model, continueOnError,
+              provider, lmstudioUrl, lmstudioModel, openaiApiKey } = msg;
+      const isLocal = provider === 'lmstudio';
+      const isOpenAI = provider === 'openai';
+      const key = (isLocal || isOpenAI) ? null : (apiKey || process.env.ANTHROPIC_API_KEY);
+      if (!isLocal && !isOpenAI && !key) return send({ type: 'error', message: 'Anthropic API key required' });
+      if (isOpenAI && !(openaiApiKey || process.env.OPENAI_API_KEY)) return send({ type: 'error', message: 'OpenAI API key required' });
       const session = sessions.get(sessionId);
       if (!session) return send({ type: 'error', message: 'Session not found — configure a repo first' });
 
@@ -516,16 +745,30 @@ wss.on('connection', ws => {
         send({ type: 'agent_start', agentId, label: meta.label || agentId, color: meta.color });
 
         try {
-          const output = await runAgent({
-            agentId,
-            repoPath: session.repoPath,
-            target: target || '',
-            chainContexts,
-            apiKey: key,
-            model: model || 'claude-sonnet-5',
-            signal: ac.signal,
-            onEvent: ev => send({ ...ev, agentId }),
-          });
+          const output = (isLocal || isOpenAI)
+            ? await runAgentLmStudio({
+                agentId,
+                repoPath: session.repoPath,
+                target: target || '',
+                chainContexts,
+                model: isOpenAI ? (model || 'gpt-5.6') : (lmstudioModel || model || ''),
+                baseUrl: isOpenAI
+                  ? 'https://api.openai.com/v1'
+                  : (lmstudioUrl || 'http://localhost:1234/v1').replace(/\/$/, ''),
+                apiKey: isOpenAI ? (openaiApiKey || process.env.OPENAI_API_KEY) : undefined,
+                signal: ac.signal,
+                onEvent: ev => send({ ...ev, agentId }),
+              })
+            : await runAgent({
+                agentId,
+                repoPath: session.repoPath,
+                target: target || '',
+                chainContexts,
+                apiKey: key,
+                model: model || 'claude-sonnet-5',
+                signal: ac.signal,
+                onEvent: ev => send({ ...ev, agentId }),
+              });
 
           const report = await generateReport(agentId, output, sessionId);
           chainContexts.push({ agentId, summary: extractSummary(output) });
@@ -540,7 +783,7 @@ wss.on('connection', ws => {
           });
         } catch (err) {
           send({ type: 'agent_error', agentId, message: err.message });
-          if (!msg.continueOnError) break;
+          if (!continueOnError) break;
         }
       }
 
@@ -557,9 +800,7 @@ wss.on('connection', ws => {
 
     // ── Chat ────────────────────────────────────────────────────────────────
     else if (msg.action === 'chat') {
-      const { sessionId, message, history, apiKey, model } = msg;
-      const key = apiKey || process.env.ANTHROPIC_API_KEY;
-      if (!key) return send({ type: 'chat_error', message: 'API key required' });
+      const { sessionId, message, history, apiKey, model, provider, lmstudioUrl, lmstudioModel, openaiApiKey } = msg;
 
       const session = sessions.get(sessionId);
       let system = `You are a senior application security expert assistant integrated with Threatlint, a multi-agent security analysis platform. Be concise, precise, and cite specific code locations when referencing findings.`;
@@ -574,6 +815,35 @@ wss.on('connection', ws => {
 
       const msgs = [...(history || []).slice(-20), { role: 'user', content: message }];
 
+      if (provider === 'lmstudio' || provider === 'openai') {
+        const isOpenAI = provider === 'openai';
+        const baseUrl = isOpenAI
+          ? 'https://api.openai.com/v1'
+          : (lmstudioUrl || 'http://localhost:1234/v1').replace(/\/$/, '');
+        const chosenModel = isOpenAI ? (model || 'gpt-5.6') : (lmstudioModel || '');
+        const key = isOpenAI ? (openaiApiKey || process.env.OPENAI_API_KEY) : undefined;
+        if (!isOpenAI && !chosenModel) return send({ type: 'chat_error', message: 'No LM Studio model selected' });
+        if (isOpenAI && !key) return send({ type: 'chat_error', message: 'OpenAI API key required' });
+
+        send({ type: 'chat_start' });
+        let fullText = '';
+        streamLmStudio({
+          baseUrl,
+          model: chosenModel,
+          systemPrompt: system,
+          messages: msgs,
+          maxTokens: 4096,
+          apiKey: key,
+          onChunk: text => { fullText += text; send({ type: 'chat_chunk', text }); },
+          onDone: () => send({ type: 'chat_end', fullText }),
+          onError: err => send({ type: 'chat_error', message: err.message }),
+        });
+        return;
+      }
+
+      // Claude (default)
+      const key = apiKey || process.env.ANTHROPIC_API_KEY;
+      if (!key) return send({ type: 'chat_error', message: 'API key required' });
       try {
         const anthropic = new Anthropic({ apiKey: key });
         const stream = anthropic.messages.stream({
@@ -611,12 +881,14 @@ app.get('*', (_req, res) => {
 
 // ── Start ──────────────────────────────────────────────────────────────────
 
-server.listen(PORT, () => {
-  console.log(`\n┌─────────────────────────────────────────────┐`);
-  console.log(`│  Threatlint Web UI                          │`);
-  console.log(`│  http://localhost:${PORT}                       │`);
-  console.log(`│  API key: ${process.env.ANTHROPIC_API_KEY ? 'loaded from env (ANTHROPIC_API_KEY)' : 'not set — enter in UI    '} │`);
-  console.log(`└─────────────────────────────────────────────┘\n`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`\n┌─────────────────────────────────────────────┐`);
+    console.log(`│  Threatlint Web UI                          │`);
+    console.log(`│  http://localhost:${PORT}                       │`);
+    console.log(`│  API key: ${process.env.ANTHROPIC_API_KEY ? 'loaded from env (ANTHROPIC_API_KEY)' : 'not set — enter in UI    '} │`);
+    console.log(`└─────────────────────────────────────────────┘\n`);
+  });
+}
 
-module.exports = app;
+module.exports = { app, server };

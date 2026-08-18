@@ -24,9 +24,9 @@
   --green: #39ff14;
   --blue: #4488ff;
   --purple: #bb86fc;
-  --text: #d0d4f0;
-  --text2: #8890bb;
-  --text3: #4a5080;
+  --text: #e0e4f4;
+  --text2: #b0b8d8;
+  --text3: #7078a8;
   --font: 'JetBrains Mono', monospace;
 }
 
@@ -37,7 +37,7 @@ html, body {
   background: var(--bg0);
   color: var(--text);
   font-family: var(--font);
-  font-size: 13px;
+  font-size: 14px;
   overflow: hidden;
 }
 
@@ -345,6 +345,16 @@ header {
 .model-row {
   display: flex; gap: 6px; align-items: center;
 }
+.provider-toggle {
+  display: flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+}
+.provider-btn {
+  flex: 1; padding: 3px 8px; background: var(--bg3); border: none; color: var(--text3);
+  font-family: var(--font); font-size: 10px; cursor: pointer; transition: background .15s, color .15s;
+}
+.provider-btn.active {
+  background: var(--accent); color: #000;
+}
 .model-select {
   flex: 1; padding: 4px 6px; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 3px; color: var(--text2); font-family: var(--font); font-size: 10px;
@@ -412,6 +422,46 @@ header {
 }
 .field input:focus, .field select:focus { border-color: var(--accent2); }
 .field input::placeholder { color: var(--text3); }
+
+.path-input-row { display: flex; gap: 6px; }
+.path-input-row input { flex: 1; width: auto; }
+.btn-browse {
+  padding: 0 10px; background: var(--bg4); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text2); font-family: var(--font); font-size: 11px;
+  cursor: pointer; white-space: nowrap; transition: border-color .15s, color .15s;
+}
+.btn-browse:hover { border-color: var(--border-hi); color: var(--text); }
+
+.dir-picker {
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg2);
+  margin-bottom: 12px; overflow: hidden;
+}
+.dir-breadcrumb {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0;
+  padding: 5px 8px; background: var(--bg3); border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.dir-crumb {
+  color: var(--text3); cursor: pointer; padding: 1px 3px; border-radius: 2px;
+  transition: color .1s, background .1s;
+}
+.dir-crumb:hover { color: var(--accent); background: var(--accent-dim); }
+.dir-crumb-sep { color: var(--border-hi); padding: 0 1px; }
+.dir-entries { max-height: 180px; overflow-y: auto; }
+.dir-entry {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  cursor: pointer; font-size: 11px; color: var(--text2);
+  border-bottom: 1px solid var(--border); transition: background .1s;
+}
+.dir-entry:last-child { border-bottom: none; }
+.dir-entry:hover { background: var(--bg4); color: var(--text); }
+.dir-entry-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-repo-badge {
+  font-size: 9px; padding: 1px 5px; background: var(--accent-dim);
+  color: var(--accent); border: 1px solid var(--accent2); border-radius: 3px;
+  flex-shrink: 0;
+}
+.dir-empty { padding: 10px; color: var(--text3); font-size: 11px; text-align: center; }
 
 .modal-row { display: flex; gap: 8px; margin-top: 4px; }
 .btn-primary {
@@ -569,10 +619,30 @@ header { position: relative; }
         </div>
         <div class="chat-input-area">
           <div class="model-row">
-            <select class="model-select" id="model-select">
+            <div class="provider-toggle">
+              <button class="provider-btn active" id="provider-claude" onclick="setProvider('claude')">Claude</button>
+              <button class="provider-btn" id="provider-openai" onclick="setProvider('openai')">OpenAI</button>
+              <button class="provider-btn" id="provider-lmstudio" onclick="setProvider('lmstudio')">Local LLM</button>
+            </div>
+          </div>
+          <div id="model-claude-row" style="display:flex;">
+            <select class="model-select" id="model-select" style="width:100%;">
               <option value="claude-sonnet-5">claude-sonnet-5</option>
               <option value="claude-opus-5">claude-opus-5 (deep)</option>
               <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option>
+            </select>
+          </div>
+          <div id="model-openai-row" style="display:none;">
+            <select class="model-select" id="openai-model-select" style="width:100%;">
+              <option value="gpt-5.6">gpt-5.6 (balanced)</option>
+              <option value="gpt-5.6-terra">gpt-5.6-terra (efficient)</option>
+              <option value="gpt-5.6-luna">gpt-5.6-luna (fast)</option>
+              <option value="gpt-5.6-cyber">gpt-5.6-cyber (security)</option>
+            </select>
+          </div>
+          <div id="model-lmstudio-row" style="display:none;">
+            <select class="model-select" id="lmstudio-model-select" style="width:100%;">
+              <option value="">— connect to load models —</option>
             </select>
           </div>
           <div class="chat-row">
@@ -600,7 +670,14 @@ header { position: relative; }
       <div id="repo-local">
         <div class="field">
           <label>Repository Path</label>
-          <input id="local-path" placeholder="/path/to/your/repo" />
+          <div class="path-input-row">
+            <input id="local-path" placeholder="/path/to/your/repo" oninput="onPathInputChange()" />
+            <button class="btn-browse" onclick="openDirPicker()">Browse</button>
+          </div>
+        </div>
+        <div id="dir-picker" class="dir-picker" style="display:none">
+          <div class="dir-breadcrumb" id="dir-breadcrumb"></div>
+          <div class="dir-entries" id="dir-entries"></div>
         </div>
         <div class="modal-row">
           <button class="btn-primary" onclick="connectLocal()">Connect</button>
@@ -646,11 +723,27 @@ header { position: relative; }
         <div class="settings-hint">Stored in localStorage. Set ANTHROPIC_API_KEY env var on the server to avoid entering it here.</div>
       </div>
       <div class="settings-field">
+        <label>OpenAI API Key</label>
+        <input id="settings-openai-apikey" type="password" placeholder="sk-..." />
+        <div class="settings-hint">Used for GPT-4o, o4-mini, etc. Set OPENAI_API_KEY env var on the server as an alternative.</div>
+      </div>
+      <div class="settings-field">
+        <label>Local LLM URL</label>
+        <input id="settings-lmstudio-url" type="text" placeholder="http://localhost:1234/v1"
+          onblur="_populateSettingsModels(this.value)" />
+        <div class="settings-hint">Base URL for a local LLM server (LM Studio, Ollama, etc.). Default: http://localhost:1234/v1</div>
+      </div>
+      <div class="settings-field">
         <label>Default Model</label>
         <select id="settings-model" style="width:100%;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--font);font-size:12px;outline:none;">
           <option value="claude-sonnet-5">claude-sonnet-5 (balanced)</option>
           <option value="claude-opus-5">claude-opus-5 (thorough)</option>
           <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option>
+          <option disabled>── OpenAI ──</option>
+          <option value="gpt-5.6">gpt-5.6 (balanced)</option>
+          <option value="gpt-5.6-terra">gpt-5.6-terra (efficient)</option>
+          <option value="gpt-5.6-luna">gpt-5.6-luna (fast)</option>
+          <option value="gpt-5.6-cyber">gpt-5.6-cyber (security)</option>
         </select>
       </div>
       <div class="settings-field">
@@ -688,8 +781,12 @@ const S = {
   chatStreaming: false,
   reports: [],
   apiKey: ls('tl_apikey') || '',
+  openaiApiKey: ls('tl_openai_apikey') || '',
   model: ls('tl_model') || 'claude-sonnet-5',
   continueOnError: ls('tl_continue') === 'true',
+  chatProvider: ls('tl_chat_provider') || 'claude',
+  lmstudioUrl: ls('tl_lmstudio_url') || 'http://localhost:1234/v1',
+  lmstudioModels: [],
 };
 
 function ls(k, v) {
@@ -986,22 +1083,47 @@ function setPipelineRunning(running) {
 function runPipeline() {
   if (!S.session) { openRepoModal(); return; }
   if (S.pipeline.length === 0) { toast('Add at least one agent', 'info'); return; }
-  const key = S.apiKey;
-  if (!key) { openSettings(); return; }
+
+  const selectedModel = S.model || 'claude-sonnet-5';
+  const CLAUDE_MODELS = ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'];
+  const isOpenAI = /^(gpt-|o[1-9])/.test(selectedModel);
+  const isClaude = CLAUDE_MODELS.includes(selectedModel);
+  const isLocal = !isClaude && !isOpenAI;
+
+  if (isClaude && !S.apiKey) {
+    toast('Add an Anthropic API key in ⚙ Settings to run the pipeline', 'info');
+    return;
+  }
+  if (isOpenAI && !S.openaiApiKey) {
+    toast('Add an OpenAI API key in ⚙ Settings to run the pipeline', 'info');
+    return;
+  }
 
   resetPipelineStatuses();
   clearTerminal();
   setTermStatus('STARTING');
 
-  wsSend({
+  const msg = {
     action: 'run_pipeline',
     sessionId: S.session.sessionId,
     agentIds: S.pipeline.map(a => a.agentId),
     target: document.getElementById('target-input').value.trim(),
-    apiKey: key,
-    model: document.getElementById('model-select').value,
+    model: selectedModel,
     continueOnError: S.continueOnError,
-  });
+  };
+
+  if (isOpenAI) {
+    msg.provider = 'openai';
+    msg.openaiApiKey = S.openaiApiKey;
+  } else if (isLocal) {
+    msg.provider = 'lmstudio';
+    msg.lmstudioUrl = S.lmstudioUrl;
+    msg.lmstudioModel = selectedModel;
+  } else {
+    msg.apiKey = S.apiKey;
+  }
+
+  wsSend(msg);
 }
 
 function cancelPipeline() {
@@ -1104,13 +1226,23 @@ function sendChat() {
   appendChatBubble('user', text);
   S.chatHistory.push({ role: 'user', content: text });
 
+  const isLocal = S.chatProvider === 'lmstudio';
+  const isOpenAI = S.chatProvider === 'openai';
+  const lmModel = document.getElementById('lmstudio-model-select')?.value || '';
+  const openaiModel = document.getElementById('openai-model-select')?.value || 'gpt-4o';
+  const claudeModel = document.getElementById('model-select')?.value || 'claude-sonnet-5';
+
   wsSend({
     action: 'chat',
     sessionId: S.session?.sessionId || '__no_session__',
     message: text,
     history: S.chatHistory.slice(-20),
     apiKey: S.apiKey,
-    model: document.getElementById('model-select').value,
+    openaiApiKey: S.openaiApiKey,
+    model: isOpenAI ? openaiModel : (isLocal ? lmModel : claudeModel),
+    provider: S.chatProvider,
+    lmstudioUrl: S.lmstudioUrl,
+    lmstudioModel: lmModel,
   });
 }
 
@@ -1167,6 +1299,7 @@ function openRepoModal() { document.getElementById('repo-overlay').classList.add
 function closeRepoModal() {
   document.getElementById('repo-overlay').classList.remove('open');
   document.getElementById('repo-status-msg').textContent = '';
+  closeDirPicker();
 }
 
 function setRepoTab(tab) {
@@ -1180,6 +1313,79 @@ function setRepoMsg(text, cls) {
   const el = document.getElementById('repo-status-msg');
   el.textContent = text;
   el.className = `modal-status ${cls || ''}`;
+}
+
+// ── Directory picker ────────────────────────────────────────────────────────
+
+let _pickerOpen = false;
+
+async function openDirPicker() {
+  const input = document.getElementById('local-path');
+  const startPath = input.value.trim() || '';
+  document.getElementById('dir-picker').style.display = '';
+  _pickerOpen = true;
+  await browseTo(startPath);
+}
+
+function closeDirPicker() {
+  document.getElementById('dir-picker').style.display = 'none';
+  _pickerOpen = false;
+}
+
+async function browseTo(p) {
+  const breadcrumb = document.getElementById('dir-breadcrumb');
+  const entries = document.getElementById('dir-entries');
+  breadcrumb.innerHTML = '<span style="color:var(--text3)">Loading…</span>';
+  entries.innerHTML = '';
+
+  try {
+    const r = await fetch(`/api/fs/browse?path=${encodeURIComponent(p)}`);
+    const data = await r.json();
+    if (data.error) {
+      breadcrumb.innerHTML = `<span style="color:var(--red)">${data.error}</span>`;
+      return;
+    }
+
+    // Update path input
+    document.getElementById('local-path').value = data.path;
+
+    // Breadcrumb
+    const parts = data.path.split('/').filter(Boolean);
+    const crumbs = [];
+    if (data.parent) {
+      crumbs.push(`<span class="dir-crumb dir-crumb-sep">/</span>`);
+    }
+    let built = '';
+    for (let i = 0; i < parts.length; i++) {
+      built += '/' + parts[i];
+      const captured = built;
+      crumbs.push(`<span class="dir-crumb" onclick="browseTo('${captured.replace(/'/g, "\\'")}')">${parts[i]}</span>`);
+      if (i < parts.length - 1) crumbs.push(`<span class="dir-crumb-sep">/</span>`);
+    }
+    breadcrumb.innerHTML = crumbs.join('');
+
+    // Entries
+    if (!data.entries.length) {
+      entries.innerHTML = '<div class="dir-empty">No subdirectories found</div>';
+      return;
+    }
+    entries.innerHTML = data.entries.map(e => {
+      const badge = e.isRepo ? `<span class="dir-repo-badge">git</span>` : '';
+      const icon = e.isRepo ? '📂' : '📁';
+      const target = (data.path + '/' + e.name).replace('//', '/');
+      return `<div class="dir-entry" onclick="browseTo('${target.replace(/'/g, "\\'")}')">
+        <span>${icon}</span>
+        <span class="dir-entry-name">${e.name}</span>
+        ${badge}
+      </div>`;
+    }).join('');
+  } catch (err) {
+    breadcrumb.innerHTML = `<span style="color:var(--red)">${err.message}</span>`;
+  }
+}
+
+function onPathInputChange() {
+  if (_pickerOpen) closeDirPicker();
 }
 
 async function connectLocal() {
@@ -1239,11 +1445,54 @@ function setSession(s) {
 
 // ── Settings Modal ─────────────────────────────────────────────────────────
 
-function openSettings() {
+async function openSettings() {
   document.getElementById('settings-apikey').value = S.apiKey;
-  document.getElementById('settings-model').value = S.model;
+  document.getElementById('settings-openai-apikey').value = S.openaiApiKey;
   document.getElementById('settings-continue').value = String(S.continueOnError);
+  const urlInput = document.getElementById('settings-lmstudio-url');
+  urlInput.value = S.lmstudioUrl;
   document.getElementById('settings-overlay').classList.add('open');
+
+  // Populate model dropdown: always include Claude models, then probe bionic
+  await _populateSettingsModels(S.lmstudioUrl);
+}
+
+async function _populateSettingsModels(bionicUrl) {
+  const sel = document.getElementById('settings-model');
+  const CLAUDE_OPTS = [
+    ['claude-sonnet-5',            'claude-sonnet-5 (balanced)'],
+    ['claude-opus-5',              'claude-opus-5 (thorough)'],
+    ['claude-haiku-4-5-20251001',  'claude-haiku-4-5 (fast)'],
+  ];
+
+  const opts = [...CLAUDE_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`)];
+
+  const OPENAI_OPTS = [
+    ['gpt-5.6',       'gpt-5.6 (balanced)'],
+    ['gpt-5.6-terra', 'gpt-5.6-terra (efficient)'],
+    ['gpt-5.6-luna',  'gpt-5.6-luna (fast)'],
+    ['gpt-5.6-cyber', 'gpt-5.6-cyber (security)'],
+  ];
+  opts.push('<option disabled>── OpenAI ──</option>');
+  OPENAI_OPTS.forEach(([v, l]) => opts.push(`<option value="${v}">${l}</option>`));
+
+  try {
+    const url = encodeURIComponent((bionicUrl || 'http://localhost:1234/v1').replace(/\/$/, ''));
+    const r = await fetch(`/api/lmstudio/models?baseUrl=${url}`);
+    if (r.ok) {
+      const data = await r.json();
+      const localModels = (data.models || []);
+      if (localModels.length) {
+        opts.push('<option disabled>── Local LLM ──</option>');
+        localModels.forEach(m => opts.push(`<option value="${m}">${m}</option>`));
+      }
+    }
+  } catch { /* bionic not reachable — Claude models only */ }
+
+  sel.innerHTML = opts.join('');
+  // Re-apply saved selection (may be a local model)
+  sel.value = S.model;
+  if (!sel.value) sel.selectedIndex = 0; // fallback if saved model no longer available
 }
 
 function closeSettings() {
@@ -1252,17 +1501,63 @@ function closeSettings() {
 
 function saveSettings() {
   const key = document.getElementById('settings-apikey').value.trim();
+  const openaiKey = document.getElementById('settings-openai-apikey').value.trim();
   const model = document.getElementById('settings-model').value;
   const cont = document.getElementById('settings-continue').value === 'true';
+  const lmUrl = document.getElementById('settings-lmstudio-url').value.trim() || 'http://localhost:1234/v1';
   S.apiKey = key;
+  S.openaiApiKey = openaiKey;
   S.model = model;
   S.continueOnError = cont;
+  S.lmstudioUrl = lmUrl;
   ls('tl_apikey', key);
+  ls('tl_openai_apikey', openaiKey);
   ls('tl_model', model);
   ls('tl_continue', cont);
+  ls('tl_lmstudio_url', lmUrl);
   document.getElementById('model-select').value = model;
   closeSettings();
   toast('Settings saved', 'success');
+}
+
+// ── Provider toggle ────────────────────────────────────────────────────────
+
+async function setProvider(p) {
+  S.chatProvider = p;
+  ls('tl_chat_provider', p);
+  document.getElementById('provider-claude').classList.toggle('active', p === 'claude');
+  document.getElementById('provider-openai').classList.toggle('active', p === 'openai');
+  document.getElementById('provider-lmstudio').classList.toggle('active', p === 'lmstudio');
+  document.getElementById('model-claude-row').style.display = p === 'claude' ? 'block' : 'none';
+  document.getElementById('model-openai-row').style.display = p === 'openai' ? 'block' : 'none';
+  document.getElementById('model-lmstudio-row').style.display = p === 'lmstudio' ? 'block' : 'none';
+
+  if (p === 'lmstudio') {
+    await refreshLmStudioModels();
+  }
+}
+
+async function refreshLmStudioModels() {
+  const sel = document.getElementById('lmstudio-model-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const url = encodeURIComponent(S.lmstudioUrl);
+    const r = await fetch(`/api/lmstudio/models?baseUrl=${url}`);
+    const data = await r.json();
+    if (data.error) {
+      sel.innerHTML = `<option value="">⚠ ${data.error.slice(0, 60)}</option>`;
+      return;
+    }
+    const models = data.models || [];
+    if (!models.length) {
+      sel.innerHTML = '<option value="">No models loaded in local LLM server</option>';
+      return;
+    }
+    sel.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+    S.lmstudioModels = models;
+  } catch (err) {
+    sel.innerHTML = `<option value="">⚠ ${err.message}</option>`;
+  }
 }
 
 // ── Toast ──────────────────────────────────────────────────────────────────
@@ -1299,11 +1594,14 @@ renderReports();
 // Restore model select
 document.getElementById('model-select').value = S.model;
 
-// Auto-open settings if no API key
-if (!S.apiKey && !window._settingsOpened) {
+// Restore provider
+setProvider(S.chatProvider);
+
+// Auto-open settings if no API key and using Claude
+if (!S.apiKey && S.chatProvider === 'claude' && !window._settingsOpened) {
   window._settingsOpened = true;
   setTimeout(() => {
-    toast('Enter your Anthropic API key in Settings to get started', 'info');
+    toast('Enter your Anthropic API key in Settings, or switch to Local LLM in the chat panel', 'info');
   }, 1500);
 }
 </script>

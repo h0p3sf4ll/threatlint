@@ -6,6 +6,7 @@ TTTTT H   H RRRR  EEEEE  AAA  TTTTT L     IIIII N   N TTTTT
   T   H   H R  RR EEEEE A   A   T   LLLLL IIIII N   N   T
 ```
 
+![Microsoft Teams](https://img.shields.io/badge/Microsoft%20Teams-supported-6264A7?style=flat-square)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-supported-D97706?style=flat-square)
 ![GitHub Copilot](https://img.shields.io/badge/GitHub%20Copilot-supported-1F883D?style=flat-square)
 ![OpenAI](https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square)
@@ -14,7 +15,7 @@ TTTTT H   H RRRR  EEEEE  AAA  TTTTT L     IIIII N   N TTTTT
 
 # threatlint
 
-`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), GitHub Copilot Chat (via `.github/` customizations), and local models via LM Studio — with no API key required. Reports are saved as Word documents in the repository being analyzed.
+`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), GitHub Copilot Chat (via `.github/` customizations), Microsoft Teams (via the Claude API Teams bot), and local models via LM Studio — with no API key required. Reports are saved as Word documents in the repository being analyzed.
 
 Analysis is grounded in the inspected source and local configuration. Assumptions and unknowns are labeled explicitly rather than hidden behind generic findings.
 
@@ -28,6 +29,7 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 - [Quick Start With Local Models (LM Studio)](#quick-start-with-local-models-lm-studio)
 - [Quick Start With Codex / AGENTS.md Tools](#quick-start-with-codex--agentsmd-tools)
 - [Quick Start With GitHub Copilot Chat](#quick-start-with-github-copilot-chat)
+- [Quick Start With Microsoft Teams](#quick-start-with-microsoft-teams)
 - [Installing on Another Repository](#installing-on-another-repository)
   - [Claude Code — Global](#claude-code--global-no-per-repo-import-required)
   - [Claude Code — Per-Repository](#claude-code--per-repository-team-use)
@@ -35,6 +37,7 @@ Analysis is grounded in the inspected source and local configuration. Assumption
   - [Codex / AGENTS.md — Global](#codex--agentsmd--global-no-per-repo-import-required)
   - [Codex / AGENTS.md — Per-Repository](#codex--agentsmd--per-repository-team-use)
   - [GitHub Copilot Chat](#installing-copilot-chat-agents-in-another-repository)
+  - [Microsoft Teams](#installing-the-teams-bot)
   - [Verifying Any Installation](#verifying-any-installation)
 - [Word Document Output](#word-document-output)
 - [Analysis Posture](#analysis-posture)
@@ -54,7 +57,7 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 
 | File | Use it for |
 | --- | --- |
-| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any tool that reads `AGENTS.md`. Covers all 8 security agents with routing, protocols, and report formats. |
+| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any tool that reads `AGENTS.md`. Covers all 14 security agents with routing, protocols, and report formats. |
 | [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent — evidence-based threat modeling with autonomous repository discovery, crown jewel analysis, attack chains, and MITRE ATT&CK/DREAD scoring. |
 | [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent — security review of a diff or pull request with merge recommendation. |
 | [`.claude/agents/appsec-dependency-auditor.md`](.claude/agents/appsec-dependency-auditor.md) | Claude Code subagent — supply chain security: CVEs, dependency confusion, typosquatting, malicious install hooks, abandoned packages, lockfile integrity. |
@@ -63,7 +66,15 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 | [`.claude/agents/appsec-cicd-auditor.md`](.claude/agents/appsec-cicd-auditor.md) | Claude Code subagent — CI/CD security: script injection, workflow permissions, action pinning, fork secret exposure, artifact integrity. |
 | [`.claude/agents/appsec-api-security-reviewer.md`](.claude/agents/appsec-api-security-reviewer.md) | Claude Code subagent — OWASP API Security Top 10 (2023): BOLA, broken auth, mass assignment, SSRF, resource consumption, and more. |
 | [`.claude/agents/appsec-auth-reviewer.md`](.claude/agents/appsec-auth-reviewer.md) | Claude Code subagent — auth/authz deep-dive: OAuth 2.0/OIDC, JWT, sessions, CSRF, MFA, RBAC, multi-tenancy, password hashing, brute-force protection. |
-| [`docs/agents.md`](docs/agents.md) | Comprehensive per-agent documentation: protocols, coverage areas, frameworks applied, and complete report format for all 8 agents. |
+| [`.claude/agents/appsec-fp-reviewer.md`](.claude/agents/appsec-fp-reviewer.md) | Claude Code subagent — false positive triage and Semgrep rule tuning. Accepts SARIF, Semgrep JSON, or pasted findings. |
+| [`.claude/agents/appsec-compliance-checker.md`](.claude/agents/appsec-compliance-checker.md) | Claude Code subagent — maps findings to OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, CIS Controls v8. |
+| [`.claude/agents/appsec-attack-tree.md`](.claude/agents/appsec-attack-tree.md) | Claude Code subagent — formal AND/OR attack tree with Mermaid rendering, bypass analysis per defense node, and leaf node ranking. |
+| [`.claude/agents/appsec-red-team.md`](.claude/agents/appsec-red-team.md) | Claude Code subagent — 5 adversarial scenarios with ATT&CK-mapped kill chains, IoCs, detection gaps, and purple-team test cases. |
+| [`.claude/agents/appsec-threat-delta.md`](.claude/agents/appsec-threat-delta.md) | Claude Code subagent — compares a prior report to the current codebase: RESOLVED / PARTIALLY FIXED / STILL PRESENT / REGRESSED / NEW. |
+| [`.claude/agents/appsec-verify-fix.md`](.claude/agents/appsec-verify-fix.md) | Claude Code subagent — verifies a specific finding: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED. |
+| [`web/`](web/) | Web UI with streaming terminal, chat panel, and multi-agent pipeline runner. Supports Claude, OpenAI, and local LLMs via LM Studio. |
+| [`teams-app/`](teams-app/) | Microsoft Teams bot (Node.js + Bot Framework) that routes security commands to Claude AI agents via the Anthropic API. |
+| [`docs/agents.md`](docs/agents.md) | Comprehensive per-agent documentation: protocols, coverage areas, frameworks applied, and complete report format for all 14 agents. |
 
 ### Slash Commands
 
@@ -99,7 +110,7 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 
 | File | Purpose |
 | --- | --- |
-| [`.github/agents/`](.github/agents/) | 8 Copilot Chat agents — one per security domain |
+| [`.github/agents/`](.github/agents/) | 14 Copilot Chat agents — one per security domain |
 | [`.github/workflows/appsec-pr-review.yml`](.github/workflows/appsec-pr-review.yml) | Runs on every non-draft PR: security review + PR comment + SARIF upload + issues |
 | [`.github/workflows/appsec-threat-model.yml`](.github/workflows/appsec-threat-model.yml) | Manual: threat model + SARIF upload + issues |
 | [`.github/workflows/appsec-scheduled.yml`](.github/workflows/appsec-scheduled.yml) | Weekly + on IaC/Dockerfile changes: automated threat model + issues |
@@ -227,7 +238,7 @@ The agent reads `AGENTS.md`, performs the analysis, and saves the report as a Wo
 
 ## Quick Start With GitHub Copilot Chat
 
-The `.github/agents/` files register nine custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. All are available as soon as the repository is open in a trusted VS Code workspace.
+The `.github/agents/` files register fourteen custom agents in Copilot Chat. The `.github/prompts/` files register two slash commands. All are available as soon as the repository is open in a trusted VS Code workspace.
 
 ### Agents
 
@@ -242,6 +253,11 @@ Open Copilot Chat and select an agent from the agent picker (the `@` icon or the
 - **AppSec API Security Reviewer** — review REST, GraphQL, and gRPC APIs against OWASP API Top 10.
 - **AppSec Auth Reviewer** — deep-dive review of authentication and authorization implementations.
 - **AppSec False Positive Reviewer** — triage scanner findings and generate Semgrep rule tuning.
+- **AppSec Compliance Checker** — map findings to ASVS, PCI-DSS, HIPAA, SOC 2, ISO 27001, NIST CSF, CIS.
+- **AppSec Attack Tree** — formal AND/OR attack tree with bypass analysis and leaf node ranking.
+- **AppSec Red Team** — 5 adversarial scenarios with ATT&CK kill chains and purple-team test cases.
+- **AppSec Threat Delta** — compare a prior report to current state: RESOLVED/REGRESSED/NEW/STILL PRESENT.
+- **AppSec Verify Fix** — verify a specific finding: REMEDIATED/PARTIALLY FIXED/STILL PRESENT/REGRESSED.
 
 Then describe what to analyze:
 
@@ -265,9 +281,71 @@ Type `/` in Copilot Chat to open the prompt picker:
 
 ---
 
+## Quick Start With Microsoft Teams
+
+The `teams-app/` directory contains a Microsoft Teams bot that routes security analysis commands to Claude AI agents using the Anthropic API.
+
+### Prerequisites
+
+- Microsoft Azure account with a Bot Framework registration
+- Node.js 18+
+- An Anthropic API key (`ANTHROPIC_API_KEY`)
+
+### Setup
+
+**Step 1 — Register a bot in Azure**
+
+1. Go to [Azure Portal](https://portal.azure.com) → Create a resource → "Azure Bot".
+2. Set the messaging endpoint to `https://<your-domain>/api/messages`.
+3. Note the **App ID** and generate a **client secret** (App Password).
+
+**Step 2 — Deploy the bot**
+
+```bash
+cd /path/to/threatlint/teams-app
+npm install
+
+export ANTHROPIC_API_KEY=sk-ant-...
+export BOT_APP_ID=<azure-app-id>
+export BOT_APP_PASSWORD=<azure-app-password>
+
+node bot.js
+```
+
+**Step 3 — Package and sideload into Teams**
+
+1. Edit `teams-app/manifest.json` and replace `{{BOT_APP_ID}}` with your Azure App ID.
+2. Add 192×192 `icon-color.png` and 32×32 `icon-outline.png` to `teams-app/`.
+3. Zip the three files: `manifest.json`, `icon-color.png`, `icon-outline.png`.
+4. In Microsoft Teams → Apps → Manage your apps → Upload an app → Upload the zip.
+
+### Usage
+
+Mention the bot or send commands directly in any Teams channel where it is installed:
+
+```text
+@threatlint /threat-model
+@threatlint /security-review src/auth
+@threatlint /compliance-check
+@threatlint /red-team
+@threatlint /help
+```
+
+All 14 agents are available. The bot uses Claude AI (configurable via `CLAUDE_MODEL`) and returns the full analysis report directly in the Teams conversation. Large reports are automatically split to stay within Teams' message size limit.
+
+### Claude Model
+
+By default the bot uses `claude-sonnet-5`. Override with:
+
+```bash
+export CLAUDE_MODEL=claude-opus-5
+```
+
+---
+
 ## Installing on Another Repository
 
-There are five installation paths depending on tool, scope, and whether you want cloud or local models. **Agents alone are not sufficient for Word document output in Claude Code** — the commands wire up the conversion pipeline.
+There are six installation paths depending on tool, scope, and whether you want cloud or local models. **Agents alone are not sufficient for Word document output in Claude Code** — the commands wire up the conversion pipeline.
 
 ---
 
@@ -315,6 +393,12 @@ cat >> CLAUDE.md << 'EOF'
 - Delegate CI/CD pipeline audits to `appsec-cicd-auditor`.
 - Delegate API security reviews to `appsec-api-security-reviewer`.
 - Delegate authentication and authorization reviews to `appsec-auth-reviewer`.
+- Delegate false positive triage and Semgrep rule tuning to `appsec-fp-reviewer`.
+- Delegate compliance mapping (ASVS, PCI-DSS, HIPAA, SOC 2, ISO 27001, NIST CSF, CIS) to `appsec-compliance-checker`.
+- Delegate formal attack tree construction to `appsec-attack-tree`.
+- Delegate adversarial red-team scenario generation to `appsec-red-team`.
+- Delegate comparison of a prior report to current state to `appsec-threat-delta`.
+- Delegate verification of whether a specific finding was remediated to `appsec-verify-fix`.
 - When no target is given, use `appsec-threat-modeler` — it will discover the repository automatically.
 EOF
 
@@ -443,13 +527,35 @@ There is no global equivalent for Copilot Chat agents — the `.github/` files m
 
 ---
 
+### Installing the Teams Bot
+
+The Teams bot runs as a service alongside your existing infrastructure. Deploy it once and connect it to your Microsoft Teams workspace.
+
+```bash
+cd /path/to/threatlint/teams-app
+npm install
+
+# Edit manifest.json: replace {{BOT_APP_ID}} with your Azure App ID
+# Add icon-color.png (192x192) and icon-outline.png (32x32)
+
+# Set required environment variables (in your hosting environment)
+ANTHROPIC_API_KEY=sk-ant-...
+BOT_APP_ID=<azure-app-id>
+BOT_APP_PASSWORD=<azure-app-password>
+```
+
+See [Quick Start With Microsoft Teams](#quick-start-with-microsoft-teams) for the full registration and deployment steps.
+
+---
+
 ### Verifying Any Installation
 
-1. **Claude Code (cloud)**: type `@` — all 8 agents should appear. Type `/` — all slash commands should appear in the picker.
+1. **Claude Code (cloud)**: type `@` — all 14 agents should appear. Type `/` — all slash commands should appear in the picker.
 2. **Claude Code (local)**: type `/` — `threat-model-local`, `security-review-local`, `dependency-audit-local`, `secrets-scan-local`, `iac-review-local`, `cicd-audit-local`, `api-security-review-local`, `auth-review-local`, `attack-tree-local`, `red-team-local` should appear. LM Studio must be running with a model loaded.
 3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask "threat model this repository" — it should begin discovery immediately.
-4. **GitHub Copilot Chat**: type `@` — 8 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
-5. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx` should appear in the current directory.
+4. **GitHub Copilot Chat**: type `@` — 14 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
+5. **Microsoft Teams**: send `@threatlint /help` — the bot should respond with the list of 14 available commands.
+6. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx` should appear in the current directory.
 
 ---
 
@@ -559,7 +665,7 @@ The report ends with **Suggested Focused Follow-Ups**: three to five ready-to-se
 
 ## Agents
 
-threatlint includes 8 specialized security agents. Each is read-only and produces a structured two-tier report saved as a Word document. For full per-agent documentation, see [docs/agents.md](docs/agents.md).
+threatlint includes 14 specialized security agents. Each is read-only and produces a structured two-tier report saved as a Word document. For full per-agent documentation, see [docs/agents.md](docs/agents.md).
 
 | Agent | Finding Prefix | Coverage |
 | --- | --- | --- |
@@ -571,8 +677,14 @@ threatlint includes 8 specialized security agents. Each is read-only and produce
 | `appsec-cicd-auditor` | `CI-` | CI/CD pipeline: script injection, workflow permissions, action pinning, fork secret exposure |
 | `appsec-api-security-reviewer` | `AR-` | OWASP API Security Top 10 (2023): BOLA, broken auth, mass assignment, SSRF, resource consumption |
 | `appsec-auth-reviewer` | `AU-` | Auth/authz deep-dive: OAuth 2.0/OIDC, JWT, sessions, CSRF, MFA, RBAC, multi-tenancy, brute-force |
+| `appsec-fp-reviewer` | `FP-` | False positive triage and Semgrep rule tuning; accepts SARIF, Semgrep JSON, or pasted findings |
+| `appsec-compliance-checker` | `CC-` | Compliance mapping: OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2, ISO 27001:2022, NIST CSF 2.0, CIS v8 |
+| `appsec-attack-tree` | `AT-` | Formal AND/OR attack tree with Mermaid rendering, defense bypass analysis, leaf node ranking |
+| `appsec-red-team` | `RT-` | 5 adversarial scenarios with ATT&CK kill chains, IoCs, detection gaps, purple-team test cases |
+| `appsec-threat-delta` | `TD-` | Prior report vs current state: RESOLVED / PARTIALLY FIXED / STILL PRESENT / REGRESSED / NEW |
+| `appsec-verify-fix` | `VF-` | Single-finding verification: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED |
 
-All agents are available in Claude Code (cloud), LM Studio (local), GitHub Copilot Chat, and AGENTS.md-compatible tools.
+All agents are available in Claude Code (cloud), OpenAI, LM Studio (local), GitHub Copilot Chat, Microsoft Teams, and AGENTS.md-compatible tools.
 
 ---
 
@@ -591,6 +703,11 @@ All agents do not alter source files, install dependencies, stage changes, or cr
 | API security reviewer | Same as code reviewer |
 | Auth reviewer | Same as code reviewer |
 | False positive reviewer | Same as code reviewer |
+| Compliance checker | Same as code reviewer |
+| Attack tree | Same as code reviewer |
+| Red team | Same as code reviewer |
+| Threat delta | Same as code reviewer |
+| Verify fix | Same as code reviewer |
 
 `Write` and `Edit` are explicitly denied for Claude Code agents. For Codex, the same constraint is stated directly in `AGENTS.md`.
 
@@ -667,7 +784,7 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 ```text
 .
-├── AGENTS.md                                         ← Codex / AGENTS.md-compatible tools (all 8 agents)
+├── AGENTS.md                                         ← Codex / AGENTS.md-compatible tools (all 14 agents)
 ├── CLAUDE.md                                         ← Claude Code routing for this project
 ├── LICENSE
 ├── .claude
@@ -679,7 +796,13 @@ Keep each customization focused. Add instructions that improve scope or analysis
 │   │   ├── appsec-iac-reviewer.md                   ← IaC security agent
 │   │   ├── appsec-cicd-auditor.md                   ← CI/CD audit agent
 │   │   ├── appsec-api-security-reviewer.md          ← OWASP API Security agent
-│   │   └── appsec-auth-reviewer.md                  ← Auth/authz deep-dive agent
+│   │   ├── appsec-auth-reviewer.md                  ← Auth/authz deep-dive agent
+│   │   ├── appsec-fp-reviewer.md                    ← False positive triage agent
+│   │   ├── appsec-compliance-checker.md             ← Compliance mapping agent
+│   │   ├── appsec-attack-tree.md                    ← AND/OR attack tree agent
+│   │   ├── appsec-red-team.md                       ← Red team scenario agent
+│   │   ├── appsec-threat-delta.md                   ← Report delta comparison agent
+│   │   └── appsec-verify-fix.md                     ← Fix verification agent
 │   ├── commands
 │   │   ├── threat-model.md                          ← /threat-model (cloud)
 │   │   ├── threat-model-deep.md                     ← /threat-model-deep (cloud)
@@ -719,7 +842,13 @@ Keep each customization focused. Add instructions that improve scope or analysis
 │   │   ├── appsec-iac-reviewer.agent.md             ← Copilot Chat IaC review agent
 │   │   ├── appsec-cicd-auditor.agent.md             ← Copilot Chat CI/CD audit agent
 │   │   ├── appsec-api-security-reviewer.agent.md   ← Copilot Chat API security agent
-│   │   └── appsec-auth-reviewer.agent.md            ← Copilot Chat auth review agent
+│   │   ├── appsec-auth-reviewer.agent.md            ← Copilot Chat auth review agent
+│   │   ├── appsec-fp-reviewer.agent.md              ← Copilot Chat false positive reviewer
+│   │   ├── appsec-compliance-checker.agent.md       ← Copilot Chat compliance checker
+│   │   ├── appsec-attack-tree.agent.md              ← Copilot Chat attack tree agent
+│   │   ├── appsec-red-team.agent.md                 ← Copilot Chat red team agent
+│   │   ├── appsec-threat-delta.agent.md             ← Copilot Chat threat delta agent
+│   │   └── appsec-verify-fix.agent.md               ← Copilot Chat fix verifier
 │   ├── prompts
 │   │   ├── discover-application-threat-model.prompt.md
 │   │   └── threat-model-report.prompt.md
@@ -734,8 +863,16 @@ Keep each customization focused. Add instructions that improve scope or analysis
 │       ├── appsec-scheduled.yml                     ← Weekly automated threat model
 │       ├── appsec-dependency-audit.yml              ← Manifest-triggered dependency audit
 │       └── appsec-iac-review.yml                    ← IaC-triggered infrastructure review
+├── teams-app
+│   ├── bot.js                                       ← Teams bot (Node.js + Bot Framework)
+│   ├── manifest.json                                ← Teams app manifest
+│   └── package.json                                 ← Bot dependencies
+├── web
+│   ├── server.js                                    ← Web UI backend (Express + WebSocket)
+│   ├── public/index.html                            ← Web UI frontend
+│   └── tests/                                       ← Node.js test suite
 ├── docs
-│   ├── agents.md                                    ← Per-agent documentation for all 8 agents
+│   ├── agents.md                                    ← Per-agent documentation for all 14 agents
 │   └── github-actions.md                            ← Provider setup and Actions troubleshooting
 └── README.md
 

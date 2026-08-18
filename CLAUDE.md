@@ -13,6 +13,11 @@ This project provides read-only application-security subagents for Claude Code.
 - Delegate API security reviews (REST, GraphQL, gRPC, WebSocket) to `appsec-api-security-reviewer`.
 - Delegate authentication and authorization reviews (OAuth, JWT, RBAC, session management, MFA) to `appsec-auth-reviewer`.
 - Delegate false positive triage and Semgrep rule tuning to `appsec-fp-reviewer`.
+- Delegate compliance mapping (OWASP ASVS, PCI-DSS v4, HIPAA, SOC 2, ISO 27001, NIST CSF, CIS Controls) to `appsec-compliance-checker`.
+- Delegate formal attack tree construction with bypass analysis and leaf node ranking to `appsec-attack-tree`.
+- Delegate adversarial red-team scenario generation with kill chains and purple-team test cases to `appsec-red-team`.
+- Delegate comparison of a prior security report to the current repository state (New/Resolved/Regressed/Unchanged) to `appsec-threat-delta`.
+- Delegate verification of whether a specific finding has been remediated to `appsec-verify-fix`.
 - When a threat-modeling request has no target or application context, use `appsec-threat-modeler` anyway. It must autonomously discover the repository, select an evidence-supported initial scope, and explain that choice.
 
 ## Boundaries
