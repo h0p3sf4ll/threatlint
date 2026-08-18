@@ -1,0 +1,170 @@
+# threatlint/azure-pipelines/pr-review.yml
+# Reusable template: security review of a pull request diff.
+#
+# Usage:
+#   - template: azure-pipelines/pr-review.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: CRITICAL
+  - name: minIssueSeverity
+    type: string
+    default: HIGH
+  - name: createWorkItems
+    type: boolean
+    default: false
+
+jobs:
+  - job: AppsecPRReview
+    displayName: AppSec PR Security Review
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 25
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-pr-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      # ─── Claude (anthropics/claude-code-action not available in ADO;
+      #     use Anthropic API directly via Python) ─────────────────────────
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess, sys
+          import anthropic
+
+          base = os.environ.get('SYSTEM_PULLREQUEST_SOURCECOMMITID', 'HEAD~1')
+          head = os.environ.get('BUILD_SOURCEVERSION', 'HEAD')
+
+          diff = subprocess.run(
+              ['git', 'diff', f'{base}..{head}'],
+              capture_output=True, text=True
+          ).stdout[:80000]
+
+          changed = subprocess.run(
+              ['git', 'diff', '--name-only', f'{base}..{head}'],
+              capture_output=True, text=True
+          ).stdout.strip()
+
+          prompt = f"""## Changed Files\n{changed}\n\n## Diff\n```diff\n{diff}\n```\n\n
+          Produce a two-tier Markdown security code review (TIER 1 executive summary with
+          Change Risk Level CRITICAL/HIGH/MEDIUM/LOW/CLEAN, Finding Summary table,
+          Top Issues, Merge Recommendation BLOCK/MERGE WITH ACTION/MERGE;
+          TIER 2 technical findings with [CR-NNN] finding blocks each including
+          Severity, Confidence, OWASP, CWE, Evidence, Exploit Path, Impact, Mitigation
+          with before/after code snippets, Test Case).
+          Only report security regressions and missing controls."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model=os.environ.get('APPSEC_MODEL', 'claude-sonnet-5') if '${{ parameters.model }}' == '' else '${{ parameters.model }}',
+              max_tokens=8192,
+              system='You are an expert application security engineer. Apply aggressive posture.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run PR security review (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      # ─── OpenAI / GitHub Models ──────────────────────────────────────────
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          BASE=$(git merge-base HEAD origin/$(System.PullRequest.TargetBranch) 2>/dev/null || echo "HEAD~1")
+          python3 .github/scripts/appsec_api.py \
+            --mode pr-review \
+            --provider "$PROVIDER" \
+            --base "$BASE" \
+            --head "$(Build.SourceVersion)" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}"
+        displayName: Run PR security review (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      # ─── Upload report artifact ──────────────────────────────────────────
+      - publish: $(REPORT_FILE)
+        artifact: appsec-pr-report-$(Build.BuildId)
+        displayName: Publish PR security review report
+        condition: always()
+
+      # ─── SARIF upload to Azure DevOps Advanced Security ──────────────────
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-pr.sarif" \
+              --tool "appsec-code-reviewer" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-pr.sarif
+          artifactName: CodeAnalysisLogs
+
+      # ─── Gate ────────────────────────────────────────────────────────────
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then
+            echo "No report file — skipping gate."
+            exit 0
+          fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" \
+            --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
+
+      # ─── Create ADO work items (optional) ────────────────────────────────
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))

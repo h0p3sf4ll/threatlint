@@ -1,0 +1,164 @@
+# threatlint/azure-pipelines/red-team.yml
+# Reusable template: adversarial red-team scenario generation with kill chains.
+# Intended for scheduled or manual runs — not gating PRs.
+#
+# Usage:
+#   - template: azure-pipelines/red-team.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+#       target: 'authentication service'  # optional focus area
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: ''  # empty = no gate (red-team is advisory by default)
+  - name: minIssueSeverity
+    type: string
+    default: CRITICAL
+  - name: createWorkItems
+    type: boolean
+    default: false
+  - name: target
+    type: string
+    default: ''
+
+jobs:
+  - job: AppsecRedTeam
+    displayName: AppSec Red Team
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 30
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-redteam-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess
+          import anthropic
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          context = f"## Repository files\n```\n{files}\n```"
+          for fname in ['README.md', 'package.json', 'requirements.txt', 'go.mod',
+                        'docker-compose.yml', 'docker-compose.yaml']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      context += f"\n\n## {fname}\n```\n{f.read(4000)}\n```"
+
+          target = '${{ parameters.target }}'
+          focus = f"Focus specifically on: {target}" if target else ''
+          prompt = f"""## Repository Context\n{context}\n\n{focus}
+          You are performing an adversarial red-team analysis of this repository. Generate 5
+          distinct attack scenarios grounded in evidence from the codebase. Produce a two-tier
+          Markdown red-team report: TIER 1 with Overall Risk Level, Scenario Index table (ID,
+          Scenario Name, Attacker Profile, Entry Point, Business Impact), Top Actionable
+          Recommendations; TIER 2 with per-scenario [RT-NNN] blocks containing Scenario Name,
+          Attacker Profile (nation-state/criminal/insider/opportunist), Assumed Access Level,
+          Motivation, Full Kill Chain (Initial Access→Execution→Persistence→Privilege Escalation→
+          Defense Evasion→Credential Access→Discovery→Lateral Movement→Exfiltration/Impact),
+          Indicators of Compromise, Purple-Team Test Cases (detection query + response playbook),
+          Remediation Priority. Do not modify any repository source files."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert red-team security engineer. Think adversarially.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run red team (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          python3 .github/scripts/appsec_api.py \
+            --mode red-team \
+            --provider "$PROVIDER" \
+            --target "${{ parameters.target }}" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}"
+        displayName: Run red team (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      - publish: $(REPORT_FILE)
+        artifact: appsec-redteam-report-$(Build.BuildId)
+        displayName: Publish red team report
+        condition: always()
+
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-redteam.sarif" \
+              --tool "appsec-red-team" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-redteam.sarif
+          artifactName: CodeAnalysisLogs
+
+      - script: |
+          if [ -z "$(GATE_SEVERITY)" ] || [ ! -f "$(REPORT_FILE)" ]; then
+            echo "Gate disabled or no report — skipping."; exit 0
+          fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: always()
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))

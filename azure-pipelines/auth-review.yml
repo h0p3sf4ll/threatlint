@@ -1,0 +1,151 @@
+# threatlint/azure-pipelines/auth-review.yml
+# Reusable template: deep-dive auth/authz security review.
+#
+# Usage:
+#   - template: azure-pipelines/auth-review.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: CRITICAL
+  - name: minIssueSeverity
+    type: string
+    default: HIGH
+  - name: createWorkItems
+    type: boolean
+    default: false
+
+jobs:
+  - job: AppsecAuthReview
+    displayName: AppSec Auth Review
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 20
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-auth-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess
+          import anthropic
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          context = f"## Repository files\n```\n{files}\n```"
+          for fname in ['README.md', 'package.json', 'requirements.txt']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      context += f"\n\n## {fname}\n```\n{f.read(4000)}\n```"
+
+          prompt = f"""## Repository Context\n{context}\n\n
+          You are performing an authentication and authorization security review of this
+          repository. Produce a two-tier Markdown auth review: TIER 1 with Auth Security Level,
+          Finding Summary table, Top Issues (Critical/High); TIER 2 with Auth Coverage Matrix
+          (OAuth/JWT/Session/CSRF/MFA/RBAC/Password/Brute-force/Multi-tenancy), per-finding
+          [AU-NNN] blocks (Auth Category, CWE, File location, Evidence with code quote, Exploit
+          Path, Impact, Mitigation with corrected code snippet and library reference), Privilege
+          Escalation Paths table.
+          Do not modify any repository source files."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert auth security engineer. Apply aggressive posture.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run auth review (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          python3 .github/scripts/appsec_api.py \
+            --mode auth-review \
+            --provider "$PROVIDER" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}"
+        displayName: Run auth review (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      - publish: $(REPORT_FILE)
+        artifact: appsec-auth-report-$(Build.BuildId)
+        displayName: Publish auth review report
+        condition: always()
+
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-auth.sarif" \
+              --tool "appsec-auth-reviewer" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-auth.sarif
+          artifactName: CodeAnalysisLogs
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then echo "No report — skipping gate."; exit 0; fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))

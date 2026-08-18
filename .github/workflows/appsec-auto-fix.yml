@@ -1,0 +1,176 @@
+name: AppSec Auto-Fix
+
+# Automatically implements security remediations from a prior scan report.
+# Opens a pull request with the applied fixes for human review and merge.
+#
+# Trigger options:
+#   1. workflow_dispatch: provide a report artifact name (or finding IDs) to fix
+#   2. issue_comment: comment "/appsec-fix <finding-id>" on a security issue to fix it
+#
+# IMPORTANT: This workflow uses Write/Edit tools — it WILL modify repository files.
+# All changes are committed to a new branch and opened as a PR for review.
+# No direct commits to main/master.
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_artifact:
+        description: 'Artifact name from a prior scan run (e.g. "appsec-pr-review-42-12345"). Leave blank to let the agent find the most recent scan report.'
+        required: false
+        default: ''
+      finding_ids:
+        description: 'Comma-separated finding IDs to fix (e.g. "CR-001,CR-003"). Leave blank to fix all CRITICAL and HIGH findings.'
+        required: false
+        default: ''
+      base_branch:
+        description: 'Branch to base the fix PR on (default: main)'
+        required: false
+        default: 'main'
+
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  auto-fix:
+    # For issue_comment trigger: only run when comment is "/appsec-fix" and commenter has write access
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '/appsec-fix') &&
+       github.event.issue.pull_request == null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BASE_BRANCH: ${{ github.event.inputs.base_branch || 'main' }}
+      FINDING_IDS: ${{ github.event.inputs.finding_ids || '' }}
+      REPORT_ARTIFACT: ${{ github.event.inputs.report_artifact || '' }}
+      # Fix branch name includes run ID to avoid collisions
+      FIX_BRANCH: appsec/auto-fix-${{ github.run_id }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+
+      - name: Create fix branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$FIX_BRANCH"
+
+      # ─── Download most-recent scan report artifact (if specified) ─────────
+      - name: Download scan report artifact
+        if: env.REPORT_ARTIFACT != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPORT_ARTIFACT }}
+          path: /tmp/appsec-reports/
+        continue-on-error: true
+
+      # ─── Parse finding IDs from issue comment (issue_comment trigger) ─────
+      - name: Extract finding IDs from comment
+        if: github.event_name == 'issue_comment'
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          IDS=$(echo "$COMMENT" | grep -oP '/appsec-fix\s+\K[\w,\-]+' | head -1)
+          echo "FINDING_IDS=$IDS" >> $GITHUB_ENV
+          echo "Extracted finding IDs from comment: $IDS"
+
+      # ─── Claude: implement fixes ───────────────────────────────────────────
+      - name: Implement security fixes (Claude)
+        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are implementing security remediations for this repository.
+
+            Context:
+            - Working branch: ${{ env.FIX_BRANCH }}
+            - Report artifact directory: /tmp/appsec-reports/ (may be empty if not downloaded)
+            - Finding IDs to fix: ${{ env.FINDING_IDS || 'all CRITICAL and HIGH findings' }}
+
+            Instructions:
+            1. If /tmp/appsec-reports/ contains a report, read it to extract findings and
+               their Remediation Guidance sections. Otherwise, run a quick security scan
+               to discover the most critical issues.
+            2. For each target finding (filtered by FINDING_IDS if set, otherwise CRITICAL+HIGH
+               CONFIRMED/PLAUSIBLE findings):
+               a. Read the affected source files at the cited file:line locations
+               b. Implement the Remediation Guidance exactly as specified
+               c. Do NOT break existing functionality — make the minimum change that fixes the issue
+               d. If a fix is ambiguous or would require major refactoring, skip it and note why
+            3. After implementing all fixes, run any available test suite to verify nothing breaks:
+               - npm test, pytest, go test ./..., cargo test — whichever applies
+            4. Stage ALL modified files with: git add -A
+            5. Commit with a clear message listing the finding IDs fixed:
+               git commit -m "fix(security): remediate [list of IDs]
+
+               Auto-implemented by appsec-auto-fix workflow.
+               Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            6. Report which findings were fixed, which were skipped (with reason), and any
+               test failures observed.
+
+            IMPORTANT:
+            - Only modify source files needed for the fixes
+            - Do NOT modify .github/ workflow files or agent definitions
+            - Do NOT push to main/master — work on the current branch only
+            - If a fix would introduce a new security issue, skip it and explain why
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Edit,Write,Bash,Grep,Glob"
+
+      # ─── Push branch and open PR ───────────────────────────────────────────
+      - name: Push fix branch
+        run: |
+          git push origin "$FIX_BRANCH"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FINDING_LABEL="${{ env.FINDING_IDS || 'CRITICAL+HIGH findings' }}"
+          gh pr create \
+            --title "fix(security): auto-remediate $FINDING_LABEL [run ${{ github.run_id }}]" \
+            --body "## Security Auto-Fix PR
+
+          This pull request was automatically generated by the **AppSec Auto-Fix** workflow.
+
+          **Run**: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Findings targeted**: \`${{ env.FINDING_IDS || 'CRITICAL and HIGH (CONFIRMED/PLAUSIBLE)' }}\`
+          **Base branch**: \`${{ env.BASE_BRANCH }}\`
+
+          ### Before merging
+
+          - [ ] Review every file diff carefully — fixes are AI-generated
+          - [ ] Verify tests pass (CI will run on this PR)
+          - [ ] Confirm no functional regressions
+          - [ ] Re-run the relevant AppSec scan workflow against this branch to verify fixes
+
+          ### How to re-verify a fix
+
+          Run the appropriate scan workflow against this PR's head commit and check that
+          the gated findings no longer appear at CONFIRMED/PLAUSIBLE confidence.
+
+          > **Note**: This PR was opened by an automated agent. Human review and approval is required before merge." \
+            --base "$BASE_BRANCH" \
+            --head "$FIX_BRANCH" \
+            --label "security" || true
+
+      # ─── Comment on triggering issue (issue_comment trigger) ──────────────
+      - name: Comment on triggering issue
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ env.BASE_BRANCH }}...${{ env.FIX_BRANCH }}"
+          gh issue comment "${{ github.event.issue.number }}" \
+            --body "🔧 Auto-fix workflow started for finding(s) \`${{ env.FINDING_IDS }}\`. [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})." \
+            || true

@@ -1,0 +1,154 @@
+# threatlint/azure-pipelines/dependency-audit.yml
+# Reusable template: supply chain / dependency security audit.
+#
+# Usage:
+#   - template: azure-pipelines/dependency-audit.yml@threatlint
+#     parameters:
+#       anthropicApiKey: $(ANTHROPIC_API_KEY)
+
+parameters:
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: $(System.AccessToken)
+  - name: model
+    type: string
+    default: ''
+  - name: gateSeverity
+    type: string
+    default: CRITICAL
+  - name: minIssueSeverity
+    type: string
+    default: HIGH
+  - name: createWorkItems
+    type: boolean
+    default: false
+
+jobs:
+  - job: AppsecDependencyAudit
+    displayName: AppSec Dependency Audit
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 20
+    variables:
+      REPORT_FILE: $(Agent.TempDirectory)/appsec-dep-report.md
+      PROVIDER: ${{ parameters.provider }}
+      GATE_SEVERITY: ${{ parameters.gateSeverity }}
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - script: pip install anthropic
+        displayName: Install Anthropic SDK
+        condition: eq('${{ parameters.provider }}', 'claude')
+
+      - script: |
+          python3 - << 'PYEOF'
+          import os, subprocess
+          import anthropic
+
+          files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True).stdout[:3000]
+          context = f"## Repository files\n```\n{files}\n```"
+          for fname in ['package.json', 'package-lock.json', 'yarn.lock', 'requirements.txt',
+                        'Pipfile', 'Pipfile.lock', 'poetry.lock', 'pyproject.toml',
+                        'go.mod', 'go.sum', 'Cargo.toml', 'Cargo.lock',
+                        'pom.xml', 'build.gradle', 'Gemfile', 'Gemfile.lock']:
+              if os.path.isfile(fname):
+                  with open(fname, errors='replace') as f:
+                      context += f"\n\n## {fname}\n```\n{f.read(4000)}\n```"
+
+          prompt = f"""## Repository Context\n{context}\n\n
+          You are performing a dependency supply chain audit of this repository. Produce a
+          two-tier Markdown dependency audit: TIER 1 with Supply Chain Risk Level, Finding
+          Summary table, Top Issues, Recommended Actions (update priorities, audit commands);
+          TIER 2 with Manifests Reviewed table, per-finding [DA-NNN] blocks (Package name@version,
+          Manifest file:line, Attack Vector CVE/confusion/typosquat/hook/abandoned, Evidence,
+          Impact, Mitigation with version pin or replacement), Dependency Inventory table,
+          Recommended Audit Commands.
+          Do not modify any repository source files."""
+
+          client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+          message = client.messages.create(
+              model='${{ parameters.model }}' or os.environ.get('APPSEC_MODEL', 'claude-sonnet-5'),
+              max_tokens=8192,
+              system='You are an expert supply chain security engineer. Apply aggressive posture.',
+              messages=[{'role': 'user', 'content': prompt}]
+          )
+          report = message.content[0].text
+          with open(os.environ['REPORT_FILE'], 'w') as f:
+              f.write(report)
+          print(f"Report written ({len(report):,} chars)")
+          PYEOF
+        displayName: Run dependency audit (Claude)
+        condition: eq('${{ parameters.provider }}', 'claude')
+        env:
+          ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+          REPORT_FILE: $(REPORT_FILE)
+
+      - script: pip install openai
+        displayName: Install OpenAI SDK
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+
+      - script: |
+          python3 .github/scripts/appsec_api.py \
+            --mode dependency-audit \
+            --provider "$PROVIDER" \
+            --output "$(REPORT_FILE)" \
+            --model "${{ parameters.model }}"
+        displayName: Run dependency audit (OpenAI / GitHub Models)
+        condition: in('${{ parameters.provider }}', 'openai', 'github-models')
+        env:
+          OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+          GH_TOKEN: ${{ parameters.githubToken }}
+          PROVIDER: ${{ parameters.provider }}
+
+      - publish: $(REPORT_FILE)
+        artifact: appsec-dep-report-$(Build.BuildId)
+        displayName: Publish dependency audit report
+        condition: always()
+
+      - script: |
+          if [ -f "$(REPORT_FILE)" ]; then
+            python3 .github/scripts/to_sarif.py \
+              --report "$(REPORT_FILE)" \
+              --output "$(Agent.TempDirectory)/appsec-dep.sarif" \
+              --tool "appsec-dependency-auditor" \
+              --commit-sha "$(Build.SourceVersion)"
+          fi
+        displayName: Convert report to SARIF
+        condition: always()
+
+      - task: PublishBuildArtifacts@1
+        displayName: Publish SARIF artifact
+        condition: always()
+        inputs:
+          pathToPublish: $(Agent.TempDirectory)/appsec-dep.sarif
+          artifactName: CodeAnalysisLogs
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then echo "No report — skipping gate."; exit 0; fi
+          python3 .github/scripts/gate_report.py \
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+        displayName: Gate on severity threshold
+        condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
+
+      - script: |
+          if [ ! -f "$(REPORT_FILE)" ]; then exit 0; fi
+          python3 .github/scripts/create_ado_workitems.py \
+            --report "$(REPORT_FILE)" \
+            --min-severity "${{ parameters.minIssueSeverity }}" \
+            --org "$(System.TeamFoundationCollectionUri)" \
+            --project "$(System.TeamProject)" \
+            --token "$(System.AccessToken)" || true
+        displayName: Create ADO work items for findings
+        condition: and(always(), eq('${{ parameters.createWorkItems }}', 'true'))
