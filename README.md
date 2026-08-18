@@ -46,6 +46,9 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 - [Slash Commands](#slash-commands)
 - [Read-Only Safety Boundaries](#read-only-safety-boundaries)
 - [GitHub Actions](#github-actions)
+  - [Gating](#gating)
+  - [Auto-Fix](#auto-fix)
+- [Azure Pipelines](#azure-pipelines)
 - [Suggested Team Workflows](#suggested-team-workflows)
 - [Customization](#customization)
 - [Repository Layout](#repository-layout)
@@ -131,12 +134,21 @@ The generated deck is designed for:
 | File | Purpose |
 | --- | --- |
 | [`.github/agents/`](.github/agents/) | 14 Copilot Chat agents — one per security domain |
-| [`.github/workflows/appsec-pr-review.yml`](.github/workflows/appsec-pr-review.yml) | Runs on every non-draft PR: security review + PR comment + SARIF upload + issues |
-| [`.github/workflows/appsec-threat-model.yml`](.github/workflows/appsec-threat-model.yml) | Manual: threat model + SARIF upload + issues |
-| [`.github/workflows/appsec-scheduled.yml`](.github/workflows/appsec-scheduled.yml) | Weekly + on IaC/Dockerfile changes: automated threat model + issues |
-| [`.github/workflows/appsec-dependency-audit.yml`](.github/workflows/appsec-dependency-audit.yml) | On manifest/lockfile changes: dependency audit + issues |
-| [`.github/workflows/appsec-iac-review.yml`](.github/workflows/appsec-iac-review.yml) | On IaC changes: IaC security review + issues |
-| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | OpenAI / GitHub Models / LM Studio runner (10 modes) |
+| [`.github/workflows/appsec-pr-review.yml`](.github/workflows/appsec-pr-review.yml) | Every non-draft PR: security review + PR comment + SARIF + issues + gate |
+| [`.github/workflows/appsec-threat-model.yml`](.github/workflows/appsec-threat-model.yml) | Manual: threat model + SARIF + issues + gate |
+| [`.github/workflows/appsec-scheduled.yml`](.github/workflows/appsec-scheduled.yml) | Weekly + IaC push: threat model + issues + gate |
+| [`.github/workflows/appsec-dependency-audit.yml`](.github/workflows/appsec-dependency-audit.yml) | Manifest/lockfile changes: dependency audit + issues + gate |
+| [`.github/workflows/appsec-iac-review.yml`](.github/workflows/appsec-iac-review.yml) | IaC changes: IaC security review + issues + gate |
+| [`.github/workflows/appsec-secrets-scan.yml`](.github/workflows/appsec-secrets-scan.yml) | Push to main: secrets scan + SARIF + issues + gate |
+| [`.github/workflows/appsec-cicd-audit.yml`](.github/workflows/appsec-cicd-audit.yml) | Pipeline config changes: CI/CD audit + SARIF + issues + gate |
+| [`.github/workflows/appsec-api-security.yml`](.github/workflows/appsec-api-security.yml) | PR touching API paths: OWASP API Security review + SARIF + gate |
+| [`.github/workflows/appsec-auth-review.yml`](.github/workflows/appsec-auth-review.yml) | PR touching auth paths: auth/authz review + SARIF + gate |
+| [`.github/workflows/appsec-compliance-check.yml`](.github/workflows/appsec-compliance-check.yml) | Manual + monthly: compliance mapping (ASVS/PCI/HIPAA/SOC 2/ISO/NIST/CIS) |
+| [`.github/workflows/appsec-attack-tree.yml`](.github/workflows/appsec-attack-tree.yml) | Manual: formal AND/OR attack tree for a named component |
+| [`.github/workflows/appsec-red-team.yml`](.github/workflows/appsec-red-team.yml) | Manual + quarterly: 5 ATT&CK kill chains + IoCs + purple-team tests |
+| [`.github/workflows/appsec-auto-fix.yml`](.github/workflows/appsec-auto-fix.yml) | Manual + `/appsec-fix` comment: AI-assisted remediation → PR |
+| [`.github/scripts/appsec_api.py`](.github/scripts/appsec_api.py) | OpenAI / GitHub Models / LM Studio runner (13 modes, --gate flag) |
+| [`.github/scripts/gate_report.py`](.github/scripts/gate_report.py) | Exits 1 if findings at or above threshold severity exist |
 | [`.github/scripts/create_issues.py`](.github/scripts/create_issues.py) | Parses reports and opens deduplicated GitHub issues |
 | [`.github/scripts/to_sarif.py`](.github/scripts/to_sarif.py) | Converts threatlint reports to SARIF 2.1.0 for GitHub Code Scanning |
 | [`.github/scripts/post_pr_comment.py`](.github/scripts/post_pr_comment.py) | Posts risk summary as a PR comment with merge recommendation |
@@ -745,11 +757,56 @@ All workflows support three AI providers. Choose the one that fits your team.
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `appsec-pr-review.yml` | Non-draft PRs from same-repo branches | Security code review + PR comment + SARIF upload + GitHub issues |
-| `appsec-threat-model.yml` | Manual Actions dispatch | Threat model + SARIF upload + GitHub issues |
-| `appsec-scheduled.yml` | Weekly (Monday 06:00 UTC) + IaC/Dockerfile push to main | Automated threat model + issues |
-| `appsec-dependency-audit.yml` | Push/PR touching manifests or lockfiles | Dependency supply chain audit + issues |
-| `appsec-iac-review.yml` | Push/PR touching Terraform, K8s, or Dockerfile | IaC security review + issues |
+| `appsec-pr-review.yml` | Non-draft PRs from same-repo branches | Security code review + PR comment + SARIF + issues + gate |
+| `appsec-threat-model.yml` | Manual Actions dispatch | Threat model + SARIF + issues + gate |
+| `appsec-scheduled.yml` | Weekly (Monday 06:00 UTC) + IaC/Dockerfile push to main | Automated threat model + issues + gate |
+| `appsec-dependency-audit.yml` | Push/PR touching manifests or lockfiles | Dependency supply chain audit + issues + gate |
+| `appsec-iac-review.yml` | Push/PR touching Terraform, K8s, or Dockerfile | IaC security review + issues + gate |
+| `appsec-secrets-scan.yml` | Push to main touching source or config files | Secrets scan + SARIF + issues + gate |
+| `appsec-cicd-audit.yml` | Push touching pipeline config files | CI/CD audit + SARIF + issues + gate |
+| `appsec-api-security.yml` | PR touching API path directories | OWASP API Security review + SARIF + gate |
+| `appsec-auth-review.yml` | PR touching auth-related paths | Auth/authz deep-dive + SARIF + gate |
+| `appsec-compliance-check.yml` | Manual dispatch + monthly (first Monday) | Compliance mapping to 7 frameworks |
+| `appsec-attack-tree.yml` | Manual dispatch | Formal AND/OR attack tree for a named component |
+| `appsec-red-team.yml` | Manual dispatch + quarterly | 5 ATT&CK kill chains + IoCs + purple-team tests |
+| `appsec-auto-fix.yml` | Manual dispatch or `/appsec-fix` issue comment | AI-assisted remediation → branch → PR |
+
+### Gating
+
+Every workflow includes a **severity gate** step. If any finding at or above the threshold severity (and at CONFIRMED or PLAUSIBLE confidence) exists in the report, the step exits 1 — failing the workflow. For PRs, mark the workflow as required in branch protection to block merges on security findings.
+
+Configure the threshold with the `APPSEC_GATE_SEVERITY` repository variable:
+
+| Value | Effect |
+| --- | --- |
+| `CRITICAL` (default) | Fails only on critical findings |
+| `HIGH` | Fails on high or critical findings (recommended for gated pipelines) |
+| `MEDIUM` | Fails on medium, high, or critical findings |
+| `` (empty string) | Disables gating — workflow always passes |
+
+The gate is implemented in `.github/scripts/gate_report.py`. Run it standalone for local checks:
+
+```bash
+python3 .github/scripts/gate_report.py --report /path/to/report.md --severity HIGH
+# exits 0 (PASS) or 1 (BLOCK)
+```
+
+### Auto-Fix
+
+`appsec-auto-fix.yml` implements security remediations automatically and opens a pull request for human review.
+
+**Trigger options:**
+1. **`workflow_dispatch`** — provide an artifact name from a prior scan or specific finding IDs to fix
+2. **Issue comment** — comment `/appsec-fix CR-001,CR-003` on a GitHub issue to fix named findings
+
+**What it does:**
+1. Creates a branch `appsec/auto-fix-<run-id>` from `main` (configurable)
+2. Reads the scan report and extracts remediation guidance for each target finding
+3. Uses Claude with Write/Edit/Bash tools to implement the remediations in the source files
+4. Runs the test suite to detect regressions
+5. Commits all changes and opens a PR with a description of what was fixed
+
+**All auto-fix PRs require human review before merge.** The agent works on a branch and never commits directly to main.
 
 ### PR Comment
 
@@ -769,6 +826,52 @@ After each analysis, the workflow opens one GitHub issue per qualifying finding:
 Each issue gets `security` and `severity:<level>` labels and includes the full finding block with evidence, exploit path, Remediation Guidance, and a link to the workflow run.
 
 Fork pull requests are skipped to prevent secret exposure. See [docs/github-actions.md](docs/github-actions.md) for full setup and troubleshooting.
+
+---
+
+## Azure Pipelines
+
+The [`azure-pipelines/`](azure-pipelines/) directory contains 12 reusable YAML templates that mirror the GitHub Actions workflows for teams running Azure DevOps.
+
+**Add threatlint as a repository resource:**
+
+```yaml
+resources:
+  repositories:
+    - repository: threatlint
+      type: github
+      name: h0p3sf4ll/threatlint
+      ref: refs/heads/main
+      endpoint: <your-github-service-connection>
+```
+
+**Reference a template:**
+
+```yaml
+stages:
+  - stage: Security
+    jobs:
+      - template: azure-pipelines/pr-review.yml@threatlint
+        parameters:
+          anthropicApiKey: $(ANTHROPIC_API_KEY)
+          gateSeverity: HIGH   # fail pipeline on HIGH or CRITICAL findings
+```
+
+| Template | Purpose |
+| --- | --- |
+| `pr-review.yml` | Security review of a PR diff |
+| `threat-model.yml` | Full threat model (supports `deep: true`) |
+| `secrets-scan.yml` | Secrets and credential scan |
+| `iac-review.yml` | IaC security review |
+| `cicd-audit.yml` | CI/CD pipeline audit |
+| `dependency-audit.yml` | Supply chain dependency audit |
+| `api-security.yml` | OWASP API Security Top 10 review |
+| `auth-review.yml` | Auth/authz deep-dive |
+| `compliance-check.yml` | Compliance mapping (7 frameworks) |
+| `red-team.yml` | Adversarial kill chain scenarios |
+| `auto-fix.yml` | AI-assisted remediation → branch → PR |
+
+All templates support `provider: claude / openai / github-models`, `gateSeverity`, `minIssueSeverity`, and `createWorkItems` (opens Azure DevOps work items for findings). See [`azure-pipelines/README.md`](azure-pipelines/README.md) for the full parameter reference.
 
 ---
 

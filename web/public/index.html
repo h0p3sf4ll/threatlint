@@ -627,8 +627,8 @@ header { position: relative; }
           </div>
           <div id="model-claude-row" style="display:flex;">
             <select class="model-select" id="model-select" style="width:100%;">
-              <option value="claude-sonnet-5">claude-sonnet-5</option>
-              <option value="claude-opus-5">claude-opus-5 (deep)</option>
+              <option value="claude-sonnet-5">claude-sonnet-5 (balanced)</option>
+              <option value="claude-opus-5">claude-opus-5 (thorough)</option>
               <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option>
             </select>
           </div>
@@ -720,12 +720,12 @@ header { position: relative; }
       <div class="settings-field">
         <label>Anthropic API Key</label>
         <input id="settings-apikey" type="password" placeholder="sk-ant-..." />
-        <div class="settings-hint">Stored in localStorage. Set ANTHROPIC_API_KEY env var on the server to avoid entering it here.</div>
+        <div class="settings-hint">Used for claude-sonnet-5, claude-opus-5, claude-haiku-4-5. Set ANTHROPIC_API_KEY env var on the server to avoid entering it here.</div>
       </div>
       <div class="settings-field">
         <label>OpenAI API Key</label>
         <input id="settings-openai-apikey" type="password" placeholder="sk-..." />
-        <div class="settings-hint">Used for GPT-4o, o4-mini, etc. Set OPENAI_API_KEY env var on the server as an alternative.</div>
+        <div class="settings-hint">Used for gpt-5.6, gpt-5.6-terra, gpt-5.6-luna, gpt-5.6-cyber. Set OPENAI_API_KEY env var on the server as an alternative.</div>
       </div>
       <div class="settings-field">
         <label>Local LLM URL</label>
