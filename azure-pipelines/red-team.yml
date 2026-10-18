@@ -48,6 +48,7 @@ jobs:
       REPORT_FILE: $(Agent.TempDirectory)/appsec-redteam-report.md
       PROVIDER: ${{ parameters.provider }}
       GATE_SEVERITY: ${{ parameters.gateSeverity }}
+      GATE_MODE: ${{ parameters.gateMode }}
 
     steps:
       - checkout: self
@@ -148,7 +149,7 @@ jobs:
             echo "Gate disabled or no report — skipping."; exit 0
           fi
           python3 .github/scripts/gate_report.py \
-            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)" --mode "$(GATE_MODE)"
         displayName: Gate on severity threshold
         condition: always()
 

@@ -1,25 +1,116 @@
 {
   "name": "threatlint-web",
   "version": "1.0.0",
-  "description": "Threatlint Web UI — multi-agent AppSec analysis dashboard",
-  "main": "server.js",
+  "description": "Threatlint Workbench \u2014 evidence-led AppSec agents for desktop and browser",
+  "author": "threatlint contributors",
+  "main": "desktop/main.cjs",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test tests/agents.test.cjs tests/tools.test.cjs tests/api.test.cjs tests/copilot-agents.test.cjs tests/teams-bot.test.cjs",
+    "desktop": "electron .",
+    "predesktop:pack": "node desktop/build-icon.cjs && node scripts/desktop-sync.cjs stamp",
+    "desktop:pack": "electron-builder --dir",
+    "predesktop:dist": "node desktop/build-icon.cjs && node scripts/desktop-sync.cjs stamp",
+    "desktop:dist": "electron-builder",
+    "test:desktop": "node tests/desktop-smoke.cjs",
+    "test:browser": "node tests/browser-smoke.cjs",
+    "test": "node --test tests/*.test.cjs",
     "test:agents": "node --test tests/agents.test.cjs",
     "test:tools": "node --test tests/tools.test.cjs",
     "test:api": "node --test tests/api.test.cjs",
     "test:copilot": "node --test tests/copilot-agents.test.cjs",
-    "test:teams": "node --test tests/teams-bot.test.cjs"
+    "test:teams": "node --test tests/teams-bot.test.cjs",
+    "videos": "node scripts/build-videos.cjs",
+    "demo-app": "node examples/demo-app.cjs",
+    "desktop:dev": "THREATLINT_DESKTOP_WATCH=1 electron .",
+    "desktop:verify": "node scripts/desktop-sync.cjs verify",
+    "desktop:sync": "node scripts/desktop-sync.cjs ensure",
+    "hooks:install": "git config core.hooksPath .githooks && echo \"Threatlint git hooks enabled (.githooks).\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.53.0",
     "express": "^4.18.2",
-    "ws": "^8.14.2"
+    "ws": "^8.14.2",
+    "dompurify": "3.4.12",
+    "marked": "17.0.6",
+    "minimatch": "10.2.6",
+    "shell-quote": "1.10.0"
+  },
+  "devDependencies": {
+    "electron": "40.10.2",
+    "electron-builder": "26.15.3",
+    "playwright": "1.58.2"
+  },
+  "overrides": {
+    "extract-zip": {
+      "yauzl": "3.4.0"
+    }
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
+  },
+  "build": {
+    "appId": "io.threatlint.workbench",
+    "productName": "Threatlint",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "lib/**/*",
+      "public/**/*",
+      "server.js",
+      "package.json",
+      "!tests/**/*",
+      "examples/**/*",
+      "!examples/demo-app.cjs",
+      "!examples/build-runtime-example.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "../src/threatlint/data",
+        "to": "data",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "build-assets/build-info.json",
+        "to": "build-info.json"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "icon": "build-assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build-assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build-assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "license": "MIT"
 }

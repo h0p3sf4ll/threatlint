@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="300" viewBox="0 0 1280 300" role="img" aria-labelledby="t d">
+  <title id="t">threatlint</title>
+  <desc id="d">Security agents for developers: review code, scan running apps, and ship secure AI-generated code.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f8f6"/><stop offset="1" stop-color="#e3efe9"/></linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#d3e2db" stroke-width="1"/></pattern>
+  </defs>
+  <rect width="1280" height="300" rx="18" fill="url(#bg)"/>
+  <rect width="1280" height="300" rx="18" fill="url(#grid)" opacity=".55"/>
+  <g transform="translate(80 78) scale(3.3)">
+    <path d="M20 2 36 8v13c0 9-7.4 16.4-16 21C11.4 37.4 4 30 4 21V8L20 2Z" fill="#14916b" fill-opacity=".1" stroke="#14916b" stroke-width="1.7"/>
+    <path d="M11 14h18M20 14v16M15 23l5 7 8-12" stroke="#0f7a59" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <text x="250" y="150" fill="#0f1a17" font-family="Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="78" font-weight="700" letter-spacing="-2">threatlint</text>
+  <text x="254" y="196" fill="#43534f" font-family="Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="24">Security agents for developers. Review code, scan running apps,</text>
+  <text x="254" y="228" fill="#43534f" font-family="Inter,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="24">and ship secure AI-generated code — locally, from your IDE to CI.</text>
+  <g font-family="SFMono-Regular,Consolas,monospace" font-size="13" fill="#167a5c" letter-spacing="1.5">
+    <text x="1000" y="70">22 AGENTS</text><text x="1000" y="96">26 SKILLS</text><text x="1000" y="122">RUNTIME + SOURCE</text><text x="1000" y="148">IDE · CI · DESKTOP</text>
+  </g>
+</svg>

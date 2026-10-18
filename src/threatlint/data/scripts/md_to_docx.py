@@ -9,10 +9,9 @@ import sys
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 
 # ---------------------------------------------------------------------------
 # Heading colour palette (dark teal for H1/H2, slate for H3/H4)
@@ -46,33 +45,37 @@ def _apply_inline(para, text):
             para.add_run(part)
 
 
+TABLE_SEPARATOR = re.compile(r"^\s*\|[-:\s|]+\|\s*$")
+HORIZONTAL_RULE = re.compile(r"^[-*_]{3,}\s*$")
+HEADING = re.compile(r"^(#{1,4})\s+(.*)")
+BULLET = re.compile(r"^(\s*)[-*+]\s+(.*)")
+NUMBERED = re.compile(r"^(\s*)\d+[.)]\s+(.*)")
+HEADING_STYLES = {1: ("Heading 1", H1_COLOR), 2: ("Heading 2", H2_COLOR), 3: ("Heading 3", H3_COLOR), 4: ("Heading 4", H4_COLOR)}
+
+
+def _fill_cell(cell, text, header):
+    # Clear default paragraph and rebuild with inline formatting
+    cell.paragraphs[0].clear()
+    _apply_inline(cell.paragraphs[0], text)
+    if header:
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+
+
 def _add_table(doc, lines):
     """Parse a contiguous block of markdown table lines and add to doc."""
-    rows = []
-    for line in lines:
-        # Skip the separator row (e.g., |---|---|)
-        if re.match(r"^\s*\|[-:\s|]+\|\s*$", line):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        rows.append(cells)
-
+    # Skip the separator row (e.g., |---|---|)
+    rows = [[c.strip() for c in line.strip().strip("|").split("|")]
+            for line in lines if not TABLE_SEPARATOR.match(line)]
     if not rows:
         return
 
     ncols = max(len(r) for r in rows)
     table = doc.add_table(rows=len(rows), cols=ncols)
     table.style = "Table Grid"
-
     for ri, row in enumerate(rows):
         for ci in range(ncols):
-            cell_text = row[ci] if ci < len(row) else ""
-            cell = table.cell(ri, ci)
-            # Clear default paragraph and rebuild with inline formatting
-            cell.paragraphs[0].clear()
-            _apply_inline(cell.paragraphs[0], cell_text)
-            if ri == 0:
-                for run in cell.paragraphs[0].runs:
-                    run.bold = True
+            _fill_cell(table.cell(ri, ci), row[ci] if ci < len(row) else "", ri == 0)
 
     doc.add_paragraph()  # breathing room after table
 
@@ -89,6 +92,89 @@ def _add_code_block(doc, lines):
     p.paragraph_format.space_after = Pt(4)
 
 
+def _add_rule(doc):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(4)
+    # Draw a thin bottom border on the paragraph
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "4")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), "AAAAAA")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+
+def _add_heading(doc, match):
+    style, color = HEADING_STYLES[len(match.group(1))]
+    p = doc.add_paragraph(style=style)
+    _apply_inline(p, match.group(2).strip())
+    _set_heading_color(p, color)
+
+
+def _add_bullet(doc, match):
+    depth = len(match.group(1)) // 2
+    p = doc.add_paragraph(style="List Bullet")
+    _apply_inline(p, match.group(2))
+    p.paragraph_format.left_indent = Inches(0.25 * (depth + 1))
+
+
+def _add_numbered(doc, match):
+    _apply_inline(doc.add_paragraph(style="List Number"), match.group(2))
+
+
+def _add_text_line(doc, line):
+    """Render one non-table, non-code line: rule, heading, list item, blank, or paragraph."""
+    if HORIZONTAL_RULE.match(line.strip()):
+        _add_rule(doc)
+        return
+    for pattern, render in ((HEADING, _add_heading), (BULLET, _add_bullet), (NUMBERED, _add_numbered)):
+        match = pattern.match(line)
+        if match:
+            render(doc, match)
+            return
+    if line.strip():
+        _apply_inline(doc.add_paragraph(), line)
+
+
+class _Blocks:
+    """Buffers multi-line blocks (code fences, tables) and flushes them in document order."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.in_code = False
+        self.code = []
+        self.table = []
+
+    def feed(self, line):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if self.in_code:
+                _add_code_block(self.doc, self.code)
+            self.in_code, self.code = not self.in_code, []
+            return
+        if self.in_code:
+            self.code.append(line)
+            return
+        if stripped.startswith("|"):
+            self.table.append(line)
+            return
+        self._flush_table()
+        _add_text_line(self.doc, line)
+
+    def _flush_table(self):
+        if self.table:
+            _add_table(self.doc, self.table)
+            self.table = []
+
+    def close(self):
+        self._flush_table()
+        if self.in_code and self.code:
+            _add_code_block(self.doc, self.code)
+
+
 def convert(md_text: str, output_path: str) -> None:
     doc = Document()
 
@@ -97,106 +183,10 @@ def convert(md_text: str, output_path: str) -> None:
     normal.font.name = "Aptos"
     normal.font.size = Pt(10)
 
-    lines = md_text.splitlines()
-    i = 0
-    table_buf: list[str] = []
-    in_code = False
-    code_buf: list[str] = []
-
-    while i < len(lines):
-        line = lines[i]
-
-        # ---- code fence ----
-        if line.strip().startswith("```"):
-            if not in_code:
-                in_code = True
-                code_buf = []
-            else:
-                _add_code_block(doc, code_buf)
-                in_code = False
-                code_buf = []
-            i += 1
-            continue
-
-        if in_code:
-            code_buf.append(line)
-            i += 1
-            continue
-
-        # ---- flush table buffer when non-table line is encountered ----
-        if not line.strip().startswith("|") and table_buf:
-            _add_table(doc, table_buf)
-            table_buf = []
-
-        # ---- table row ----
-        if line.strip().startswith("|"):
-            table_buf.append(line)
-            i += 1
-            continue
-
-        # ---- horizontal rule ----
-        if re.match(r"^[-*_]{3,}\s*$", line.strip()):
-            p = doc.add_paragraph()
-            p.paragraph_format.space_after = Pt(4)
-            # Draw a thin bottom border on the paragraph
-            pPr = p._p.get_or_add_pPr()
-            pBdr = OxmlElement("w:pBdr")
-            bottom = OxmlElement("w:bottom")
-            bottom.set(qn("w:val"), "single")
-            bottom.set(qn("w:sz"), "4")
-            bottom.set(qn("w:space"), "1")
-            bottom.set(qn("w:color"), "AAAAAA")
-            pBdr.append(bottom)
-            pPr.append(pBdr)
-            i += 1
-            continue
-
-        # ---- headings ----
-        m = re.match(r"^(#{1,4})\s+(.*)", line)
-        if m:
-            level = len(m.group(1))
-            text = m.group(2).strip()
-            style_map = {1: "Heading 1", 2: "Heading 2", 3: "Heading 3", 4: "Heading 4"}
-            p = doc.add_paragraph(style=style_map[level])
-            _apply_inline(p, text)
-            color_map = {1: H1_COLOR, 2: H2_COLOR, 3: H3_COLOR, 4: H4_COLOR}
-            _set_heading_color(p, color_map[level])
-            i += 1
-            continue
-
-        # ---- unordered list ----
-        m = re.match(r"^(\s*)[-*+]\s+(.*)", line)
-        if m:
-            depth = len(m.group(1)) // 2
-            p = doc.add_paragraph(style="List Bullet")
-            _apply_inline(p, m.group(2))
-            p.paragraph_format.left_indent = Inches(0.25 * (depth + 1))
-            i += 1
-            continue
-
-        # ---- ordered list ----
-        m = re.match(r"^(\s*)\d+[.)]\s+(.*)", line)
-        if m:
-            p = doc.add_paragraph(style="List Number")
-            _apply_inline(p, m.group(2))
-            i += 1
-            continue
-
-        # ---- blank line ----
-        if not line.strip():
-            i += 1
-            continue
-
-        # ---- normal paragraph ----
-        p = doc.add_paragraph()
-        _apply_inline(p, line)
-        i += 1
-
-    # Flush any remaining blocks
-    if table_buf:
-        _add_table(doc, table_buf)
-    if in_code and code_buf:
-        _add_code_block(doc, code_buf)
+    blocks = _Blocks(doc)
+    for line in md_text.splitlines():
+        blocks.feed(line)
+    blocks.close()
 
     doc.save(output_path)
     print(f"Saved: {output_path}")

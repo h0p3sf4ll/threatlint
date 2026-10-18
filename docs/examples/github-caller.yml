@@ -1,0 +1,68 @@
+# Example: consume the Threatlint reusable workflow from another repository.
+# Save as .github/workflows/security.yml in the repository you want reviewed.
+# Replace <sha> with a full 40-character Threatlint commit SHA (both places).
+
+name: Security
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '17 3 * * 1'   # weekly deep review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: threatlint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-review:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+    uses: InfoSec-Actions/threatlint/.github/workflows/threatlint-reusable.yml@<sha>
+    with:
+      agents: appsec-code-reviewer,appsec-secrets-scanner
+      provider: claude
+      fail-on-severity: high
+      gate-mode: warn               # warn (default) annotates and stays green; fail blocks the PR
+      threatlint-ref: <sha>
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  weekly:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+    uses: InfoSec-Actions/threatlint/.github/workflows/threatlint-reusable.yml@<sha>
+    with:
+      agents: appsec-threat-modeler,appsec-dependency-auditor,appsec-iac-reviewer,appsec-cicd-auditor
+      provider: openai
+      model: gpt-4o
+      fail-on-severity: none        # report only; never block a scheduled run
+      comment-on-pr: false
+      threatlint-ref: <sha>
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  # Alternative: call the composite action directly inside your own job.
+  # single-agent:
+  #   runs-on: ubuntu-latest
+  #   permissions: { contents: read, pull-requests: write, security-events: write, id-token: write }
+  #   steps:
+  #     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+  #       with: { fetch-depth: 0, persist-credentials: false }
+  #     - uses: InfoSec-Actions/threatlint/.github/actions/threatlint@<sha>
+  #       with:
+  #         agent: appsec-api-security-reviewer
+  #         target: src/api
+  #         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -18,10 +18,13 @@ This project provides read-only application-security subagents for Claude Code.
 - Delegate adversarial red-team scenario generation with kill chains and purple-team test cases to `appsec-red-team`.
 - Delegate comparison of a prior security report to the current repository state (New/Resolved/Regressed/Unchanged) to `appsec-threat-delta`.
 - Delegate verification of whether a specific finding has been remediated to `appsec-verify-fix`.
+- Delegate secure-by-default review of AI/model-generated or newly written code to `appsec-secure-codegen-reviewer`.
+- Delegate privacy and sensitive-data flow reviews (PII inventory, logging/analytics/third-party flows, retention, consent) to `appsec-privacy-reviewer`.
 - When a threat-modeling request has no target or application context, use `appsec-threat-modeler` anyway. It must autonomously discover the repository, select an evidence-supported initial scope, and explain that choice.
 
 ## Boundaries
 
+- Every specialist must load its assigned skills from the canonical agent-skill registry. The shared evidence and professional reporting workflows require source-grounded proposals, implementation notes, suggested owner/effort, regression assertions, and explicit validation status. The FP reviewer follows its enhanced three-tier findings/remediation protocol; ambiguous items stay open and a false-positive verdict does not authorize an untested suppression.
 - All AppSec subagents are analysis-only. They must not modify the workspace, install dependencies, stage files, or create commits.
 - The threat-modeler uses repository evidence and labels assumptions, unknowns, and residual risk explicitly.
 - The code reviewer treats the current working-tree diff as its default scope when the user supplies no change set.

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Rebuild the local packaged desktop app when shared workbench code changed.
+# Runs in the background so git returns immediately; log: web/release/desktop-sync.log
+# Disable for one command with THREATLINT_SKIP_DESKTOP_SYNC=1.
+[ "$THREATLINT_SKIP_DESKTOP_SYNC" = "1" ] && exit 0
+root=$(git rev-parse --show-toplevel) || exit 0
+[ -d "$root/web/node_modules" ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
+mkdir -p "$root/web/release"
+( cd "$root/web" && node scripts/desktop-sync.cjs ensure ) >"$root/web/release/desktop-sync.log" 2>&1 &
+exit 0

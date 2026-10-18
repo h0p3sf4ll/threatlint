@@ -1,13 +1,13 @@
 'use strict';
 /**
  * Agent registry tests — verifies every .md file loads correctly and is
- * registered in AGENT_META with the required fields.
+ * registered in the canonical registry with the required product metadata.
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
+const { AGENTS: AGENT_META, SKILL_MAP } = require('../lib/agents.cjs');
 
 const AGENTS_DIR = path.resolve(__dirname, '../../.claude/agents');
 
@@ -35,24 +35,7 @@ function loadAgents() {
   return agents;
 }
 
-const AGENT_META = {
-  'appsec-threat-modeler':        { label: 'Threat Model',    color: '#ff6b6b', emoji: '🎯', category: 'Analysis' },
-  'appsec-code-reviewer':         { label: 'Code Review',     color: '#ffd93d', emoji: '🔍', category: 'Analysis' },
-  'appsec-dependency-auditor':    { label: 'Dependencies',    color: '#6bcb77', emoji: '📦', category: 'Supply Chain' },
-  'appsec-secrets-scanner':       { label: 'Secrets Scan',    color: '#4d96ff', emoji: '🔑', category: 'Exposure' },
-  'appsec-iac-reviewer':          { label: 'IaC Review',      color: '#c77dff', emoji: '☁️', category: 'Infrastructure' },
-  'appsec-cicd-auditor':          { label: 'CI/CD Audit',     color: '#ff9671', emoji: '⚙️', category: 'Supply Chain' },
-  'appsec-api-security-reviewer': { label: 'API Security',    color: '#00c9a7', emoji: '🌐', category: 'Analysis' },
-  'appsec-auth-reviewer':         { label: 'Auth Review',     color: '#f9c74f', emoji: '🛡️', category: 'Analysis' },
-  'appsec-fp-reviewer':           { label: 'FP Triage',       color: '#90e0ef', emoji: '⚖️', category: 'Analysis' },
-  'appsec-compliance-checker':    { label: 'Compliance Map',  color: '#a8dadc', emoji: '📋', category: 'Compliance' },
-  'appsec-attack-tree':           { label: 'Attack Tree',     color: '#e63946', emoji: '🌳', category: 'Adversarial' },
-  'appsec-red-team':              { label: 'Red Team',        color: '#d62828', emoji: '⚔️', category: 'Adversarial' },
-  'appsec-threat-delta':          { label: 'Threat Delta',    color: '#b5838d', emoji: '📊', category: 'Analysis' },
-  'appsec-verify-fix':            { label: 'Verify Fix',      color: '#52b788', emoji: '✅', category: 'Analysis' },
-};
-
-const EXPECTED = Object.keys(AGENT_META);
+const EXPECTED = Object.keys(SKILL_MAP);
 const agents = loadAgents();
 
 describe('Agent file loading', () => {
@@ -60,9 +43,8 @@ describe('Agent file loading', () => {
     assert.ok(fs.existsSync(AGENTS_DIR));
   });
 
-  it('loads all 14 expected agents', () => {
-    const missing = EXPECTED.filter(id => !agents[id]);
-    assert.deepEqual(missing, [], `Missing agent files: ${missing.join(', ')}`);
+  it('loads exactly the registered agents', () => {
+    assert.deepEqual(Object.keys(agents).sort(), [...EXPECTED].sort());
   });
 
   it('no agent is missing frontmatter delimiters', () => {
@@ -92,6 +74,13 @@ describe('Agent field validation', () => {
       assert.ok(disallowed.includes('Edit'), `${id}: Edit not disallowed`);
     });
 
+    it(`${id}: declares only inspection tools`, () => {
+      const allowed = new Set(['Read', 'Grep', 'Glob', 'Bash']);
+      const tools = agents[id].tools.split(',').map(tool => tool.trim());
+      assert.ok(tools.length > 0);
+      assert.ok(tools.every(tool => allowed.has(tool)), `${id}: unexpected tool`);
+    });
+
     it(`${id}: AGENT_META has label, color, emoji, category`, () => {
       const m = AGENT_META[id];
       assert.ok(m.label && m.color && m.emoji && m.category);
@@ -101,6 +90,22 @@ describe('Agent field validation', () => {
 });
 
 describe('Agent content integrity', () => {
+  it('specialists expose their distinct finding prefixes and advisory deliverables', () => {
+    const prefixes = {
+      'appsec-runtime-reviewer': 'DX', 'appsec-business-logic-reviewer': 'BL',
+      'appsec-client-security-reviewer': 'CL', 'appsec-crypto-reviewer': 'CY',
+      'appsec-ai-security-reviewer': 'AI', 'appsec-security-test-planner': 'ST',
+      'appsec-secure-codegen-reviewer': 'SG', 'appsec-privacy-reviewer': 'PD',
+    };
+    for (const [id, prefix] of Object.entries(prefixes)) {
+      assert.equal(AGENT_META[id].initials, prefix);
+      assert.ok(AGENT_META[id].deliverable.length > 30);
+      assert.ok(agents[id].systemPrompt.includes(`[${prefix}-NNN]`));
+      assert.match(agents[id].systemPrompt, /persistence is host-owned/);
+      assert.match(agents[id].systemPrompt, /NOT RUN/);
+    }
+  });
+
   it('compliance-checker references all 7 frameworks', () => {
     const sp = agents['appsec-compliance-checker']?.systemPrompt || '';
     for (const fw of ['ASVS', 'PCI-DSS', 'HIPAA', 'SOC 2', 'ISO 27001', 'NIST CSF', 'CIS']) {

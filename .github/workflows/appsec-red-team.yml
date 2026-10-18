@@ -25,6 +25,8 @@ jobs:
       PROVIDER: ${{ vars.APPSEC_PROVIDER || 'claude' }}
       MIN_ISSUE_SEVERITY: ${{ vars.APPSEC_MIN_ISSUE_SEVERITY || 'HIGH' }}
       GATE_SEVERITY: ${{ vars.APPSEC_GATE_SEVERITY || 'CRITICAL' }}
+      # warn (default): findings are annotated and the job stays green. fail: the job fails.
+      GATE_MODE: ${{ vars.APPSEC_GATE_MODE || 'warn' }}
       REPORT_FILE: /tmp/appsec-red-team-report.md
 
     steps:
@@ -116,17 +118,18 @@ jobs:
           sarif_file: /tmp/appsec-red-team.sarif
         continue-on-error: true
 
-      # ─── Gate: fail if findings at or above threshold ─────────────────────
+      # ─── Gate: warn (default) or fail on findings at or above threshold ─────
       - name: Gate on severity threshold
         if: always() && env.GATE_SEVERITY != ''
         run: |
           if [ ! -f "$REPORT_FILE" ]; then
-            echo "No report file — skipping gate."
+            echo "::warning::No Threatlint report was produced; the severity gate was not evaluated."
             exit 0
           fi
           python3 .github/scripts/gate_report.py \
             --report "$REPORT_FILE" \
-            --severity "$GATE_SEVERITY"
+            --severity "$GATE_SEVERITY" \
+            --mode "$GATE_MODE"
 
       # ─── Create GitHub issues ─────────────────────────────────────────────
       - name: Create GitHub issues for findings

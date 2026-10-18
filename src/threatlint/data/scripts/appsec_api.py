@@ -18,6 +18,56 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
+
+
+_SPECIALIST_MODES = {
+    'runtime-review': 'appsec-runtime-reviewer',
+    'business-logic-review': 'appsec-business-logic-reviewer',
+    'client-security-review': 'appsec-client-security-reviewer',
+    'crypto-review': 'appsec-crypto-reviewer',
+    'ai-security-review': 'appsec-ai-security-reviewer',
+    'security-test-plan': 'appsec-security-test-planner',
+    'secure-codegen-review': 'appsec-secure-codegen-reviewer',
+    'privacy-review': 'appsec-privacy-reviewer',
+}
+
+_MODE_TO_AGENT = {
+    'pr-review': 'appsec-code-reviewer', 'threat-model': 'appsec-threat-modeler',
+    'secrets-scan': 'appsec-secrets-scanner', 'iac-review': 'appsec-iac-reviewer',
+    'cicd-audit': 'appsec-cicd-auditor', 'dependency-audit': 'appsec-dependency-auditor',
+    'api-security': 'appsec-api-security-reviewer', 'auth-review': 'appsec-auth-reviewer',
+    'red-team': 'appsec-red-team', 'attack-tree': 'appsec-attack-tree',
+    'compliance-check': 'appsec-compliance-checker', 'threat-delta': 'appsec-threat-delta',
+    'verify-fix': 'appsec-verify-fix', 'fp-review': 'appsec-fp-reviewer',
+    **_SPECIALIST_MODES,
+}
+
+
+def required_workflows(mode):
+    """Load the canonical role prompt and skills rather than rely on divergent short templates."""
+    try:
+        from threatlint.skills import agent_prompt
+        return agent_prompt(_MODE_TO_AGENT[mode])
+    except ImportError:
+        pass
+    import json
+    import re
+    here = Path(__file__).resolve()
+    # Packaged copy: <data>/scripts/appsec_api.py. Checkout copy: <repo>/.github/scripts/appsec_api.py.
+    roots = [here.parent.parent, *[parent / 'src/threatlint/data' for parent in here.parents]]
+    for root in roots:
+        registry = root / 'agent-skills.json'
+        if not registry.is_file():
+            continue
+        mapping = json.loads(registry.read_text(encoding='utf-8'))
+        agent_id = _MODE_TO_AGENT[mode]
+        paths = [root / 'agents' / f'{agent_id}.md']
+        paths += [root / 'skills' / name / 'SKILL.md' for name in mapping[agent_id]]
+        bodies = [re.sub(r'^---\n[\s\S]*?\n---\n', '', source.read_text(encoding='utf-8')).strip() for source in paths]
+        return '\n\n'.join(bodies)
+    raise RuntimeError('Required Threatlint skills are unavailable; install threatlint or include src/threatlint/data in the checkout')
+
 
 MAX_DIFF_CHARS = 80_000
 MAX_FILE_BYTES = 6_000
@@ -58,49 +108,57 @@ def read_file_safe(path, max_bytes=MAX_FILE_BYTES):
         return None
 
 
+CONTEXT_MANIFESTS = (
+    'README.md', 'readme.md', 'ARCHITECTURE.md',
+    'package.json', 'package-lock.json', 'yarn.lock',
+    'go.mod', 'go.sum',
+    'requirements.txt', 'Pipfile.lock', 'poetry.lock',
+    'Cargo.toml', 'Cargo.lock',
+    'pom.xml', 'build.gradle', 'pyproject.toml',
+    'Gemfile', 'Gemfile.lock',
+    'composer.json', 'composer.lock',
+    'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+    '.env.example', '.env.sample',
+)
+CONTEXT_IAC_DIRS = ('infra', 'terraform', 'k8s', 'helm', 'deploy', '.github/workflows')
+IAC_FILES_PER_DIR = 3
+
+
+def _append_file(parts, path, max_file_bytes):
+    """Add one file section if there is room and the file is readable. Returns False when full."""
+    if len(parts) >= MAX_TOTAL_PARTS:
+        return False
+    if path and os.path.isfile(path):
+        content = read_file_safe(path, max_bytes=max_file_bytes)
+        if content:
+            parts.append(f'## {path}\n```\n{content}\n```')
+    return True
+
+
+def _iac_files(search_dir):
+    if not os.path.isdir(search_dir):
+        return []
+    found = run([
+        'find', search_dir,
+        '(', '-name', '*.yml', '-o', '-name', '*.yaml', '-o', '-name', '*.tf', ')',
+        '-type', 'f',
+    ]).stdout.strip().split('\n')
+    return found[:IAC_FILES_PER_DIR]
+
+
+def _context_paths():
+    """Manifests first, then a few IaC/workflow files per directory, in a stable order."""
+    yield from CONTEXT_MANIFESTS
+    for search_dir in CONTEXT_IAC_DIRS:
+        yield from _iac_files(search_dir)
+
+
 def gather_repo_context(max_file_bytes=MAX_FILE_BYTES):
-    parts = []
-
     file_list = run(['git', 'ls-files']).stdout
-    parts.append(f'## Repository file listing\n```\n{file_list[:4000]}\n```')
-
-    for fname in [
-        'README.md', 'readme.md', 'ARCHITECTURE.md',
-        'package.json', 'package-lock.json', 'yarn.lock',
-        'go.mod', 'go.sum',
-        'requirements.txt', 'Pipfile.lock', 'poetry.lock',
-        'Cargo.toml', 'Cargo.lock',
-        'pom.xml', 'build.gradle', 'pyproject.toml',
-        'Gemfile', 'Gemfile.lock',
-        'composer.json', 'composer.lock',
-        'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
-        '.env.example', '.env.sample',
-    ]:
-        if len(parts) >= MAX_TOTAL_PARTS:
+    parts = [f'## Repository file listing\n```\n{file_list[:4000]}\n```']
+    for path in _context_paths():
+        if not _append_file(parts, path, max_file_bytes):
             break
-        if os.path.isfile(fname):
-            content = read_file_safe(fname, max_bytes=max_file_bytes)
-            if content:
-                parts.append(f'## {fname}\n```\n{content}\n```')
-
-    for search_dir in ['infra', 'terraform', 'k8s', 'helm', 'deploy', '.github/workflows']:
-        if len(parts) >= MAX_TOTAL_PARTS:
-            break
-        if not os.path.isdir(search_dir):
-            continue
-        found = run([
-            'find', search_dir,
-            '(', '-name', '*.yml', '-o', '-name', '*.yaml', '-o', '-name', '*.tf', ')',
-            '-type', 'f',
-        ]).stdout.strip().split('\n')
-        for fpath in found[:3]:
-            if len(parts) >= MAX_TOTAL_PARTS:
-                break
-            if fpath and os.path.isfile(fpath):
-                content = read_file_safe(fpath, max_bytes=max_file_bytes)
-                if content:
-                    parts.append(f'## {fpath}\n```\n{content}\n```')
-
     return '\n\n'.join(parts)
 
 
@@ -221,6 +279,39 @@ ATTACK_TREE_SYSTEM = (
     'Annotate each leaf with: feasibility (HIGH/MEDIUM/LOW), required attacker capability, '
     'existing mitigating control (or NONE), and control bypass path if one exists. '
     'Conclude with a leaf node priority ranking (highest feasibility × highest impact first).'
+)
+
+COMPLIANCE_CHECK_SYSTEM = (
+    'You are an expert security compliance engineer with deep knowledge of OWASP ASVS 4.0, '
+    'PCI-DSS v4.0, HIPAA Security Rule, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8. '
+    'Map every provided security finding to one or more specific controls in each applicable framework. '
+    'For each control, state: control ID, control text, finding that triggers it, current status '
+    '(FAILED / PARTIAL / PASSED / NOT APPLICABLE), and the remediation action required. '
+    'Produce a per-framework compliance gap table and an overall compliance posture summary.'
+)
+
+THREAT_DELTA_SYSTEM = (
+    'You are an expert application security engineer performing a threat-delta analysis. '
+    'Compare the provided prior security report against the current repository state. '
+    'For each finding in the prior report, classify it as: '
+    'RESOLVED (fix confirmed in code), PARTIALLY FIXED (control added but bypass exists), '
+    'STILL PRESENT (no meaningful change), REGRESSED (was fixed, now re-introduced), '
+    'WONT FIX / ACCEPTED (documented exception), or CANT ASSESS (insufficient evidence). '
+    'Also identify NEW findings present in the current code that were absent from the prior report. '
+    'Ground every verdict in specific code evidence. Label all assumptions explicitly.'
+)
+
+VERIFY_FIX_SYSTEM = (
+    'You are an expert application security engineer performing fix verification. '
+    'Given a specific finding (ID, title, description, and original evidence location), '
+    'verify whether the fix has been applied correctly in the current codebase. '
+    'Return one of four verdicts: '
+    'REMEDIATED (fix present, no equivalent bypass), '
+    'PARTIALLY FIXED (fix present but at least one equivalent exploit path remains), '
+    'STILL PRESENT (no meaningful change from the original finding), or '
+    'REGRESSED (fix was present in a prior version but has been removed or weakened). '
+    'Cite exact file:line evidence for the verdict. Be conservative: '
+    'only return REMEDIATED when the fix is verifiably correct and no bypass exists.'
 )
 
 # ─── Prompt templates ────────────────────────────────────────────────────────
@@ -928,6 +1019,175 @@ Controls that are absent or inadequate and enable the highest-priority paths.
 '''
 
 
+COMPLIANCE_CHECK_TEMPLATE = '''\
+{target_line}
+
+## Repository Context / Prior Findings
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown compliance mapping report.
+
+### TIER 1 — EXECUTIVE SUMMARY
+
+**Overall Compliance Posture**: HIGH RISK / MEDIUM RISK / LOW RISK / COMPLIANT
+
+One-sentence summary.
+
+**Framework Coverage**:
+| Framework | Controls Checked | Failed | Partial | Passed | N/A |
+|-----------|-----------------|--------|---------|--------|-----|
+| OWASP ASVS 4.0 | | | | | |
+| PCI-DSS v4.0 | | | | | |
+| HIPAA Security Rule | | | | | |
+| SOC 2 Type II | | | | | |
+| ISO 27001:2022 | | | | | |
+| NIST CSF 2.0 | | | | | |
+| CIS Controls v8 | | | | | |
+
+**Top Compliance Gaps** (FAILED controls with CRITICAL or HIGH findings):
+- **[Framework § Control]** *Title* — finding driving the gap. Required action.
+
+---
+
+### TIER 2 — CONTROL-BY-CONTROL MAPPING
+
+For each finding, map to applicable frameworks:
+
+#### Finding: [Finding ID or Description]
+
+| Framework | Control ID | Control Text | Status | Gap / Remediation |
+|-----------|-----------|--------------|--------|-------------------|
+| OWASP ASVS | V?.?.? | | FAILED/PARTIAL/PASSED | |
+| PCI-DSS | Req ?.? | | | |
+| HIPAA | § 164.3?? | | | |
+| SOC 2 | CC?.? | | | |
+| ISO 27001 | A.?? | | | |
+| NIST CSF | [Function].[Category].[Subcategory] | | | |
+| CIS Controls | Control ?.? | | | |
+
+---
+
+**Remediation Priority by Framework**:
+| Priority | Framework | Control | Severity | Effort |
+|----------|-----------|---------|----------|--------|
+'''
+
+THREAT_DELTA_TEMPLATE = '''\
+{target_line}
+
+## Current Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a two-tier Markdown threat-delta report comparing the prior report to current state.
+
+### TIER 1 — DELTA SUMMARY
+
+**Net Risk Change**: INCREASED / DECREASED / UNCHANGED
+
+**Finding Delta**:
+| Verdict | Count |
+|---------|-------|
+| RESOLVED | |
+| PARTIALLY FIXED | |
+| STILL PRESENT | |
+| REGRESSED | |
+| NEW | |
+| WONT FIX / ACCEPTED | |
+| CANT ASSESS | |
+
+**Key Changes** (Regressed and New findings only):
+- **[ID]** *Title* — what changed and why it matters.
+
+---
+
+### TIER 2 — FINDING-BY-FINDING DELTA
+
+For each finding from the prior report:
+
+#### [Prior ID] — *Finding Title*
+
+**Prior Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Verdict**: RESOLVED / PARTIALLY FIXED / STILL PRESENT / REGRESSED / WONT FIX / CANT ASSESS
+
+| Field | Detail |
+|-------|--------|
+| Prior Evidence | original `path/to/file:NN` |
+| Current State | what the code looks like now |
+| Evidence | `path/to/file:NN` — quoted current code |
+| Rationale | why this verdict was assigned |
+| Remaining Risk | if PARTIALLY FIXED: remaining bypass path |
+
+---
+
+### NEW FINDINGS
+
+Findings present in the current code not in the prior report:
+
+#### [NEW-NNN] — *Finding Title*
+
+**Severity**: CRITICAL / HIGH / MEDIUM / LOW
+**Confidence**: CONFIRMED / PLAUSIBLE / THEORETICAL
+
+| Field | Detail |
+|-------|--------|
+| Evidence | `path/to/file:NN` |
+| Introduced By | commit hash or change description if determinable |
+| Remediation | |
+
+---
+
+**Updated Remediation Roadmap**:
+| Priority | ID | Title | Verdict | Action Required |
+|----------|----|-------|---------|-----------------|
+'''
+
+VERIFY_FIX_TEMPLATE = '''\
+Finding to verify:
+- **ID**: {finding_id}
+- **Title**: {finding_title}
+- **Original Evidence**: {finding_evidence}
+- **Description**: {finding_description}
+
+## Current Repository Context
+
+{context}
+
+## Required Report Format
+
+Produce a concise fix-verification report.
+
+### VERDICT: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED
+
+**Verdict**: (one of the four above)
+
+**Confidence**: CONFIRMED / PLAUSIBLE
+
+### Evidence
+
+| Field | Detail |
+|-------|--------|
+| Original Location | `path/to/file:NN` |
+| Current Code | quoted current code at that location |
+| Fix Applied | yes / no / partial |
+| Equivalent Bypass | if PARTIALLY FIXED: describe the remaining attack path |
+| Regression Evidence | if REGRESSED: what was removed or weakened |
+
+### Rationale
+
+2–4 sentences explaining the verdict, citing specific code evidence.
+
+### Recommended Next Step
+
+One sentence: what the developer should do (if not REMEDIATED).
+'''
+
+
 
 
 def _lmstudio_call(system_prompt, user_prompt, model_override):
@@ -951,7 +1211,7 @@ def _lmstudio_call(system_prompt, user_prompt, model_override):
                 sys.exit(1)
             model = loaded[0]
             print(f'Auto-detected LM Studio model: {model}', flush=True)
-        except (urllib.error.URLError, OSError) as exc:
+        except OSError as exc:  # urllib.error.URLError is an OSError
             print(f'ERROR: Cannot reach LM Studio at {base_url}: {exc}\n'
                   'Make sure LM Studio is running and the local server is started.',
                   file=sys.stderr)
@@ -1018,137 +1278,175 @@ def call_api(provider, system_prompt, user_prompt, model_override):
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
-def main():
+# Modes whose prompt is "<target line> + repository context": (template, system, label, default scope).
+_CONTEXT_MODES = {
+    'secrets-scan': (SECRETS_SCAN_TEMPLATE, SECRETS_SCAN_SYSTEM, 'Secrets scan target',
+                     'Scan the entire repository for hardcoded secrets and credential management issues.'),
+    'iac-review': (IAC_REVIEW_TEMPLATE, IAC_REVIEW_SYSTEM, 'IaC review target',
+                   'Review all Infrastructure as Code in the repository.'),
+    'cicd-audit': (CICD_AUDIT_TEMPLATE, CICD_AUDIT_SYSTEM, 'CI/CD audit target',
+                   'Audit all CI/CD pipeline configuration in the repository.'),
+    'dependency-audit': (DEPENDENCY_AUDIT_TEMPLATE, DEPENDENCY_AUDIT_SYSTEM, 'Dependency audit target',
+                         'Audit all package manifests and lockfiles in the repository.'),
+    'api-security': (API_SECURITY_TEMPLATE, API_SECURITY_SYSTEM, 'API security review target',
+                     'Review all API endpoints discovered in the repository.'),
+    'auth-review': (AUTH_REVIEW_TEMPLATE, AUTH_REVIEW_SYSTEM, 'Auth review target',
+                    'Review all authentication and authorization code in the repository.'),
+    'red-team': (RED_TEAM_TEMPLATE, RED_TEAM_SYSTEM, 'Red team target',
+                 'Select the 5 highest-risk attack surfaces from the repository.'),
+    'compliance-check': (COMPLIANCE_CHECK_TEMPLATE, COMPLIANCE_CHECK_SYSTEM, 'Compliance check target',
+                         'Map all security findings in the repository to applicable compliance frameworks.'),
+    'threat-delta': (THREAT_DELTA_TEMPLATE, THREAT_DELTA_SYSTEM, 'Prior report for delta analysis',
+                     'Compare the prior security findings to the current repository state.'),
+}
+
+_AUTONOMOUS_THREAT_MODEL_SCOPE = (
+    'No target specified. Autonomously inventory the repository, rank candidate '
+    'components by external exposure, privilege level, sensitive-data handling, and '
+    'blast radius, then select the highest-risk scope and explain the selection before '
+    'producing the full report.'
+)
+_UNSPECIFIED = 'unspecified'
+
+SNAPSHOT_RULES = (
+    '\nOnly supplied context is available in this snapshot runner. Disclose truncation and uninspected files; '
+    'never claim tool calls or tests were executed.'
+    '\nNo runtime or browser tools are available. Do not make requests, collect captures, log in, automate '
+    'SSO/MFA, or run scans/tests. Runtime/auth evidence must be explicitly supplied and redacted; missing '
+    'evidence is a limitation, not a verified result. Proposed validation is NOT RUN; report persistence is host-owned.'
+)
+
+
+def _parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description='Run AppSec analysis via OpenAI, GitHub Models, or LM Studio'
     )
-    parser.add_argument('--mode', choices=[
-        'pr-review', 'threat-model', 'secrets-scan', 'iac-review',
-        'cicd-audit', 'dependency-audit', 'api-security', 'auth-review',
-        'red-team', 'attack-tree',
-    ], required=True)
+    parser.add_argument('--mode', choices=list(_MODE_TO_AGENT), required=True)
     parser.add_argument('--provider', choices=['openai', 'github-models', 'lmstudio'], required=True)
     parser.add_argument('--base',   default='', help='Base commit SHA (pr-review only)')
     parser.add_argument('--head',   default='', help='Head commit SHA (pr-review only)')
-    parser.add_argument('--target', default='', help='Threat model target (threat-model only)')
+    parser.add_argument('--target', default='', help='Component, scope, or review objective')
+    parser.add_argument('--findings', default='', help='UTF-8 SARIF/JSON/Markdown/text evidence for fp-review or specialist modes (up to 5 MB; redact secrets)')
     parser.add_argument('--deep',   action='store_true',
                         help='Use aggressive deep-dive mode (threat-model only)')
     parser.add_argument('--output', required=True, help='Output path for the Markdown report')
     parser.add_argument('--model',  default='', help='Model override')
-    args = parser.parse_args()
+    parser.add_argument('--gate',   default='',
+                        choices=['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                        help='Gate on CONFIRMED/PLAUSIBLE findings at or above this severity; APPSEC_GATE_MODE=warn (default) or fail')
+    return parser, parser.parse_args(argv)
 
-    is_local = args.provider == 'lmstudio'
-    max_diff  = MAX_DIFF_CHARS_LOCAL  if is_local else MAX_DIFF_CHARS
-    max_file  = MAX_FILE_BYTES_LOCAL  if is_local else MAX_FILE_BYTES
 
-    if args.mode == 'pr-review':
-        if not args.base or not args.head:
-            print('ERROR: --base and --head are required for pr-review mode.', file=sys.stderr)
-            sys.exit(1)
-        diff    = get_diff(args.base, args.head, max_chars=max_diff)
-        changed = get_changed_files(args.base, args.head)
-        files_str    = '\n'.join(f'- {f}' for f in changed[:60])
-        user_prompt  = PR_REVIEW_TEMPLATE.format(files=files_str, diff=diff)
-        system_prompt = PR_REVIEW_SYSTEM
+def _findings_context(path):
+    """Import the packaged evidence wrapper, preferring a source checkout when present."""
+    source_root = Path(__file__).resolve().parents[2] / 'src'
+    if source_root.is_dir():
+        sys.path.insert(0, str(source_root))
+    from threatlint.skills import findings_context
+    return findings_context(path)
 
-    elif args.mode == 'threat-model':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'Threat model target: **{args.target}**'
-            if args.target
-            else (
-                'No target specified. Autonomously inventory the repository, rank candidate '
-                'components by external exposure, privilege level, sensitive-data handling, and '
-                'blast radius, then select the highest-risk scope and explain the selection before '
-                'producing the full report.'
-            )
-        )
-        if args.deep:
-            user_prompt   = THREAT_MODEL_DEEP_TEMPLATE.format(target_line=target_line, context=context)
-            system_prompt = THREAT_MODEL_DEEP_SYSTEM
-        else:
-            user_prompt   = THREAT_MODEL_TEMPLATE.format(target_line=target_line, context=context)
-            system_prompt = THREAT_MODEL_SYSTEM
 
-    elif args.mode == 'secrets-scan':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'Secrets scan target: **{args.target}**' if args.target
-            else 'Scan the entire repository for hardcoded secrets and credential management issues.'
-        )
-        user_prompt   = SECRETS_SCAN_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = SECRETS_SCAN_SYSTEM
+def _pr_review_prompt(args, limits, parser):
+    if not args.base or not args.head:
+        parser.error('--base and --head are required for pr-review mode.')
+    diff = get_diff(args.base, args.head, max_chars=limits['diff'])
+    changed = get_changed_files(args.base, args.head)
+    files_str = '\n'.join(f'- {f}' for f in changed[:60])
+    return PR_REVIEW_SYSTEM, PR_REVIEW_TEMPLATE.format(files=files_str, diff=diff)
 
-    elif args.mode == 'iac-review':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'IaC review target: **{args.target}**' if args.target
-            else 'Review all Infrastructure as Code in the repository.'
-        )
-        user_prompt   = IAC_REVIEW_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = IAC_REVIEW_SYSTEM
 
-    elif args.mode == 'cicd-audit':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'CI/CD audit target: **{args.target}**' if args.target
-            else 'Audit all CI/CD pipeline configuration in the repository.'
-        )
-        user_prompt   = CICD_AUDIT_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = CICD_AUDIT_SYSTEM
+def _threat_model_prompt(args, limits, _parser):
+    context = gather_repo_context(max_file_bytes=limits['file'])
+    target_line = f'Threat model target: **{args.target}**' if args.target else _AUTONOMOUS_THREAT_MODEL_SCOPE
+    if args.deep:
+        return THREAT_MODEL_DEEP_SYSTEM, THREAT_MODEL_DEEP_TEMPLATE.format(target_line=target_line, context=context)
+    return THREAT_MODEL_SYSTEM, THREAT_MODEL_TEMPLATE.format(target_line=target_line, context=context)
 
-    elif args.mode == 'dependency-audit':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'Dependency audit target: **{args.target}**' if args.target
-            else 'Audit all package manifests and lockfiles in the repository.'
-        )
-        user_prompt   = DEPENDENCY_AUDIT_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = DEPENDENCY_AUDIT_SYSTEM
 
-    elif args.mode == 'api-security':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'API security review target: **{args.target}**' if args.target
-            else 'Review all API endpoints discovered in the repository.'
-        )
-        user_prompt   = API_SECURITY_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = API_SECURITY_SYSTEM
+def _attack_tree_prompt(args, limits, _parser):
+    context = gather_repo_context(max_file_bytes=limits['file'])
+    target = args.target or 'the highest-risk component in the repository'
+    return ATTACK_TREE_SYSTEM, ATTACK_TREE_TEMPLATE.format(target=target, context=context)
 
-    elif args.mode == 'auth-review':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'Auth review target: **{args.target}**' if args.target
-            else 'Review all authentication and authorization code in the repository.'
-        )
-        user_prompt   = AUTH_REVIEW_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = AUTH_REVIEW_SYSTEM
 
-    elif args.mode == 'red-team':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target_line = (
-            f'Red team target: **{args.target}**' if args.target
-            else 'Select the 5 highest-risk attack surfaces from the repository.'
-        )
-        user_prompt   = RED_TEAM_TEMPLATE.format(target_line=target_line, context=context)
-        system_prompt = RED_TEAM_SYSTEM
+def _verify_fix_prompt(args, limits, _parser):
+    context = gather_repo_context(max_file_bytes=limits['file'])
+    # --target format: "FINDING_ID|Title|file:line|description"
+    defaults = [_UNSPECIFIED, _UNSPECIFIED, _UNSPECIFIED, 'Verify the finding is remediated.']
+    supplied = args.target.split('|') if args.target else []
+    parts = [value or default for value, default in zip(supplied + [''] * 4, defaults)]
+    user_prompt = VERIFY_FIX_TEMPLATE.format(finding_id=parts[0], finding_title=parts[1],
+                                             finding_evidence=parts[2], finding_description=parts[3], context=context)
+    return VERIFY_FIX_SYSTEM, user_prompt
 
-    elif args.mode == 'attack-tree':
-        context = gather_repo_context(max_file_bytes=max_file)
-        target = args.target or 'the highest-risk component in the repository'
-        user_prompt   = ATTACK_TREE_TEMPLATE.format(target=target, context=context)
-        system_prompt = ATTACK_TREE_SYSTEM
 
-    else:
-        print(f'ERROR: Unknown mode: {args.mode}', file=sys.stderr)
-        sys.exit(1)
+def _fp_review_prompt(args, limits, parser):
+    if not args.findings:
+        parser.error('--findings is required for fp-review; use the tool-enabled CLI for repository inspection')
+    return '', gather_repo_context(max_file_bytes=limits['file']) + _findings_context(args.findings)
 
+
+def _specialist_prompt(args, limits, _parser):
+    user_prompt = (
+        f'Specialist review: {args.mode}\n'
+        f'Scope / objective: {args.target or "Review only the supplied evidence; identify missing context."}\n\n'
+        '## Repository Snapshot\n\n' + gather_repo_context(max_file_bytes=limits['file'])
+    )
+    if args.findings:
+        user_prompt += _findings_context(args.findings)
+    return '', user_prompt
+
+
+def _context_mode_prompt(args, limits, _parser):
+    template, system_prompt, label, default_scope = _CONTEXT_MODES[args.mode]
+    context = gather_repo_context(max_file_bytes=limits['file'])
+    target_line = f'{label}: **{args.target}**' if args.target else default_scope
+    return system_prompt, template.format(target_line=target_line, context=context)
+
+
+_PROMPT_BUILDERS = {
+    'pr-review': _pr_review_prompt,
+    'threat-model': _threat_model_prompt,
+    'attack-tree': _attack_tree_prompt,
+    'verify-fix': _verify_fix_prompt,
+    'fp-review': _fp_review_prompt,
+    **dict.fromkeys(_SPECIALIST_MODES, _specialist_prompt),
+    **dict.fromkeys(_CONTEXT_MODES, _context_mode_prompt),
+}
+
+
+def build_prompts(args, parser):
+    """Return (system_prompt, user_prompt) for a mode, including the canonical agent and skills."""
+    local = args.provider == 'lmstudio'
+    limits = {'diff': MAX_DIFF_CHARS_LOCAL if local else MAX_DIFF_CHARS,
+              'file': MAX_FILE_BYTES_LOCAL if local else MAX_FILE_BYTES}
+    system_prompt, user_prompt = _PROMPT_BUILDERS[args.mode](args, limits, parser)
+    system_prompt += '\n\n## Required Agent and Skill Workflows\n' + required_workflows(args.mode) + SNAPSHOT_RULES
+    return system_prompt, user_prompt
+
+
+def _run_gate(report_path, severity):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('gate_report', Path(__file__).parent / 'gate_report.py')
+    gate_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate_mod)
+    saved = sys.argv
+    sys.argv = ['gate_report', '--report', report_path, '--severity', severity]
+    try:
+        gate_mod.main()
+    finally:
+        sys.argv = saved
+
+
+def main(argv=None):
+    parser, args = _parse_args(argv)
+    system_prompt, user_prompt = build_prompts(args, parser)
     report = call_api(args.provider, system_prompt, user_prompt, args.model)
-
-    with open(args.output, 'w') as f:
+    with open(args.output, 'w', encoding='utf-8') as f:
         f.write(report)
-
     print(f'Report written to {args.output} ({len(report):,} characters).', flush=True)
+    if args.gate:
+        _run_gate(args.output, args.gate)
 
 
 if __name__ == '__main__':

@@ -24,14 +24,15 @@ Tell the agent:
    c. Trace to the sink: what transformations and validation occur along the path?
    d. Identify any code-level sanitizers that break the exploit path.
    e. Classify as TRUE POSITIVE, FALSE POSITIVE, or AMBIGUOUS with cited code evidence.
-4. For every FALSE POSITIVE:
+4. Apply the required finding-triage, Semgrep-tuning, evidence-analysis, and actionable-reporting skills. The current agent protocol supersedes the abbreviated instructions below.
+5. For every FALSE POSITIVE:
    a. Generate a Semgrep rule patch using the lowest-level tuning option that correctly suppresses only this FP.
    b. State explicitly which true positives the patched rule still catches.
-   c. Validate that the YAML is syntactically correct before outputting it.
-5. For every TRUE POSITIVE: confirm the exploit path and recommend severity and action.
-6. For every AMBIGUOUS: state the blocking question and resolution path.
-7. End with a Suppression Impact Assessment table and a Patterns section for systemic issues.
-8. Do not modify any files.
+   c. Require the original rule for an exact patch. Label unexecuted validation NOT RUN and assess possible false negatives separately from the verdict.
+6. For every TRUE POSITIVE: provide a concrete proposed code/configuration fix, implementation notes, owner/effort, regression assertions, and acceptance criteria. Proposals are NOT APPLIED.
+7. For every AMBIGUOUS: keep open, state the exact blocking evidence, suggested owner, resolution plan, and interim action.
+8. Produce the full three-tier professional report: executive summary and priority actions; detailed evidence-backed findings with original-ID mapping and proposed fixes; suppression impact, systemic causes, remediation roadmap, and acceptance matrix. Reconcile all input/duplicate/unreviewed counts. Never classify code as safe solely because it is admin-only, internal, test, generated, or vendored.
+9. Do not modify any files.
 
 ## Output: Save as Word Document
 

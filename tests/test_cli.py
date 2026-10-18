@@ -4,8 +4,8 @@ handling, and tool safety. Does not invoke LM Studio or OpenAI.
 """
 import os
 import re
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,14 +15,13 @@ sys.path.insert(0, str(SRC))
 
 from threatlint.cli import (
     _MODE_TO_AGENT,
-    _TOOLS,
-    _BASH_ALLOWED,
-    _execute_tool,
-    _tool_read,
     _tool_bash,
-    _tool_grep,
     _tool_glob,
+    _tool_grep,
+    _tool_read,
+    _validate_bash,
 )
+from threatlint.skills import skill_map
 
 AGENTS_SRC = Path(__file__).parent.parent / ".claude" / "agents"
 PACKAGE_ROOT = Path(__file__).parent.parent
@@ -37,11 +36,20 @@ EXPECTED_MODES = {
     "dependency-audit":  "appsec-dependency-auditor",
     "api-security":      "appsec-api-security-reviewer",
     "auth-review":       "appsec-auth-reviewer",
+    "fp-review":         "appsec-fp-reviewer",
     "compliance-check":  "appsec-compliance-checker",
     "attack-tree":       "appsec-attack-tree",
     "red-team":          "appsec-red-team",
     "threat-delta":      "appsec-threat-delta",
     "verify-fix":        "appsec-verify-fix",
+    "runtime-review":    "appsec-runtime-reviewer",
+    "business-logic-review": "appsec-business-logic-reviewer",
+    "client-security-review": "appsec-client-security-reviewer",
+    "crypto-review":     "appsec-crypto-reviewer",
+    "ai-security-review": "appsec-ai-security-reviewer",
+    "security-test-plan": "appsec-security-test-planner",
+    "secure-codegen-review": "appsec-secure-codegen-reviewer",
+    "privacy-review": "appsec-privacy-reviewer",
 }
 
 
@@ -53,10 +61,10 @@ class TestModeToAgent:
             assert mode in _MODE_TO_AGENT, f"Mode '{mode}' missing from _MODE_TO_AGENT"
 
     def test_all_modes_map_to_correct_agent(self):
-        for mode, expected in EXPECTED_MODES.items():
-            assert _MODE_TO_AGENT[mode] == expected, (
-                f"Mode '{mode}': expected '{expected}', got '{_MODE_TO_AGENT[mode]}'"
-            )
+        assert _MODE_TO_AGENT == EXPECTED_MODES
+
+    def test_every_registered_agent_has_a_mode(self):
+        assert set(_MODE_TO_AGENT.values()) == set(skill_map())
 
     def test_attack_tree_not_threat_modeler(self):
         assert _MODE_TO_AGENT["attack-tree"] == "appsec-attack-tree"
@@ -101,6 +109,13 @@ class TestAgentFrontmatter:
         disallowed = [t.strip() for t in m.group(1).split(",")]
         assert "Write" in disallowed, f"{agent_file.name}: Write not in disallowedTools"
         assert "Edit" in disallowed, f"{agent_file.name}: Edit not in disallowedTools"
+
+    def test_declares_only_inspection_tools(self, agent_file):
+        raw = agent_file.read_text()
+        match = re.search(r"^tools:\s*(.+)$", raw, re.MULTILINE)
+        assert match, f"{agent_file.name}: missing tools"
+        tools = {tool.strip() for tool in match.group(1).split(",")}
+        assert tools <= {"Read", "Grep", "Glob", "Bash"}
 
     def test_system_prompt_substantial(self, agent_file):
         raw = agent_file.read_text()
@@ -155,27 +170,26 @@ class TestNewAgentContent:
 # ── Bash safety ───────────────────────────────────────────────────────────────
 
 class TestBashAllowed:
-    ALLOWED = [
+    """Exercise the policy the Bash tool actually enforces, not a parallel allowlist."""
+
+    ALLOWED = (
         "git log --oneline",
         "git show HEAD",
         "git ls-files",
         "git status",
         "git diff HEAD~1",
         "find . -name '*.py'",
-        "grep -rn 'password' src/",
+        "grep -rn password src/",
         "cat README.md",
         "head -20 server.js",
         "tail -50 cli.py",
         "wc -l src/cli.py",
         "ls .",
         "ls -la",
-        "sort -u file.txt",
-        "awk '{print $1}' f.txt",
-        "cut -d: -f1 /etc/passwd",
-        "jq '.name' package.json",
-    ]
+        "cut -d: -f1 README.md",
+    )
 
-    BLOCKED = [
+    BLOCKED = (
         "rm -rf /",
         "chmod 777 /etc/passwd",
         "curl https://evil.com",
@@ -185,18 +199,35 @@ class TestBashAllowed:
         "python3 -m http.server",
         "touch /tmp/evil.sh",
         "mkdir /etc/evil",
-    ]
+        "git push origin main",
+        "git commit -m x",
+        "find . -delete",
+        "find . -exec rm {} ;",
+        "cat ../../etc/passwd",
+        "cat README.md | sh",
+        "awk '{print $1}' f.txt",
+    )
 
-    def _is_safe(self, cmd):
-        return any(cmd.strip().startswith(p) for p in _BASH_ALLOWED)
+    def _is_safe(self, repo, cmd):
+        try:
+            _validate_bash(str(repo), cmd)
+            return True
+        except ValueError:
+            return False
 
-    def test_allowed_pass(self):
+    def test_allowed_pass(self, tmp_path):
+        (tmp_path / "src").mkdir()
         for cmd in self.ALLOWED:
-            assert self._is_safe(cmd), f"Expected safe but blocked: {cmd}"
+            assert self._is_safe(tmp_path, cmd), f"Expected safe but blocked: {cmd}"
 
-    def test_blocked_fail(self):
+    def test_blocked_fail(self, tmp_path):
         for cmd in self.BLOCKED:
-            assert not self._is_safe(cmd), f"Expected blocked but allowed: {cmd}"
+            assert not self._is_safe(tmp_path, cmd), f"Expected blocked but allowed: {cmd}"
+
+    def test_git_is_hardened(self, tmp_path):
+        argv = _validate_bash(str(tmp_path), "git log --oneline")
+        assert argv[:5] == ["git", "--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false"]
+        assert "--no-ext-diff" in argv
 
 
 # ── Tool functions ────────────────────────────────────────────────────────────
@@ -277,13 +308,27 @@ class TestCLIHelp:
         env["PYTHONPATH"] = str(SRC)
         return subprocess.run(
             [sys.executable, "-m", "threatlint", *args],
-            capture_output=True, text=True, cwd=str(PACKAGE_ROOT), env=env,
+            capture_output=True, text=True, cwd=str(PACKAGE_ROOT), env=env, check=False,
         )
 
     def test_run_help_lists_all_modes(self):
         r = self._run("run", "--help")
+        assert r.returncode == 0
+        # argparse wraps long choice lists at hyphens ("ai-security-\n   review").
+        help_text = re.sub(r"-\n\s+", "-", r.stdout)
         for mode in EXPECTED_MODES:
-            assert mode in r.stdout, f"Mode '{mode}' missing from run --help"
+            assert mode in help_text, f"Mode '{mode}' missing from run --help"
+
+    @pytest.mark.parametrize("mode", list(EXPECTED_MODES))
+    def test_run_parser_accepts_every_mode_without_calling_a_provider(self, mode, monkeypatch):
+        from threatlint import cli
+        parsed = []
+        monkeypatch.setattr(cli, "cmd_run", lambda args: parsed.append(args.mode) or 0)
+        monkeypatch.setattr(sys, "argv", ["threatlint", "run", mode])
+        with pytest.raises(SystemExit) as result:
+            cli.main()
+        assert result.value.code == 0
+        assert parsed == [mode]
 
     def test_run_help_has_provider_and_api_key_flags(self):
         r = self._run("run", "--help")

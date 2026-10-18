@@ -26,6 +26,10 @@ parameters:
   - name: gateSeverity
     type: string
     default: CRITICAL
+  - name: gateMode
+    type: string
+    default: warn
+    values: [warn, fail]
   - name: minIssueSeverity
     type: string
     default: HIGH
@@ -43,6 +47,7 @@ jobs:
       REPORT_FILE: $(Agent.TempDirectory)/appsec-iac-report.md
       PROVIDER: ${{ parameters.provider }}
       GATE_SEVERITY: ${{ parameters.gateSeverity }}
+      GATE_MODE: ${{ parameters.gateMode }}
 
     steps:
       - checkout: self
@@ -141,9 +146,9 @@ jobs:
           artifactName: CodeAnalysisLogs
 
       - script: |
-          if [ ! -f "$(REPORT_FILE)" ]; then echo "No report — skipping gate."; exit 0; fi
+          if [ ! -f "$(REPORT_FILE)" ]; then echo "##vso[task.logissue type=warning]No Threatlint report was produced; the severity gate was not evaluated."; exit 0; fi
           python3 .github/scripts/gate_report.py \
-            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)"
+            --report "$(REPORT_FILE)" --severity "$(GATE_SEVERITY)" --mode "$(GATE_MODE)"
         displayName: Gate on severity threshold
         condition: and(always(), ne(variables['GATE_SEVERITY'], ''))
 

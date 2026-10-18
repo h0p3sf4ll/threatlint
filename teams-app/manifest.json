@@ -20,7 +20,7 @@
   },
   "description": {
     "short": "Application security analysis via Claude AI agents",
-    "full": "threatlint runs 14 specialized application security agents powered by Claude AI. Threat modeling, code review, secrets scanning, dependency auditing, compliance mapping, and adversarial red-team scenarios — all from Microsoft Teams."
+    "full": "threatlint offers specialized application security agents powered by Claude AI: threat modeling, code review, supply chain, compliance, runtime evidence, business logic, client security, cryptography, AI/LLM security, security test planning, secure code generation, and privacy review. Teams analyzes supplied redacted evidence only; it cannot inspect repositories, capture traffic, log in, or execute tests."
   },
   "accentColor": "#D97706",
   "bots": [
@@ -49,6 +49,14 @@
             { "title": "threat-delta", "description": "Compare prior report to current state" },
             { "title": "verify-fix", "description": "Verify a specific finding was remediated" },
             { "title": "fp-review", "description": "Triage scanner findings and tune Semgrep rules" },
+            { "title": "runtime-review", "description": "Correlate supplied redacted runtime captures with source" },
+            { "title": "business-logic-review", "description": "Review workflows, invariants, idempotency, and race conditions" },
+            { "title": "client-security-review", "description": "Review browser, Electron, mobile, origins, storage, and IPC" },
+            { "title": "crypto-review", "description": "Review cryptographic purpose, keys, nonces, and TLS verification" },
+            { "title": "ai-security-review", "description": "Review prompt, RAG, tool, tenant, and output trust boundaries" },
+            { "title": "security-test-plan", "description": "Plan traceable security acceptance cases without executing tests" },
+            { "title": "secure-codegen-review", "description": "Check generated or new code for insecure defaults and safe rewrites" },
+            { "title": "privacy-review", "description": "Inventory PII and review data flows, retention, and consent" },
             { "title": "help", "description": "Show all available commands" }
           ]
         }

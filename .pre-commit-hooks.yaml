@@ -1,0 +1,7 @@
+- id: threatlint-guard
+  name: threatlint guard
+  description: Fast local secure-coding checks (injection, unsafe deserialization, disabled TLS, hardcoded secrets, XSS, weak crypto).
+  entry: threatlint guard --fail-on high
+  language: python
+  types: [text]
+  require_serial: false
