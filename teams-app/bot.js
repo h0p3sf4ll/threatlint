@@ -19,9 +19,25 @@ const restify = require('restify');
 const { BotFrameworkAdapter, TurnContext, ActivityHandler } = require('botbuilder');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const PORT = parseInt(process.env.PORT || '3978', 10);
+const PORT = Number.parseInt(process.env.PORT || '3978', 10);
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
-const AGENTS_DIR = path.resolve(__dirname, '../.claude/agents');
+const DATA_DIR = path.resolve(__dirname, '../src/threatlint/data');
+const AGENTS_DIR = path.join(DATA_DIR, 'agents');
+const MAX_OUTPUT_TOKENS = 8192;
+// Teams accepts roughly 28 KB per activity; leave headroom for formatting.
+const TEAMS_MESSAGE_CHARS = 25000;
+
+const WELCOME_TEXT = 'Welcome to **threatlint**! I run application security agents powered by Claude AI.\n\nType `/help` to see all available commands.';
+
+/** Send activities strictly in order; Teams shows them in arrival order, so report chunks must not race. */
+function sendInOrder(context, messages) {
+  return messages.reduce((previous, message) => previous.then(() => context.sendActivity(message)), Promise.resolve());
+}
+
+/** Split text into Teams-sized chunks, preserving order. */
+function chunks(text, size) {
+  return Array.from({ length: Math.ceil(text.length / size) }, (_, index) => text.slice(index * size, (index + 1) * size));
+}
 
 const adapter = new BotFrameworkAdapter({
   appId: process.env.BOT_APP_ID || '',
@@ -52,6 +68,14 @@ const COMMAND_TO_AGENT = {
   'red-team':            'appsec-red-team',
   'threat-delta':        'appsec-threat-delta',
   'verify-fix':          'appsec-verify-fix',
+  'runtime-review':      'appsec-runtime-reviewer',
+  'business-logic-review': 'appsec-business-logic-reviewer',
+  'client-security-review': 'appsec-client-security-reviewer',
+  'crypto-review':       'appsec-crypto-reviewer',
+  'ai-security-review':  'appsec-ai-security-reviewer',
+  'security-test-plan':  'appsec-security-test-planner',
+  'secure-codegen-review': 'appsec-secure-codegen-reviewer',
+  'privacy-review':      'appsec-privacy-reviewer',
 };
 
 function loadAgentPrompt(agentId) {
@@ -59,7 +83,13 @@ function loadAgentPrompt(agentId) {
   if (!fs.existsSync(agentPath)) return null;
   const raw = fs.readFileSync(agentPath, 'utf8');
   const match = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-  return match ? match[1].trim() : raw.trim();
+  const body = match ? match[1].trim() : raw.trim();
+  const registry = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'agent-skills.json'), 'utf8'));
+  const skills = registry[agentId].map(id => {
+    const source = fs.readFileSync(path.join(DATA_DIR, 'skills', id, 'SKILL.md'), 'utf8');
+    return source.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
+  });
+  return `${body}\n\n## Required Skill Workflows\n${skills.join('\n\n')}\n\nThis Teams runner has no repository inspection tools. Analyze only evidence explicitly supplied in the conversation. Do not claim a repository was inspected or findings verified when source is unavailable; identify the evidence needed or recommend the desktop/CLI runner. No runtime or browser tools are available: do not collect captures, send requests, log in, automate SSO/MFA, or execute tests. Missing source/auth/runtime evidence is a limitation, not a verified result; proposed validation is NOT RUN.`;
 }
 
 // ── Command parsing ────────────────────────────────────────────────────────────
@@ -74,7 +104,7 @@ function parseCommand(text) {
 
 function helpText() {
   const rows = Object.keys(COMMAND_TO_AGENT).map(cmd => `• \`/${cmd}\``).join('\n');
-  return `**threatlint — AppSec Agents**\n\nAvailable commands:\n${rows}\n\nUsage: \`/threat-model [target]\` or \`@threatlint threat-model [target]\`\n\nAll agents are read-only. No files are modified.`;
+  return `**threatlint — AppSec Agents**\n\nAvailable commands:\n${rows}\n\nUsage: \`/threat-model [target]\` or \`@threatlint threat-model [target]\`\n\nAll agents are read-only. No files are modified. Teams reviews supplied evidence only; it cannot inspect repositories, capture traffic, log in, or run tests. Supply redacted evidence without credentials or session tokens.`;
 }
 
 // ── Bot activity handler ───────────────────────────────────────────────────────
@@ -106,7 +136,8 @@ class ThreatLintBot extends ActivityHandler {
         return next();
       }
 
-      await context.sendActivity(`Running **${agentId}**${args ? ` on \`${args}\`` : ''}…`);
+      const scope = args ? ` on \`${args}\`` : '';
+      await context.sendActivity(`Running **${agentId}**${scope}…`);
 
       const userMessage = args
         ? `Analyze the following target: ${args}`
@@ -115,7 +146,7 @@ class ThreatLintBot extends ActivityHandler {
       try {
         const stream = await anthropic.messages.stream({
           model: MODEL,
-          max_tokens: 8192,
+          max_tokens: MAX_OUTPUT_TOKENS,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         });
@@ -127,15 +158,7 @@ class ThreatLintBot extends ActivityHandler {
           }
         }
 
-        // Teams message size limit: ~28 KB per activity. Split large reports.
-        const CHUNK = 25000;
-        if (report.length <= CHUNK) {
-          await context.sendActivity(report);
-        } else {
-          for (let i = 0; i < report.length; i += CHUNK) {
-            await context.sendActivity(report.slice(i, i + CHUNK));
-          }
-        }
+        await sendInOrder(context, report ? chunks(report, TEAMS_MESSAGE_CHARS) : ['The model returned an empty report.']);
       } catch (err) {
         console.error('[threatlint] API error:', err);
         await context.sendActivity(`Analysis failed: ${err.message || String(err)}`);
@@ -145,13 +168,8 @@ class ThreatLintBot extends ActivityHandler {
     });
 
     this.onMembersAdded(async (context, next) => {
-      for (const member of context.activity.membersAdded || []) {
-        if (member.id !== context.activity.recipient.id) {
-          await context.sendActivity(
-            'Welcome to **threatlint**! I run application security agents powered by Claude AI.\n\nType `/help` to see all available commands.'
-          );
-        }
-      }
+      const newMembers = (context.activity.membersAdded || []).filter(member => member.id !== context.activity.recipient.id);
+      await sendInOrder(context, newMembers.map(() => WELCOME_TEXT));
       await next();
     });
   }

@@ -13,7 +13,11 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 
+
+# threatlint_chat.py locates the latest report comment on a PR by this hidden marker.
+REPORT_MARKER = '<!-- threatlint:report -->'
 
 SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'INFORMATIONAL']
 
@@ -33,6 +37,18 @@ MERGE_REC_STYLE = {
 }
 
 
+DEFAULT_REPORT_TYPE = 'code-review'
+
+
+@dataclass
+class Summary:
+    report_type: str = DEFAULT_REPORT_TYPE
+    risk_level: str = 'UNKNOWN'
+    merge_recommendation: str = ''
+    findings_by_severity: dict = field(default_factory=dict)
+    top_issues: list = field(default_factory=list)
+
+
 def _detect_report_type(report_text):
     for prefix, report_type in [
         ('[TM-', 'threat-model'),
@@ -42,32 +58,26 @@ def _detect_report_type(report_text):
         ('[CI-', 'cicd-audit'),
         ('[AR-', 'api-security'),
         ('[AU-', 'auth-review'),
-        ('[CR-', 'code-review'),
+        ('[CR-', DEFAULT_REPORT_TYPE),
     ]:
         if prefix in report_text:
             return report_type
-    return 'code-review'
+    return DEFAULT_REPORT_TYPE
 
 
 def extract_summary(report_text):
     """Parse the executive summary section of a threatlint report."""
-    summary = {
-        'risk_level': 'UNKNOWN',
-        'merge_recommendation': None,
-        'findings_by_severity': {},
-        'top_issues': [],
-        'report_type': _detect_report_type(report_text),
-    }
+    summary = Summary(report_type=_detect_report_type(report_text))
 
     # Risk level / Change Risk Level
     m = re.search(r'\*\*(CRITICAL|HIGH|MEDIUM|LOW|CLEAN)\*\*\s*(?:/\s*\*\*(CRITICAL|HIGH|MEDIUM|LOW|CLEAN)\*\*\s*)*\n', report_text)
     if m:
-        summary['risk_level'] = m.group(1)
+        summary.risk_level = m.group(1)
 
     # Merge recommendation
     m = re.search(r'\*\*(BLOCK|MERGE WITH ACTION|MERGE)\*\*', report_text)
     if m:
-        summary['merge_recommendation'] = m.group(1)
+        summary.merge_recommendation = m.group(1)
 
     # Finding summary table
     table_pattern = re.compile(
@@ -78,7 +88,7 @@ def extract_summary(report_text):
         sev = row.group(1).upper()
         count = int(row.group(2))
         if count > 0:
-            summary['findings_by_severity'][sev] = {
+            summary.findings_by_severity[sev] = {
                 'total': count,
                 'confirmed': int(row.group(3)),
                 'plausible': int(row.group(4)),
@@ -91,36 +101,36 @@ def extract_summary(report_text):
         for line in top_section.group(1).strip().split('\n'):
             m = re.match(r'\s*[-*]\s*\*\*(\[(?:TM|CR|DA|IC|CI|AR|AU|SS)-\d+\])\*\*\s*(.*)', line)
             if m:
-                summary['top_issues'].append({'id': m.group(1), 'detail': m.group(2).strip()})
+                summary.top_issues.append({'id': m.group(1), 'detail': m.group(2).strip()})
 
     return summary
 
 
 def build_comment(summary, run_url):
-    lines = []
-    risk = summary['risk_level']
+    lines = [REPORT_MARKER]
+    risk = summary.risk_level
     emoji = SEVERITY_EMOJI.get(risk, '⚪')
 
     report_type_label = {
         'threat-model': 'Threat Model',
-        'code-review': 'Code Review',
+        DEFAULT_REPORT_TYPE: 'Code Review',
         'dependency-audit': 'Dependency Audit',
         'secrets-scan': 'Secrets Scan',
         'iac-review': 'IaC Review',
         'cicd-audit': 'CI/CD Audit',
         'api-security': 'API Security Review',
         'auth-review': 'Auth Review',
-    }.get(summary['report_type'], 'Security Review')
+    }.get(summary.report_type, 'Security Review')
     lines.append(f'## {emoji} AppSec {report_type_label}: **{risk}**')
     lines.append('')
 
-    if summary['merge_recommendation']:
-        rec = summary['merge_recommendation']
+    if summary.merge_recommendation:
+        rec = summary.merge_recommendation
         lines.append(f'**Merge recommendation**: {MERGE_REC_STYLE.get(rec, rec)}')
         lines.append('')
 
     # Findings table
-    findings = summary['findings_by_severity']
+    findings = summary.findings_by_severity
     if findings:
         lines.append('| Severity | Total | Confirmed | Plausible | Theoretical |')
         lines.append('|----------|-------|-----------|-----------|-------------|')
@@ -132,13 +142,15 @@ def build_comment(summary, run_url):
         lines.append('')
 
     # Top issues
-    if summary['top_issues']:
+    if summary.top_issues:
         lines.append('**Top issues:**')
-        for issue in summary['top_issues'][:5]:
+        for issue in summary.top_issues[:5]:
             lines.append(f'- **{issue["id"]}** {issue["detail"]}')
         lines.append('')
 
     lines.append(f'[View full report in workflow run]({run_url})')
+    lines.append('')
+    lines.append('💬 Ask about these findings: comment `/threatlint <question>` (for example `/threatlint suggest a fix for the top issue`).')
     lines.append('')
     lines.append('<sub>Generated by [threatlint](https://github.com/h0p3sf4ll/threatlint)</sub>')
 

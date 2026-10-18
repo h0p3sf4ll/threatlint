@@ -1,0 +1,1332 @@
+{
+  "id": "synthetic-example",
+  "status": "complete",
+  "target": "https://staging.demo-shop.test",
+  "startedAt": 1792344066319,
+  "finishedAt": 1792344066346,
+  "requests": [
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 57,
+      "contentType": "text/html"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 57,
+      "contentType": "text/html"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/",
+      "statusCode": 200,
+      "durationMs": 2,
+      "bytes": 57,
+      "contentType": "text/html"
+    },
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/api/health",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 11,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/api/health",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 11,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/api/health",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 11,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/api/profile",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 42,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/api/profile",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 40,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/api/profile",
+      "statusCode": 401,
+      "durationMs": 1,
+      "bytes": 26,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/api/orders",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 90,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/api/orders",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 90,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/api/orders",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 90,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/api/admin/users",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 61,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/api/admin/users",
+      "statusCode": 200,
+      "durationMs": 1,
+      "bytes": 61,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/api/admin/users",
+      "statusCode": 403,
+      "durationMs": 1,
+      "bytes": 21,
+      "contentType": "application/json"
+    },
+    {
+      "identity": "primary (oauth-client-credentials)",
+      "method": "GET",
+      "path": "/debug",
+      "statusCode": 500,
+      "durationMs": 1,
+      "bytes": 99,
+      "contentType": "text/plain"
+    },
+    {
+      "identity": "developer (form login)",
+      "method": "GET",
+      "path": "/debug",
+      "statusCode": 500,
+      "durationMs": 1,
+      "bytes": 99,
+      "contentType": "text/plain"
+    },
+    {
+      "identity": "anonymous",
+      "method": "GET",
+      "path": "/debug",
+      "statusCode": 500,
+      "durationMs": 1,
+      "bytes": 99,
+      "contentType": "text/plain"
+    }
+  ],
+  "findings": [
+    {
+      "id": "RT-001",
+      "rule": "RT-COOKIE-FLAGS",
+      "severity": "MEDIUM",
+      "title": "Cookie sid is missing HttpOnly, SameSite",
+      "cwe": "CWE-1004",
+      "path": "/login",
+      "identity": "developer (form login)",
+      "description": "Set-Cookie for sid lacks HttpOnly, SameSite.",
+      "fix": "Set HttpOnly; SameSite on sid (e.g. HttpOnly; Secure; SameSite=Lax).",
+      "evidence": {
+        "cookie": "sid",
+        "missing": [
+          "HttpOnly",
+          "SameSite"
+        ]
+      }
+    },
+    {
+      "id": "RT-002",
+      "rule": "RT-HDR-CSP",
+      "severity": "MEDIUM",
+      "title": "Missing Content-Security-Policy on HTML",
+      "cwe": "CWE-1021",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "/ returned 200 without content-security-policy.",
+      "fix": "Add a restrictive CSP (default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none').",
+      "evidence": {
+        "header": "content-security-policy",
+        "present": false,
+        "contentType": "text/html"
+      },
+      "occurrences": 3
+    },
+    {
+      "id": "RT-003",
+      "rule": "RT-HDR-XCTO",
+      "severity": "LOW",
+      "title": "Missing X-Content-Type-Options: nosniff",
+      "cwe": "CWE-693",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "/ returned 200 without x-content-type-options.",
+      "fix": "Send X-Content-Type-Options: nosniff on every response.",
+      "evidence": {
+        "header": "x-content-type-options",
+        "present": false,
+        "contentType": "text/html"
+      },
+      "occurrences": 18
+    },
+    {
+      "id": "RT-004",
+      "rule": "RT-HDR-FRAME",
+      "severity": "LOW",
+      "title": "HTML can be framed (no X-Frame-Options or frame-ancestors)",
+      "cwe": "CWE-1021",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "/ returned 200 without x-frame-options.",
+      "fix": "Send X-Frame-Options: DENY or CSP frame-ancestors 'none'.",
+      "evidence": {
+        "header": "x-frame-options",
+        "present": false,
+        "contentType": "text/html"
+      },
+      "occurrences": 3
+    },
+    {
+      "id": "RT-005",
+      "rule": "RT-CORS-REFLECT",
+      "severity": "HIGH",
+      "title": "CORS reflects an untrusted origin",
+      "cwe": "CWE-942",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "An Origin of https://threatlint-cors-probe.invalid was echoed in Access-Control-Allow-Origin with credentials allowed.",
+      "fix": "Compare Origin against an explicit allowlist; never reflect arbitrary origins with credentials.",
+      "evidence": {
+        "allowOrigin": "https://threatlint-cors-probe.invalid",
+        "allowCredentials": "true"
+      },
+      "occurrences": 18
+    },
+    {
+      "id": "RT-006",
+      "rule": "RT-DISCLOSE-VERSION",
+      "severity": "INFO",
+      "title": "Version disclosed in server",
+      "cwe": "CWE-200",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "server: demo-node/18.2.0",
+      "fix": "Remove or genericize the server header at the server or proxy.",
+      "evidence": {
+        "header": "server",
+        "value": "demo-node/18.2.0"
+      },
+      "occurrences": 18
+    },
+    {
+      "id": "RT-007",
+      "rule": "RT-DISCLOSE-VERSION",
+      "severity": "INFO",
+      "title": "Version disclosed in x-powered-by",
+      "cwe": "CWE-200",
+      "path": "/",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "x-powered-by: Express 4.18.2",
+      "fix": "Remove or genericize the x-powered-by header at the server or proxy.",
+      "evidence": {
+        "header": "x-powered-by",
+        "value": "Express 4.18.2"
+      },
+      "occurrences": 18
+    },
+    {
+      "id": "RT-008",
+      "rule": "RT-DEBUG-LEAK",
+      "severity": "MEDIUM",
+      "title": "Stack trace or debug output in response",
+      "cwe": "CWE-209",
+      "path": "/debug",
+      "identity": "primary (oauth-client-credentials)",
+      "description": "/debug returned content matching a debug/stack-trace signature.",
+      "fix": "Disable debug mode in deployed environments and return generic error pages.",
+      "evidence": {
+        "signature": "Traceback \\(most recent call last\\)"
+      },
+      "occurrences": 3
+    },
+    {
+      "id": "RT-009",
+      "rule": "RT-AUTHZ-ASSERT",
+      "severity": "HIGH",
+      "title": "Access-control assertion failed for /api/orders",
+      "cwe": "CWE-862",
+      "path": "/api/orders",
+      "identity": "anonymous",
+      "description": "Anonymous GET /api/orders returned 200; expected 401 or 403.",
+      "fix": "Enforce authentication middleware on this route server-side and add a regression test asserting 401/403 for anonymous callers.",
+      "evidence": {
+        "expected": [
+          401,
+          403
+        ],
+        "observed": 200
+      }
+    },
+    {
+      "id": "RT-010",
+      "rule": "RT-AUTHZ-ROLE-EQUAL",
+      "severity": "HIGH",
+      "title": "developer (form login) receives the primary identity's /api/admin/users content",
+      "cwe": "CWE-639",
+      "path": "/api/admin/users",
+      "identity": "developer (form login)",
+      "description": "developer (form login) received 200 with a body identical to the primary identity on a route that denies anonymous callers. Verify whether this role should have access.",
+      "fix": "Enforce function- and object-level authorization for each role server-side; add role-matrix regression tests.",
+      "evidence": {
+        "primary": 200,
+        "role": 200,
+        "identical": true
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "target",
+      "kind": "target",
+      "label": "https://staging.demo-shop.test",
+      "status": "observed",
+      "detail": "Authorized: synthetic loopback fixture",
+      "evidence": {
+        "paths": 6,
+        "allowPrivate": true
+      }
+    },
+    {
+      "id": "identity-0",
+      "kind": "identity",
+      "label": "primary (oauth-client-credentials)",
+      "status": "observed",
+      "detail": "Authentication workflow: oauth-client-credentials",
+      "evidence": {
+        "type": "oauth-client-credentials",
+        "established": true
+      }
+    },
+    {
+      "id": "identity-1",
+      "kind": "identity",
+      "label": "developer (form login)",
+      "status": "observed",
+      "detail": "Authentication workflow: form-login",
+      "evidence": {
+        "type": "form-login",
+        "established": true
+      }
+    },
+    {
+      "id": "finding-RT-001",
+      "kind": "finding",
+      "label": "Cookie sid is missing HttpOnly, SameSite",
+      "status": "observed",
+      "detail": "MEDIUM · RT-COOKIE-FLAGS",
+      "evidence": {
+        "cookie": "sid",
+        "missing": [
+          "HttpOnly",
+          "SameSite"
+        ]
+      }
+    },
+    {
+      "id": "impact-RT-COOKIE-FLAGS",
+      "kind": "impact",
+      "label": "Session theft via XSS or network interception becomes easier",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "identity-2",
+      "kind": "identity",
+      "label": "anonymous",
+      "status": "observed",
+      "detail": "Authentication workflow: none",
+      "evidence": {
+        "type": "none",
+        "established": true
+      }
+    },
+    {
+      "id": "req-0",
+      "kind": "request",
+      "label": "GET /",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-0-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · text/html",
+      "evidence": {
+        "status": 200,
+        "bytes": 57
+      }
+    },
+    {
+      "id": "finding-RT-002",
+      "kind": "finding",
+      "label": "Missing Content-Security-Policy on HTML",
+      "status": "observed",
+      "detail": "MEDIUM · RT-HDR-CSP",
+      "evidence": {
+        "header": "content-security-policy",
+        "present": false,
+        "contentType": "text/html"
+      }
+    },
+    {
+      "id": "impact-RT-HDR-CSP",
+      "kind": "impact",
+      "label": "Injected script would execute without a CSP backstop",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "finding-RT-003",
+      "kind": "finding",
+      "label": "Missing X-Content-Type-Options: nosniff",
+      "status": "observed",
+      "detail": "LOW · RT-HDR-XCTO",
+      "evidence": {
+        "header": "x-content-type-options",
+        "present": false,
+        "contentType": "text/html"
+      }
+    },
+    {
+      "id": "finding-RT-004",
+      "kind": "finding",
+      "label": "HTML can be framed (no X-Frame-Options or frame-ancestors)",
+      "status": "observed",
+      "detail": "LOW · RT-HDR-FRAME",
+      "evidence": {
+        "header": "x-frame-options",
+        "present": false,
+        "contentType": "text/html"
+      }
+    },
+    {
+      "id": "impact-RT-HDR-FRAME",
+      "kind": "impact",
+      "label": "Clickjacking of authenticated actions",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "finding-RT-005",
+      "kind": "finding",
+      "label": "CORS reflects an untrusted origin",
+      "status": "observed",
+      "detail": "HIGH · RT-CORS-REFLECT",
+      "evidence": {
+        "allowOrigin": "https://threatlint-cors-probe.invalid",
+        "allowCredentials": "true"
+      }
+    },
+    {
+      "id": "impact-RT-CORS-REFLECT",
+      "kind": "impact",
+      "label": "A malicious site could read authenticated responses cross-origin",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "finding-RT-006",
+      "kind": "finding",
+      "label": "Version disclosed in server",
+      "status": "observed",
+      "detail": "INFO · RT-DISCLOSE-VERSION",
+      "evidence": {
+        "header": "server",
+        "value": "demo-node/18.2.0"
+      }
+    },
+    {
+      "id": "finding-RT-007",
+      "kind": "finding",
+      "label": "Version disclosed in x-powered-by",
+      "status": "observed",
+      "detail": "INFO · RT-DISCLOSE-VERSION",
+      "evidence": {
+        "header": "x-powered-by",
+        "value": "Express 4.18.2"
+      }
+    },
+    {
+      "id": "req-1",
+      "kind": "request",
+      "label": "GET /",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-1-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · text/html",
+      "evidence": {
+        "status": 200,
+        "bytes": 57
+      }
+    },
+    {
+      "id": "req-2",
+      "kind": "request",
+      "label": "GET /",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-2-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "2 ms · text/html",
+      "evidence": {
+        "status": 200,
+        "bytes": 57
+      }
+    },
+    {
+      "id": "req-3",
+      "kind": "request",
+      "label": "GET /api/health",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-3-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 11
+      }
+    },
+    {
+      "id": "req-4",
+      "kind": "request",
+      "label": "GET /api/health",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-4-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 11
+      }
+    },
+    {
+      "id": "req-5",
+      "kind": "request",
+      "label": "GET /api/health",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-5-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 11
+      }
+    },
+    {
+      "id": "req-6",
+      "kind": "request",
+      "label": "GET /api/profile",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-6-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 42
+      }
+    },
+    {
+      "id": "req-7",
+      "kind": "request",
+      "label": "GET /api/profile",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-7-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 40
+      }
+    },
+    {
+      "id": "req-8",
+      "kind": "request",
+      "label": "GET /api/profile",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-8-res",
+      "kind": "control",
+      "label": "HTTP 401 · access control",
+      "status": "blocked",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 401,
+        "bytes": 26
+      }
+    },
+    {
+      "id": "req-9",
+      "kind": "request",
+      "label": "GET /api/orders",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-9-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 90
+      }
+    },
+    {
+      "id": "req-10",
+      "kind": "request",
+      "label": "GET /api/orders",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-10-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 90
+      }
+    },
+    {
+      "id": "req-11",
+      "kind": "request",
+      "label": "GET /api/orders",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-11-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 90
+      }
+    },
+    {
+      "id": "req-12",
+      "kind": "request",
+      "label": "GET /api/admin/users",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-12-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 61
+      }
+    },
+    {
+      "id": "req-13",
+      "kind": "request",
+      "label": "GET /api/admin/users",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-13-res",
+      "kind": "response",
+      "label": "HTTP 200",
+      "status": "observed",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 200,
+        "bytes": 61
+      }
+    },
+    {
+      "id": "req-14",
+      "kind": "request",
+      "label": "GET /api/admin/users",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-14-res",
+      "kind": "control",
+      "label": "HTTP 403 · access control",
+      "status": "blocked",
+      "detail": "1 ms · application/json",
+      "evidence": {
+        "status": 403,
+        "bytes": 21
+      }
+    },
+    {
+      "id": "req-15",
+      "kind": "request",
+      "label": "GET /debug",
+      "status": "observed",
+      "detail": "as primary (oauth-client-credentials)",
+      "evidence": {
+        "identity": "primary (oauth-client-credentials)"
+      }
+    },
+    {
+      "id": "req-15-res",
+      "kind": "response",
+      "label": "HTTP 500",
+      "status": "observed",
+      "detail": "1 ms · text/plain",
+      "evidence": {
+        "status": 500,
+        "bytes": 99
+      }
+    },
+    {
+      "id": "finding-RT-008",
+      "kind": "finding",
+      "label": "Stack trace or debug output in response",
+      "status": "observed",
+      "detail": "MEDIUM · RT-DEBUG-LEAK",
+      "evidence": {
+        "signature": "Traceback \\(most recent call last\\)"
+      }
+    },
+    {
+      "id": "impact-RT-DEBUG-LEAK",
+      "kind": "impact",
+      "label": "Internal paths and versions aid targeted exploitation",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "req-16",
+      "kind": "request",
+      "label": "GET /debug",
+      "status": "observed",
+      "detail": "as developer (form login)",
+      "evidence": {
+        "identity": "developer (form login)"
+      }
+    },
+    {
+      "id": "req-16-res",
+      "kind": "response",
+      "label": "HTTP 500",
+      "status": "observed",
+      "detail": "1 ms · text/plain",
+      "evidence": {
+        "status": 500,
+        "bytes": 99
+      }
+    },
+    {
+      "id": "req-17",
+      "kind": "request",
+      "label": "GET /debug",
+      "status": "observed",
+      "detail": "as anonymous",
+      "evidence": {
+        "identity": "anonymous"
+      }
+    },
+    {
+      "id": "req-17-res",
+      "kind": "response",
+      "label": "HTTP 500",
+      "status": "observed",
+      "detail": "1 ms · text/plain",
+      "evidence": {
+        "status": 500,
+        "bytes": 99
+      }
+    },
+    {
+      "id": "finding-RT-009",
+      "kind": "finding",
+      "label": "Access-control assertion failed for /api/orders",
+      "status": "observed",
+      "detail": "HIGH · RT-AUTHZ-ASSERT",
+      "evidence": {
+        "expected": [
+          401,
+          403
+        ],
+        "observed": 200
+      }
+    },
+    {
+      "id": "impact-RT-AUTHZ-ASSERT",
+      "kind": "impact",
+      "label": "Unauthenticated users could reach a protected resource",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    },
+    {
+      "id": "finding-RT-010",
+      "kind": "finding",
+      "label": "developer (form login) receives the primary identity's /api/admin/users content",
+      "status": "observed",
+      "detail": "HIGH · RT-AUTHZ-ROLE-EQUAL",
+      "evidence": {
+        "primary": 200,
+        "role": 200,
+        "identical": true
+      }
+    },
+    {
+      "id": "impact-RT-AUTHZ-ROLE-EQUAL",
+      "kind": "impact",
+      "label": "A lower-privilege role may access a higher-privilege resource",
+      "status": "not-tested",
+      "detail": "Hypothesis. Not validated."
+    }
+  ],
+  "edges": [
+    {
+      "from": "target",
+      "to": "identity-0",
+      "label": "acts as"
+    },
+    {
+      "from": "identity-1",
+      "to": "finding-RT-001",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-001",
+      "to": "impact-RT-COOKIE-FLAGS",
+      "label": "could enable"
+    },
+    {
+      "from": "target",
+      "to": "identity-1",
+      "label": "acts as"
+    },
+    {
+      "from": "target",
+      "to": "identity-2",
+      "label": "acts as"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-0",
+      "label": "requests"
+    },
+    {
+      "from": "req-0",
+      "to": "req-0-res",
+      "label": "responds"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-002",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-002",
+      "to": "impact-RT-HDR-CSP",
+      "label": "could enable"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-003",
+      "label": "reveals"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-004",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-004",
+      "to": "impact-RT-HDR-FRAME",
+      "label": "could enable"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-005",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-005",
+      "to": "impact-RT-CORS-REFLECT",
+      "label": "could enable"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-006",
+      "label": "reveals"
+    },
+    {
+      "from": "req-0-res",
+      "to": "finding-RT-007",
+      "label": "reveals"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-1",
+      "label": "requests"
+    },
+    {
+      "from": "req-1",
+      "to": "req-1-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-2",
+      "label": "requests"
+    },
+    {
+      "from": "req-2",
+      "to": "req-2-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-3",
+      "label": "requests"
+    },
+    {
+      "from": "req-3",
+      "to": "req-3-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-4",
+      "label": "requests"
+    },
+    {
+      "from": "req-4",
+      "to": "req-4-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-5",
+      "label": "requests"
+    },
+    {
+      "from": "req-5",
+      "to": "req-5-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-6",
+      "label": "requests"
+    },
+    {
+      "from": "req-6",
+      "to": "req-6-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-7",
+      "label": "requests"
+    },
+    {
+      "from": "req-7",
+      "to": "req-7-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-8",
+      "label": "requests"
+    },
+    {
+      "from": "req-8",
+      "to": "req-8-res",
+      "label": "denied"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-9",
+      "label": "requests"
+    },
+    {
+      "from": "req-9",
+      "to": "req-9-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-10",
+      "label": "requests"
+    },
+    {
+      "from": "req-10",
+      "to": "req-10-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-11",
+      "label": "requests"
+    },
+    {
+      "from": "req-11",
+      "to": "req-11-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-12",
+      "label": "requests"
+    },
+    {
+      "from": "req-12",
+      "to": "req-12-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-13",
+      "label": "requests"
+    },
+    {
+      "from": "req-13",
+      "to": "req-13-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-14",
+      "label": "requests"
+    },
+    {
+      "from": "req-14",
+      "to": "req-14-res",
+      "label": "denied"
+    },
+    {
+      "from": "identity-0",
+      "to": "req-15",
+      "label": "requests"
+    },
+    {
+      "from": "req-15",
+      "to": "req-15-res",
+      "label": "responds"
+    },
+    {
+      "from": "req-15-res",
+      "to": "finding-RT-008",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-008",
+      "to": "impact-RT-DEBUG-LEAK",
+      "label": "could enable"
+    },
+    {
+      "from": "identity-1",
+      "to": "req-16",
+      "label": "requests"
+    },
+    {
+      "from": "req-16",
+      "to": "req-16-res",
+      "label": "responds"
+    },
+    {
+      "from": "identity-2",
+      "to": "req-17",
+      "label": "requests"
+    },
+    {
+      "from": "req-17",
+      "to": "req-17-res",
+      "label": "responds"
+    },
+    {
+      "from": "req-11-res",
+      "to": "finding-RT-009",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-009",
+      "to": "impact-RT-AUTHZ-ASSERT",
+      "label": "could enable"
+    },
+    {
+      "from": "req-13-res",
+      "to": "finding-RT-010",
+      "label": "reveals"
+    },
+    {
+      "from": "finding-RT-010",
+      "to": "impact-RT-AUTHZ-ROLE-EQUAL",
+      "label": "could enable"
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "2026-10-18T17:21:06.319Z",
+      "message": "Scan started · 6 paths · budget 50"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.325Z",
+      "message": "Identity established · primary (oauth-client-credentials)"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.326Z",
+      "message": "Identity established · developer (form login)"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.327Z",
+      "message": "Identity established · anonymous"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.328Z",
+      "message": "GET / as primary (oauth-client-credentials) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.329Z",
+      "message": "GET / as developer (form login) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.331Z",
+      "message": "GET / as anonymous → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.332Z",
+      "message": "GET /api/health as primary (oauth-client-credentials) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.333Z",
+      "message": "GET /api/health as developer (form login) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.334Z",
+      "message": "GET /api/health as anonymous → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.335Z",
+      "message": "GET /api/profile as primary (oauth-client-credentials) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.336Z",
+      "message": "GET /api/profile as developer (form login) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.337Z",
+      "message": "GET /api/profile as anonymous → 401"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.338Z",
+      "message": "GET /api/orders as primary (oauth-client-credentials) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.339Z",
+      "message": "GET /api/orders as developer (form login) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.340Z",
+      "message": "GET /api/orders as anonymous → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.341Z",
+      "message": "GET /api/admin/users as primary (oauth-client-credentials) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.342Z",
+      "message": "GET /api/admin/users as developer (form login) → 200"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.343Z",
+      "message": "GET /api/admin/users as anonymous → 403"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.344Z",
+      "message": "GET /debug as primary (oauth-client-credentials) → 500"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.345Z",
+      "message": "GET /debug as developer (form login) → 500"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.346Z",
+      "message": "GET /debug as anonymous → 500"
+    },
+    {
+      "timestamp": "2026-10-18T17:21:06.346Z",
+      "message": "Scan complete"
+    }
+  ],
+  "coverage": {
+    "authorization": "synthetic loopback fixture",
+    "authType": "oauth-client-credentials",
+    "maxRequests": 50,
+    "pathsTested": 6,
+    "pathsInScope": 6,
+    "pathsNotTested": [],
+    "identities": [
+      "primary (oauth-client-credentials)",
+      "developer (form login)",
+      "anonymous"
+    ],
+    "requestBudgetUsed": 18,
+    "responseCount": 18,
+    "deniedResponses": 2,
+    "checks": [
+      "security headers",
+      "cookie flags",
+      "CORS origin reflection",
+      "version disclosure",
+      "debug output",
+      "anonymous/role comparison",
+      "status assertions"
+    ]
+  }
+}

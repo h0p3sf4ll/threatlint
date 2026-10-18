@@ -1,0 +1,7 @@
+# Rename to .gitattributes (and run `git lfs install` once) to store narrated videos and
+# README previews in Git LFS instead of normal Git objects. See README → "Large media and Git LFS".
+web/public/media/*.mp4 filter=lfs diff=lfs merge=lfs -text
+web/public/media/*.png filter=lfs diff=lfs merge=lfs -text
+docs/media/*.gif       filter=lfs diff=lfs merge=lfs -text
+docs/media/*.png       filter=lfs diff=lfs merge=lfs -text
+# Keep SVG branding in normal Git: small, diffable, and rendered inline by GitHub.

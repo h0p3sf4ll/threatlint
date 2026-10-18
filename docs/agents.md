@@ -1,6 +1,6 @@
-# Agent Reference
+# <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Agent Reference
 
-Detailed documentation for all fourteen threatlint security agents.
+Detailed documentation for the registered threatlint security agents.
 
 ---
 
@@ -20,6 +20,14 @@ Detailed documentation for all fourteen threatlint security agents.
 - [appsec-red-team](#appsec-red-team)
 - [appsec-threat-delta](#appsec-threat-delta)
 - [appsec-verify-fix](#appsec-verify-fix)
+- [appsec-runtime-reviewer](#appsec-runtime-reviewer)
+- [appsec-business-logic-reviewer](#appsec-business-logic-reviewer)
+- [appsec-client-security-reviewer](#appsec-client-security-reviewer)
+- [appsec-crypto-reviewer](#appsec-crypto-reviewer)
+- [appsec-ai-security-reviewer](#appsec-ai-security-reviewer)
+- [appsec-security-test-planner](#appsec-security-test-planner)
+- [appsec-secure-codegen-reviewer](#appsec-secure-codegen-reviewer)
+- [appsec-privacy-reviewer](#appsec-privacy-reviewer)
 
 ---
 
@@ -463,7 +471,191 @@ Performs a deep-dive security review of all authentication and authorization cod
 
 ---
 
-*All agents are read-only. They do not modify workspace files, install dependencies, stage changes, or create commits.*
+## appsec-runtime-reviewer
+
+**Finding prefix**: `DX-NNN`  
+**CLI / Teams mode**: `runtime-review`  
+**Slash commands**: `/runtime-review`, `/runtime-review-local`
+
+### Purpose
+
+Correlates explicitly supplied, redacted runtime observations with source code, build/revision, authentication role/tenant, and capture provenance. It reviews evidence; it does not collect captures, browse targets, issue requests, log in, or automate SSO/MFA.
+
+### What It Reviews
+
+- Capture/check provenance, redirect context, identity state, and deployment drift
+- Route, middleware, proxy/configuration, sensitive operation, and effective defenses
+- Observation versus hardening note, blocked/inconclusive check, or supported vulnerability
+- Supplied authentication evidence and manual prerequisites through the runtime-auth-workflows skill
+
+### Report Structure
+
+Evidence-supported executive summary, source/capture coverage matrix, DX findings with observed versus inferred impact, anchored advisory fixes, owners/effort, acceptance criteria, and evidence gaps. Missing headers/statuses alone are not verified vulnerabilities. Additional collection and validation are proposals **NOT RUN**.
+
+---
+
+## appsec-business-logic-reviewer
+
+**Finding prefix**: `BL-NNN`  
+**CLI / Teams mode**: `business-logic-review`  
+**Slash commands**: `/business-logic-review`, `/business-logic-review-local`
+
+### Purpose
+
+Reviews source-backed invariants and sensitive state transitions for workflow, entitlement, transactional, and asynchronous abuse. It states unknown policy explicitly rather than inventing business rules or financial impact.
+
+### What It Reviews
+
+- Authoritative values, approval/entitlement checks, transitions, and durable side effects
+- Idempotency scope, replay, retries, duplicate/out-of-order jobs, and webhook provenance
+- Transaction/isolation/constraint semantics and concrete bounded race interleavings
+- Role/tenant binding through queues, caches, exports, delegated operations, and compensation
+
+### Report Structure
+
+Executive risk summary, invariant/transition coverage matrix, BL findings with quoted check and side-effect locations, advisory fixes with retry/rollout implications, owners/effort, and synthetic acceptance cases **NOT RUN**. The agent never executes races, replays webhooks, places orders, or transfers value.
+
+---
+
+## appsec-client-security-reviewer
+
+**Finding prefix**: `CL-NNN`  
+**CLI / Teams mode**: `client-security-review`  
+**Slash commands**: `/client-security-review`, `/client-security-review-local`
+
+### Purpose
+
+Reviews actual browser, SPA, Electron, and mobile-client trust boundaries from untrusted input to rendering, navigation, messaging, privileged bridges, and server enforcement. It does not launch browsers/apps, invoke IPC/deep links, or use sessions.
+
+### What It Reviews
+
+- Context-specific encoding/sanitization and DOM/HTML/script/navigation flows
+- Origins, frames, postMessage, opener behavior, service workers, and account switching
+- Electron/native sandbox, bridge/IPC validation, sender identity, and privileged sinks
+- Sensitive storage, URLs/logs/analytics, logout lifecycle, and backend authorization
+
+### Report Structure
+
+Executive summary, client-boundary coverage matrix, CL findings with source-to-sink evidence and actual privilege effects, framework-native advisory fixes, owners/effort, compatibility notes, and isolation acceptance cases **NOT RUN**. Sink names, missing headers, or screenshots alone do not prove compromise.
+
+---
+
+## appsec-crypto-reviewer
+
+**Finding prefix**: `CY-NNN`  
+**CLI / Teams mode**: `crypto-review`  
+**Slash commands**: `/crypto-review`, `/crypto-review-local`
+
+### Purpose
+
+Reviews cryptographic implementation and key lifecycles against the security property actually required by callers. It never uses real keys, decrypts/cracks data, probes TLS, or performs cryptographic experiments.
+
+### What It Reviews
+
+- Primitive/mode/library semantics, authenticated encryption, MAC/signature verification, and context binding
+- Entropy, KDF parameters, salt/domain separation, nonce uniqueness, concurrency, and restart behavior
+- Key-generation/access/storage references, rotation, revocation, version selection, and backup
+- Certificate/hostname verification and storage/wire-format migration compatibility
+
+### Report Structure
+
+Executive summary, cryptographic-use inventory, CY findings tied to a supported security property and reachable use, established-library/KMS advisory fixes, migration/rotation/rollback guidance, owners/effort, and synthetic-key acceptance cases **NOT RUN**. Non-security checksums are not vulnerabilities solely because of algorithm names.
+
+---
+
+## appsec-ai-security-reviewer
+
+**Finding prefix**: `AI-NNN`  
+**CLI / Teams mode**: `ai-security-review`  
+**Slash commands**: `/ai-security-review`, `/ai-security-review-local`
+
+### Purpose
+
+Reviews AI/LLM trust and authority boundaries without equating prompt influence with authorization. It does not call reviewed providers/tools, submit adversarial prompts, poison indexes, or execute evaluations.
+
+### What It Reviews
+
+- Direct/indirect inputs through prompts, retrieval, memory, tool results, and agent handoffs
+- Deterministic tool dispatch, validation, per-action approval, identity/tenant binding, and least privilege
+- Ingestion/retrieval provenance, document ACLs, cache/vector/memory isolation, and consumption-time enforcement
+- Generated-output sinks, observable provider data flows, secrets handling, and resource budgets
+
+### Report Structure
+
+Executive summary, AI trust/authority coverage matrix, AI findings with input-to-sensitive-operation evidence, deterministic advisory controls, owners/effort, compatibility notes, and synthetic injection/tool/RAG/output/tenant acceptance cases **NOT RUN**. Model behavior and provider-policy unknowns remain explicit limitations.
+
+---
+
+## appsec-security-test-planner
+
+**Plan-item prefix**: `ST-NNN`  
+**CLI / Teams mode**: `security-test-plan`  
+**Slash commands**: `/security-test-plan`, `/security-test-plan-local`
+
+### Purpose
+
+Designs implementable, source-grounded security regression and acceptance plans without writing or executing tests. It preserves upstream finding IDs; ST identifiers are plan cases, not newly verified vulnerabilities. A plan is not proof of remediation.
+
+### What It Plans
+
+- Finding/invariant-to-control-to-case traceability and synthetic fixtures
+- Allowed/denied, boundary/bypass, replay/race, role/tenant, and rollback cases where supported
+- State/data/side-effect oracles, owners/effort, deterministic reset, budgets, and cleanup
+- Separate runtime action approval, manual SSO/MFA prerequisites, redaction, and stop conditions through runtime-auth-workflows
+
+### Report Structure
+
+Executive coverage summary and traceable acceptance matrix; per-ST-case provenance, prerequisites, fixture, action description, observable oracle, expected result, budgets, owner, and must-pass gate. Proposed cases remain **NOT RUN**; absent authorization/auth state is **BLOCKED**. Supplied results require artifact provenance and do not imply independent reproduction.
+
+---
+
+*All agents are read-only. They do not modify workspace files, install dependencies, stage changes, or create commits. Report persistence is host-owned. The new specialists do not control runtime engines or perform live validation; Teams and snapshot modes analyze supplied evidence only.*
+
+---
+
+## appsec-secure-codegen-reviewer
+
+**Finding prefix**: `SG-NNN`  
+**CLI / Teams mode**: `secure-codegen-review`  
+**Slash commands**: `/secure-codegen-review`, `/secure-codegen-review-local`
+
+### Purpose
+
+Reviews AI/model-generated and newly written code for insecure-by-default patterns before merge, and proposes drop-in secure rewrites that use the project's existing helpers. Defaults to the working-tree diff. It never executes code, payloads, or tests.
+
+### What It Reviews
+
+- Source-to-sink paths into SQL/NoSQL, command, template/HTML, `eval`, deserialization, filesystem, redirect, and outbound-URL (SSRF) sinks
+- Insecure defaults: disabled TLS verification, weak crypto/randomness, hardcoded secrets, permissive CORS, debug errors, disabled CSRF
+- New routes or handlers missing the authentication/authorization guard used by neighboring code
+- Unpinned or nonexistent (hallucinated) dependencies and missing size/rate limits
+
+### Report Structure
+
+Executive summary, generated-code pattern inventory, SG findings with quoted source/sink lines, before/after secure-by-default rewrites (**NOT APPLIED**), reusable IDE/assistant guardrails, owners/effort, and regression assertions **NOT RUN**.
+
+---
+
+## appsec-privacy-reviewer
+
+**Finding prefix**: `PD-NNN`  
+**CLI / Teams mode**: `privacy-review`  
+**Slash commands**: `/privacy-review`, `/privacy-review-local`
+
+### Purpose
+
+Inventories personal and sensitive data and traces it through storage, logs, analytics, AI providers, and third parties. It never prints or queries real personal data and does not provide legal or regulatory opinions.
+
+### What It Reviews
+
+- Data inventory: category, location, source, purpose, storage, recipients, retention, and protection
+- Outbound flows to logs, error trackers, analytics/session-replay SDKs, LLM providers, webhooks, and messaging services
+- Minimization, over-broad serializers, retention/purge and deletion handling, consent gating, and sensitive-record access control
+- Encryption/tokenization at rest and TLS in transit for sensitive categories
+
+### Report Structure
+
+Executive summary, data inventory and flow summary, PD findings with quoted collection/flow/storage lines, framework-native advisory fixes, owners/effort, obligations for privacy/legal confirmation, and synthetic-data acceptance cases **NOT RUN**.
 
 ---
 
@@ -476,7 +668,11 @@ Performs a deep-dive security review of all authentication and authorization cod
 
 ### Purpose
 
-Triages security scanner findings as true or false positives and generates precise Semgrep rule tuning to suppress noise without hiding real vulnerabilities. Accepts SARIF 2.1.0, Semgrep JSON (`--json`), or pasted finding descriptions.
+Produces a professionally written findings and remediation report from SARIF 2.1.0, Semgrep JSON, Threatlint Markdown, or pasted findings. The reviewer separates source-supported TRUE POSITIVE, FALSE POSITIVE, and AMBIGUOUS verdicts from severity/confidence, proposes concrete fixes, and evaluates scanner-tuning risk independently. It never applies proposals.
+
+### Required Skills
+
+The reviewer loads evidence analysis, actionable reporting, finding triage, and Semgrep tuning. All other agents load the shared evidence/reporting workflows plus their own specialist skill. See [the registry](../src/threatlint/data/agent-skills.json) and [the workbench guide](workbench.md).
 
 ### What It Reviews
 
@@ -493,10 +689,12 @@ Triages security scanner findings as true or false positives and generates preci
 
 ### Report Structure
 
-- **Summary Table**: finding ID, rule, verdict (True Positive / False Positive / Needs Review)
-- **Per-Finding Blocks**: code evidence, verdict rationale, FP type (safe sink, safe value, unreachable), rewritten Semgrep YAML if FP
-- **Rule Tuning Output**: ready-to-apply Semgrep YAML rules or `.semgrepignore` entries
-- **True Positive Escalations**: findings confirmed as real that should be tracked as security issues
+- **Tier 1 — Executive Summary**: input/unique/duplicate/unreviewed accounting, risk decision, prioritized actions, suggested owners/effort, and acceptance.
+- **Tier 2 — Detailed Findings**: original IDs and source/scan provenance, path/line evidence, source-to-control-to-sink reasoning, verdict/severity/confidence, and alternative interpretations.
+- **True positives**: concrete proposed before/after or patch, implementation/compatibility notes, regression assertions, and closure criteria. Proposed changes are NOT APPLIED; proposed tests are NOT RUN.
+- **False positives**: verified contextual reason, narrow rule proposal only when the original rule is known, ruleid/ok fixtures, coverage/blast radius, approval and rollback. Missing rule details block exact tuning, not necessarily the FP verdict.
+- **Ambiguous findings**: remain open, with exact blocking evidence, a suggested owner, a safe resolution plan, and an interim action.
+- **Tier 3 — Engineering Action Plan**: suppression impact, systemic root causes, remediation roadmap, acceptance matrix, limitations, and unresolved questions. No blanket suppressions or unsupported zero-false-negative promises.
 
 ---
 

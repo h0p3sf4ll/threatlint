@@ -1,0 +1,67 @@
+# Example: consume Threatlint templates from another Azure DevOps (or GitHub-hosted) repository.
+# Save as azure-pipelines.yml in the repository you want reviewed.
+#
+# Pipeline variables (mark as secret): ANTHROPIC_API_KEY and/or OPENAI_API_KEY.
+# For PR comments on Azure Repos, grant the build service "Contribute to pull requests".
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: ['*']
+
+schedules:
+  - cron: '17 3 * * 1'
+    displayName: Weekly deep review
+    branches:
+      include: [main]
+    always: true
+
+resources:
+  repositories:
+    - repository: threatlint
+      type: github
+      name: InfoSec-Actions/threatlint
+      ref: refs/tags/<version>          # or a full commit SHA
+      endpoint: github-threatlint       # GitHub service connection with read access
+
+stages:
+  - stage: PullRequestSecurity
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    jobs:
+      - template: azure-pipelines/templates/threatlint-job.yml@threatlint
+        parameters:
+          agents: [appsec-code-reviewer, appsec-secrets-scanner]
+          provider: claude
+          failOnSeverity: high
+          gateMode: warn                # warn keeps the build green; fail blocks
+          anthropicApiKey: $(ANTHROPIC_API_KEY)
+
+  - stage: ScheduledSecurity
+    condition: eq(variables['Build.Reason'], 'Schedule')
+    jobs:
+      - template: azure-pipelines/templates/threatlint-job.yml@threatlint
+        parameters:
+          agents: [appsec-threat-modeler, appsec-dependency-auditor, appsec-iac-reviewer, appsec-cicd-auditor]
+          provider: openai
+          model: gpt-4o
+          failOnSeverity: none
+          commentOnPr: false
+          openaiApiKey: $(OPENAI_API_KEY)
+
+# Embedding the steps in an existing job instead:
+#   - job: build
+#     steps:
+#       - checkout: self
+#         fetchDepth: 0
+#       - checkout: threatlint
+#         path: s/.threatlint
+#       - template: azure-pipelines/templates/threatlint-steps.yml@threatlint
+#         parameters:
+#           agent: appsec-api-security-reviewer
+#           target: src/api
+#           anthropicApiKey: $(ANTHROPIC_API_KEY)
+#           threatlintPath: $(Pipeline.Workspace)/s/.threatlint
+#           sourcePath: $(Pipeline.Workspace)/s/<self-repo-name>

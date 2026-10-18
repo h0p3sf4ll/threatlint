@@ -1,0 +1,31 @@
+{
+  "name": "threatlint",
+  "displayName": "Threatlint",
+  "description": "Secure-by-default guardrails for human- and AI-written code: inline security diagnostics with secure alternatives, plus one-click access to the Threatlint Workbench.",
+  "version": "1.0.0",
+  "publisher": "threatlint",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "keywords": ["security", "appsec", "sast", "ai", "copilot", "secure-by-default"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "threatlint.scanWorkspace", "title": "Threatlint: Scan workspace" },
+      { "command": "threatlint.scanFile", "title": "Threatlint: Scan current file" },
+      { "command": "threatlint.openWorkbench", "title": "Threatlint: Open Workbench" },
+      { "command": "threatlint.installInstructions", "title": "Threatlint: Install secure-by-default AI instructions" }
+    ],
+    "configuration": {
+      "title": "Threatlint",
+      "properties": {
+        "threatlint.executable": { "type": "string", "default": "threatlint", "description": "Path to the threatlint CLI (pip install threatlint)." },
+        "threatlint.scanOnSave": { "type": "boolean", "default": true, "description": "Run threatlint guard when a file is saved." },
+        "threatlint.scanOnOpen": { "type": "boolean", "default": true, "description": "Run threatlint guard when a file is opened." },
+        "threatlint.workbenchUrl": { "type": "string", "default": "http://127.0.0.1:3000", "description": "Local Threatlint Workbench URL (start it with `npm --prefix web start`)." },
+        "threatlint.minimumSeverity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"], "default": "low", "description": "Hide findings below this severity." }
+      }
+    }
+  }
+}

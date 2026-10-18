@@ -1,0 +1,165 @@
+# threatlint/.github/workflows/threatlint-reusable.yml
+# Reusable workflow: run one or more Threatlint AppSec agents against the CALLER's repository.
+#
+#   jobs:
+#     threatlint:
+#       uses: InfoSec-Actions/threatlint/.github/workflows/threatlint-reusable.yml@<full-commit-sha>
+#       with:
+#         agents: appsec-code-reviewer,appsec-secrets-scanner
+#         threatlint-ref: <same full-commit-sha>
+#       secrets:
+#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+#
+# Each agent runs as its own matrix job (fail-fast disabled) through the composite action in
+# .github/actions/threatlint. See docs/ci-templates.md for every input and the permission model.
+
+name: Threatlint (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      agents:
+        description: Comma-separated agent IDs (max 20).
+        type: string
+        default: appsec-code-reviewer
+      provider:
+        description: claude | openai | github-models
+        type: string
+        default: claude
+      model:
+        description: Model override. Empty uses the provider default.
+        type: string
+        default: ''
+      target:
+        description: Optional component, path, or review objective passed to every agent.
+        type: string
+        default: ''
+      fail-on-severity:
+        description: none | low | medium | high | critical
+        type: string
+        default: high
+      gate-mode:
+        description: warn (default) keeps the job green and annotates findings; fail fails the job.
+        type: string
+        default: warn
+      upload-sarif:
+        description: Upload SARIF to GitHub Code Scanning.
+        type: boolean
+        default: true
+      comment-on-pr:
+        description: Post a summary comment on the pull request.
+        type: boolean
+        default: true
+      python-version:
+        type: string
+        default: '3.12'
+      max-turns:
+        description: Maximum Claude Code agent turns per agent.
+        type: string
+        default: '25'
+      timeout-minutes:
+        type: number
+        default: 30
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      threatlint-repository:
+        description: Repository that hosts the Threatlint action and canonical agents.
+        type: string
+        default: InfoSec-Actions/threatlint
+      threatlint-ref:
+        description: Ref of threatlint-repository. Pin to the same commit SHA as the uses line.
+        type: string
+        default: main
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+    outputs:
+      agents:
+        description: JSON array of the agents that were scheduled.
+        value: ${{ jobs.plan.outputs.agents }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan Threatlint agents
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      agents: ${{ steps.parse.outputs.agents }}
+    steps:
+      - name: Parse agent list
+        id: parse
+        env:
+          TL_AGENTS: ${{ inputs.agents }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys
+          agents = []
+          for raw in os.environ['TL_AGENTS'].split(','):
+              agent = raw.strip()
+              if not agent or agent in agents:
+                  continue
+              if not re.fullmatch(r'appsec-[a-z0-9-]{2,60}', agent):
+                  sys.exit(f'Invalid agent ID: {agent!r}')
+              agents.append(agent)
+          if not agents or len(agents) > 20:
+              sys.exit('Provide between 1 and 20 agent IDs.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f'agents={json.dumps(agents)}\n')
+          print('Scheduled:', ', '.join(agents))
+          PY
+
+  analyze:
+    name: ${{ matrix.agent }}
+    needs: plan
+    # Never expose provider secrets to pull requests from forks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: ${{ fromJSON(needs.plan.outputs.agents) }}
+    steps:
+      - name: Check out repository under review
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out Threatlint
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.threatlint-repository }}
+          ref: ${{ inputs.threatlint-ref }}
+          path: .threatlint
+          persist-credentials: false
+
+      - name: Run Threatlint
+        uses: ./.threatlint/.github/actions/threatlint
+        with:
+          agent: ${{ matrix.agent }}
+          provider: ${{ inputs.provider }}
+          model: ${{ inputs.model }}
+          target: ${{ inputs.target }}
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          gate-mode: ${{ inputs.gate-mode }}
+          upload-sarif: ${{ inputs.upload-sarif }}
+          comment-on-pr: ${{ inputs.comment-on-pr }}
+          python-version: ${{ inputs.python-version }}
+          max-turns: ${{ inputs.max-turns }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ github.token }}

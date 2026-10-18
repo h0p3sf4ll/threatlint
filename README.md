@@ -1,29 +1,160 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/banner.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/media/banner-light.svg">
+    <img src="docs/media/banner.svg" alt="threatlint — security agents for developers" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+<img alt="Agents" src="https://img.shields.io/badge/agents-22-8ce5c7?style=flat-square&labelColor=101617">
+<img alt="Skills" src="https://img.shields.io/badge/skills-26-8ce5c7?style=flat-square&labelColor=101617">
+<img alt="Runtime scanning" src="https://img.shields.io/badge/runtime-authenticated%20scanning-8ce5c7?style=flat-square&labelColor=101617">
+<img alt="IDE" src="https://img.shields.io/badge/IDE-VS%20Code%20·%20Cursor%20·%20Copilot%20·%20Claude%20Code-8ce5c7?style=flat-square&labelColor=101617">
+<img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions%20·%20Azure%20DevOps-8ce5c7?style=flat-square&labelColor=101617">
+<br>
+<img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-supported-D97706?style=flat-square">
+<img alt="GitHub Copilot" src="https://img.shields.io/badge/GitHub%20Copilot-supported-1F883D?style=flat-square">
+<img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square">
+<img alt="LM Studio" src="https://img.shields.io/badge/LM%20Studio-local%20models-6D28D9?style=flat-square">
+<img alt="Microsoft Teams" src="https://img.shields.io/badge/Microsoft%20Teams-supported-6264A7?style=flat-square">
+<img alt="License" src="https://img.shields.io/badge/License-MIT-0284C7?style=flat-square">
+</p>
+
+# <img src="docs/media/logo.svg" alt="" width="36" height="40" align="top"> threatlint
+
+### A security reviewer that sits next to you, not at the end of the release.
+
+**The core idea, in one line:** *Threatlint finds the security bug while the code is still in your
+editor, and hands you the fix and the test.*
+
+#### The problem you already know
+
+It's Thursday, 4:40 pm. Your pull request has two approvals. Then the security scan comes back:
+**312 findings.** Most are noise, a few are real, and none of them say which. Do you merge, or do
+you lose your Friday?
+
+Here's what usually happens: the real one gets merged with the noise. In the code below, an
+AI assistant wrote a "quick" customer lookup in under a second:
+
+```python
+customer_id = request.args["id"]
+query = f"SELECT * FROM customers WHERE id = '{customer_id}'"    # api/customers.py:42
 ```
-TTTTT H   H RRRR  EEEEE  AAA  TTTTT L     IIIII N   N TTTTT
-  T   H   H R   R E     A   A   T   L       I   NN  N   T
-  T   HHHHH RRRR  EEEE  AAAAA   T   L       I   N N N   T
-  T   H   H R R   E     A   A   T   L       I   N  NN   T
-  T   H   H R  RR EEEEE A   A   T   LLLLL IIIII N   N   T
+
+Any visitor who types `' OR '1'='1` into that `id` gets every customer record. The scanner flagged
+it as finding #187 of 312. Nobody reached #187.
+
+#### What Threatlint does instead
+
+Threatlint is the colleague who reads your diff before anyone else does, and tells you **one thing**:
+
+> **CR-001 · HIGH · `api/customers.py:42`** — SQL built from request input.
+> **Fix:** `cursor.execute("SELECT * FROM customers WHERE id = %s", (customer_id,))`
+> **Test:** `test_lookup_rejects_injection` — passes `' OR '1'='1`, expects zero rows.
+
+A file, a line, a fix, and a test. Then you can ask why: *"Is this reachable without login?"*,
+*"Where else do we do this?"*, and it answers from your actual code.
+
+#### Why that's different
+
+The surprise is what Threatlint **doesn't** do. It doesn't give you a longer list. It gives you a
+shorter, verified one, and it never touches your code. Every agent is read-only, every finding
+must point to a real `path:line`, and anything it couldn't verify is labeled as an assumption
+instead of being dressed up as fact.
+
+#### Don't take our word for it. Run it on a deliberately broken app.
+
+```bash
+npm --prefix web ci && npm --prefix web run demo-app   # a weak app on 127.0.0.1:4010
+npm --prefix web start                                  # open http://127.0.0.1:3000 → Scan running app
 ```
 
-![Microsoft Teams](https://img.shields.io/badge/Microsoft%20Teams-supported-6264A7?style=flat-square)
-![Claude Code](https://img.shields.io/badge/Claude%20Code-supported-D97706?style=flat-square)
-![GitHub Copilot](https://img.shields.io/badge/GitHub%20Copilot-supported-1F883D?style=flat-square)
-![OpenAI](https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square)
-![LM Studio](https://img.shields.io/badge/LM%20Studio-local%20models-6D28D9?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-0284C7?style=flat-square)
+In about a minute you'll watch it sign in as an admin (OAuth), a developer, and an anonymous visitor, and catch the anonymous order leak,
+the reflected CORS origin, the session cookie without `HttpOnly`, and the stack trace on `/debug`,
+each drawn as an attack chain from *who you are* to *what an attacker gets*.
 
-# threatlint
+#### The same idea everywhere you work
 
-`threatlint` provides application security agents for threat modeling and security code review. It supports Claude Code (via subagents and slash commands), Codex CLI and other AGENTS.md-compatible tools (via `AGENTS.md`), GitHub Copilot Chat (via `.github/` customizations), Microsoft Teams (via the Claude API Teams bot), and local models via LM Studio — with no API key required. Reports are saved as Word documents in the repository being analyzed.
+| Where you are | What Threatlint does there |
+| --- | --- |
+| **Writing code with an AI assistant** | `threatlint ide install` teaches Copilot, Cursor, Windsurf, and Claude Code to write secure code by default, and an offline guard makes the assistant rewrite insecure code as it types |
+| **Before you push** | The workbench runs a playbook (PR review, AI-generated code, secrets, dependencies, APIs, auth…) with 22 specialists on your branch, local or from GitHub / Azure DevOps |
+| **Testing the running app** | Authenticated runtime scans with every common login flow, including SSO/MFA by hand, and role-vs-role comparison to catch broken access control |
+| **In the pull request** | CI templates post findings as a comment and **warn by default** (they don't block you until you choose). Reply `/threatlint why is CR-001 high?` and it answers in the thread |
+| **When you're stuck** | *Ask Threatlint* in the app: a conversation grounded in your repository, with file:line answers |
+| **Proving progress** | Metrics and dashboards that show risk going down, sprint over sprint |
 
-Analysis is grounded in the inspected source and local configuration. Assumptions and unknowns are labeled explicitly rather than hidden behind generic findings.
+**Remember three words: _find, fix, prove._** Find the bug before it ships, fix it with the patch
+and test you were handed, and prove it with a dashboard instead of a spreadsheet.
+
+## See it in action
+
+Each video below has a voiceover and is also available offline in the app under **Learn & videos**.
+The GIFs are silent previews; click one to play the narrated MP4.
+
+| | |
+| --- | --- |
+| [![Threatlint in two minutes](docs/media/overview.gif)](web/public/media/overview.mp4)<br>**Threatlint in two minutes** · [▶ narrated MP4](web/public/media/overview.mp4) | [![Your first review](docs/media/first-review.gif)](web/public/media/first-review.mp4)<br>**Your first review** · [▶ narrated MP4](web/public/media/first-review.mp4) |
+| [![Connect a source code manager](docs/media/connect-source.gif)](web/public/media/connect-source.mp4)<br>**Connect GitHub / Azure DevOps** · [▶ narrated MP4](web/public/media/connect-source.mp4) | [![Authenticated runtime scan](docs/media/runtime-scan.gif)](web/public/media/runtime-scan.mp4)<br>**Authenticated runtime scan + attack chain** · [▶ narrated MP4](web/public/media/runtime-scan.mp4) |
+| [![Ask Threatlint](docs/media/ask.gif)](web/public/media/ask.mp4)<br>**Ask Threatlint how to fix it** · [▶ narrated MP4](web/public/media/ask.mp4) | [![Threatlint in two minutes](docs/media/overview.png)](web/public/media/overview.mp4)<br>**All videos are also in the app** under Learn & videos |
+| [![Metrics and dashboards](docs/media/dashboards.gif)](web/public/media/dashboards.mp4)<br>**Metrics and custom dashboards** · [▶ narrated MP4](web/public/media/dashboards.mp4) | [![Secure-by-default IDE](docs/media/ide.gif)](web/public/media/ide.mp4)<br>**Secure-by-default code in the IDE** · [▶ narrated MP4](web/public/media/ide.mp4) |
+
+Every frame is a real screenshot of the app, recorded against local fixtures: a deliberately weak
+loopback demo app, a demonstration source account, and the bundled synthetic report. To re-record
+after UI changes, run `npm --prefix web run videos` (needs Playwright Chromium, ffmpeg, and macOS
+`say` or `espeak-ng`). The narrator is the friendly US-English female voice *Samantha (Enhanced)* when installed, falling back to *Samantha*; override with `THREATLINT_VOICE`.
+
+## Developer quick start
+
+```bash
+# 1. Workbench (desktop or browser — same code, same features)
+npm --prefix web ci
+npm --prefix web run desktop          # or: npm --prefix web start → http://127.0.0.1:3000
+
+# 2. Secure-by-default AI coding in your repo
+pip install threatlint                # or: pip install -e . from this checkout
+threatlint ide install                # Copilot, Cursor, Windsurf, Claude Code, VS Code, pre-commit
+threatlint guard --staged             # offline check of what you are about to commit
+
+# 3. Gate pull requests (GitHub) — .github/workflows/security.yml
+#    jobs.threatlint.uses: InfoSec-Actions/threatlint/.github/workflows/threatlint-reusable.yml@<sha>
+```
+
+Then, in the workbench: open a repository → choose **Pull request review** → **Run**. No model yet?
+Use LM Studio for fully local analysis, or **View sample report** to see the output first.
+
+## What's new
+
+| Capability | Where | Docs |
+| --- | --- | --- |
+| **Source code managers**: connect GitHub (fine-grained PAT or app installation token) or Azure DevOps (PAT), browse repositories and branches, and open a hook-free shallow checkout with provider/branch/commit provenance | Workbench → **Sources** | [Workbench guide](docs/workbench.md#source-code-managers) |
+| **Runtime scanning** with every common auth workflow, anonymous and multi-role comparison, status assertions, passive header/cookie/CORS/debug checks, and Markdown/HTML/JSON evidence export | Workbench → **Runtime** | [Runtime scanning](docs/workbench.md#runtime-scanning) |
+| **Attack-chain visualization**: target → identity → request → response/control → finding → impact hypothesis, with full-chain highlighting and a “finding chains only” filter | Workbench → **Runtime** | [Attack chain](docs/workbench.md#reading-the-attack-chain) |
+| **Metrics & dashboards**: KPIs, severity/agent/workspace/time breakdowns, heatmaps, custom dashboards, CSV export | Workbench → **Metrics** | [Dashboards guide](docs/dashboards.md) |
+| **Ask Threatlint**: conversations grounded in your repository, started from a finding, report, or runtime scan; plus `/threatlint` replies on GitHub and Azure DevOps PRs | Workbench → **Ask Threatlint**, your PRs | [Ask Threatlint](#ask-threatlint) |
+| **Warn, don't block (by default)**: every pipeline template annotates findings and keeps the build green; set `gate-mode: fail` when you're ready | Your pipelines | [CI templates](docs/ci-templates.md) |
+| **Developer-first navigation**: Test → Fix → Track, with a get-started checklist | Workbench | [Workbench guide](docs/workbench.md) |
+| **In-app help**: tooltips on every key control, task guides, glossary, and a narrated video library (`?` opens it) | Workbench → **Learn & videos** | [Workbench guide](docs/workbench.md) |
+| **IDE + secure-by-default code generation**: `threatlint ide install`, `threatlint guard` (21 offline rules with CWE and secure alternative; text/JSON/SARIF), Claude Code hook, VS Code extension, pre-commit | Your editor | [IDE guide](docs/ide.md) |
+| **Reusable CI**: GitHub reusable workflow + composite action; Azure DevOps job and steps templates; SARIF upload, PR comments, severity gate | Your pipelines | [CI templates](docs/ci-templates.md) |
+| **New specialists**: `appsec-secure-codegen-reviewer` (SG) and `appsec-privacy-reviewer` (PD), plus runtime, business-logic, client, crypto, AI/LLM, and security-test-plan specialists | Everywhere | [Agents](docs/agents.md) |
+| **One codebase for web and desktop**: Electron loads the same `server.js`, `lib/`, and `public/` as the browser runner, so every change ships to both | `web/` | [Shared architecture](docs/workbench.md#one-codebase-for-browser-and-desktop) |
 
 ---
 
 ## Table of Contents
 
+- [See it in action](#see-it-in-action)
+- [Ask Threatlint (in the app and on PRs)](#ask-threatlint)
+- [Developer quick start](#developer-quick-start)
+- [What's new](#whats-new)
+- [Using Threatlint in your IDE](#using-threatlint-in-your-ide)
+- [Metrics and dashboards](#metrics-and-dashboards)
+- [Large media and Git LFS](#large-media-and-git-lfs)
 - [What Is Included](#what-is-included)
+- [Desktop and Browser Workbench](#desktop-and-browser-workbench)
+- [Agent Skills and Professional Findings Reports](#agent-skills-and-professional-findings-reports)
 - [Requirements](#requirements)
 - [Quick Start With Claude Code](#quick-start-with-claude-code)
 - [Quick Start With Local Models (LM Studio)](#quick-start-with-local-models-lm-studio)
@@ -57,6 +188,229 @@ Analysis is grounded in the inspected source and local configuration. Assumption
 
 ---
 
+## Desktop and Browser Workbench
+
+The Electron desktop app and the browser workbench are **one codebase**. `web/desktop/main.cjs`
+starts the same `createWorkbench()` from `web/server.js` on a private loopback port and loads the
+same `web/public` UI; there is no desktop-only engine or UI. Any change to `server.js`, `lib/`, or
+`public/` ships to both. The desktop shell only adds native pickers, sandboxing, and packaging.
+
+**Requirements:** Node.js 22+ and npm. Python is optional (Word export needs `python-docx`).
+
+```bash
+npm --prefix web ci
+npm --prefix web run desktop        # desktop app
+npm --prefix web start              # browser: http://127.0.0.1:3000
+```
+
+| View | What you do there |
+| --- | --- |
+| **Workbench** | Open a repo, pick a playbook (PR review, AI-generated code, baseline, triage, verify, runtime → source), run, and follow live activity |
+| **Sources** | Connect GitHub / Azure DevOps with a read-only token, search repositories, pick a branch, check out |
+| **Runtime** | Authorize a target, choose an auth workflow, add roles, scan, and explore the attack chain |
+| **Agent library / Skills** | Browse the 22 specialists and the exact skill workflows each one loads |
+| **Reports** | Read findings with severity/disposition filters; download Markdown or Word |
+| **Metrics** | Dashboards over every report and scan; build your own; export CSV |
+| **Learn & videos** | Narrated walkthroughs, task guides, and a glossary. Press `?` anywhere |
+
+Hover any **?** next to a control for a one-line explanation. In VS Code, **Terminal → Run Task**
+has browser, desktop, test, and packaging tasks. See [the workbench guide](docs/workbench.md).
+
+### Keeping the desktop app current
+
+The desktop app runs the shared code, so `npm --prefix web run desktop` always shows your latest
+changes. Three mechanisms keep the **packaged** app (`web/release`) from falling behind:
+
+| When | What happens | Command |
+| --- | --- | --- |
+| While developing | Saving a file in `web/public` reloads the desktop window; saving `server.js`, `web/lib`, or `web/desktop` relaunches it | `npm --prefix web run desktop:dev` |
+| After `git pull`, checkout, commit, or rebase | A git hook rebuilds the local package in the background, but only if the code changed (log: `web/release/desktop-sync.log`) | `npm --prefix web run hooks:install` (once per clone) |
+| On every change to `main` or a PR touching `web/` | CI tests and packages macOS, Windows, and Linux builds, verifies they match the source, and uploads them as artifacts | [`.github/workflows/desktop-build.yml`](.github/workflows/desktop-build.yml) |
+
+Every package carries a build stamp (a hash of `server.js`, `lib/`, `public/`, `desktop/`,
+examples, and agent data). `npm --prefix web run desktop:verify` exits non-zero when a package is
+stale; `npm --prefix web run desktop:sync` rebuilds only if needed. The sidebar footer shows the
+version and commit of the running build, or `live` when running from source. CI builds are
+unsigned; signing and notarization still need your certificates.
+
+### A complete review workflow
+
+1. **Open a repository** from the top bar, or check one out from **Sources**.
+2. **Configure a model** in Model & settings: LM Studio (local), Anthropic, or OpenAI.
+3. **Choose a playbook** or assemble/reorder specialists from the agent library.
+4. **Attach findings** for triage (SARIF, Semgrep JSON, Markdown, or text, up to 5 MB).
+5. **Run and follow the evidence** in the live activity stream. Stop at any time.
+6. **Read the report**: every finding has a file:line, severity, confidence, proposed fix, and
+   regression test. Download Markdown or Word.
+
+### Runtime scanning and the attack chain
+
+Runtime scans only send `GET` requests to explicit paths you list, within a request budget, after
+you confirm authorization. Private and loopback targets need a second opt-in, DNS answers are
+validated and pinned, and redirects are not followed. Credentials stay in runner memory for one
+scan and never appear in snapshots or exports.
+
+| Auth workflow | Notes |
+| --- | --- |
+| None, Bearer, HTTP Basic, API key (header/query), custom headers, Cookie | Sent as configured |
+| OAuth client credentials, refresh token, resource-owner password | Runner exchanges at your trusted token endpoint |
+| Form login | Runner POSTs your login form once and replays the session cookie |
+| Mutual TLS | PEM client certificate and key presented in the TLS handshake |
+| Manual browser sign-in (SSO, SAML, MFA, passkeys) | A real browser opens; you sign in yourself; cookies are captured |
+| Imported browser state | Cookies from a Playwright `storageState` file |
+
+Checks: anonymous vs authenticated comparison, up to four extra roles (flags a lower role that
+gets the primary identity's exact content on an anonymous-denied route), expected-status
+assertions, security headers, cookie flags (including on the login response), CORS origin
+reflection, version disclosure, and debug/stack-trace output. Each finding becomes a node in the
+attack chain with its impact hypothesis. Click any node to highlight its full chain, or tick
+**Finding chains only**. **Send to runtime review** hands the sanitized evidence to the
+`appsec-runtime-reviewer` agent to correlate it with source.
+
+Try it safely: `npm --prefix web run demo-app` starts a deliberately weak app on
+`http://127.0.0.1:4010` (accounts in `web/examples/demo-app.cjs`).
+
+**Privacy:** API keys and tokens stay in memory and are never saved. Remote model providers
+receive prompts and source/tool results, so the UI asks for consent first. With a loopback LM
+Studio server, everything stays local. This is a single-user loopback application, not a hosted
+multi-user service, and its tool policy is not an OS-level sandbox for untrusted repositories.
+
+## Ask Threatlint
+
+**In the app.** Open **Ask Threatlint**, or press **Ask how to fix this** on any finding, **Ask
+about this report** in the report reader, or **Ask about this scan** after a runtime scan. The
+assistant uses your configured model (LM Studio, Claude, or OpenAI) and the same read-only Read /
+Grep / Glob tools as the agents, so answers cite `path:line`, propose a change, and include a
+regression test. Threads are saved locally per workspace and remember earlier turns. Reports,
+findings, and scan evidence are passed to the model as clearly delimited untrusted data.
+
+**On pull requests.** Comment `/threatlint <question>` (or mention `@threatlint`) on a GitHub or
+Azure DevOps pull request, for example `/threatlint suggest a fix for the SQL finding`. The
+configured model answers in the same thread using the PR diff and the latest Threatlint report.
+Setup and the security model are in [docs/ci-templates.md](docs/ci-templates.md#conversing-with-threatlint-on-pull-requests).
+
+## Using Threatlint in your IDE
+
+```bash
+threatlint ide install            # in your repository
+```
+
+This writes secure-by-default instructions for **GitHub Copilot**
+(`.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`), **Cursor**
+(`.cursor/rules/*.mdc`), **Windsurf** (`.windsurfrules`), and **Claude Code** (`CLAUDE.md`), plus a
+Claude Code `PostToolUse` hook, VS Code tasks, and a pre-commit hook. Re-running is idempotent.
+
+How it keeps generated code secure by default:
+
+1. **Before generation**: the instructions tell the assistant to parameterize queries, avoid
+   shells and unsafe deserializers, keep TLS verification on, use strong crypto and CSPRNGs, read
+   secrets from the environment, and authorize every handler.
+2. **During generation**: in Claude Code the hook runs `threatlint guard` after each edit. Findings
+   go back to the model, which rewrites the code. The VS Code extension (`ide/vscode`) shows the
+   same findings inline on open and save, with a CWE and a secure alternative.
+3. **Before commit**: `threatlint guard --staged` or the pre-commit hook blocks HIGH findings.
+4. **Before merge**: run the **Check AI-generated code** playbook
+   (`appsec-secure-codegen-reviewer` + `appsec-code-reviewer`) on your diff, and let the reusable CI
+   template gate the PR.
+
+Suppressions must name the rule and give a reason (`# threatlint-ignore: TL-PY-SHELL fixed argv`).
+See [docs/ide.md](docs/ide.md) for per-editor setup and the full rule list.
+
+## Metrics and dashboards
+
+The **Metrics** view aggregates every saved report and runtime scan. The built-in *Security
+posture* dashboard shows open risk score, findings, evidence coverage, findings by severity and
+over time, risk by specialist, a specialist × severity heatmap, and risk by workspace.
+
+To build your own: **New dashboard** (or **Duplicate**) → name it → **Add widget** → pick a
+**metric** (findings, risk score, unique findings, evidence coverage, reports), a **dimension**
+(severity, specialist, discipline, workspace, day, week, disposition, confidence, source, finding
+type), a **chart** (stat tile, column, bar, line, donut, table, heatmap), a size, and an optional
+filter → **Save**. Every chart has hover values and a table view. **Export CSV** gives you the raw
+findings for your own BI tool. Full guide: [docs/dashboards.md](docs/dashboards.md).
+
+## Large media and Git LFS
+
+The narrated videos (`web/public/media/*.mp4`, about 9 MB) and README previews
+(`docs/media/*.gif|png`, about 4 MB) are binary files. Each time they are re-recorded, Git stores a
+complete new copy, so history grows by about 13 MB per re-record, and every future clone downloads
+all of it.
+
+**What Git LFS is.** Git Large File Storage replaces chosen files in the repository with small
+text pointers (about 130 bytes each). The real files live in a separate LFS store on your Git host
+and are downloaded at checkout only for the commit you are on.
+
+| | Plain Git (current) | Git LFS |
+| --- | --- | --- |
+| Clone size over time | Grows ~13 MB per re-record, forever | Pointers only; you download media for your checkout |
+| Setup for contributors | None | `git lfs install` once per machine; without it, they get pointer text instead of videos |
+| GitHub README / PR display | GIFs and PNGs render | Still render: GitHub serves LFS images in READMEs |
+| MP4 links in README | Play from the repo | Play from the repo |
+| GitHub quota | Normal repository limits (warns at 50 MB per file) | Free tier ~1 GB storage and ~1 GB/month bandwidth, shared by the account; above that, paid data packs. Bandwidth counts each CI checkout and each clone |
+| GitHub Actions | `actions/checkout` gets everything | Needs `lfs: true` (already set in `desktop-build.yml`); each run consumes LFS bandwidth |
+| Azure DevOps | Works | Supported natively; enable "Checkout LFS objects" (`lfs: true` on the checkout step) |
+| Forks and ZIP downloads | Include media | Forks need LFS on the host; "Download ZIP" may contain pointers unless the archive includes LFS objects (a repository setting on GitHub) |
+| Desktop packaging | Works | Works, as long as the build machine has LFS objects checked out (otherwise the package ships pointer files instead of videos) |
+| Reversibility | — | Moving files into LFS after they are already committed requires `git lfs migrate`, which rewrites history and force-pushes; everyone must re-clone |
+
+**Recommendation.** Turn on LFS **before** the first commit of the media, so no history rewrite is
+needed:
+
+```bash
+brew install git-lfs        # or your package manager; not currently installed on this machine
+git lfs install
+mv .gitattributes.lfs-example .gitattributes
+git add .gitattributes web/public/media docs/media
+```
+
+If you do not want contributors or CI to depend on LFS, the alternative is to keep media out of the
+repository and attach the MP4s to a GitHub Release (link them from the README) while committing only
+the small PNG posters.
+
+## Agent Skills and Professional Findings Reports
+
+All **22 agents** are equipped with **26 focused skills**. Every specialist receives evidence-led
+analysis and professional reporting/remediation workflows, plus its domain-specific skill.
+The false-positive reviewer also receives dedicated finding-triage and Semgrep-tuning skills.
+
+The [canonical registry](src/threatlint/data/agent-skills.json) maps agents to
+[packaged workflows](src/threatlint/data/skills). The desktop, browser, Python CLI, CI snapshot
+runner, and Teams prompt loader inject actual skill content, not merely skill names. Native
+Claude/Copilot entry points are discoverable in the repository; installers copy complete skills
+into other repositories. Snapshot/Teams runs explicitly disclose their limited source visibility.
+
+### False-positive review: findings, decisions, and proposed fixes
+
+The FP reviewer now produces a professional three-tier report:
+
+- **Executive summary:** reconciled counts, risk/decision, priorities, suggested owners, and effort.
+- **Detailed findings:** original-ID mapping, source-to-sink/control evidence, independent verdict,
+  severity/confidence, and alternative interpretations.
+- **Engineering action plan:** concrete proposed code/configuration fixes for true positives,
+  implementation/compatibility notes, regression assertions, acceptance criteria, safe rule-tuning
+  proposals, suppression blast radius, approval/rollback, and a remediation roadmap.
+
+Ambiguous findings remain open with a specific evidence-resolution plan. Admin-only input,
+internal-looking names, or test/generated paths are not automatic false positives. A correct FP
+verdict does not automatically authorize a suppression. Proposed changes are **not applied**;
+unexecuted tests/rule checks are explicitly marked **NOT RUN**.
+
+```bash
+# Direct local triage, with source inspection and all assigned skills
+threatlint run fp-review --findings ./results.sarif --model YOUR_LOCAL_MODEL
+
+# Install complete agents and skills for native clients
+threatlint install --local -y
+threatlint install --copilot --local -y
+threatlint install --lmstudio -y
+```
+
+Uninstall removes only bundled skill files and leaves third-party skills and custom additions
+untouched. Report-format warnings in the UI are structural checks, not verification that a finding,
+patch, or scanner rule is correct. Human review and real regression testing remain required.
+
+---
+
 ## Building the Business Case
 
 Selling an AppSec tooling investment to leadership often requires a concise, visual summary of what the tool does and why it matters. [`build_pptx.py`](build_pptx.py) generates a 6-slide executive overview deck covering capabilities, integrations, compatibility, usage, and how to get started.
@@ -80,7 +434,7 @@ The generated deck is designed for:
 
 | File | Use it for |
 | --- | --- |
-| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any tool that reads `AGENTS.md`. Covers all 14 security agents with routing, protocols, and report formats. |
+| [`AGENTS.md`](AGENTS.md) | Cross-platform agent instructions for OpenAI Codex CLI, GitHub Copilot Coding Agent, Cursor, and any tool that reads `AGENTS.md`. Covers all 22 security agents with routing, protocols, and report formats. |
 | [`.claude/agents/appsec-threat-modeler.md`](.claude/agents/appsec-threat-modeler.md) | Claude Code subagent — evidence-based threat modeling with autonomous repository discovery, crown jewel analysis, attack chains, and MITRE ATT&CK/DREAD scoring. |
 | [`.claude/agents/appsec-code-reviewer.md`](.claude/agents/appsec-code-reviewer.md) | Claude Code subagent — security review of a diff or pull request with merge recommendation. |
 | [`.claude/agents/appsec-dependency-auditor.md`](.claude/agents/appsec-dependency-auditor.md) | Claude Code subagent — supply chain security: CVEs, dependency confusion, typosquatting, malicious install hooks, abandoned packages, lockfile integrity. |
@@ -97,7 +451,7 @@ The generated deck is designed for:
 | [`.claude/agents/appsec-verify-fix.md`](.claude/agents/appsec-verify-fix.md) | Claude Code subagent — verifies a specific finding: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED. |
 | [`web/`](web/) | Web UI with streaming terminal, chat panel, and multi-agent pipeline runner. Supports Claude, OpenAI, and local LLMs via LM Studio. |
 | [`teams-app/`](teams-app/) | Microsoft Teams bot (Node.js + Bot Framework) that routes security commands to Claude AI agents via the Anthropic API. |
-| [`docs/agents.md`](docs/agents.md) | Comprehensive per-agent documentation: protocols, coverage areas, frameworks applied, and complete report format for all 14 agents. |
+| [`docs/agents.md`](docs/agents.md) | Comprehensive per-agent documentation: protocols, coverage areas, frameworks applied, and complete report format for all 22 agents. |
 
 ### Slash Commands
 
@@ -363,7 +717,7 @@ Mention the bot or send commands directly in any Teams channel where it is insta
 @threatlint /help
 ```
 
-All 14 agents are available. The bot uses Claude AI (configurable via `CLAUDE_MODEL`) and returns the full analysis report directly in the Teams conversation. Large reports are automatically split to stay within Teams' message size limit.
+All 22 agents are available. The bot uses Claude AI (configurable via `CLAUDE_MODEL`) and returns the full analysis report directly in the Teams conversation. Large reports are automatically split to stay within Teams' message size limit.
 
 ### Claude Model
 
@@ -582,10 +936,10 @@ See [Quick Start With Microsoft Teams](#quick-start-with-microsoft-teams) for th
 
 ### Verifying Any Installation
 
-1. **Claude Code (cloud)**: type `@` — all 14 agents should appear. Type `/` — all slash commands should appear in the picker.
+1. **Claude Code (cloud)**: type `@` — all 22 agents should appear. Type `/` — all slash commands should appear in the picker.
 2. **Claude Code (local)**: type `/` — `threat-model-local`, `security-review-local`, `dependency-audit-local`, `secrets-scan-local`, `iac-review-local`, `cicd-audit-local`, `api-security-review-local`, `auth-review-local`, `attack-tree-local`, `red-team-local` should appear. LM Studio must be running with a model loaded.
 3. **Codex**: confirm `AGENTS.md` is present at the repo root or the global path. Ask "threat model this repository" — it should begin discovery immediately.
-4. **GitHub Copilot Chat**: type `@` — 14 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
+4. **GitHub Copilot Chat**: type `@` — 22 agents should appear. Type `/` — `Discover Application Threat Model` and `Threat Model Report` should appear.
 5. **Microsoft Teams**: send `@threatlint /help` — the bot should respond with the list of 14 available commands.
 6. **End-to-end (Claude Code / Codex)**: run `/threat-model` or `/threat-model-local`. A `<repo-name>-<branch>-threat-model-YYYY-MM-DD.docx` should appear in the current directory.
 
@@ -697,7 +1051,7 @@ The report ends with **Suggested Focused Follow-Ups**: three to five ready-to-se
 
 ## Agents
 
-threatlint includes 14 specialized security agents. Each is read-only and produces a structured two-tier report saved as a Word document. For full per-agent documentation, see [docs/agents.md](docs/agents.md).
+threatlint includes 22 specialized security agents. Each is read-only and produces a structured two-tier report saved as a Word document. For full per-agent documentation, see [docs/agents.md](docs/agents.md).
 
 | Agent | Finding Prefix | Coverage |
 | --- | --- | --- |
@@ -715,6 +1069,14 @@ threatlint includes 14 specialized security agents. Each is read-only and produc
 | `appsec-red-team` | `RT-` | 5 adversarial scenarios with ATT&CK kill chains, IoCs, detection gaps, purple-team test cases |
 | `appsec-threat-delta` | `TD-` | Prior report vs current state: RESOLVED / PARTIALLY FIXED / STILL PRESENT / REGRESSED / NEW |
 | `appsec-verify-fix` | `VF-` | Single-finding verification: REMEDIATED / PARTIALLY FIXED / STILL PRESENT / REGRESSED |
+| `appsec-runtime-reviewer` | `DX-` | Correlates authorized runtime captures with source and authentication state |
+| `appsec-business-logic-reviewer` | `BL-` | Workflow invariants, entitlements, idempotency, races, async side effects |
+| `appsec-client-security-reviewer` | `CL-` | Browser, SPA, Electron, and mobile: DOM sinks, origins, IPC, storage |
+| `appsec-crypto-reviewer` | `CY-` | Algorithms, modes, key/nonce lifecycle, KDFs, signatures, TLS verification |
+| `appsec-ai-security-reviewer` | `AI-` | Prompt injection, RAG, tool/agent authority, memory and tenant boundaries |
+| `appsec-security-test-planner` | `ST-` | Evidence-grounded security regression and acceptance test plans |
+| `appsec-secure-codegen-reviewer` | `SG-` | Insecure defaults in AI-generated or new code, with secure rewrites and IDE guardrails |
+| `appsec-privacy-reviewer` | `PD-` | PII inventory, flows to logs/analytics/AI/third parties, retention, consent |
 
 All agents are available in Claude Code (cloud), OpenAI, LM Studio (local), GitHub Copilot Chat, Microsoft Teams, and AGENTS.md-compatible tools.
 
@@ -747,7 +1109,15 @@ All agents do not alter source files, install dependencies, stage changes, or cr
 
 ## GitHub Actions
 
-All workflows support three AI providers. Choose the one that fits your team.
+> **Reusable templates.** To run Threatlint from any repository without copying workflows, call
+> `InfoSec-Actions/threatlint/.github/workflows/threatlint-reusable.yml@<sha>` with
+> `agents: appsec-code-reviewer,appsec-secrets-scanner`, or use the composite action
+> `.github/actions/threatlint`. Azure DevOps: `azure-pipelines/templates/threatlint-job.yml@threatlint`
+> (one job per agent) or `threatlint-steps.yml`. All support Claude, OpenAI, and GitHub Models,
+> upload SARIF, comment on PRs, and gate with `fail-on-severity` (default `high`). See
+> [docs/ci-templates.md](docs/ci-templates.md) and the callers in [docs/examples](docs/examples).
+
+The per-agent workflows below also support three AI providers. Choose the one that fits your team.
 
 | Provider | Authentication | Analysis depth |
 | --- | --- | --- |
@@ -907,8 +1277,26 @@ Keep each customization focused. Add instructions that improve scope or analysis
 
 ```text
 .
-├── AGENTS.md                                         ← Codex / AGENTS.md-compatible tools (all 14 agents)
+├── AGENTS.md                                         ← Codex / AGENTS.md-compatible tools (all 22 agents)
 ├── CLAUDE.md                                         ← Claude Code routing for this project
+├── web/                                              ← Workbench: one codebase for browser and Electron
+│   ├── server.js                                     ← Shared runner (API, WebSocket, routes)
+│   ├── lib/                                          ← agents, providers, tools, scm, runtime, metrics, help
+│   ├── public/                                       ← UI (app.js, operations.js, charts.js, insights.js)
+│   ├── public/media/                                 ← Narrated MP4 video library (in-app)
+│   ├── desktop/                                      ← Electron shell (loads server.js + public/)
+│   ├── scripts/desktop-sync.cjs                      ← Build stamp + stale-package check / rebuild
+│   ├── examples/                                     ← Sample report, runtime example, weak demo app
+│   └── scripts/build-videos.cjs                      ← Re-records narrated videos and screenshots
+├── ide/vscode/                                       ← VS Code extension (inline guard diagnostics)
+├── src/threatlint/guard.py                           ← Offline secure-code guard (threatlint guard)
+├── src/threatlint/ide.py                             ← threatlint ide install
+├── .github/workflows/threatlint-reusable.yml         ← Reusable GitHub workflow
+├── .github/actions/threatlint/                       ← Composite action
+├── azure-pipelines/templates/                        ← Reusable Azure DevOps job/steps templates
+├── docs/media/                                       ← Logo, light/dark banners, GIF previews, screenshots
+├── .githooks/                                        ← Optional hooks that rebuild the desktop package after pulls
+├── .github/workflows/desktop-build.yml               ← Builds desktop app on every web/ change
 ├── LICENSE
 ├── .claude
 │   ├── agents
@@ -995,7 +1383,7 @@ Keep each customization focused. Add instructions that improve scope or analysis
 │   ├── public/index.html                            ← Web UI frontend
 │   └── tests/                                       ← Node.js test suite
 ├── docs
-│   ├── agents.md                                    ← Per-agent documentation for all 14 agents
+│   ├── agents.md                                    ← Per-agent documentation for all 22 agents
 │   └── github-actions.md                            ← Provider setup and Actions troubleshooting
 └── README.md
 

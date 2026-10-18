@@ -1,0 +1,595 @@
+/* global marked, DOMPurify */
+'use strict';
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const desktop = window.threatlintDesktop;
+  const PRESETS = [
+    { id: 'full', title: 'Security baseline', icon: '◎', description: 'Understand your exposure, credentials, and dependency trust.', agents: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'], label: 'DISCOVER & PRIORITIZE' },
+    { id: 'pr', title: 'Pull request review', icon: '⌘', description: 'Review the change. Trace its impact. Make a scoped merge decision.', agents: ['appsec-code-reviewer', 'appsec-api-security-reviewer', 'appsec-auth-reviewer'], label: 'REVIEW & VALIDATE' },
+    { id: 'triage', title: 'Find signal in the noise', icon: '⌁', description: 'Turn scanner findings into defensible verdicts and proposed fixes.', agents: ['appsec-fp-reviewer'], label: 'TRIAGE & REMEDIATE' },
+    { id: 'verify', title: 'Close the loop', icon: '✓', description: 'Verify remediation, check bypasses, and understand what changed.', agents: ['appsec-verify-fix', 'appsec-threat-delta'], label: 'VERIFY & COMPARE' },
+    { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
+    { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
+  ];
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1' };
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
+  const state = {
+    agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
+    statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
+    preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
+    credentials: { claude: '', openai: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
+  };
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function button(text, className, action, title) {
+    const node = el('button', className, text);
+    node.type = 'button';
+    if (title) { node.title = title; node.setAttribute('aria-label', title); }
+    node.addEventListener('click', action);
+    return node;
+  }
+  function toast(message, error = false) {
+    clearTimeout(state.toastTimer);
+    $('toast').textContent = message;
+    $('toast').classList.toggle('error', error);
+    $('toast').classList.remove('hidden');
+    state.toastTimer = setTimeout(() => $('toast').classList.add('hidden'), error ? 8500 : 4000);
+  }
+  async function request(url, options = {}) {
+    const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+  }
+  function safeMarkdown(container, text) {
+    if (!window.marked || !window.DOMPurify) { container.textContent = text; return; }
+    container.innerHTML = DOMPurify.sanitize(marked.parse(String(text), { gfm: true, breaks: false }), {
+      USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'style', 'form', 'input', 'button', 'iframe', 'object'], FORBID_ATTR: ['style', 'srcset'],
+    });
+    // Evidence links are not arbitrary filesystem/navigation capabilities.
+    for (const anchor of container.querySelectorAll('a')) {
+      const href = anchor.getAttribute('href') || '';
+      if (!href.startsWith('https://') && !href.startsWith('#')) anchor.removeAttribute('href');
+      else if (href.startsWith('https://')) { anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; }
+    }
+  }
+  function agentById(id) { return state.agents.find(agent => agent.id === id); }
+  function repoName(repoPath) { return repoPath.split(/[\\/]/).findLast(Boolean) || repoPath; }
+  function formatTime(value) { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function selectedModel() { return state.preferences.models[state.preferences.provider] || ''; }
+  function cloudProvider() {
+    if (state.preferences.provider !== 'lmstudio') return true;
+    try { return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(state.preferences.lmstudioUrl).hostname); } catch { return true; }
+  }
+  function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
+  function showView(name) {
+    const titles = { workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos' };
+    if (!Object.hasOwn(titles, name)) return;
+    state.view = name;
+    for (const view of document.querySelectorAll('.view')) { const active = view.id === `view-${name}`; view.hidden = !active; view.classList.toggle('active', active); }
+    for (const item of document.querySelectorAll('[data-view]')) { item.classList.toggle('active', item.dataset.view === name); item.setAttribute('aria-current', item.dataset.view === name ? 'page' : 'false'); }
+    $('breadcrumb-title').textContent = titles[name];
+    document.dispatchEvent(new CustomEvent('threatlint:view', { detail: { view: name } }));
+    history.replaceState(null, '', `#${name}`);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function renderPresets() {
+    $('playbook-count').textContent = `${PRESETS.length} PLAYBOOKS`;
+    $('workflow-presets').replaceChildren(...PRESETS.map(preset => {
+      const node = button('', `workflow-card${state.preset === preset.id ? ' selected' : ''}`, () => {
+        if (state.running) return;
+        state.pipeline = [...preset.agents]; state.statuses = {}; state.preset = preset.id;
+        renderPipeline(); renderPresets(); renderAgents();
+        if (preset.id === 'triage' && !state.attachment) toast('Attach scanner findings, or specify a findings path in the review scope.');
+      });
+      node.disabled = state.running;
+      const top = el('div', 'workflow-top'); top.append(el('span', 'workflow-icon', preset.icon), el('span', 'workflow-arrow', '↗'));
+      const meta = el('div', 'workflow-meta'); meta.append(el('span', '', `${preset.agents.length} AGENT${preset.agents.length > 1 ? 'S' : ''}`), el('b', '', preset.label));
+      node.append(top, el('h3', '', preset.title), el('p', '', preset.description), meta);
+      return node;
+    }));
+  }
+  function renderPipeline() {
+    $('pipeline-count').textContent = state.pipeline.length;
+    $('pipeline-list').replaceChildren();
+    if (!state.pipeline.length) $('pipeline-list').append(el('li', 'pipeline-empty', 'A focused review starts with the right specialist.'));
+    state.pipeline.forEach((id, index) => {
+      const agent = agentById(id);
+      const status = state.statuses[id] || 'ready';
+      const item = el('li', `pipeline-item ${status}`); item.dataset.agentId = id;
+      const info = el('div', 'pipeline-item-info'); info.append(el('strong', '', agent?.label || id), el('small', '', `${agent?.skills?.length || 3} skills · ${agent?.category || 'Analysis'}`));
+      item.append(el('span', 'pipeline-number', String(index + 1).padStart(2, '0')), el('span', 'agent-monogram', agent?.initials || 'TL'), info);
+      if (state.running || status !== 'ready') item.append(el('span', 'pipeline-status', { ready: 'Queued', running: 'Reviewing…', complete: 'Complete', error: 'Failed', cancelled: 'Stopped', interrupted: 'Interrupted' }[status] || status));
+      const actions = el('div', 'pipeline-actions');
+      const move = direction => {
+        if (state.running) return;
+        const other = index + direction;
+        [state.pipeline[index], state.pipeline[other]] = [state.pipeline[other], state.pipeline[index]];
+        state.preset = ''; renderPipeline(); renderPresets();
+      };
+      const up = button('↑', 'icon-button', () => move(-1), `Move ${agent?.label} up`); up.disabled = state.running || index === 0;
+      const down = button('↓', 'icon-button', () => move(1), `Move ${agent?.label} down`); down.disabled = state.running || index === state.pipeline.length - 1;
+      const remove = button('×', 'icon-button', () => {
+        if (state.running) return;
+        state.pipeline.splice(index, 1); state.preset = ''; renderPipeline(); renderPresets(); renderAgents();
+      }, `Remove ${agent?.label}`); remove.disabled = state.running;
+      actions.append(up, down, remove); item.append(actions); $('pipeline-list').append(item);
+    });
+    updateRunControls();
+  }
+  // Other view modules receive a copy of the workspace and model settings; credentials go only to the runner socket.
+  function publishContext() {
+    const provider = state.preferences.provider;
+    document.dispatchEvent(new CustomEvent('threatlint:context', { detail: Object.freeze({
+      session: state.session ? { id: state.session.id, repoPath: state.session.repoPath } : null,
+      connected: state.connected, ready: !!selectedModel() && (!cloudProvider() || state.consent.has(consentKey())),
+      reports: state.reports.length, ran: state.reports.length > 0,
+      socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+        apiKey: provider === 'claude' ? state.credentials.claude : undefined, openaiApiKey: provider === 'openai' ? state.credentials.openai : undefined },
+    }) }));
+    for (const [step, done] of [['repo', !!state.session], ['model', !!selectedModel()], ['run', state.reports.length > 0], ['fix', state.reports.length > 0 && state.asked]]) {
+      document.querySelector(`#onboarding [data-step="${step}"]`)?.classList.toggle('done', done);
+    }
+    $('onboarding').hidden = !!state.session && !!selectedModel() && state.reports.length > 0 && state.asked;
+  }
+  function updateRunControls() {
+    publishContext();
+    $('start-run').disabled = state.running || !state.connected || !state.session || !state.pipeline.length;
+    $('cancel-run').classList.toggle('hidden', !state.running);
+    $('clear-pipeline').disabled = state.running;
+    $('browse-agents').disabled = state.running;
+    $('target').disabled = state.running;
+    $('attach-findings').disabled = state.running;
+    $('remove-attachment').disabled = state.running;
+    $('choose-repo').disabled = state.running;
+    $('settings-button').disabled = state.running;
+    $('configure-provider').disabled = state.running;
+    let summary = `${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} ready · ${selectedModel() || 'configure a model'}`;
+    if (!state.pipeline.length) summary = 'Add at least one specialist';
+    if (!state.session) summary = 'Choose a repository to get started';
+    if (!state.connected) summary = 'Connecting to the local runner…';
+    if (state.running) summary = 'Review in progress · source remains unchanged';
+    $('run-summary').textContent = summary;
+    $('run-status-dot').classList.toggle('waiting', !state.session);
+  }
+  function toggleAgent(id) {
+    if (state.running) { toast('Wait until the current pipeline has finished.', true); return; }
+    const index = state.pipeline.indexOf(id);
+    if (index >= 0) state.pipeline.splice(index, 1); else state.pipeline.push(id);
+    state.statuses = {}; state.preset = '';
+    renderPipeline(); renderPresets(); renderAgents();
+    toast(index < 0 ? `${agentById(id)?.label} added to your pipeline.` : 'Specialist removed.');
+  }
+  function renderAgents() {
+    const search = $('agent-search').value.toLowerCase().trim();
+    const category = $('agent-category').value;
+    const agents = state.agents.filter(agent => (!category || agent.category === category) && `${agent.label} ${agent.description} ${agent.skills.map(skill => skill.name).join(' ')}`.toLowerCase().includes(search));
+    $('agent-results-count').textContent = `${agents.length} specialists`;
+    $('agent-grid').replaceChildren(...agents.map(agent => {
+      const added = state.pipeline.includes(agent.id);
+      const card = el('article', `agent-card${added ? ' added' : ''}`);
+      const top = el('div', 'agent-card-top'); top.append(el('span', 'agent-monogram', agent.initials), el('span', 'agent-category', agent.category.toUpperCase()));
+      const chips = el('div', 'skill-chips');
+      for (const skill of agent.skills) chips.append(el('span', 'skill-chip', skill.name));
+      const footer = el('div', 'agent-card-footer');
+      const add = button(added ? '✓ In pipeline' : '＋ Add to pipeline', `button ${added ? 'secondary' : 'primary'} small-button`, () => toggleAgent(agent.id)); add.disabled = state.running;
+      footer.append(button('View expertise ↗', 'text-button', () => openAgent(agent)), add);
+      card.append(top, el('h3', '', agent.label), el('p', '', agent.description), chips, footer);
+      return card;
+    }));
+    if (!agents.length) $('agent-grid').append(el('div', 'agent-card-empty', 'No matching specialists. Try another discipline or search.'));
+  }
+  function openAgent(agent) {
+    $('detail-eyebrow').textContent = `${agent.category.toUpperCase()} / ${agent.skills.length} REQUIRED SKILLS`;
+    $('detail-title').textContent = agent.label;
+    const content = $('detail-content'); content.replaceChildren(el('p', 'detail-description', agent.description));
+    const output = el('div', 'detail-section'); output.append(el('h3', '', 'Your deliverable'), el('p', '', agent.deliverable));
+    const input = el('div', 'detail-section'); input.append(el('h3', '', 'Recommended input'), el('p', '', agent.inputHint));
+    const skills = el('div', 'detail-section'); skills.append(el('h3', '', 'Skills loaded into every analysis'));
+    for (const skill of agent.skills) {
+      const row = el('div', 'detail-skill'); row.append(el('strong', '', skill.name), el('p', '', skill.description), button('Read workflow →', 'text-button', () => openSkill(state.skills.find(item => item.id === skill.id)))); skills.append(row);
+    }
+    content.append(output, input, skills);
+    const add = button(state.pipeline.includes(agent.id) ? 'Remove from pipeline' : 'Add to pipeline →', 'button primary', () => { toggleAgent(agent.id); $('detail-dialog').close(); }); add.disabled = state.running;
+    $('detail-footer').replaceChildren(el('span', 'small subtle', 'Analysis only. Every fix is a proposal.'), add);
+    if (!$('detail-dialog').open) $('detail-dialog').showModal();
+  }
+  function renderSkills() {
+    const query = $('skill-search').value.toLowerCase().trim();
+    const skills = state.skills.filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(query));
+    $('skills-grid').replaceChildren(...skills.map(skill => {
+      const card = button('', 'skill-card', () => openSkill(skill));
+      const title = el('h3'); title.append(el('span', '', '◇'), document.createTextNode(skill.name));
+      const footer = el('footer'); footer.append(el('span', '', `${skill.agents.length} specialist${skill.agents.length > 1 ? 's' : ''} equipped`), el('span', '', 'Read workflow ↗'));
+      card.append(title, el('p', '', skill.description), footer); return card;
+    }));
+    if (!skills.length) $('skills-grid').append(el('p', 'subtle', 'No matching workflows.'));
+  }
+  function openSkill(skill) {
+    if (!skill) return;
+    $('detail-eyebrow').textContent = 'REQUIRED SKILL / READ-ONLY WORKFLOW';
+    $('detail-title').textContent = skill.name.replace(/^./, character => character.toUpperCase());
+    const article = el('article', 'markdown'); safeMarkdown(article, skill.body);
+    $('detail-content').replaceChildren(article);
+    $('detail-footer').replaceChildren(el('span', 'small subtle', `Loaded for ${skill.agents.length} specialist${skill.agents.length > 1 ? 's' : ''}.`), button('View specialists →', 'button secondary', () => { $('detail-dialog').close(); $('agent-search').value = skill.name; renderAgents(); showView('agents'); }));
+    if (!$('detail-dialog').open) $('detail-dialog').showModal();
+  }
+
+  async function refreshSessions() {
+    state.sessions = await request('/api/sessions');
+    renderSessions();
+  }
+  function renderSessions() {
+    $('session-list').replaceChildren(...state.sessions.slice(0, 8).map(session => {
+      const node = button('', `session-button${session.id === state.session?.id ? ' selected' : ''}`, () => { if (state.running) { toast('Stop the current review before changing workspace.', true); return; } openSession(session).catch(error => toast(error.message, true)); });
+      node.title = session.repoPath;
+      node.append(el('span', '', '▱'), el('span', 'session-name', repoName(session.repoPath)), el('small', '', session.reportCount));
+      return node;
+    }));
+    if (!state.sessions.length) $('session-list').append(el('p', 'subtle small', 'No workspaces yet.'));
+  }
+  async function openSession(session) {
+    const data = await request(`/api/session/${session.id}`);
+    state.session = data;
+    $('workspace-label').textContent = repoName(data.repoPath);
+    $('workspace-label').title = data.repoPath;
+    $('reports-workspace').textContent = data.repoPath;
+    localStorage.setItem('threatlint.last-session.v2', data.id);
+    await refreshReports(); renderSessions(); updateRunControls();
+  }
+  async function refreshReports() {
+    if (!state.session) { state.reports = []; renderReports(); return; }
+    state.reports = await request(`/api/session/${state.session.id}/reports`);
+    $('stat-reports').textContent = state.reports.length;
+    $('report-nav-count').textContent = state.reports.length;
+    $('stat-reports-note').textContent = state.reports.length ? 'Saved locally · ready for handoff' : 'Ready when you are';
+    renderReports(); publishContext();
+  }
+  function renderReports() {
+    const list = $('report-list'); list.replaceChildren();
+    if (!state.reports.length) {
+      const empty = el('div', 'empty-state');
+      empty.append(el('span', 'empty-symbol', '▤'), el('h3', '', 'Your next decision starts here.'), el('p', '', state.session ? 'Run a specialist to create your first source-grounded findings report. Reports stay available when you return.' : 'Open a repository to access its saved reports, or explore the clearly labelled example.'), button('See a sample findings report ↗', 'button secondary', openExample));
+      list.append(empty); return;
+    }
+    for (const report of state.reports) {
+      const agent = agentById(report.agentId);
+      const card = el('article', 'report-card');
+      const info = el('div', 'report-card-info'); info.append(el('h3', '', report.label), el('p', '', `${formatTime(report.timestamp)} · ${report.findings?.length || 0} parsed findings · ${report.hasDocx ? 'Markdown + Word' : 'Markdown'}`));
+      if (report.quality?.issues?.length) info.append(el('div', 'report-card-status', `${report.quality.issues.length} format item${report.quality.issues.length > 1 ? 's' : ''} need review`));
+      const actions = el('div', 'report-card-actions'); actions.append(button('Read report ↗', 'button primary small-button', () => openReportUrl(report.previewUrl).catch(error => toast(error.message, true))));
+      const download = el('a', 'button secondary small-button', '↓ Markdown'); download.href = report.mdUrl; download.download = ''; actions.append(download);
+      if (report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = report.docxUrl; word.download = ''; actions.append(word); }
+      card.append(el('span', 'agent-monogram', agent?.initials || 'TL'), info, actions); list.append(card);
+    }
+  }
+  async function openReportUrl(url) { const report = await request(url); openReport(report); }
+  async function openExample() { try { openReport(await request('/api/examples/fp-review')); } catch (error) { toast(error.message, true); } }
+  function openReport(report) {
+    state.report = report;
+    $('report-reader-title').textContent = report.example ? 'Findings & remediation · Example' : report.label || 'Security findings report';
+    $('report-reader-eyebrow').textContent = report.example ? 'SYNTHETIC EXAMPLE · NOT A SCAN' : 'SOURCE-GROUNDED / HUMAN REVIEW REQUIRED';
+    const quality = $('report-quality'); quality.replaceChildren(); quality.className = 'report-quality';
+    quality.classList.toggle('example', !!report.example);
+    quality.classList.toggle('warning', !report.example && !!report.quality?.issues?.length);
+    quality.append(document.createTextNode(report.example ? 'Illustrative report only. These are fictional paths and findings, not results from your repository.' : 'Automated format checks are not a security approval. Proposed fixes and tests require engineering review.'));
+    if (report.quality?.issues?.length) {
+      const details = el('details');
+      details.append(el('summary', '', `${report.quality.issues.length} report-format warnings`));
+      const list = el('ul');
+      for (const issue of report.quality.issues) list.append(el('li', '', issue));
+      details.append(list); quality.append(details);
+    }
+    $('report-ask').hidden = !!report.example || !report.id;
+    for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl]]) {
+      $(id).classList.toggle('hidden', !url || report.example); if (url) $(id).href = url; else $(id).removeAttribute('href');
+    }
+    $('reader-finding-count').textContent = report.findings?.length || 0;
+    $('severity-filter').value = ''; $('disposition-filter').value = '';
+    safeMarkdown($('report-markdown'), report.markdown);
+    selectReportTab('full'); renderFindings();
+    if (!$('report-dialog').open) $('report-dialog').showModal();
+  }
+  // Hands a report or finding to the Ask Threatlint view; chat.js owns the conversation.
+  function askAbout(context, question) {
+    if ($('report-dialog').open) $('report-dialog').close();
+    showView('chat');
+    document.dispatchEvent(new CustomEvent('threatlint:ask', { detail: { context, question } }));
+  }
+  function selectReportTab(tab) {
+    const full = tab === 'full';
+    $('report-tab-full').classList.toggle('active', full); $('report-tab-findings').classList.toggle('active', !full);
+    $('report-markdown').classList.toggle('hidden', !full); $('report-findings').classList.toggle('hidden', full); $('finding-filters').classList.toggle('hidden', full);
+    document.querySelector('.report-reader-body').scrollTop = 0;
+  }
+  function renderFindings() {
+    const severity = $('severity-filter').value, disposition = $('disposition-filter').value;
+    const findings = (state.report?.findings || []).filter(finding => (!severity || finding.severity === severity) && (!disposition || finding.disposition === disposition));
+    const list = $('report-findings'); list.replaceChildren();
+    for (const finding of findings) {
+      const card = el('article', 'finding-card'); const header = el('div', 'finding-card-header');
+      header.append(el('span', 'finding-id', finding.id), el('h3', '', finding.title), el('span', `severity-badge severity-${finding.severity}`, finding.severity));
+      if (finding.disposition) header.append(el('span', 'disposition-badge', finding.disposition));
+      const body = el('div', 'markdown'); safeMarkdown(body, finding.body);
+      const actions = el('div', 'finding-card-actions');
+      if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
+      card.append(header, body, actions); list.append(card);
+    }
+    if (!findings.length) { const empty = el('div', 'empty-state'); empty.append(el('h3', '', 'No findings match this view.'), el('p', '', state.report?.findings?.length ? 'Adjust the severity or disposition filter.' : 'No structured finding blocks were detected. Read the full report for conclusions, scope, and limitations.')); list.append(empty); }
+  }
+
+  async function chooseRepository() {
+    if (state.running) return;
+    if (desktop) {
+      try { const repoPath = await desktop.selectRepository(); if (repoPath) await connectRepository(repoPath); } catch (error) { toast(error.message, true); }
+    } else { $('repository-error').textContent = ''; $('repo-path').value = state.session?.repoPath || ''; $('directory-browser').classList.add('hidden'); $('repository-dialog').showModal(); }
+  }
+  async function connectRepository(repoPath) {
+    const data = await request('/api/session/local', { method: 'POST', body: JSON.stringify({ repoPath }) });
+    await refreshSessions(); await openSession({ id: data.sessionId });
+    if ($('repository-dialog').open) $('repository-dialog').close();
+    toast(`${repoName(data.repoPath)} is ready for review.`);
+  }
+  async function browseDirectory(repoPath = '') {
+    const query = repoPath ? `?path=${encodeURIComponent(repoPath)}` : '';
+    const data = await request(`/api/fs/browse${query}`);
+    $('repo-path').value = data.path;
+    const container = $('directory-browser'); container.classList.remove('hidden'); container.replaceChildren();
+    container.append(el('p', 'small subtle', data.path));
+    if (data.parent) container.append(button('↑ Parent directory', 'directory-row', () => browseDirectory(data.parent).catch(error => { $('repository-error').textContent = error.message; })));
+    for (const entry of data.entries) container.append(button(`${entry.isRepo ? '◇' : '▱'} ${entry.name}${entry.isRepo ? ' · Git repository' : ''}`, 'directory-row', () => browseDirectory(`${data.path}/${entry.name}`).catch(error => { $('repository-error').textContent = error.message; })));
+  }
+  function setAttachment(attachment) {
+    if (!attachment) return;
+    if (!/\.(sarif|json|md|txt)$/i.test(attachment.name) || new TextEncoder().encode(attachment.content).length > 5 * 1024 * 1024 || !attachment.content.trim()) { toast('Choose a nonempty SARIF, JSON, Markdown, or text file up to 5 MB.', true); return; }
+    state.attachment = attachment;
+    $('attachment-name').textContent = attachment.name; $('attachment-name').title = attachment.name;
+    $('remove-attachment').classList.remove('hidden'); toast('Findings attached for this session. Source evidence will still be verified.');
+  }
+  async function chooseFindings() {
+    if (state.running) return;
+    if (desktop) { try { setAttachment(await desktop.selectFindings()); } catch (error) { toast(error.message, true); } }
+    else $('findings-file').click();
+  }
+
+  function updateProviderDisplay() {
+    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', openai: 'OpenAI' }[state.preferences.provider] || 'Local';
+    updateRunControls();
+  }
+  function showSettings() {
+    const provider = state.preferences.provider;
+    document.querySelector(`input[name=provider][value="${provider}"]`).checked = true;
+    $('model-url').value = state.preferences.lmstudioUrl;
+    $('model-id').value = selectedModel();
+    $('api-key').value = state.credentials[provider] || '';
+    $('settings-error').textContent = '';
+    $('cloud-consent').checked = state.consent.has(consentKey());
+    updateSettingsFields(provider);
+    $('settings-dialog').showModal();
+  }
+  function updateSettingsFields(provider) {
+    const local = provider === 'lmstudio';
+    $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
+    $('discover-models').classList.toggle('hidden', !local);
+    $('model-id').placeholder = local ? 'Load models or enter a model ID' : 'Exact provider model ID';
+    const providerName = provider === 'claude' ? 'anthropic' : 'openai';
+    $('environment-key-note').textContent = state.config.providers[providerName] ? 'A server environment key is available. You may leave this field empty.' : 'No server environment key detected. Enter a key for this session.';
+    // Remote LM Studio-compatible servers also require explicit data-sharing consent.
+    let remote = !local;
+    if (local) { try { remote = !['localhost', '127.0.0.1', '[::1]'].includes(new URL($('model-url').value).hostname); } catch { remote = true; } }
+    $('cloud-consent-label').classList.toggle('hidden', !remote);
+  }
+  function saveSettings(event) {
+    event.preventDefault();
+    const provider = document.querySelector('input[name=provider]:checked').value;
+    const model = $('model-id').value.trim();
+    if (!model) { $('settings-error').textContent = 'Enter a model ID or load an available local model.'; return; }
+    let url;
+    try {
+      url = new URL($('model-url').value || DEFAULTS.lmstudioUrl);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid model-server URL');
+      if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote servers require HTTPS');
+    } catch { $('settings-error').textContent = 'Use an HTTP(S) model-server URL without credentials. Remote servers require HTTPS.'; return; }
+    state.preferences.provider = provider;
+    state.preferences.models[provider] = model;
+    state.preferences.model = model;
+    state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
+    if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
+    if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl })); } catch { /* in-memory operation remains available */ }
+    $('api-key').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
+  }
+  async function discoverModels() {
+    $('discover-models').disabled = true; $('settings-error').textContent = '';
+    try {
+      const data = await request(`/api/lmstudio/models?baseUrl=${encodeURIComponent($('model-url').value || DEFAULTS.lmstudioUrl)}`);
+      $('local-models').replaceChildren(...data.models.map(model => { const option = el('option'); option.value = model; return option; }));
+      if (!data.models.length) throw new Error('The server is reachable but no model is loaded. Load a model in LM Studio.');
+      if (!$('model-id').value || !data.models.includes($('model-id').value)) $('model-id').value = data.models[0];
+      toast(`${data.models.length} local model${data.models.length > 1 ? 's' : ''} available.`);
+    } catch (error) { $('settings-error').textContent = error.message; }
+    finally { $('discover-models').disabled = false; }
+  }
+
+  function log(message, kind = '') {
+    $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden');
+    const container = $('activity-log');
+    const follow = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    const node = el('div', `log-event ${kind}`, message); container.append(node);
+    if (++state.activityCount > 1500) container.firstChild?.remove();
+    if (follow) container.scrollTop = container.scrollHeight;
+  }
+  function logText(text) {
+    const container = $('activity-log'); const follow = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    let node = container.lastElementChild;
+    if (!node?.classList.contains('log-text')) { node = el('div', 'log-text'); container.append(node); }
+    node.append(document.createTextNode(text));
+    if (node.textContent.length > 100_000) node.textContent = '[Earlier streaming output omitted from this activity view]\n' + node.textContent.slice(-80_000);
+    if (follow) container.scrollTop = container.scrollHeight;
+  }
+  function finishRun(result) {
+    state.running = false;
+    for (const id of state.pipeline) if (state.statuses[id] === 'running' || state.statuses[id] === 'ready') state.statuses[id] = result === 'complete' ? state.statuses[id] : result;
+    $('activity-badge').classList.remove('running');
+    const label = { complete: 'Review complete', cancelled: 'Review stopped', error: 'Review needs attention', interrupted: 'Connection interrupted' }[result] || result;
+    $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode(label));
+    $('activity-detail').textContent = result === 'complete' ? 'Completed reports are available in your report library.' : 'Completed reports remain available. Incomplete reviews are not saved as final reports.';
+    const logKind = { complete: 'success', error: 'error' }[result] || '';
+    log(label, logKind);
+    renderPipeline(); renderPresets(); renderAgents();
+    refreshReports().catch(error => toast(error.message, true)); refreshSessions().catch(() => {});
+  }
+  function handleEvent(event) {
+    switch (event.type) {
+      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${selectedModel()}`); break;
+      case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
+      case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
+      case 'text_chunk': logText(event.text); break;
+      case 'tool_executing': { const input = event.input || {}; const detail = input.file_path || input.pattern || input.command || ''; log(`↳ ${event.tool} ${String(detail).slice(0, 180)}`); break; }
+      case 'tool_result': break;
+      case 'agent_complete': state.statuses[event.agentId] = 'complete'; renderPipeline(); log(`${event.label} report saved locally${event.hasDocx ? ' · Word export ready' : ''}`, 'success'); refreshReports().catch(error => toast(error.message, true)); break;
+      case 'agent_error': state.statuses[event.agentId] = 'error'; renderPipeline(); log(event.message, 'error'); toast(event.message, true); break;
+      case 'pipeline_complete': finishRun(event.status || 'complete'); break;
+      case 'cancelled': log('Cancellation acknowledged. No incomplete report will be marked complete.'); break;
+      case 'chat_start': case 'chat_chunk': case 'chat_tool': case 'chat_complete': case 'chat_error':
+        document.dispatchEvent(new CustomEvent('threatlint:chat-event', { detail: event })); break;
+      case 'error': log(event.message, 'error'); toast(event.message, true); if (state.running) finishRun('error'); break;
+      default: break;
+    }
+  }
+  function connectSocket() {
+    clearTimeout(state.reconnectTimer);
+    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/`);
+    state.ws = socket;
+    socket.addEventListener('open', () => { state.connected = true; $('connection-status').textContent = 'Connected'; $('connection-status').className = 'connection online'; updateRunControls(); });
+    socket.addEventListener('message', message => { try { handleEvent(JSON.parse(message.data)); } catch (error) { console.error('Invalid runner event', error.message); } });
+    socket.addEventListener('close', () => {
+      state.connected = false; $('connection-status').textContent = 'Disconnected'; $('connection-status').className = 'connection offline';
+      if (state.running) finishRun('interrupted');
+      updateRunControls();
+      if (!state.intentionalClose) state.reconnectTimer = setTimeout(connectSocket, 3000);
+    });
+    socket.addEventListener('error', () => { $('connection-status').textContent = 'Reconnecting'; });
+  }
+  function startRun() {
+    if (state.running || !state.session || !state.pipeline.length || !state.connected) return;
+    if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
+    if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
+    const provider = state.preferences.provider;
+    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider === 'claude' ? 'anthropic' : 'openai']) { showSettings(); toast('A provider API key is required for this review.', true); return; }
+    if (state.pipeline.includes('appsec-fp-reviewer') && !state.attachment && !$('target').value.trim() && state.pipeline[0] === 'appsec-fp-reviewer') { toast('Attach findings or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
+    state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
+    $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden'); $('activity-log').replaceChildren(); state.activityCount = 0;
+    $('activity-badge').classList.add('running'); $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode('Reviewing'));
+    const payload = { action: 'run_pipeline', sessionId: state.session.id, agentIds: [...state.pipeline], target: $('target').value.trim(), provider,
+      model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+      apiKey: provider === 'claude' ? state.credentials.claude : undefined,
+      openaiApiKey: provider === 'openai' ? state.credentials.openai : undefined,
+      attachment: state.attachment || undefined, continueOnError: false };
+    try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
+    renderPipeline(); renderPresets(); renderAgents();
+  }
+
+  function wireEvents() {
+    for (const item of document.querySelectorAll('[data-view]')) item.addEventListener('click', () => showView(item.dataset.view));
+    for (const item of document.querySelectorAll('[data-go-view]')) item.addEventListener('click', () => showView(item.dataset.goView));
+    for (const close of document.querySelectorAll('.close-dialog')) close.addEventListener('click', () => close.closest('dialog').close());
+    for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
+    $('choose-repo').addEventListener('click', chooseRepository);
+    $('repository-form').addEventListener('submit', async event => { event.preventDefault(); $('open-repository').disabled = true; $('repository-error').textContent = ''; try { await connectRepository($('repo-path').value.trim()); } catch (error) { $('repository-error').textContent = error.message; } finally { $('open-repository').disabled = false; } });
+    $('browse-repository').addEventListener('click', () => browseDirectory($('repo-path').value.trim()).catch(error => { $('repository-error').textContent = error.message; }));
+    $('refresh-sessions').addEventListener('click', () => refreshSessions().catch(error => toast(error.message, true)));
+    $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
+    $('settings-button').addEventListener('click', showSettings); $('configure-provider').addEventListener('click', showSettings);
+    $('settings-form').addEventListener('submit', saveSettings); $('discover-models').addEventListener('click', discoverModels);
+    let settingsProvider = state.preferences.provider;
+    for (const radio of document.querySelectorAll('input[name=provider]')) radio.addEventListener('change', () => {
+      if (settingsProvider !== 'lmstudio') state.credentials[settingsProvider] = $('api-key').value.trim();
+      settingsProvider = radio.value; $('model-id').value = state.preferences.models[settingsProvider] || '';
+      $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
+      updateSettingsFields(settingsProvider);
+    });
+    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; settingsProvider = state.preferences.provider; });
+    $('model-url').addEventListener('input', () => { updateSettingsFields('lmstudio'); $('cloud-consent').checked = false; });
+    $('attach-findings').addEventListener('click', chooseFindings);
+    $('findings-file').addEventListener('change', async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        if (file.size > 5 * 1024 * 1024) throw new Error('The attachment exceeds 5 MB.');
+        setAttachment({ name: file.name, content: await file.text() });
+      } catch (error) { toast(error.message, true); }
+      event.target.value = '';
+    });
+    $('remove-attachment').addEventListener('click', () => { state.attachment = null; $('attachment-name').textContent = 'SARIF, JSON, Markdown, or text · up to 5 MB'; $('attachment-name').title = ''; $('remove-attachment').classList.add('hidden'); });
+    $('browse-agents').addEventListener('click', () => showView('agents'));
+    $('clear-pipeline').addEventListener('click', () => {
+      if (state.running) return;
+      state.pipeline = []; state.statuses = {}; state.preset = ''; renderPipeline(); renderPresets(); renderAgents();
+    });
+    $('agent-search').addEventListener('input', renderAgents); $('agent-category').addEventListener('change', renderAgents); $('skill-search').addEventListener('input', renderSkills);
+    $('start-run').addEventListener('click', startRun);
+    $('cancel-run').addEventListener('click', () => { if (state.running && state.connected) { state.ws.send(JSON.stringify({ action: 'cancel' })); $('activity-detail').textContent = 'Stopping the current model request…'; } });
+    $('clear-activity').addEventListener('click', () => { $('activity-log').replaceChildren(); state.activityCount = 0; if (!state.running) { $('activity-log').classList.add('hidden'); $('activity-empty').classList.remove('hidden'); } });
+    $('preview-example').addEventListener('click', openExample); $('reports-example').addEventListener('click', openExample);
+    $('report-tab-full').addEventListener('click', () => selectReportTab('full')); $('report-tab-findings').addEventListener('click', () => selectReportTab('findings'));
+    $('report-ask').addEventListener('click', () => askAbout({ type: 'report', reportId: state.report.id, label: `${state.report.label} report` }, 'What should I fix first in this report, and why?'));
+    $('onboarding-repo').addEventListener('click', chooseRepository);
+    $('onboarding-model').addEventListener('click', showSettings);
+    $('severity-filter').addEventListener('change', renderFindings); $('disposition-filter').addEventListener('change', renderFindings);
+    desktop?.onChooseRepository?.(chooseRepository);
+    // Handoffs from the Sources and Runtime views share the same workspace and pipeline.
+    document.addEventListener('threatlint:workspace', event => {
+      if (state.running) { toast('Stop the current review before changing workspace.', true); return; }
+      refreshSessions().then(() => openSession({ id: event.detail.sessionId })).then(() => { showView('workbench'); toast(`${repoName(event.detail.repoPath)} checked out and ready for review.`); }).catch(error => toast(error.message, true));
+    });
+    document.addEventListener('threatlint:runtime-evidence', event => {
+      if (state.running) return;
+      setAttachment(event.detail);
+      state.pipeline = ['appsec-runtime-reviewer']; state.statuses = {}; state.preset = 'runtime';
+      renderPipeline(); renderPresets(); renderAgents(); showView('workbench');
+      if (!state.session) toast('Runtime evidence attached. Open the repository that serves this app so the agent can correlate it with source.');
+    });
+    document.addEventListener('threatlint:navigate', event => showView(event.detail.view));
+    document.addEventListener('threatlint:asked', () => { state.asked = true; try { localStorage.setItem('threatlint.asked', '1'); } catch { /* optional */ } publishContext(); });
+    document.addEventListener('threatlint:request-context', publishContext);
+    window.addEventListener('beforeunload', () => { state.intentionalClose = true; if (state.running && state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
+    document.addEventListener('keydown', event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o' && !document.querySelector('dialog[open]')) { event.preventDefault(); void chooseRepository(); } });
+  }
+
+  async function initialize() {
+    // Retire secret-bearing preferences used by the old UI; do not migrate stored credentials.
+    for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) localStorage.removeItem(key);
+    wireEvents(); renderPresets(); renderPipeline(); renderReports(); updateProviderDisplay();
+    if (desktop) { $('runtime-badge').textContent = 'DESKTOP WORKBENCH'; $('app-version').textContent = desktop.version; }
+    try {
+      [state.agents, state.skills, state.config] = await Promise.all([request('/api/agents'), request('/api/skills'), request('/api/config')]);
+      const build = state.config.build;
+      if (build) {
+        const label = build.fingerprint === 'source' ? 'live' : build.commit;
+        const builtAt = build.builtAt ? ` · ${build.builtAt}` : '';
+        $('app-version').textContent = `${build.version} · ${label}`;
+        $('app-version').title = `Build ${build.fingerprint}${builtAt}`;
+      }
+      $('stat-agents').textContent = state.agents.length; $('agent-nav-count').textContent = state.agents.length;
+      $('stat-skills').textContent = state.skills.length; $('skill-nav-count').textContent = state.skills.length;
+      for (const category of [...new Set(state.agents.map(agent => agent.category))].sort((a, b) => a.localeCompare(b))) { const option = el('option', '', category); option.value = category; $('agent-category').append(option); }
+      renderPipeline(); renderAgents(); renderSkills();
+      await refreshSessions();
+      const last = localStorage.getItem('threatlint.last-session.v2');
+      if (last && state.sessions.some(session => session.id === last)) await openSession({ id: last });
+      connectSocket();
+    } catch (error) { toast(`Workbench could not initialize: ${error.message}`, true); $('connection-status').textContent = 'Unavailable'; }
+    showView(location.hash.slice(1) || 'workbench');
+  }
+  initialize().catch(error => toast(`Workbench initialization failed: ${error.message}`, true));
+})();

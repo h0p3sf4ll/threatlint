@@ -1,0 +1,116 @@
+# threatlint/azure-pipelines/templates/threatlint-job.yml
+# Job template: one job per agent, each checking out `self` plus the Threatlint repository
+# resource and running templates/threatlint-steps.yml.
+#
+#   resources:
+#     repositories:
+#       - repository: threatlint        # the alias MUST be "threatlint" (or set threatlintRepository)
+#         type: github
+#         name: InfoSec-Actions/threatlint
+#         ref: refs/tags/<version>      # pin a tag or commit
+#         endpoint: <github-service-connection>
+#
+#   jobs:
+#     - template: azure-pipelines/templates/threatlint-job.yml@threatlint
+#       parameters:
+#         agents: [appsec-code-reviewer, appsec-secrets-scanner]
+#         anthropicApiKey: $(ANTHROPIC_API_KEY)
+
+parameters:
+  - name: agents
+    type: object
+    default: [appsec-code-reviewer]
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models]
+  - name: model
+    type: string
+    default: ''
+  - name: target
+    type: string
+    default: ''
+  - name: findingsFile
+    type: string
+    default: ''
+  - name: failOnSeverity
+    type: string
+    default: high
+    values: [none, low, medium, high, critical]
+  - name: gateMode
+    type: string
+    default: warn
+    values: [warn, fail]
+  - name: uploadSarif
+    type: boolean
+    default: true
+  - name: commentOnPr
+    type: boolean
+    default: true
+  - name: pythonVersion
+    type: string
+    default: '3.12'
+  - name: maxTurns
+    type: number
+    default: 25
+  - name: claudeCodeVersion
+    type: string
+    default: 2.1.302
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: ''
+  - name: threatlintRepository
+    type: string
+    default: threatlint
+  - name: pool
+    type: object
+    default:
+      vmImage: ubuntu-latest
+  - name: timeoutInMinutes
+    type: number
+    default: 30
+  - name: dependsOn
+    type: object
+    default: []
+
+jobs:
+  - ${{ each agent in parameters.agents }}:
+    - job: threatlint_${{ replace(agent, '-', '_') }}
+      displayName: 'Threatlint · ${{ agent }}'
+      dependsOn: ${{ parameters.dependsOn }}
+      pool: ${{ parameters.pool }}
+      timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+      steps:
+        - checkout: self
+          fetchDepth: 0
+          persistCredentials: false
+          path: s/source
+        - checkout: ${{ parameters.threatlintRepository }}
+          fetchDepth: 1
+          persistCredentials: false
+          path: s/.threatlint
+        - template: threatlint-steps.yml
+          parameters:
+            agent: ${{ agent }}
+            provider: ${{ parameters.provider }}
+            model: ${{ parameters.model }}
+            target: ${{ parameters.target }}
+            findingsFile: ${{ parameters.findingsFile }}
+            failOnSeverity: ${{ parameters.failOnSeverity }}
+            gateMode: ${{ parameters.gateMode }}
+            uploadSarif: ${{ parameters.uploadSarif }}
+            commentOnPr: ${{ parameters.commentOnPr }}
+            pythonVersion: ${{ parameters.pythonVersion }}
+            maxTurns: ${{ parameters.maxTurns }}
+            claudeCodeVersion: ${{ parameters.claudeCodeVersion }}
+            anthropicApiKey: ${{ parameters.anthropicApiKey }}
+            openaiApiKey: ${{ parameters.openaiApiKey }}
+            githubToken: ${{ parameters.githubToken }}
+            threatlintPath: $(Pipeline.Workspace)/s/.threatlint
+            sourcePath: $(Pipeline.Workspace)/s/source

@@ -1,0 +1,85 @@
+# threatlint/azure-pipelines/templates/threatlint-pr-chat.yml
+# Steps template: answer `/threatlint <question>` (or `@threatlint`) comments on an Azure Repos
+# pull request, replying in the same thread with the configured model.
+#
+# The calling pipeline is triggered by an Incoming WebHook resource fed by an Azure DevOps service
+# hook ("Pull request commented on"). See docs/examples/azure-pr-chat-caller.yml and
+# docs/ci-templates.md → "Conversing with Threatlint on pull requests".
+#
+# Security model:
+#   * The webhook payload is passed to the script as JSON through env (convertToJson), never
+#     interpolated into the bash body. The script ignores comments without the trigger, system
+#     comments, comments by the build identity, and Threatlint's own replies (hidden marker).
+#   * PR code is never checked out or executed; file contents are read through the REST API.
+#   * Replies use System.AccessToken. Grant "<Project> Build Service" the
+#     "Contribute to pull requests" permission on the repository.
+#   * Azure service hooks do not report the commenter's repository role. Restrict who can comment
+#     (branch policies / repo permissions) or set allowedAuthors.
+
+parameters:
+  - name: event
+    displayName: The webhook payload. Pass ${{ parameters.<webhookAlias> }} from the root pipeline.
+    type: object
+    default: {}
+  - name: provider
+    type: string
+    default: claude
+    values: [claude, openai, github-models, lmstudio]
+  - name: model
+    type: string
+    default: ''
+  - name: anthropicApiKey
+    type: string
+    default: ''
+  - name: openaiApiKey
+    type: string
+    default: ''
+  - name: githubToken
+    type: string
+    default: ''
+  - name: allowedAuthors
+    displayName: Optional comma-separated uniqueNames allowed to invoke Threatlint (empty = anyone who can comment)
+    type: string
+    default: ''
+  - name: botName
+    displayName: Display or unique name of the identity that posts replies (default matches "Build Service")
+    type: string
+    default: Build Service
+  - name: threatlintPath
+    type: string
+    default: $(Build.SourcesDirectory)
+  - name: pythonVersion
+    type: string
+    default: '3.12'
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: Use Python ${{ parameters.pythonVersion }}
+    inputs:
+      versionSpec: ${{ parameters.pythonVersion }}
+
+  - bash: |
+      set -euo pipefail
+      if [ ! -f "$TL_ROOT/.github/scripts/threatlint_chat.py" ]; then
+        echo "##vso[task.logissue type=error]threatlint_chat.py was not found at threatlintPath."; exit 1
+      fi
+      if [ -n "$TL_ALLOWED_AUTHORS" ]; then
+        author="$(python3 -c 'import json,os; e=json.loads(os.environ["TL_EVENT_JSON"] or "{}"); print(((e.get("resource") or {}).get("comment") or {}).get("author",{}).get("uniqueName",""))')"
+        allowed=0
+        IFS=',' read -ra names <<<"$TL_ALLOWED_AUTHORS"
+        for name in "${names[@]}"; do [ "$(echo "$name" | xargs | tr '[:upper:]' '[:lower:]')" = "$(echo "$author" | tr '[:upper:]' '[:lower:]')" ] && allowed=1; done
+        if [ "$allowed" = 0 ]; then echo "Skipping: comment author is not in allowedAuthors."; exit 0; fi
+      fi
+      python3 "$TL_ROOT/.github/scripts/threatlint_chat.py" --platform azure-devops
+    displayName: 'Threatlint: reply to PR comment'
+    env:
+      TL_EVENT_JSON: ${{ convertToJson(parameters.event) }}
+      TL_ROOT: ${{ parameters.threatlintPath }}
+      TL_PROVIDER: ${{ parameters.provider }}
+      TL_MODEL: ${{ parameters.model }}
+      TL_ALLOWED_AUTHORS: ${{ parameters.allowedAuthors }}
+      TL_BOT_NAME: ${{ parameters.botName }}
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      ANTHROPIC_API_KEY: ${{ parameters.anthropicApiKey }}
+      OPENAI_API_KEY: ${{ parameters.openaiApiKey }}
+      GH_TOKEN: ${{ parameters.githubToken }}

@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build", "twine"]
+dev = ["build", "twine", "pytest>=8"]
 
 [project.scripts]
 threatlint = "threatlint.cli:main"

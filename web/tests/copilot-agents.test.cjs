@@ -7,25 +7,12 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const yaml = require('js-yaml');
+const SKILL_MAP = require('../../src/threatlint/data/agent-skills.json');
 
 const COPILOT_AGENTS_DIR = path.resolve(__dirname, '../../.github/agents');
 
-const EXPECTED_COPILOT_AGENTS = [
-  'appsec-threat-modeler',
-  'appsec-code-reviewer',
-  'appsec-dependency-auditor',
-  'appsec-secrets-scanner',
-  'appsec-iac-reviewer',
-  'appsec-cicd-auditor',
-  'appsec-api-security-reviewer',
-  'appsec-auth-reviewer',
-  'appsec-fp-reviewer',
-  'appsec-compliance-checker',
-  'appsec-attack-tree',
-  'appsec-red-team',
-  'appsec-threat-delta',
-  'appsec-verify-fix',
-];
+const EXPECTED_COPILOT_AGENTS = Object.keys(SKILL_MAP);
 
 function loadCopilotAgents() {
   const agents = {};
@@ -34,11 +21,7 @@ function loadCopilotAgents() {
     const raw = fs.readFileSync(path.join(COPILOT_AGENTS_DIR, file), 'utf8');
     const fm = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
     if (!fm) continue;
-    const meta = {};
-    fm[1].split('\n').forEach(line => {
-      const c = line.indexOf(':');
-      if (c > 0) meta[line.slice(0, c).trim()] = line.slice(c + 1).trim().replace(/^"|"$/g, '');
-    });
+    const meta = yaml.load(fm[1]);
     const id = path.basename(file, '.agent.md');
     agents[id] = { id, meta, body: fm[2].trim(), raw };
   }
@@ -52,9 +35,8 @@ describe('Copilot Chat agent directory', () => {
     assert.ok(fs.existsSync(COPILOT_AGENTS_DIR), `Directory not found: ${COPILOT_AGENTS_DIR}`);
   });
 
-  it('contains all 14 agent files', () => {
-    const missing = EXPECTED_COPILOT_AGENTS.filter(id => !agents[id]);
-    assert.deepEqual(missing, [], `Missing .github/agents files: ${missing.join(', ')}`);
+  it('contains exactly the registered agent files', () => {
+    assert.deepEqual(Object.keys(agents).sort(), [...EXPECTED_COPILOT_AGENTS].sort());
   });
 });
 
@@ -72,11 +54,20 @@ describe('Copilot Chat agent frontmatter', () => {
       assert.ok(a.meta.description && a.meta.description.length > 20, `${id}: missing or short description`);
     });
 
-    it(`${id}: has tools field`, () => {
+    it(`${id}: exposes only inspection tool groups`, () => {
       const a = agents[id];
       assert.ok(a, `Not loaded: ${id}`);
-      // Support both single-line (tools: [read, search]) and multi-line (tools:\n  - read) YAML
-      assert.ok(a.raw.match(/^tools[\s\S]/m), `${id}: missing tools`);
+      assert.ok(Array.isArray(a.meta.tools) && a.meta.tools.length > 0, `${id}: missing tools`);
+      assert.ok(a.meta.tools.every(tool => ['read', 'search', 'execute'].includes(tool)), `${id}: unexpected tool group`);
+    });
+
+    it(`${id}: references all assigned workflows in order`, () => {
+      let previous = -1;
+      for (const skill of SKILL_MAP[id]) {
+        const position = agents[id].body.indexOf(skill);
+        assert.ok(position > previous, `${id}: missing or out-of-order ${skill}`);
+        previous = position;
+      }
     });
 
     it(`${id}: body is substantial (>200 chars)`, () => {

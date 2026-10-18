@@ -1,0 +1,30 @@
+# Example: let developers converse with Threatlint on pull requests.
+# Save as .github/workflows/threatlint-chat.yml in the repository you want Threatlint to discuss.
+# Comment `/threatlint why is CR-002 high?` on a PR (or on a review comment) to get a reply.
+#
+# Secrets: ANTHROPIC_API_KEY (provider: claude) or OPENAI_API_KEY (provider: openai).
+# provider: github-models needs no secret.
+
+name: Threatlint PR chat
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  chat:
+    uses: InfoSec-Actions/threatlint/.github/workflows/threatlint-pr-chat.yml@<full-commit-sha>
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    with:
+      provider: claude
+      threatlint-ref: <same full-commit-sha>
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Generate threatlint executive overview PPTX — concise 6-slide deck."""
 
+import os
+
 from pptx import Presentation
-from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-import os
+from pptx.util import Inches, Pt
 
 NAVY   = RGBColor(0x0D, 0x1B, 0x2A)
 AMBER  = RGBColor(0xD9, 0x77, 0x06)

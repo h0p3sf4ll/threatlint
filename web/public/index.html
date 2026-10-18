@@ -1,1609 +1,269 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Threatlint</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg0: #070710;
-  --bg1: #0c0c18;
-  --bg2: #101020;
-  --bg3: #161628;
-  --bg4: #1c1c35;
-  --border: #1e2040;
-  --border-hi: #2a2d60;
-  --accent: #00e5cc;
-  --accent2: #00b4a0;
-  --accent-dim: #00e5cc22;
-  --red: #ff4757;
-  --orange: #ff7f00;
-  --yellow: #ffd700;
-  --green: #39ff14;
-  --blue: #4488ff;
-  --purple: #bb86fc;
-  --text: #e0e4f4;
-  --text2: #b0b8d8;
-  --text3: #7078a8;
-  --font: 'JetBrains Mono', monospace;
-}
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html, body {
-  height: 100%;
-  background: var(--bg0);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
-  overflow: hidden;
-}
-
-/* ── Scrollbars ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg1); }
-::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
-
-/* ── Layout ── */
-#app { display: flex; flex-direction: column; height: 100vh; }
-
-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 16px; height: 48px;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  z-index: 10;
-}
-
-.logo {
-  font-size: 15px; font-weight: 700; letter-spacing: 4px;
-  color: var(--accent);
-  text-shadow: 0 0 20px var(--accent);
-  white-space: nowrap;
-}
-.logo span { color: var(--text3); }
-
-.header-sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
-
-#repo-status {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 10px; border-radius: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-  cursor: pointer; transition: border-color .15s;
-  max-width: 280px; overflow: hidden;
-}
-#repo-status:hover { border-color: var(--accent2); }
-#repo-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
-#repo-status.connected .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
-#repo-status .repo-label { color: var(--text2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#repo-status.connected .repo-label { color: var(--text); }
-
-.header-spacer { flex: 1; }
-
-.hbtn {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-  color: var(--text2); cursor: pointer; font-family: var(--font); font-size: 12px;
-  transition: all .15s; white-space: nowrap;
-}
-.hbtn:hover { border-color: var(--accent2); color: var(--text); }
-
-#ws-badge {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 11px; color: var(--text3);
-}
-#ws-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); }
-#ws-badge.ok .dot { background: var(--green); box-shadow: 0 0 5px var(--green); }
-#ws-badge.ok { color: var(--text2); }
-
-.body { display: flex; flex: 1; overflow: hidden; }
-
-/* ── Left panel ── */
-.panel-left {
-  width: 270px; flex-shrink: 0;
-  display: flex; flex-direction: column;
-  background: var(--bg1); border-right: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.panel-title {
-  padding: 10px 14px; font-size: 10px; font-weight: 600;
-  letter-spacing: 2px; color: var(--text3); text-transform: uppercase;
-  border-bottom: 1px solid var(--border); flex-shrink: 0;
-  display: flex; align-items: center; justify-content: space-between;
-}
-
-/* ── Agent palette ── */
-.palette-wrap { overflow-y: auto; flex-shrink: 0; max-height: 340px; }
-.palette-group { padding: 8px 10px 4px; }
-.palette-group-label { font-size: 10px; color: var(--text3); letter-spacing: 1px; padding: 4px 4px 6px; }
-
-.agent-card {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; border-radius: 5px; margin-bottom: 3px;
-  background: var(--bg3); border: 1px solid var(--border);
-  cursor: pointer; transition: all .15s;
-  position: relative; overflow: hidden;
-}
-.agent-card::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-  width: 3px; background: var(--card-color, var(--accent));
-}
-.agent-card:hover { border-color: var(--border-hi); background: var(--bg4); }
-.agent-card:active { transform: scale(0.98); }
-.agent-card .emoji { font-size: 14px; flex-shrink: 0; }
-.agent-card .card-info { flex: 1; overflow: hidden; }
-.agent-card .card-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.agent-card .card-desc { font-size: 10px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
-.agent-card .add-btn { font-size: 16px; color: var(--text3); line-height: 1; flex-shrink: 0; }
-.agent-card:hover .add-btn { color: var(--accent); }
-
-/* ── Pipeline ── */
-.pipeline-section {
-  flex: 1; display: flex; flex-direction: column; overflow: hidden;
-  border-top: 1px solid var(--border);
-}
-.pipeline-scroll { flex: 1; overflow-y: auto; padding: 8px 10px; }
-
-.pl-empty {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; height: 80px; color: var(--text3); font-size: 11px; text-align: center;
-  border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0;
-}
-
-.pl-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px; border-radius: 5px; margin-bottom: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-  position: relative;
-}
-.pl-item::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-  width: 3px; border-radius: 3px 0 0 3px;
-  background: var(--item-color, var(--accent));
-}
-.pl-item .pl-emoji { font-size: 13px; flex-shrink: 0; }
-.pl-item .pl-name { flex: 1; font-size: 11px; font-weight: 500; color: var(--text); }
-.pl-item .pl-status { font-size: 10px; color: var(--text3); }
-.pl-item.running .pl-status { color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
-.pl-item.done .pl-status { color: var(--green); }
-.pl-item.error .pl-status { color: var(--red); }
-.pl-item .pl-btns { display: flex; gap: 2px; }
-.pl-item .pl-btn {
-  width: 18px; height: 18px; border-radius: 3px; border: none;
-  background: transparent; color: var(--text3); cursor: pointer; font-size: 11px;
-  display: flex; align-items: center; justify-content: center;
-  transition: all .1s;
-}
-.pl-item .pl-btn:hover { background: var(--bg4); color: var(--text); }
-.pl-item .pl-btn.del:hover { color: var(--red); }
-
-.pl-arrow {
-  text-align: center; color: var(--accent2); font-size: 10px;
-  margin: -2px 0; opacity: 0.6;
-}
-
-.pipeline-controls {
-  padding: 10px; border-top: 1px solid var(--border); flex-shrink: 0;
-  display: flex; flex-direction: column; gap: 6px;
-}
-
-.target-input {
-  width: 100%; padding: 6px 8px; background: var(--bg3);
-  border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text); font-family: var(--font); font-size: 11px;
-  outline: none; transition: border-color .15s;
-}
-.target-input:focus { border-color: var(--accent2); }
-.target-input::placeholder { color: var(--text3); }
-
-.run-row { display: flex; gap: 6px; }
-
-.btn-run {
-  flex: 1; padding: 7px; border-radius: 4px;
-  background: var(--accent2); border: none;
-  color: #000; font-family: var(--font); font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: all .15s; letter-spacing: 1px;
-}
-.btn-run:hover { background: var(--accent); box-shadow: 0 0 12px var(--accent2); }
-.btn-run:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; box-shadow: none; }
-
-.btn-cancel {
-  padding: 7px 10px; border-radius: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-  color: var(--red); font-family: var(--font); font-size: 12px;
-  cursor: pointer; transition: all .15s; display: none;
-}
-.btn-cancel:hover { border-color: var(--red); background: var(--bg4); }
-.btn-cancel.visible { display: block; }
-
-/* ── Center panel ── */
-.panel-center {
-  flex: 1; display: flex; flex-direction: column;
-  background: var(--bg0); overflow: hidden;
-  border-right: 1px solid var(--border);
-}
-
-.terminal-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 14px; background: var(--bg1); border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.terminal-header-left { display: flex; align-items: center; gap: 10px; font-size: 10px; color: var(--text3); letter-spacing: 2px; text-transform: uppercase; }
-.term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-.term-dot.off { background: var(--text3); box-shadow: none; }
-.terminal-header-right { display: flex; gap: 6px; }
-.term-btn {
-  padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border);
-  background: var(--bg3); color: var(--text3); font-family: var(--font); font-size: 10px;
-  cursor: pointer; transition: all .15s;
-}
-.term-btn:hover { border-color: var(--border-hi); color: var(--text); }
-
-#terminal {
-  flex: 1; overflow-y: auto; padding: 12px 14px;
-  font-size: 12px; line-height: 1.6;
-}
-
-.t-line { margin-bottom: 2px; white-space: pre-wrap; word-break: break-all; }
-.t-agent-header {
-  margin: 10px 0 4px; padding: 5px 10px; border-radius: 3px;
-  font-weight: 600; font-size: 11px; letter-spacing: 1px;
-  display: flex; align-items: center; gap: 8px;
-}
-.t-text { color: var(--text); }
-.t-tool-call {
-  color: var(--accent); font-size: 11px;
-  padding-left: 12px;
-}
-.t-tool-call::before { content: '⟶ '; opacity: 0.6; }
-.t-tool-result { color: var(--text3); font-size: 10px; padding-left: 20px; font-style: italic; }
-.t-tool-result::before { content: '← '; }
-.t-error { color: var(--red); }
-.t-done { color: var(--green); }
-.t-iteration { color: var(--text3); font-size: 10px; font-style: italic; }
-.t-separator { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
-
-/* ── Right panel ── */
-.panel-right {
-  width: 320px; flex-shrink: 0;
-  display: flex; flex-direction: column;
-  background: var(--bg1); overflow: hidden;
-}
-
-/* ── Reports ── */
-.reports-section {
-  flex-shrink: 0; border-bottom: 1px solid var(--border);
-  max-height: 220px; display: flex; flex-direction: column;
-}
-.reports-scroll { overflow-y: auto; flex: 1; padding: 8px 10px; }
-
-.report-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px; border-radius: 4px; margin-bottom: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-}
-.report-emoji { font-size: 13px; flex-shrink: 0; }
-.report-info { flex: 1; overflow: hidden; }
-.report-name { font-size: 11px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.report-time { font-size: 10px; color: var(--text3); }
-.report-btns { display: flex; gap: 4px; flex-shrink: 0; }
-.report-btn {
-  padding: 2px 7px; border-radius: 3px; font-size: 10px; font-family: var(--font);
-  border: 1px solid var(--border); background: var(--bg4);
-  color: var(--text2); cursor: pointer; text-decoration: none;
-  transition: all .15s; white-space: nowrap;
-}
-.report-btn:hover { border-color: var(--accent2); color: var(--accent); }
-.report-btn.docx:hover { border-color: var(--blue); color: var(--blue); }
-.reports-empty { padding: 12px; text-align: center; color: var(--text3); font-size: 11px; }
-
-/* ── Chat ── */
-.chat-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-#chat-messages {
-  flex: 1; overflow-y: auto; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 10px;
-}
-
-.chat-welcome {
-  padding: 12px; border-radius: 6px;
-  background: var(--bg3); border: 1px solid var(--border);
-  color: var(--text3); font-size: 11px; line-height: 1.6;
-  text-align: center;
-}
-.chat-welcome strong { color: var(--accent); }
-
-.chat-msg { display: flex; flex-direction: column; gap: 3px; }
-.chat-msg.user .bubble {
-  background: var(--bg4); border: 1px solid var(--border-hi);
-  align-self: flex-end; border-radius: 8px 8px 2px 8px;
-  color: var(--text);
-}
-.chat-msg.assistant .bubble {
-  background: var(--bg2); border: 1px solid var(--border);
-  align-self: flex-start; border-radius: 2px 8px 8px 8px;
-  color: var(--text);
-}
-.bubble {
-  padding: 8px 11px; font-size: 12px; line-height: 1.6;
-  max-width: 90%; white-space: pre-wrap; word-break: break-word;
-}
-.chat-role { font-size: 10px; color: var(--text3); padding: 0 4px; }
-.chat-msg.user .chat-role { text-align: right; }
-
-.chat-input-area {
-  flex-shrink: 0; padding: 10px;
-  border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px;
-}
-
-.model-row {
-  display: flex; gap: 6px; align-items: center;
-}
-.provider-toggle {
-  display: flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
-}
-.provider-btn {
-  flex: 1; padding: 3px 8px; background: var(--bg3); border: none; color: var(--text3);
-  font-family: var(--font); font-size: 10px; cursor: pointer; transition: background .15s, color .15s;
-}
-.provider-btn.active {
-  background: var(--accent); color: #000;
-}
-.model-select {
-  flex: 1; padding: 4px 6px; background: var(--bg3); border: 1px solid var(--border);
-  border-radius: 3px; color: var(--text2); font-family: var(--font); font-size: 10px;
-  outline: none; cursor: pointer;
-}
-.model-select:focus { border-color: var(--accent2); }
-
-.chat-row { display: flex; gap: 6px; }
-#chat-input {
-  flex: 1; padding: 7px 10px; background: var(--bg3);
-  border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text); font-family: var(--font); font-size: 12px;
-  outline: none; transition: border-color .15s; resize: none; min-height: 36px;
-}
-#chat-input:focus { border-color: var(--accent2); }
-#chat-input::placeholder { color: var(--text3); }
-
-.btn-send {
-  padding: 7px 12px; border-radius: 4px;
-  background: var(--accent2); border: none;
-  color: #000; font-family: var(--font); font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: all .15s;
-}
-.btn-send:hover { background: var(--accent); }
-.btn-send:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; }
-
-/* ── Modals ── */
-.overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.75);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 100; opacity: 0; pointer-events: none; transition: opacity .2s;
-}
-.overlay.open { opacity: 1; pointer-events: all; }
-
-.modal {
-  background: var(--bg2); border: 1px solid var(--border-hi);
-  border-radius: 8px; padding: 24px; width: 480px; max-width: 95vw;
-  box-shadow: 0 20px 60px rgba(0,0,0,.6);
-  transform: scale(0.95); transition: transform .2s;
-}
-.overlay.open .modal { transform: scale(1); }
-
-.modal h2 { font-size: 14px; font-weight: 600; color: var(--accent); letter-spacing: 2px; margin-bottom: 18px; }
-.modal-close {
-  float: right; background: none; border: none; color: var(--text3);
-  cursor: pointer; font-size: 18px; line-height: 1; margin: -4px -4px 0 0;
-}
-.modal-close:hover { color: var(--text); }
-
-.tabs { display: flex; gap: 4px; margin-bottom: 16px; }
-.tab {
-  padding: 5px 14px; border-radius: 4px; font-size: 12px; font-family: var(--font);
-  border: 1px solid var(--border); background: var(--bg3); color: var(--text2);
-  cursor: pointer; transition: all .15s;
-}
-.tab.active { background: var(--accent2); border-color: var(--accent2); color: #000; font-weight: 600; }
-
-.field { margin-bottom: 12px; }
-.field label { display: block; font-size: 10px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
-.field input, .field select {
-  width: 100%; padding: 7px 10px; background: var(--bg3);
-  border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text); font-family: var(--font); font-size: 12px;
-  outline: none; transition: border-color .15s;
-}
-.field input:focus, .field select:focus { border-color: var(--accent2); }
-.field input::placeholder { color: var(--text3); }
-
-.path-input-row { display: flex; gap: 6px; }
-.path-input-row input { flex: 1; width: auto; }
-.btn-browse {
-  padding: 0 10px; background: var(--bg4); border: 1px solid var(--border);
-  border-radius: 4px; color: var(--text2); font-family: var(--font); font-size: 11px;
-  cursor: pointer; white-space: nowrap; transition: border-color .15s, color .15s;
-}
-.btn-browse:hover { border-color: var(--border-hi); color: var(--text); }
-
-.dir-picker {
-  border: 1px solid var(--border); border-radius: 4px; background: var(--bg2);
-  margin-bottom: 12px; overflow: hidden;
-}
-.dir-breadcrumb {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0;
-  padding: 5px 8px; background: var(--bg3); border-bottom: 1px solid var(--border);
-  font-size: 10px;
-}
-.dir-crumb {
-  color: var(--text3); cursor: pointer; padding: 1px 3px; border-radius: 2px;
-  transition: color .1s, background .1s;
-}
-.dir-crumb:hover { color: var(--accent); background: var(--accent-dim); }
-.dir-crumb-sep { color: var(--border-hi); padding: 0 1px; }
-.dir-entries { max-height: 180px; overflow-y: auto; }
-.dir-entry {
-  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
-  cursor: pointer; font-size: 11px; color: var(--text2);
-  border-bottom: 1px solid var(--border); transition: background .1s;
-}
-.dir-entry:last-child { border-bottom: none; }
-.dir-entry:hover { background: var(--bg4); color: var(--text); }
-.dir-entry-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dir-repo-badge {
-  font-size: 9px; padding: 1px 5px; background: var(--accent-dim);
-  color: var(--accent); border: 1px solid var(--accent2); border-radius: 3px;
-  flex-shrink: 0;
-}
-.dir-empty { padding: 10px; color: var(--text3); font-size: 11px; text-align: center; }
-
-.modal-row { display: flex; gap: 8px; margin-top: 4px; }
-.btn-primary {
-  flex: 1; padding: 8px; border-radius: 4px;
-  background: var(--accent2); border: none;
-  color: #000; font-family: var(--font); font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: all .15s; letter-spacing: 1px;
-}
-.btn-primary:hover { background: var(--accent); box-shadow: 0 0 10px var(--accent2); }
-.btn-secondary {
-  padding: 8px 16px; border-radius: 4px;
-  background: var(--bg3); border: 1px solid var(--border);
-  color: var(--text2); font-family: var(--font); font-size: 12px;
-  cursor: pointer; transition: all .15s;
-}
-.btn-secondary:hover { border-color: var(--border-hi); color: var(--text); }
-
-.modal-status { margin-top: 10px; font-size: 11px; min-height: 16px; }
-.modal-status.ok { color: var(--green); }
-.modal-status.err { color: var(--red); }
-
-/* ── Settings modal ── */
-.settings-field { margin-bottom: 14px; }
-.settings-field label { display: block; font-size: 10px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
-.settings-field input {
-  width: 100%; padding: 7px 10px; background: var(--bg3);
-  border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text); font-family: var(--font); font-size: 12px;
-  outline: none; transition: border-color .15s;
-}
-.settings-field input:focus { border-color: var(--accent2); }
-.settings-hint { font-size: 10px; color: var(--text3); margin-top: 4px; }
-
-/* ── Toast ── */
-#toast-container {
-  position: fixed; bottom: 20px; right: 20px;
-  display: flex; flex-direction: column; gap: 8px; z-index: 200;
-  pointer-events: none;
-}
-.toast {
-  padding: 10px 14px; border-radius: 6px; font-size: 12px;
-  background: var(--bg3); border: 1px solid var(--border);
-  color: var(--text); max-width: 320px;
-  animation: toast-in .2s ease;
-}
-.toast.success { border-color: var(--green); color: var(--green); }
-.toast.error { border-color: var(--red); color: var(--red); }
-.toast.info { border-color: var(--accent2); color: var(--accent); }
-
-@keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-/* ── Scan-line effect ── */
-header::after {
-  content: '';
-  position: absolute; left: 0; right: 0; top: 47px;
-  height: 1px; background: linear-gradient(90deg, transparent, var(--accent2), transparent);
-  opacity: 0.4;
-}
-header { position: relative; }
-
-.streaming-cursor::after {
-  content: '▋'; animation: pulse .8s infinite; color: var(--accent);
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="An evidence-led security workbench. Specialist agents. Connected source. Authorized runtime observations. Your choice of model.">
+  <title>Threatlint · Security Workbench</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/marked.js" defer></script>
+  <script src="/vendor/purify.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script src="/operations.js" defer></script>
+  <script src="/charts.js" defer></script>
+  <script src="/insights.js" defer></script>
+  <script src="/chat.js" defer></script>
 </head>
 <body>
-<div id="app">
-
-  <!-- ── Header ── -->
-  <header>
-    <div class="logo">THREAT<span>LINT</span></div>
-    <div class="header-sep"></div>
-
-    <div id="repo-status" onclick="openRepoModal()">
-      <div class="dot"></div>
-      <div class="repo-label" id="repo-label">No repository — click to configure</div>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <aside class="sidebar" aria-label="Threatlint navigation">
+    <a class="brand" href="#workbench" aria-label="Threatlint home"><img src="/mark.svg" width="34" height="38" alt=""><span>threatlint<span class="brand-caption">SECURITY WORKBENCH</span></span></a>
+    <nav aria-label="Main navigation">
+      <div class="sidebar-label">1 · TEST</div>
+      <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
+      <button class="nav-item" data-view="sources" aria-controls="view-sources"><span class="nav-icon" aria-hidden="true">⑂</span>Connect source</button>
+      <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span>Scan running app</button>
+      <div class="sidebar-label">2 · FIX</div>
+      <button class="nav-item" data-view="reports"><span class="nav-icon" aria-hidden="true">▤</span>Findings<span class="nav-count" id="report-nav-count">0</span></button>
+      <button class="nav-item" data-view="chat" aria-controls="view-chat"><span class="nav-icon" aria-hidden="true">✦</span>Ask Threatlint</button>
+      <div class="sidebar-label">3 · TRACK</div>
+      <button class="nav-item" data-view="metrics" aria-controls="view-metrics"><span class="nav-icon" aria-hidden="true">▦</span>Metrics</button>
+      <div class="sidebar-label">REFERENCE</div>
+      <button class="nav-item" data-view="agents"><span class="nav-icon" aria-hidden="true">⌘</span>Agents<span class="nav-count" id="agent-nav-count">—</span></button>
+      <button class="nav-item" data-view="skills"><span class="nav-icon" aria-hidden="true">◇</span>Skills<span class="nav-count" id="skill-nav-count">—</span></button>
+      <button class="nav-item" data-view="learn" aria-controls="view-learn"><span class="nav-icon" aria-hidden="true">▷</span>Learn &amp; videos</button>
+    </nav>
+    <div class="sidebar-label recent-heading">RECENT WORKSPACES<button class="icon-button" id="refresh-sessions" aria-label="Refresh workspace history">↻</button></div>
+    <div id="session-list" class="session-list"><p class="subtle small">No workspaces yet.</p></div>
+    <div class="sidebar-bottom">
+      <div class="safety-card"><span class="status-dot"></span><strong>Observe. Don’t modify.</strong><p>Agents inspect source and propose fixes. Your code stays yours.</p></div>
+      <button class="nav-item" id="settings-button"><span class="nav-icon">⚙</span>Model & settings</button>
+      <div class="sidebar-footer"><span>THREATLINT <span id="app-version">1.0</span></span><span class="connection" id="connection-status">Connecting</span></div>
     </div>
+  </aside>
 
-    <div class="header-spacer"></div>
+  <div class="application">
+    <header class="topbar">
+      <div class="breadcrumb"><span class="subtle">Workspace</span><span class="breadcrumb-divider">/</span><span id="breadcrumb-title">Workbench</span></div>
+      <div class="topbar-actions"><span class="mode-badge" id="runtime-badge">LOCAL WORKBENCH</span><button class="workspace-button" id="choose-repo"><span class="folder-icon">▱</span><span id="workspace-label">Open repository</span><span class="subtle">⌄</span></button><span data-tip="open-repo"></span><button class="button secondary small-button" id="open-help" type="button" aria-keyshortcuts="?">? Help</button><span class="avatar" aria-label="Local workspace">TL</span></div>
+    </header>
 
-    <button class="hbtn" onclick="openSettings()">⚙ Settings</button>
-    <div id="ws-badge">
-      <div class="dot"></div>
-      <span id="ws-label">connecting</span>
-    </div>
-  </header>
+    <main id="main" tabindex="-1">
+      <section class="view active" id="view-workbench" aria-labelledby="workbench-title">
+        <div class="page-heading"><div><div class="eyebrow"><span class="tiny-line"></span>SECURITY REVIEW FOR DEVELOPERS</div><h1 id="workbench-title">Find it before it ships.<br><span class="muted-heading">Fix it while it’s fresh.</span></h1><p class="page-description">Point Threatlint at your code, pick a playbook, and get findings with the file, the line, the fix, and the test.</p></div><div class="heading-actions"><button class="button secondary" id="preview-example">View sample report <span>↗</span></button><span class="small subtle">No scan or API key required</span></div></div>
 
-  <!-- ── Body ── -->
-  <div class="body">
-
-    <!-- Left: Pipeline Builder -->
-    <div class="panel-left">
-      <div class="panel-title">
-        <span>Agent Palette</span>
-        <span id="palette-count" style="color:var(--accent2);font-size:11px"></span>
-      </div>
-      <div class="palette-wrap" id="palette"></div>
-
-      <div class="pipeline-section">
-        <div class="panel-title">
-          <span>Pipeline</span>
-          <button onclick="clearPipeline()" style="font-size:10px;background:none;border:none;color:var(--text3);cursor:pointer;padding:0;" title="Clear pipeline">✕ clear</button>
+        <ol class="onboarding" id="onboarding" aria-label="Get started">
+          <li data-step="repo"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Open your code</strong><small>A local folder, or <button class="text-button" type="button" data-go-view="sources">check out from GitHub / Azure DevOps</button></small></div><button class="button secondary small-button" type="button" id="onboarding-repo">Open repository</button></li>
+          <li data-step="model"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Choose a model</strong><small>LM Studio keeps everything local. Claude and OpenAI also work.</small></div><button class="button secondary small-button" type="button" id="onboarding-model">Choose model</button></li>
+          <li data-step="run"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Run a review</strong><small>Pick a playbook below, then press Run.</small></div><a class="button secondary small-button" href="#pipeline-title">Go to pipeline</a></li>
+          <li data-step="fix"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Fix and ask</strong><small>Open a finding, then ask Threatlint how to fix it in your code.</small></div><button class="button secondary small-button" type="button" data-go-view="reports">See findings</button></li>
+        </ol>
+        <div class="stat-grid">
+          <div class="stat-card"><span class="stat-icon mint">⌘</span><div><span class="stat-value" id="stat-agents">—</span><span class="stat-label">Specialist agents</span></div><span class="stat-note">Purpose-built expertise</span></div>
+          <div class="stat-card"><span class="stat-icon lavender">◇</span><div><span class="stat-value" id="stat-skills">—</span><span class="stat-label">Focused skills</span></div><span class="stat-note">Evidence → action</span></div>
+          <div class="stat-card"><span class="stat-icon amber">▤</span><div><span class="stat-value" id="stat-reports">0</span><span class="stat-label">Workspace reports</span></div><span class="stat-note" id="stat-reports-note">Ready when you are</span></div>
+          <div class="stat-card"><span class="stat-icon blue">⌁</span><div><span class="stat-value stat-provider" id="stat-provider">Local</span><span class="stat-label">Model provider</span></div><button class="text-button stat-note" id="configure-provider">Configure model ↗</button></div>
         </div>
-        <div class="pipeline-scroll" id="pipeline-list"></div>
-        <div class="pipeline-controls">
-          <input class="target-input" id="target-input" placeholder="Target (e.g. auth module, src/api)" />
-          <div class="run-row">
-            <button class="btn-run" id="btn-run" onclick="runPipeline()">▶ RUN PIPELINE</button>
-            <button class="btn-cancel" id="btn-cancel" onclick="cancelPipeline()">■</button>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Center: Terminal -->
-    <div class="panel-center">
-      <div class="terminal-header">
-        <div class="terminal-header-left">
-          <div class="term-dot off" id="term-dot"></div>
-          <span id="term-status">IDLE</span>
-        </div>
-        <div class="terminal-header-right">
-          <button class="term-btn" onclick="clearTerminal()">clear</button>
-          <button class="term-btn" onclick="copyTerminal()">copy</button>
-        </div>
-      </div>
-      <div id="terminal">
-        <div class="t-line" style="color:var(--text3);font-size:11px;padding:6px 0;">
-          Threatlint ready — configure a repository and build a pipeline to begin.
-        </div>
-      </div>
-    </div>
+        <div class="section-heading"><div><h2>Start with a workflow</h2><p>Curated specialists. Shared context. A clear next step.</p></div><span><span class="tag" id="playbook-count">PLAYBOOKS</span><span data-tip="playbooks"></span></span></div>
+        <div class="workflow-grid" id="workflow-presets"></div>
 
-    <!-- Right: Chat + Reports -->
-    <div class="panel-right">
-
-      <div class="reports-section">
-        <div class="panel-title">
-          <span>Reports</span>
-          <span id="report-count" style="color:var(--accent2);font-size:11px"></span>
-        </div>
-        <div class="reports-scroll" id="reports-list">
-          <div class="reports-empty">No reports yet — run a pipeline to generate them.</div>
-        </div>
-      </div>
-
-      <div class="chat-section">
-        <div class="panel-title"><span>Chat</span></div>
-        <div id="chat-messages">
-          <div class="chat-welcome">
-            <strong>Security Assistant</strong><br><br>
-            Ask me anything about the findings, request clarifications, or discuss remediation strategies. Reports from this session are automatically included in my context.
-          </div>
-        </div>
-        <div class="chat-input-area">
-          <div class="model-row">
-            <div class="provider-toggle">
-              <button class="provider-btn active" id="provider-claude" onclick="setProvider('claude')">Claude</button>
-              <button class="provider-btn" id="provider-openai" onclick="setProvider('openai')">OpenAI</button>
-              <button class="provider-btn" id="provider-lmstudio" onclick="setProvider('lmstudio')">Local LLM</button>
+        <div class="workbench-grid">
+          <section class="panel pipeline-panel" aria-labelledby="pipeline-title">
+            <div class="panel-header"><div><span class="eyebrow">REVIEW BUILDER</span><h2 id="pipeline-title">Your agent pipeline <span id="pipeline-count" class="count-pill">0</span><span data-tip="pipeline"></span></h2></div><button class="text-button" id="clear-pipeline">Clear</button></div>
+            <div class="pipeline-context"><span class="mini-icon">⇢</span><p>Agents run in sequence and build on the previous report. Select a workflow or add specialists.</p></div>
+            <ol id="pipeline-list" class="pipeline-list"></ol>
+            <button class="add-agent-button" id="browse-agents">＋ Add a specialist</button>
+            <div class="form-section">
+              <label for="target">Review scope <span class="subtle">optional</span><span data-tip="scope"></span></label><textarea id="target" rows="3" placeholder="A component, path, commit range, or question. Leave blank for autonomous discovery."></textarea>
+              <div class="attachment-row"><button class="button secondary small-button" id="attach-findings">↥ Attach findings</button><span data-tip="attach"></span><span class="small subtle" id="attachment-name">SARIF, JSON, Markdown, or text · up to 5 MB</span><button id="remove-attachment" class="icon-button hidden" aria-label="Remove findings attachment">×</button></div>
+              <input type="file" id="findings-file" accept=".sarif,.json,.md,.txt" aria-label="Findings file" hidden>
             </div>
-          </div>
-          <div id="model-claude-row" style="display:flex;">
-            <select class="model-select" id="model-select" style="width:100%;">
-              <option value="claude-sonnet-5">claude-sonnet-5 (balanced)</option>
-              <option value="claude-opus-5">claude-opus-5 (thorough)</option>
-              <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option>
-            </select>
-          </div>
-          <div id="model-openai-row" style="display:none;">
-            <select class="model-select" id="openai-model-select" style="width:100%;">
-              <option value="gpt-5.6">gpt-5.6 (balanced)</option>
-              <option value="gpt-5.6-terra">gpt-5.6-terra (efficient)</option>
-              <option value="gpt-5.6-luna">gpt-5.6-luna (fast)</option>
-              <option value="gpt-5.6-cyber">gpt-5.6-cyber (security)</option>
-            </select>
-          </div>
-          <div id="model-lmstudio-row" style="display:none;">
-            <select class="model-select" id="lmstudio-model-select" style="width:100%;">
-              <option value="">— connect to load models —</option>
-            </select>
-          </div>
-          <div class="chat-row">
-            <textarea id="chat-input" placeholder="Ask about findings…" rows="1"
-              onkeydown="handleChatKey(event)"></textarea>
-            <button class="btn-send" id="btn-send" onclick="sendChat()">Send</button>
-          </div>
-        </div>
-      </div>
+            <div class="run-footer"><div class="run-summary"><span class="status-dot" id="run-status-dot"></span><span id="run-summary">Choose a repository to get started</span></div><div class="run-buttons"><button class="button danger hidden" id="cancel-run">Stop review</button><button class="button primary" id="start-run" disabled><span>▶</span> Run pipeline</button></div><p class="micro subtle">Analysis only. Proposed fixes are never applied automatically.</p></div>
+          </section>
 
-    </div>
-  </div><!-- end body -->
+          <section class="panel activity-panel" aria-labelledby="activity-title">
+            <div class="panel-header"><div><span class="eyebrow">EVIDENCE IN MOTION</span><h2 id="activity-title">Live activity</h2></div><span class="live-badge" id="activity-badge"><span class="status-dot"></span>Standing by</span></div>
+            <div class="activity-empty" id="activity-empty"><div class="orbit"><span>⌁</span><i></i><i></i></div><h3>A quieter way to work securely.</h3><p>Connect a repository, assemble your specialists, and follow the evidence as it unfolds.</p><div class="empty-steps"><span><b>01</b> Open source</span><span><b>02</b> Choose agents</span><span><b>03</b> Get clarity</span></div></div>
+            <div id="activity-log" class="activity-log hidden" role="log" aria-label="Agent activity" aria-live="off"></div>
+            <div class="activity-footer"><span class="small subtle" id="activity-detail">Source inspection and tool activity appear here.</span><button class="text-button" id="clear-activity">Clear log</button></div>
+          </section>
+        </div>
 
-  <!-- ── Repo Modal ── -->
-  <div class="overlay" id="repo-overlay">
-    <div class="modal">
-      <button class="modal-close" onclick="closeRepoModal()">×</button>
-      <h2>CONFIGURE REPOSITORY</h2>
+        <div class="section-heading"><div><h2>Built for the handoff</h2><p>Not another alert. A finding your team can act on.</p></div><button class="text-button" data-go-view="reports">Explore reports →</button></div>
+        <div class="handoff-grid"><article><span class="feature-number">01 / EVIDENCE</span><h3>Grounded in your source</h3><p>Specific locations, verified controls, and explicit assumptions. No invented certainty.</p></article><article><span class="feature-number">02 / DECISION</span><h3>Signal, not scanner noise</h3><p>True positives, false positives, and unanswered questions remain distinct and traceable.</p></article><article><span class="feature-number">03 / REMEDIATION</span><h3>A practical path to closure</h3><p>Proposed fixes, engineering notes, regression assertions, and acceptance criteria.</p></article></div>
+      </section>
 
-      <div class="tabs">
-        <button class="tab active" onclick="setRepoTab('local')" id="tab-local">Local Path</button>
-        <button class="tab" onclick="setRepoTab('remote')" id="tab-remote">Remote URL</button>
-      </div>
+      <section class="view" id="view-agents" aria-labelledby="agents-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">SPECIALIST EXPERTISE</div><h1 id="agents-title">The right mind for every boundary.</h1><p class="page-description">Focused specialists, equipped with the skills their work demands.</p></div><button class="button primary" data-go-view="workbench">Review pipeline →</button></div>
+        <div class="library-toolbar"><label class="search-field"><span>⌕</span><input id="agent-search" type="search" placeholder="Search agents, skills, or expertise…" aria-label="Search agents"></label><select id="agent-category" aria-label="Filter agent category"><option value="">All disciplines</option></select><span class="small subtle" id="agent-results-count"></span></div>
+        <div class="agent-grid" id="agent-grid"></div>
+      </section>
 
-      <div id="repo-local">
-        <div class="field">
-          <label>Repository Path</label>
-          <div class="path-input-row">
-            <input id="local-path" placeholder="/path/to/your/repo" oninput="onPathInputChange()" />
-            <button class="btn-browse" onclick="openDirPicker()">Browse</button>
+      <section class="view" id="view-reports" aria-labelledby="reports-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">FROM FINDING TO FIX</div><h1 id="reports-title">Your findings, ready to fix.</h1><p class="page-description">Detailed findings, proposed fixes, and engineering-ready validation plans.</p></div><button class="button secondary" id="reports-example">View sample report ↗</button></div>
+        <div class="report-workspace-label"><span class="status-dot"></span><span id="reports-workspace">Open a repository to see its reports.</span><button class="text-button" id="refresh-reports">↻ Refresh</button></div>
+        <div id="report-list" class="report-list"></div>
+      </section>
+
+      <section class="view" id="view-skills" aria-labelledby="skills-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">EXPERTISE, MADE EXPLICIT</div><h1 id="skills-title">Better skills. Better judgment.</h1><p class="page-description">Inspect the real workflows loaded into each specialist’s analysis.</p></div><span class="tag">READ-ONLY PLAYBOOKS</span></div>
+        <label class="search-field skills-search"><span>⌕</span><input id="skill-search" type="search" placeholder="Search skills…" aria-label="Search skills"></label>
+        <div class="skills-grid" id="skills-grid"></div>
+      </section>
+
+      <section class="view operations-view" id="view-sources" aria-labelledby="sources-title" hidden>
+        <div class="page-heading compact operations-heading">
+          <div><div class="eyebrow"><span class="tiny-line"></span>CONNECTED SOURCE / SHARED CONTEXT</div><h1 id="sources-title">Your source.<br><span class="muted-heading">One connected workspace.</span></h1><p class="page-description">Browse GitHub or Azure DevOps, choose a branch, and bring its checkout into the same specialist workspace.</p></div>
+          <div class="operations-seal"><img src="/mark.svg" width="40" height="44" alt=""><span>YOUR CODE.<br><strong>YOUR BOUNDARIES.</strong></span></div>
+        </div>
+        <output class="operations-status" id="scm-status" aria-live="polite" aria-atomic="true">Connect an account to browse source. Tokens are not saved by this interface.</output>
+        <div class="sources-grid">
+          <section class="panel" aria-labelledby="scm-connect-title">
+            <div class="panel-header"><div><span class="eyebrow">01 / CONNECT</span><h2 id="scm-connect-title">A session, not a saved secret.</h2></div><span class="operations-pill">SESSION ONLY</span></div>
+            <form id="scm-connection-form" class="operations-form" autocomplete="off">
+              <fieldset id="scm-connection-fields" class="operations-fieldset">
+                <legend class="operations-sr-only">Source connection</legend>
+                <div class="operations-field"><label for="scm-provider">Source provider</label><select id="scm-provider" name="scmProvider"><option value="github">GitHub</option><option value="azure-devops">Azure DevOps</option></select></div>
+                <div class="operations-field" id="scm-organization-field" hidden><label for="scm-organization">Azure DevOps organization</label><input id="scm-organization" name="scmOrganization" placeholder="your-organization" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" disabled><p class="field-note subtle">Organization name only, not a URL. For example: your-team.</p></div>
+                <div class="operations-field"><label for="scm-token">Access token <span class="subtle">session memory only</span><span data-tip="scm-token"></span></label><input id="scm-token" name="scmAccessToken" type="password" autocomplete="off" spellcheck="false" required maxlength="4096" placeholder="A repository-read token" aria-describedby="scm-token-note"></div>
+                <p class="operations-notice" id="scm-token-note">Use the least-privileged token that can read your repositories. It is sent to the local runner and selected source provider, held in server session memory, and never written to browser storage or workspace history. The field clears after every connection attempt.</p>
+                <button class="button primary operations-full-button" id="scm-connect" type="submit">Connect source <span aria-hidden="true">↗</span></button>
+              </fieldset>
+            </form>
+            <div class="operations-panel-divider"><div class="operations-subheading"><h3>Connected accounts</h3><button class="text-button" id="scm-refresh-connections" type="button">↻ Refresh</button></div><ul class="scm-connections" id="scm-connections" aria-label="Source connections"><li class="operations-empty-note">No accounts loaded. Connect a source or refresh.</li></ul><p class="micro subtle">Disconnect releases the runner’s connection. Existing checkouts are not deleted.</p></div>
+          </section>
+          <section class="panel sources-repositories" aria-labelledby="scm-repositories-title">
+            <div class="panel-header"><div><span class="eyebrow">02 / SELECT SOURCE</span><h2 id="scm-repositories-title">Find your next review.</h2></div><span class="operations-pill" id="scm-repository-count">NO CONNECTION</span></div>
+            <div class="operations-panel-body">
+              <form id="scm-repository-search-form" class="operations-input-row" role="search" autocomplete="off"><label class="search-field"><span aria-hidden="true">⌕</span><input id="scm-repository-search" type="search" placeholder="Search repositories…" aria-label="Search connected repositories" maxlength="200" disabled></label><button class="button secondary" id="scm-search" type="submit" disabled>Search</button></form>
+              <ul class="scm-repositories" id="scm-repositories" aria-label="Repositories"><li class="operations-empty-state"><span class="operations-empty-symbol" aria-hidden="true">⑂</span><h3>Source, without the copy-paste.</h3><p>Select a connected account to see the repositories available to it. Nothing is checked out until you choose.</p></li></ul>
+              <button class="button secondary operations-full-button" id="scm-repositories-more" type="button" hidden>Load more repositories</button>
+              <div class="scm-checkout">
+                <div class="operations-subheading"><div><span class="eyebrow">03 / OPEN WORKSPACE</span><h3>Choose the exact branch.</h3></div><span class="operations-step-mark" aria-hidden="true">↳</span></div>
+                <p class="small subtle operations-break" id="scm-selection">Select a repository to load its branches.</p>
+                <div class="operations-field"><label for="scm-branch">Branch</label><div class="operations-input-row"><select id="scm-branch" aria-describedby="scm-selection" disabled><option value="">Choose a repository first</option></select><button class="button secondary small-button" id="scm-branches-more" type="button" hidden>More branches</button></div></div>
+                <button class="button primary operations-full-button" id="scm-checkout" type="button" disabled>Check out & open workspace <span aria-hidden="true">→</span></button>
+                <p class="field-note subtle operations-break" id="scm-checkout-detail">The local runner creates the checkout. Specialist agents still inspect source without modifying it.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view operations-view" id="view-runtime" aria-labelledby="runtime-title" hidden>
+        <div class="page-heading compact operations-heading">
+          <div><div class="eyebrow"><span class="tiny-line"></span>AUTHORIZED RUNTIME / EVIDENCE IN MOTION</div><h1 id="runtime-title">Follow the evidence.<br><span class="muted-heading">Not the assumptions.</span></h1><p class="page-description">A bounded, non-destructive observer for environments you are authorized to test. Connect source-level judgment to what actually responds.</p></div>
+          <div class="heading-actions"><button class="button secondary" id="runtime-demo" type="button">Load demonstration <span aria-hidden="true">↗</span></button><span class="small subtle">Clearly labelled synthetic data · no target contacted</span></div>
+        </div>
+        <output class="operations-status" id="runtime-status" aria-live="polite" aria-atomic="true">Not run. Configure a safe scope and explicitly authorize it before sending requests.</output>
+        <form id="runtime-scan-form" class="operations-form runtime-form" autocomplete="off">
+          <fieldset id="runtime-configuration" class="operations-fieldset">
+            <legend class="operations-sr-only">Authorized runtime scan configuration</legend>
+            <div class="runtime-setup-grid">
+              <section class="panel" aria-labelledby="runtime-scope-title">
+                <div class="panel-header"><div><span class="eyebrow">01 / DRAW THE BOUNDARY</span><h2 id="runtime-scope-title">Permission before packets.</h2></div><img src="/mark.svg" width="25" height="28" alt=""></div>
+                <div class="operations-panel-body">
+                  <div class="operations-field"><label for="runtime-target">Authorized target<span data-tip="runtime-target"></span></label><input id="runtime-target" name="runtimeTarget" type="url" placeholder="https://staging.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" required maxlength="2048" aria-describedby="runtime-target-note"><p class="field-note subtle" id="runtime-target-note">HTTP(S) only. No embedded credentials, query strings, or fragments. Redirect and address restrictions are enforced by the runner.</p></div>
+                  <div class="operations-field"><label for="runtime-paths">Paths in scope <span class="subtle">JSON array</span><span data-tip="runtime-paths"></span></label><textarea id="runtime-paths" name="runtimePaths" class="operations-code-input" rows="3" spellcheck="false" required maxlength="16000" placeholder='["/", "/api/health", "/api/private"]'>["/"]</textarea><p class="field-note subtle">Explicit origin-relative paths only. No crawling, full URLs, query strings, or destructive payloads. Only include routes safe to request.</p></div>
+                  <div class="operations-field"><label for="runtime-authorization-reason">Authorization context</label><input id="runtime-authorization-reason" name="runtimeReason" value="owned test environment" required maxlength="300" placeholder="Owned staging environment · approved test scope"></div>
+                  <label class="checkbox-label operations-consent"><input id="runtime-authorized" type="checkbox" required><span>I own this target or have explicit permission to send these scoped requests.</span></label>
+                  <label class="checkbox-label"><input id="runtime-allow-private" type="checkbox"><span>Explicitly allow private-network and loopback targets for this scope.<small class="operations-checkbox-note">Off by default. Enable only for an approved local or private environment.</small></span></label>
+                  <details class="operations-details"><summary>Request budget & timing</summary><div class="runtime-limits"><div class="operations-field"><label for="runtime-max-requests">Max requests</label><input id="runtime-max-requests" type="number" min="1" max="100" step="1" value="20" required></div><div class="operations-field"><label for="runtime-timeout">Timeout / ms</label><input id="runtime-timeout" type="number" min="500" max="30000" step="1" value="10000" required></div><div class="operations-field"><label for="runtime-delay">Delay / ms</label><input id="runtime-delay" type="number" min="0" max="10000" step="1" value="150" required></div></div><p class="field-note subtle">Both identities share the request budget. The runner applies its own ceilings. Even a read-only request can have side effects on an unsafe endpoint.</p></details>
+                </div>
+              </section>
+              <section class="panel" aria-labelledby="runtime-auth-title">
+                <div class="panel-header"><div><span class="eyebrow">02 / DEFINE THE IDENTITY</span><h2 id="runtime-auth-title">One profile. Explicit authority.</h2></div><span class="operations-pill">MEMORY ONLY</span></div>
+                <div class="operations-panel-body">
+                  <div class="operations-field"><label for="runtime-auth-type">Primary authentication<span data-tip="runtime-auth"></span></label><select id="runtime-auth-type" aria-describedby="runtime-auth-help"><option value="none">None / anonymous</option><option value="bearer">Bearer token</option><option value="basic">HTTP Basic</option><option value="api-key">API key</option><option value="headers">Custom headers · JSON</option><option value="cookie">Cookie header</option><option value="oauth-client-credentials">OAuth · client credentials</option><option value="oauth-refresh-token">OAuth · refresh token</option><option value="oauth-password">OAuth · resource-owner password (test identities)</option><option value="form-login">Form login · username &amp; password</option><option value="mtls">Mutual TLS · client certificate</option><option value="browser-session">Manual browser sign-in · SSO / MFA</option><option value="browser-state">Import browser state · cookies only</option></select><p class="field-note subtle" id="runtime-auth-help">No credentials are sent. Requests use the anonymous identity.</p></div>
+                  <div id="runtime-auth-fields" class="runtime-auth-fields"></div>
+                  <div id="runtime-browser-auth" class="runtime-browser-auth" hidden><p class="small subtle">The local runner opens its own sign-in browser. Complete SSO, SAML, MFA, a passkey, or any consent manually there, then finish below. This interface never asks for your SSO password or bypasses authentication.</p><div class="operations-button-row"><button id="runtime-browser-start" class="button secondary" type="button" disabled>Open sign-in browser ↗</button><button id="runtime-browser-finish" class="button primary" type="button" disabled>Finish sign-in</button></div><output id="runtime-browser-status" class="field-note subtle" aria-live="polite">Authorize the target above before opening the sign-in browser.</output><p class="field-note subtle">Browser automation availability depends on the runner. Only cookies are replayed; client JavaScript, localStorage tokens, WebAuthn, and interactive workflows are not automated.</p></div>
+                  <div class="operations-subheading runtime-profile-footer"><span class="micro subtle">No saved profiles. Inputs clear after a scan submission.</span><button id="runtime-clear-auth" class="text-button" type="button">Clear credentials</button></div>
+                  <label class="checkbox-label"><input id="runtime-compare-anonymous" type="checkbox" disabled><span>Compare the primary identity with anonymous requests.<small class="operations-checkbox-note">A status comparison is evidence, not proof of an authorization bypass.</small></span></label>
+                  <details class="operations-details" id="runtime-roles-details"><summary>Additional roles <span class="subtle">multi-role access comparison</span><span data-tip="runtime-roles"></span></summary><p class="field-note subtle">Add up to four lower-privilege identities. Each requests the same paths; a role that receives the primary identity’s exact content on an anonymous-denied route is flagged.</p><ol id="runtime-roles" class="runtime-roles"></ol><button id="runtime-add-role" class="button secondary small-button" type="button">＋ Add role</button></details>
+                  <details class="operations-details"><summary>Access-control assertions <span class="subtle">optional JSON</span></summary><div class="operations-field"><label for="runtime-assertions">Expected anonymous statuses</label><textarea id="runtime-assertions" name="runtimeAssertions" class="operations-code-input" rows="4" spellcheck="false" maxlength="16000" placeholder='[{"path":"/api/private","expectedAnonymousStatus":[401,403]}]'></textarea><p class="field-note subtle">Use paths already in scope. Enable anonymous comparison when using primary authentication. An assertion checks a response status, not exploit success.</p></div></details>
+                  <p class="operations-notice">Auth material is sent only to the local runner for this scan and is not persisted by this interface. Imported browser state can replay cookies only; provide bearer or explicit headers for localStorage-based tokens. Server-sanitized evidence, not this auth profile, can be shared with specialists.</p>
+                </div>
+              </section>
+            </div>
+          </fieldset>
+          <div class="runtime-launch-bar"><div><strong>Observe within the boundary.</strong><p>Explicit paths. Bounded requests. No destructive payloads or speculative exploit verdicts.</p></div><button id="runtime-start" class="button primary" type="submit" disabled><span aria-hidden="true">▶</span> Start authorized scan</button></div>
+        </form>
+
+        <section class="panel runtime-evidence-panel" aria-labelledby="runtime-chain-title">
+          <div class="panel-header runtime-evidence-header"><div><span class="eyebrow">FROM PERMISSION TO PROOF</span><h2><span id="runtime-chain-title">The live evidence chain</span><span data-tip="runtime-chain"></span></h2><p class="small subtle operations-break" id="runtime-target-summary">No target contacted. No execution evidence yet.</p></div><div class="operations-button-row"><label class="checkbox-label runtime-chain-toggle"><input id="runtime-chain-only" type="checkbox"><span>Finding chains only</span></label><span id="runtime-scan-status" class="operations-pill" aria-live="polite">NOT RUN</span><button id="runtime-refresh" class="button secondary small-button" type="button" disabled>↻ Refresh</button><button id="runtime-cancel" class="button danger small-button" type="button" disabled>Stop scan</button></div></div>
+          <div class="runtime-demo-banner" id="runtime-demo-banner" hidden><strong>SYNTHETIC DEMONSTRATION / NOT A SCAN</strong><span>Every count, node, event, and finding below is illustrative. No target was contacted.</span></div>
+          <div class="runtime-metrics" aria-label="Runtime observation metrics"><div><span class="runtime-metric-value" id="runtime-metric-requests">—</span><span id="runtime-requests-label">Requests executed</span></div><div><span class="runtime-metric-value" id="runtime-metric-responses">—</span><span>HTTP responses</span></div><div><span class="runtime-metric-value" id="runtime-metric-denied">—</span><span>401 / 403 responses</span></div><div><span class="runtime-metric-value" id="runtime-metric-findings">—</span><span>Finding observations</span></div></div>
+          <div class="runtime-graph-intro"><p>Authorization → identity → entrypoint → response / control → observed finding → impact hypothesis</p><div class="runtime-legend" aria-label="Graph legend"><span><i class="runtime-legend-dot observed"></i>Observed</span><span><i class="runtime-legend-dot running"></i>In progress</span><span><i class="runtime-legend-dot blocked"></i>Blocked / failed</span><span><i class="runtime-legend-dot not-tested"></i>Not tested</span><span><i class="runtime-legend-line"></i>Hypothesis, not proof</span></div></div>
+          <div class="runtime-graph-board" id="runtime-graph-board"><svg id="runtime-graph-edges" class="runtime-graph-edges" aria-hidden="true" focusable="false"></svg><div id="runtime-graph-stages" class="runtime-graph-stages" aria-label="Structured evidence chain"></div></div>
+          <p class="runtime-graph-caption">Only returned nodes and edges are connected. Empty stages are not tested; impact nodes remain hypotheses. Select any node to inspect its evidence and connections.</p>
+          <div class="runtime-inspection-grid"><section id="runtime-node-detail" class="runtime-node-detail" aria-labelledby="runtime-node-detail-title"><div class="eyebrow">NODE INSPECTOR</div><h3 id="runtime-node-detail-title">Evidence has a context.</h3><p class="small subtle">Select a node to see the observation, supporting evidence, and connected steps. A graph connection does not establish exploitability.</p></section><section class="runtime-events-section" aria-labelledby="runtime-events-title"><div class="operations-subheading"><h3 id="runtime-events-title">Observed events</h3><span class="micro subtle" id="runtime-event-count">NOT RUN</span></div><ol id="runtime-events" class="runtime-events" aria-label="Observed runtime events" aria-live="off"><li class="operations-empty-note">Events appear only after the runner returns them.</li></ol></section></div>
+          <div class="runtime-export-bar"><p>Take observations to specialists.<br><span class="subtle">Evidence is not a security approval. Review it before sharing.</span></p><div class="operations-button-row"><a class="button secondary small-button" id="runtime-export-json" aria-disabled="true">↓ JSON</a><a class="button secondary small-button" id="runtime-export-md" aria-disabled="true">↓ Markdown</a><a class="button secondary small-button" id="runtime-export-html" aria-disabled="true">↓ HTML</a><button id="runtime-ask" class="button secondary small-button" type="button" disabled>✦ Ask about this scan</button><button class="button primary small-button" id="runtime-review-evidence" type="button" disabled>Review evidence with specialists →</button></div></div>
+        </section>
+
+        <div class="runtime-results-grid"><section class="panel" aria-labelledby="runtime-findings-title"><div class="panel-header"><div><span class="eyebrow">OBSERVATIONS, NOT ASSUMPTIONS</span><h2 id="runtime-findings-title">What the runner observed</h2></div><span class="count-pill" id="runtime-findings-count">—</span></div><p class="operations-panel-description">Candidate findings from executed checks. Neither a status code nor a severity label alone confirms an exploit.</p><div id="runtime-findings" class="runtime-findings"><p class="operations-empty-note">No evidence loaded. This is not a clean bill of health.</p></div><details class="operations-details runtime-request-details"><summary>Request / response log</summary><p class="field-note subtle" id="runtime-request-summary">No request records returned.</p><div class="runtime-request-table-wrap"><table class="runtime-request-table"><caption class="operations-sr-only">Runner-returned request observations</caption><thead><tr><th scope="col">Identity</th><th scope="col">Path</th><th scope="col">HTTP</th><th scope="col">Time</th></tr></thead><tbody id="runtime-requests"></tbody></table></div></details></section><section class="panel" aria-labelledby="runtime-coverage-title"><div class="panel-header"><div><span class="eyebrow">THE BOUNDARY OF THIS EVIDENCE</span><h2 id="runtime-coverage-title">Coverage & honest limits</h2></div><span class="operations-pill">BOUNDED</span></div><div class="operations-panel-body"><div id="runtime-coverage" class="runtime-coverage"><p class="small subtle">The runner has not supplied coverage details yet.</p></div><ul class="runtime-limitations"><li>One primary identity and an optional anonymous comparison, not a multi-role authorization audit.</li><li>Only configured paths and the request budget are in scope. Unvisited stages remain not tested.</li><li>Non-destructive observations do not prove exploitability or the absence of vulnerabilities.</li><li>Browser sign-in is manual. Cookie replay does not execute client JavaScript, infer localStorage tokens, or automate SSO / MFA / passkeys.</li><li>Impact is a hypothesis unless separately validated against source and authorized evidence.</li></ul></div></section></div>
+      </section>
+
+
+      <section class="view chat-view" id="view-chat" aria-labelledby="chat-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>ASK ABOUT YOUR CODE</div><h1 id="chat-title">Ask Threatlint.</h1><p class="page-description">Ask why a finding matters, how to fix it in your code, or what a runtime result means. Threatlint reads your repository to answer; it never changes it.</p></div><span class="tag" id="chat-model-tag">MODEL NOT SET</span></div>
+        <div class="chat-layout">
+          <aside class="panel chat-threads" aria-labelledby="chat-threads-title"><div class="panel-header"><h2 id="chat-threads-title">Conversations</h2><button class="button secondary small-button" type="button" id="chat-new">＋ New</button></div><ul id="chat-thread-list" class="chat-thread-list"></ul></aside>
+          <section class="panel chat-main" aria-labelledby="chat-context">
+            <div class="chat-context-bar"><span class="micro subtle">ABOUT</span><strong id="chat-context">This workspace</strong><span data-tip="chat-context"></span><button class="text-button" type="button" id="chat-clear-context" hidden>Ask about the whole workspace instead</button></div>
+            <ol id="chat-messages" class="chat-messages" aria-live="polite" aria-label="Conversation"></ol>
+            <div class="chat-suggestions" id="chat-suggestions"></div>
+            <form id="chat-form" class="chat-form" autocomplete="off"><label class="operations-sr-only" for="chat-input">Your question</label><textarea id="chat-input" rows="2" maxlength="8000" placeholder="Ask about a finding, a file, or a fix… (Enter to send, Shift+Enter for a new line)"></textarea><div class="chat-form-actions"><button class="button danger small-button" type="button" id="chat-stop" hidden>Stop</button><button class="button primary" type="submit" id="chat-send">Send ↵</button></div></form>
+          </section>
+        </div>
+      </section>
+      <section class="view" id="view-metrics" aria-labelledby="metrics-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>MEASURE WHAT YOU FIX</div><h1 id="metrics-title">Your security, in numbers.</h1><p class="page-description">Every saved report and runtime scan, rolled into metrics you can slice. Build dashboards for your team, your repo, or your sprint.</p></div>
+          <div class="heading-actions"><a class="button secondary" id="metrics-export" href="/api/metrics/export" download>↓ Export CSV</a><button class="button secondary" type="button" data-help-topic="dashboards">How to build dashboards ▷</button></div></div>
+        <div class="metrics-toolbar">
+          <label class="operations-field metrics-select"><span class="micro subtle">DASHBOARD</span><select id="dashboard-select" aria-label="Choose dashboard"></select></label>
+          <label class="operations-field metrics-select"><span class="micro subtle">TIME RANGE</span><select id="metrics-range" aria-label="Time range"><option value="">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
+          <div class="metrics-actions"><button class="button secondary small-button" id="dashboard-new" type="button">＋ New dashboard</button><button class="button secondary small-button" id="dashboard-duplicate" type="button">Duplicate</button><button class="button primary small-button" id="dashboard-edit" type="button">Edit layout</button><span data-tip="dashboard-builder"></span></div>
+        </div>
+        <div id="dashboard-editor" class="panel dashboard-editor" hidden>
+          <div class="panel-header"><div><span class="eyebrow">DASHBOARD BUILDER</span><h2>Compose your view</h2></div><div class="operations-button-row"><button class="button danger small-button" id="dashboard-delete" type="button">Delete</button><button class="button secondary small-button" id="dashboard-cancel" type="button">Cancel</button><button class="button primary small-button" id="dashboard-save" type="button">Save dashboard</button></div></div>
+          <div class="operations-panel-body">
+            <div class="operations-field"><label for="dashboard-name">Dashboard name</label><input id="dashboard-name" maxlength="80" placeholder="Sprint 42 · API team"></div>
+            <ol id="widget-editor" class="widget-editor"></ol>
+            <button class="button secondary small-button" id="widget-add" type="button">＋ Add widget</button>
+            <p class="field-note subtle" id="dashboard-error" role="alert"></p>
           </div>
         </div>
-        <div id="dir-picker" class="dir-picker" style="display:none">
-          <div class="dir-breadcrumb" id="dir-breadcrumb"></div>
-          <div class="dir-entries" id="dir-entries"></div>
-        </div>
-        <div class="modal-row">
-          <button class="btn-primary" onclick="connectLocal()">Connect</button>
-          <button class="btn-secondary" onclick="closeRepoModal()">Cancel</button>
-        </div>
-      </div>
+        <div id="dashboard-grid" class="dashboard-grid" aria-live="polite"></div>
+        <p class="field-note subtle metrics-note">Open risk score = Σ severity weight of findings not marked false positive or remediated (CRITICAL 10 · HIGH 6 · MEDIUM 3 · LOW 1). Metrics count what agents and the runtime observer reported; they are not a certification.</p>
+        <div id="chart-tooltip" class="chart-tooltip" role="tooltip" hidden></div>
+      </section>
 
-      <div id="repo-remote" style="display:none">
-        <div class="field">
-          <label>Repository URL</label>
-          <input id="remote-url" placeholder="https://github.example.com/org/repo.git" />
-        </div>
-        <div class="field">
-          <label>Username (optional)</label>
-          <input id="remote-user" placeholder="Leave blank for PAT-only auth" />
-        </div>
-        <div class="field">
-          <label>Personal Access Token / PAT</label>
-          <input id="remote-token" type="password" placeholder="ghp_... or ADO PAT" />
-        </div>
-        <div class="field">
-          <label>Branch (optional)</label>
-          <input id="remote-branch" placeholder="main" />
-        </div>
-        <div class="modal-row">
-          <button class="btn-primary" onclick="connectRemote()">Clone &amp; Connect</button>
-          <button class="btn-secondary" onclick="closeRepoModal()">Cancel</button>
-        </div>
-      </div>
-
-      <div class="modal-status" id="repo-status-msg"></div>
-    </div>
+      <section class="view" id="view-learn" aria-labelledby="learn-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>BUILT FOR DEVELOPERS</div><h1 id="learn-title">Learn Threatlint in minutes.</h1><p class="page-description">Narrated walkthroughs and step-by-step guides for every workflow: review a PR, connect source, scan a running app, secure AI-generated code, and build dashboards.</p></div><span class="tag">VOICEOVER · CAPTIONS IN GUIDES</span></div>
+        <div class="section-heading"><div><h2>Video library</h2><p>Every video has a voiceover. Press play, or read the matching guide below.</p></div></div>
+        <div id="video-grid" class="video-grid"></div>
+        <div class="section-heading"><div><h2>Guides</h2><p>Short, task-first steps. Each one links to its video.</p></div></div>
+        <div id="help-topics" class="help-topics"></div>
+        <div class="section-heading"><div><h2>Glossary</h2><p>What the labels in Threatlint mean.</p></div></div>
+        <dl id="help-glossary" class="help-glossary"></dl>
+      </section>
+      <footer class="main-footer"><span>THREATLINT <span class="footer-slash">/</span> SECURITY, WITH SUBSTANCE.</span><span>Evidence-led. Human-reviewed. Read-only.</span></footer>
+    </main>
   </div>
 
-  <!-- ── Settings Modal ── -->
-  <div class="overlay" id="settings-overlay">
-    <div class="modal">
-      <button class="modal-close" onclick="closeSettings()">×</button>
-      <h2>SETTINGS</h2>
-      <div class="settings-field">
-        <label>Anthropic API Key</label>
-        <input id="settings-apikey" type="password" placeholder="sk-ant-..." />
-        <div class="settings-hint">Used for claude-sonnet-5, claude-opus-5, claude-haiku-4-5. Set ANTHROPIC_API_KEY env var on the server to avoid entering it here.</div>
-      </div>
-      <div class="settings-field">
-        <label>OpenAI API Key</label>
-        <input id="settings-openai-apikey" type="password" placeholder="sk-..." />
-        <div class="settings-hint">Used for gpt-5.6, gpt-5.6-terra, gpt-5.6-luna, gpt-5.6-cyber. Set OPENAI_API_KEY env var on the server as an alternative.</div>
-      </div>
-      <div class="settings-field">
-        <label>Local LLM URL</label>
-        <input id="settings-lmstudio-url" type="text" placeholder="http://localhost:1234/v1"
-          onblur="_populateSettingsModels(this.value)" />
-        <div class="settings-hint">Base URL for a local LLM server (LM Studio, Ollama, etc.). Default: http://localhost:1234/v1</div>
-      </div>
-      <div class="settings-field">
-        <label>Default Model</label>
-        <select id="settings-model" style="width:100%;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--font);font-size:12px;outline:none;">
-          <option value="claude-sonnet-5">claude-sonnet-5 (balanced)</option>
-          <option value="claude-opus-5">claude-opus-5 (thorough)</option>
-          <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (fast)</option>
-          <option disabled>── OpenAI ──</option>
-          <option value="gpt-5.6">gpt-5.6 (balanced)</option>
-          <option value="gpt-5.6-terra">gpt-5.6-terra (efficient)</option>
-          <option value="gpt-5.6-luna">gpt-5.6-luna (fast)</option>
-          <option value="gpt-5.6-cyber">gpt-5.6-cyber (security)</option>
-        </select>
-      </div>
-      <div class="settings-field">
-        <label>Continue Pipeline on Agent Error</label>
-        <select id="settings-continue" style="width:100%;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--font);font-size:12px;outline:none;">
-          <option value="false">Stop on error (default)</option>
-          <option value="true">Continue to next agent</option>
-        </select>
-      </div>
-      <div class="modal-row">
-        <button class="btn-primary" onclick="saveSettings()">Save</button>
-        <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
-      </div>
-    </div>
-  </div>
+  <dialog id="repository-dialog" class="dialog"><form id="repository-form"><div class="dialog-heading"><div><span class="eyebrow">DEFINE YOUR WORKSPACE</span><h2>Open a repository</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close repository dialog">×</button></div><p class="subtle">Choose source to inspect. Agent tools are restricted to this directory.</p><label for="repo-path">Repository directory</label><div class="input-row"><input id="repo-path" placeholder="/path/to/your/repository" autocomplete="off" required><button type="button" id="browse-repository" class="button secondary">Browse…</button></div><div id="directory-browser" class="directory-browser hidden"></div><p class="form-error" id="repository-error" role="alert"></p><div class="dialog-footer"><span class="small subtle">Report history is stored locally.</span><button class="button primary" type="submit" id="open-repository">Open workspace →</button></div></form></dialog>
 
-  <!-- ── Toast container ── -->
-  <div id="toast-container"></div>
+  <dialog id="settings-dialog" class="dialog settings-dialog"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">YOUR MODELS, YOUR CHOICE</span><h2>Model & settings</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close settings">×</button></div><div class="provider-options"><label><input type="radio" name="provider" value="lmstudio"><span><strong>LM Studio</strong><small>Local model server</small></span></label><label><input type="radio" name="provider" value="claude"><span><strong>Anthropic</strong><small>Claude models</small></span></label><label><input type="radio" name="provider" value="openai"><span><strong>OpenAI</strong><small>OpenAI models</small></span></label></div><div id="local-settings"><label for="model-url">Model server URL</label><input id="model-url" type="url" placeholder="http://localhost:1234/v1"><div class="field-note small subtle">HTTP is accepted only for loopback. Remote model servers require HTTPS.</div></div><label for="model-id">Model ID</label><div class="input-row"><input id="model-id" placeholder="Enter the exact model ID" list="local-models" autocomplete="off"><button class="button secondary" id="discover-models" type="button">Load models</button></div><datalist id="local-models"></datalist><div id="cloud-settings" class="hidden"><label for="api-key">API key <span class="subtle">session only</span></label><input id="api-key" type="password" autocomplete="off" placeholder="Leave empty to use the server environment key"><p id="environment-key-note" class="field-note small subtle"></p></div><div class="privacy-notice"><span>◇</span><p>Credentials stay in memory and are never saved. Non-secret preferences and report history are stored locally. A remote provider receives prompts and the source inspected by its agents.</p></div><label class="checkbox-label" id="cloud-consent-label"><input type="checkbox" id="cloud-consent"><span>I authorize sending review context to the selected remote model provider.</span></label><p class="form-error" id="settings-error" role="alert"></p><div class="dialog-footer"><span class="small subtle">No model requests are made until you start.</span><button class="button primary" type="submit">Save preferences</button></div></form></dialog>
 
-</div><!-- end app -->
+  <dialog id="detail-dialog" class="dialog detail-dialog"><div class="dialog-heading"><div><span class="eyebrow" id="detail-eyebrow">SPECIALIST PROFILE</span><h2 id="detail-title">Details</h2></div><button class="icon-button close-dialog" aria-label="Close details">×</button></div><div id="detail-content"></div><div class="dialog-footer" id="detail-footer"></div></dialog>
 
-<script>
-'use strict';
+  <dialog id="report-dialog" class="dialog report-dialog"><div class="report-reader-header"><div><span class="eyebrow" id="report-reader-eyebrow">FINDINGS REPORT</span><h2 id="report-reader-title">Report</h2></div><div class="reader-actions"><button class="button primary small-button" type="button" id="report-ask">✦ Ask about this report</button><a class="button secondary small-button hidden" id="download-md" download>↓ Markdown</a><a class="button secondary small-button hidden" id="download-docx" download>↓ Word</a><button class="icon-button close-dialog" aria-label="Close report">×</button></div></div><div id="report-quality" class="report-quality"></div><div class="report-reader-toolbar"><div class="segmented"><button class="active" id="report-tab-full">Full report</button><button id="report-tab-findings">Findings <span id="reader-finding-count">0</span></button></div><div class="finding-filters hidden" id="finding-filters"><select id="severity-filter" aria-label="Filter findings by severity"><option value="">All severities</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option><option>INFO</option><option>UNSPECIFIED</option></select><select id="disposition-filter" aria-label="Filter findings by disposition"><option value="">All dispositions</option><option>TRUE POSITIVE</option><option>FALSE POSITIVE</option><option>AMBIGUOUS</option><option>REMEDIATED</option><option>PARTIALLY FIXED</option><option>STILL PRESENT</option><option>REGRESSED</option><option>RESOLVED</option><option>NEW</option></select></div></div><div class="report-reader-body"><article id="report-markdown" class="markdown"></article><div id="report-findings" class="hidden"></div></div></dialog>
 
-// ── State ──────────────────────────────────────────────────────────────────
-
-const S = {
-  ws: null,
-  wsReady: false,
-  session: null,       // { sessionId, repoPath }
-  pipeline: [],        // [{ agentId, label, color, emoji }]
-  agents: [],          // loaded from /api/agents
-  running: false,
-  chatHistory: [],
-  chatStreaming: false,
-  reports: [],
-  apiKey: ls('tl_apikey') || '',
-  openaiApiKey: ls('tl_openai_apikey') || '',
-  model: ls('tl_model') || 'claude-sonnet-5',
-  continueOnError: ls('tl_continue') === 'true',
-  chatProvider: ls('tl_chat_provider') || 'claude',
-  lmstudioUrl: ls('tl_lmstudio_url') || 'http://localhost:1234/v1',
-  lmstudioModels: [],
-};
-
-function ls(k, v) {
-  if (v === undefined) return localStorage.getItem(k);
-  localStorage.setItem(k, v);
-}
-
-// ── WebSocket ──────────────────────────────────────────────────────────────
-
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  S.ws = new WebSocket(`${proto}://${location.host}`);
-
-  S.ws.onopen = () => {
-    S.wsReady = true;
-    setWSBadge(true);
-  };
-  S.ws.onclose = () => {
-    S.wsReady = false;
-    setWSBadge(false);
-    setTimeout(connectWS, 3000);
-  };
-  S.ws.onerror = () => setWSBadge(false);
-  S.ws.onmessage = e => handleMsg(JSON.parse(e.data));
-}
-
-function wsSend(obj) {
-  if (S.ws?.readyState === 1) S.ws.send(JSON.stringify(obj));
-  else toast('Not connected to server', 'error');
-}
-
-function setWSBadge(ok) {
-  const b = document.getElementById('ws-badge');
-  const l = document.getElementById('ws-label');
-  b.className = 'ws-badge' + (ok ? ' ok' : '');
-  l.textContent = ok ? 'connected' : 'offline';
-}
-
-// ── Message handler ────────────────────────────────────────────────────────
-
-let activeAgentId = null;
-let termBuffer = '';
-
-function handleMsg(m) {
-  switch (m.type) {
-
-    case 'pipeline_start':
-      termBuffer = '';
-      setPipelineRunning(true);
-      tLine(`PIPELINE STARTED — ${m.agentIds?.length ?? 0} agent(s)`, 'iteration');
-      break;
-
-    case 'pipeline_complete':
-      setPipelineRunning(false);
-      flushTermBuffer();
-      tLine('PIPELINE COMPLETE', 'done');
-      setTermStatus('IDLE');
-      fetchReports();
-      break;
-
-    case 'cancelled':
-      setPipelineRunning(false);
-      flushTermBuffer();
-      tLine('Pipeline cancelled', 'error');
-      setTermStatus('IDLE');
-      break;
-
-    case 'agent_start':
-      activeAgentId = m.agentId;
-      setPLItemStatus(m.agentId, 'running');
-      setTermStatus(`RUNNING: ${m.label}`);
-      tAgentHeader(m.agentId, m.label, m.color);
-      break;
-
-    case 'agent_complete':
-      setPLItemStatus(m.agentId, 'done');
-      flushTermBuffer();
-      tLine(`✓ ${m.label} — report saved`, 'done');
-      addReport(m);
-      break;
-
-    case 'agent_error':
-      setPLItemStatus(m.agentId, 'error');
-      flushTermBuffer();
-      tLine(`✗ ${m.agentId}: ${m.message}`, 'error');
-      break;
-
-    case 'text_chunk':
-      termBuffer += m.text;
-      flushTermBuffer();
-      break;
-
-    case 'tool_call_start':
-      flushTermBuffer();
-      break;
-
-    case 'tool_executing':
-      flushTermBuffer();
-      const inp = JSON.stringify(m.input || {}).slice(0, 120);
-      tLine(`${m.tool}  ${inp}`, 'tool-call');
-      break;
-
-    case 'tool_result':
-      tLine(m.preview?.slice(0, 120) + (m.preview?.length > 120 ? '…' : ''), 'tool-result');
-      break;
-
-    case 'iteration':
-      if (m.n > 1) {
-        flushTermBuffer();
-        tLine(`[iteration ${m.n}]`, 'iteration');
-      }
-      break;
-
-    case 'error':
-      setPipelineRunning(false);
-      flushTermBuffer();
-      tLine(`ERROR: ${m.message}`, 'error');
-      setTermStatus('ERROR');
-      toast(m.message, 'error');
-      break;
-
-    case 'chat_start':
-      S.chatStreaming = true;
-      appendChatBubble('assistant', '', true);
-      document.getElementById('btn-send').disabled = true;
-      break;
-
-    case 'chat_chunk':
-      appendChatChunk(m.text);
-      break;
-
-    case 'chat_end':
-      S.chatStreaming = false;
-      finalizeChatBubble(m.fullText);
-      S.chatHistory.push({ role: 'assistant', content: m.fullText });
-      document.getElementById('btn-send').disabled = false;
-      break;
-
-    case 'chat_error':
-      S.chatStreaming = false;
-      document.getElementById('btn-send').disabled = false;
-      tLine(`Chat error: ${m.message}`, 'error');
-      toast(m.message, 'error');
-      break;
-  }
-}
-
-// ── Terminal ───────────────────────────────────────────────────────────────
-
-let termEl;
-let termTextNode = null; // current streaming text node
-
-function initTerminal() { termEl = document.getElementById('terminal'); }
-
-function tLine(text, cls) {
-  if (!text) return;
-  const d = document.createElement('div');
-  d.className = `t-line t-${cls}`;
-  d.textContent = text;
-  termEl.appendChild(d);
-  termEl.scrollTop = termEl.scrollHeight;
-}
-
-function tAgentHeader(agentId, label, color) {
-  const d = document.createElement('div');
-  d.className = 't-agent-header';
-  d.style.borderLeft = `3px solid ${color || 'var(--accent)'}`;
-  d.style.paddingLeft = '8px';
-  d.style.color = color || 'var(--accent)';
-  d.textContent = `▶ ${label.toUpperCase()}`;
-  termEl.appendChild(d);
-  // New text node for streaming
-  termTextNode = null;
-}
-
-function flushTermBuffer() {
-  if (!termBuffer) return;
-  const text = termBuffer;
-  termBuffer = '';
-  if (!termTextNode) {
-    const d = document.createElement('div');
-    d.className = 't-line t-text';
-    termEl.appendChild(d);
-    termTextNode = d;
-  }
-  termTextNode.textContent += text;
-  termEl.scrollTop = termEl.scrollHeight;
-}
-
-function clearTerminal() {
-  termEl.innerHTML = '';
-  termTextNode = null;
-}
-
-function copyTerminal() {
-  navigator.clipboard.writeText(termEl.innerText).then(() => toast('Copied to clipboard', 'success'));
-}
-
-function setTermStatus(text) {
-  document.getElementById('term-status').textContent = text;
-  const dot = document.getElementById('term-dot');
-  if (text !== 'IDLE') {
-    dot.classList.remove('off');
-    dot.style.background = 'var(--accent)';
-    dot.style.boxShadow = '0 0 8px var(--accent)';
-  } else {
-    dot.classList.add('off');
-    dot.style.background = '';
-    dot.style.boxShadow = '';
-  }
-}
-
-// ── Pipeline ───────────────────────────────────────────────────────────────
-
-function renderPipeline() {
-  const el = document.getElementById('pipeline-list');
-  if (S.pipeline.length === 0) {
-    el.innerHTML = '<div class="pl-empty"><div>No agents added</div><div style="color:var(--text3)">Click agents above to build your pipeline</div></div>';
-    return;
-  }
-  el.innerHTML = S.pipeline.map((a, i) => `
-    <div class="pl-item" id="pl-${a.agentId}" style="--item-color:${a.color}">
-      <span class="pl-emoji">${a.emoji}</span>
-      <span class="pl-name">${a.label}</span>
-      <span class="pl-status" id="plst-${a.agentId}">pending</span>
-      <div class="pl-btns">
-        <button class="pl-btn" onclick="movePL(${i}, -1)" title="Move up">↑</button>
-        <button class="pl-btn" onclick="movePL(${i}, 1)" title="Move down">↓</button>
-        <button class="pl-btn del" onclick="removePL(${i})" title="Remove">✕</button>
-      </div>
-    </div>
-    ${i < S.pipeline.length - 1 ? '<div class="pl-arrow">↓ context</div>' : ''}
-  `).join('');
-}
-
-function addToPipeline(agentId) {
-  if (S.running) return;
-  const agent = S.agents.find(a => a.id === agentId);
-  if (!agent) return;
-  if (S.pipeline.find(a => a.agentId === agentId)) {
-    toast(`${agent.label} already in pipeline`, 'info');
-    return;
-  }
-  S.pipeline.push({ agentId, label: agent.label, color: agent.color, emoji: agent.emoji || '🔒' });
-  renderPipeline();
-}
-
-function removePL(i) {
-  if (S.running) return;
-  S.pipeline.splice(i, 1);
-  renderPipeline();
-}
-
-function movePL(i, dir) {
-  if (S.running) return;
-  const j = i + dir;
-  if (j < 0 || j >= S.pipeline.length) return;
-  [S.pipeline[i], S.pipeline[j]] = [S.pipeline[j], S.pipeline[i]];
-  renderPipeline();
-}
-
-function clearPipeline() {
-  if (S.running) return;
-  S.pipeline = [];
-  renderPipeline();
-}
-
-function setPLItemStatus(agentId, status) {
-  const el = document.getElementById(`plst-${agentId}`);
-  const item = document.getElementById(`pl-${agentId}`);
-  if (!el) return;
-  const labels = { running: 'running…', done: '✓ done', error: '✗ error', pending: 'pending' };
-  el.textContent = labels[status] || status;
-  if (item) item.className = `pl-item ${status}`;
-}
-
-function resetPipelineStatuses() {
-  S.pipeline.forEach(a => {
-    setPLItemStatus(a.agentId, 'pending');
-    const item = document.getElementById(`pl-${a.agentId}`);
-    if (item) item.className = 'pl-item';
-  });
-}
-
-function setPipelineRunning(running) {
-  S.running = running;
-  document.getElementById('btn-run').disabled = running;
-  const cancel = document.getElementById('btn-cancel');
-  cancel.className = 'btn-cancel' + (running ? ' visible' : '');
-}
-
-// ── Execution ──────────────────────────────────────────────────────────────
-
-function runPipeline() {
-  if (!S.session) { openRepoModal(); return; }
-  if (S.pipeline.length === 0) { toast('Add at least one agent', 'info'); return; }
-
-  const selectedModel = S.model || 'claude-sonnet-5';
-  const CLAUDE_MODELS = ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'];
-  const isOpenAI = /^(gpt-|o[1-9])/.test(selectedModel);
-  const isClaude = CLAUDE_MODELS.includes(selectedModel);
-  const isLocal = !isClaude && !isOpenAI;
-
-  if (isClaude && !S.apiKey) {
-    toast('Add an Anthropic API key in ⚙ Settings to run the pipeline', 'info');
-    return;
-  }
-  if (isOpenAI && !S.openaiApiKey) {
-    toast('Add an OpenAI API key in ⚙ Settings to run the pipeline', 'info');
-    return;
-  }
-
-  resetPipelineStatuses();
-  clearTerminal();
-  setTermStatus('STARTING');
-
-  const msg = {
-    action: 'run_pipeline',
-    sessionId: S.session.sessionId,
-    agentIds: S.pipeline.map(a => a.agentId),
-    target: document.getElementById('target-input').value.trim(),
-    model: selectedModel,
-    continueOnError: S.continueOnError,
-  };
-
-  if (isOpenAI) {
-    msg.provider = 'openai';
-    msg.openaiApiKey = S.openaiApiKey;
-  } else if (isLocal) {
-    msg.provider = 'lmstudio';
-    msg.lmstudioUrl = S.lmstudioUrl;
-    msg.lmstudioModel = selectedModel;
-  } else {
-    msg.apiKey = S.apiKey;
-  }
-
-  wsSend(msg);
-}
-
-function cancelPipeline() {
-  wsSend({ action: 'cancel' });
-}
-
-// ── Reports ────────────────────────────────────────────────────────────────
-
-function addReport(data) {
-  const agent = S.agents.find(a => a.id === data.agentId) || {};
-  S.reports.push({ ...data, emoji: agent.emoji || '📄', color: agent.color });
-  renderReports();
-}
-
-function renderReports() {
-  const el = document.getElementById('reports-list');
-  const cnt = document.getElementById('report-count');
-  cnt.textContent = S.reports.length ? `(${S.reports.length})` : '';
-  if (S.reports.length === 0) {
-    el.innerHTML = '<div class="reports-empty">No reports yet — run a pipeline to generate them.</div>';
-    return;
-  }
-  el.innerHTML = S.reports.map(r => {
-    const t = new Date(r.timestamp).toLocaleTimeString();
-    return `
-      <div class="report-item">
-        <span class="report-emoji">${r.emoji || '📄'}</span>
-        <div class="report-info">
-          <div class="report-name" title="${r.agentId}">${r.label}</div>
-          <div class="report-time">${t}</div>
-        </div>
-        <div class="report-btns">
-          <a class="report-btn" href="${r.mdUrl}" download>MD</a>
-          ${r.hasDocx ? `<a class="report-btn docx" href="${r.docxUrl}" download>DOCX</a>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-async function fetchReports() {
-  if (!S.session) return;
-  try {
-    const res = await fetch(`/api/session/${S.session.sessionId}/reports`);
-    const list = await res.json();
-    S.reports = list.map(r => {
-      const ag = S.agents.find(a => a.id === r.agentId) || {};
-      return { ...r, emoji: ag.emoji || '📄', color: ag.color };
-    });
-    renderReports();
-  } catch {}
-}
-
-// ── Chat ───────────────────────────────────────────────────────────────────
-
-let activeChatBubble = null;
-let activeChatText = '';
-
-function appendChatBubble(role, text, streaming = false) {
-  const msgs = document.getElementById('chat-messages');
-  const wrap = document.createElement('div');
-  wrap.className = `chat-msg ${role}`;
-  const label = document.createElement('div');
-  label.className = 'chat-role';
-  label.textContent = role === 'user' ? 'You' : 'Assistant';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble' + (streaming ? ' streaming-cursor' : '');
-  bubble.textContent = text;
-  wrap.appendChild(label);
-  wrap.appendChild(bubble);
-  msgs.appendChild(wrap);
-  msgs.scrollTop = msgs.scrollHeight;
-  if (streaming) { activeChatBubble = bubble; activeChatText = ''; }
-  return bubble;
-}
-
-function appendChatChunk(text) {
-  if (!activeChatBubble) return;
-  activeChatText += text;
-  activeChatBubble.textContent = activeChatText;
-  const msgs = document.getElementById('chat-messages');
-  msgs.scrollTop = msgs.scrollHeight;
-}
-
-function finalizeChatBubble(fullText) {
-  if (!activeChatBubble) return;
-  activeChatBubble.textContent = fullText || activeChatText;
-  activeChatBubble.classList.remove('streaming-cursor');
-  activeChatBubble = null;
-  activeChatText = '';
-}
-
-function sendChat() {
-  const input = document.getElementById('chat-input');
-  const text = input.value.trim();
-  if (!text || S.chatStreaming) return;
-  input.value = '';
-  input.style.height = 'auto';
-
-  appendChatBubble('user', text);
-  S.chatHistory.push({ role: 'user', content: text });
-
-  const isLocal = S.chatProvider === 'lmstudio';
-  const isOpenAI = S.chatProvider === 'openai';
-  const lmModel = document.getElementById('lmstudio-model-select')?.value || '';
-  const openaiModel = document.getElementById('openai-model-select')?.value || 'gpt-4o';
-  const claudeModel = document.getElementById('model-select')?.value || 'claude-sonnet-5';
-
-  wsSend({
-    action: 'chat',
-    sessionId: S.session?.sessionId || '__no_session__',
-    message: text,
-    history: S.chatHistory.slice(-20),
-    apiKey: S.apiKey,
-    openaiApiKey: S.openaiApiKey,
-    model: isOpenAI ? openaiModel : (isLocal ? lmModel : claudeModel),
-    provider: S.chatProvider,
-    lmstudioUrl: S.lmstudioUrl,
-    lmstudioModel: lmModel,
-  });
-}
-
-function handleChatKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
-  // auto-resize
-  const el = e.target;
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
-}
-
-// ── Palette ────────────────────────────────────────────────────────────────
-
-async function loadAgents() {
-  try {
-    const res = await fetch('/api/agents');
-    S.agents = await res.json();
-    renderPalette();
-    document.getElementById('palette-count').textContent = `(${S.agents.length})`;
-  } catch (e) {
-    toast('Failed to load agents from server', 'error');
-  }
-}
-
-function renderPalette() {
-  const el = document.getElementById('palette');
-  const groups = {};
-  for (const a of S.agents) {
-    const cat = a.category || 'Other';
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push(a);
-  }
-  el.innerHTML = Object.entries(groups).map(([cat, agents]) => `
-    <div class="palette-group">
-      <div class="palette-group-label">${cat}</div>
-      ${agents.map(a => `
-        <div class="agent-card" style="--card-color:${a.color || 'var(--accent)'}"
-             onclick="addToPipeline('${a.id}')" title="${a.description || a.id}">
-          <span class="emoji">${a.emoji || '🔒'}</span>
-          <div class="card-info">
-            <div class="card-name">${a.label || a.id}</div>
-            <div class="card-desc">${(a.description || '').slice(0, 60)}</div>
-          </div>
-          <span class="add-btn">+</span>
-        </div>
-      `).join('')}
-    </div>
-  `).join('');
-}
-
-// ── Repo Modal ─────────────────────────────────────────────────────────────
-
-function openRepoModal() { document.getElementById('repo-overlay').classList.add('open'); }
-function closeRepoModal() {
-  document.getElementById('repo-overlay').classList.remove('open');
-  document.getElementById('repo-status-msg').textContent = '';
-  closeDirPicker();
-}
-
-function setRepoTab(tab) {
-  document.getElementById('repo-local').style.display = tab === 'local' ? '' : 'none';
-  document.getElementById('repo-remote').style.display = tab === 'remote' ? '' : 'none';
-  document.getElementById('tab-local').className = 'tab' + (tab === 'local' ? ' active' : '');
-  document.getElementById('tab-remote').className = 'tab' + (tab === 'remote' ? ' active' : '');
-}
-
-function setRepoMsg(text, cls) {
-  const el = document.getElementById('repo-status-msg');
-  el.textContent = text;
-  el.className = `modal-status ${cls || ''}`;
-}
-
-// ── Directory picker ────────────────────────────────────────────────────────
-
-let _pickerOpen = false;
-
-async function openDirPicker() {
-  const input = document.getElementById('local-path');
-  const startPath = input.value.trim() || '';
-  document.getElementById('dir-picker').style.display = '';
-  _pickerOpen = true;
-  await browseTo(startPath);
-}
-
-function closeDirPicker() {
-  document.getElementById('dir-picker').style.display = 'none';
-  _pickerOpen = false;
-}
-
-async function browseTo(p) {
-  const breadcrumb = document.getElementById('dir-breadcrumb');
-  const entries = document.getElementById('dir-entries');
-  breadcrumb.innerHTML = '<span style="color:var(--text3)">Loading…</span>';
-  entries.innerHTML = '';
-
-  try {
-    const r = await fetch(`/api/fs/browse?path=${encodeURIComponent(p)}`);
-    const data = await r.json();
-    if (data.error) {
-      breadcrumb.innerHTML = `<span style="color:var(--red)">${data.error}</span>`;
-      return;
-    }
-
-    // Update path input
-    document.getElementById('local-path').value = data.path;
-
-    // Breadcrumb
-    const parts = data.path.split('/').filter(Boolean);
-    const crumbs = [];
-    if (data.parent) {
-      crumbs.push(`<span class="dir-crumb dir-crumb-sep">/</span>`);
-    }
-    let built = '';
-    for (let i = 0; i < parts.length; i++) {
-      built += '/' + parts[i];
-      const captured = built;
-      crumbs.push(`<span class="dir-crumb" onclick="browseTo('${captured.replace(/'/g, "\\'")}')">${parts[i]}</span>`);
-      if (i < parts.length - 1) crumbs.push(`<span class="dir-crumb-sep">/</span>`);
-    }
-    breadcrumb.innerHTML = crumbs.join('');
-
-    // Entries
-    if (!data.entries.length) {
-      entries.innerHTML = '<div class="dir-empty">No subdirectories found</div>';
-      return;
-    }
-    entries.innerHTML = data.entries.map(e => {
-      const badge = e.isRepo ? `<span class="dir-repo-badge">git</span>` : '';
-      const icon = e.isRepo ? '📂' : '📁';
-      const target = (data.path + '/' + e.name).replace('//', '/');
-      return `<div class="dir-entry" onclick="browseTo('${target.replace(/'/g, "\\'")}')">
-        <span>${icon}</span>
-        <span class="dir-entry-name">${e.name}</span>
-        ${badge}
-      </div>`;
-    }).join('');
-  } catch (err) {
-    breadcrumb.innerHTML = `<span style="color:var(--red)">${err.message}</span>`;
-  }
-}
-
-function onPathInputChange() {
-  if (_pickerOpen) closeDirPicker();
-}
-
-async function connectLocal() {
-  const p = document.getElementById('local-path').value.trim();
-  if (!p) return setRepoMsg('Path required', 'err');
-  setRepoMsg('Connecting…');
-  try {
-    const res = await fetch('/api/session/local', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repoPath: p }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setRepoMsg(data.error || 'Error', 'err');
-    setSession({ sessionId: data.sessionId, repoPath: data.repoPath });
-    setRepoMsg('Connected', 'ok');
-    setTimeout(closeRepoModal, 600);
-  } catch (e) {
-    setRepoMsg(e.message, 'err');
-  }
-}
-
-async function connectRemote() {
-  const url = document.getElementById('remote-url').value.trim();
-  if (!url) return setRepoMsg('URL required', 'err');
-  setRepoMsg('Cloning repository… this may take a moment');
-  try {
-    const res = await fetch('/api/session/clone', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url,
-        username: document.getElementById('remote-user').value.trim(),
-        token: document.getElementById('remote-token').value.trim(),
-        branch: document.getElementById('remote-branch').value.trim(),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setRepoMsg(data.error || 'Clone failed', 'err');
-    setSession({ sessionId: data.sessionId, repoPath: data.repoPath });
-    setRepoMsg('Cloned and connected', 'ok');
-    setTimeout(closeRepoModal, 700);
-  } catch (e) {
-    setRepoMsg(e.message, 'err');
-  }
-}
-
-function setSession(s) {
-  S.session = s;
-  S.reports = [];
-  renderReports();
-  const label = s.repoPath.split('/').pop() || s.repoPath;
-  document.getElementById('repo-label').textContent = label;
-  document.getElementById('repo-status').classList.add('connected');
-  toast(`Repository connected: ${label}`, 'success');
-}
-
-// ── Settings Modal ─────────────────────────────────────────────────────────
-
-async function openSettings() {
-  document.getElementById('settings-apikey').value = S.apiKey;
-  document.getElementById('settings-openai-apikey').value = S.openaiApiKey;
-  document.getElementById('settings-continue').value = String(S.continueOnError);
-  const urlInput = document.getElementById('settings-lmstudio-url');
-  urlInput.value = S.lmstudioUrl;
-  document.getElementById('settings-overlay').classList.add('open');
-
-  // Populate model dropdown: always include Claude models, then probe bionic
-  await _populateSettingsModels(S.lmstudioUrl);
-}
-
-async function _populateSettingsModels(bionicUrl) {
-  const sel = document.getElementById('settings-model');
-  const CLAUDE_OPTS = [
-    ['claude-sonnet-5',            'claude-sonnet-5 (balanced)'],
-    ['claude-opus-5',              'claude-opus-5 (thorough)'],
-    ['claude-haiku-4-5-20251001',  'claude-haiku-4-5 (fast)'],
-  ];
-
-  const opts = [...CLAUDE_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`)];
-
-  const OPENAI_OPTS = [
-    ['gpt-5.6',       'gpt-5.6 (balanced)'],
-    ['gpt-5.6-terra', 'gpt-5.6-terra (efficient)'],
-    ['gpt-5.6-luna',  'gpt-5.6-luna (fast)'],
-    ['gpt-5.6-cyber', 'gpt-5.6-cyber (security)'],
-  ];
-  opts.push('<option disabled>── OpenAI ──</option>');
-  OPENAI_OPTS.forEach(([v, l]) => opts.push(`<option value="${v}">${l}</option>`));
-
-  try {
-    const url = encodeURIComponent((bionicUrl || 'http://localhost:1234/v1').replace(/\/$/, ''));
-    const r = await fetch(`/api/lmstudio/models?baseUrl=${url}`);
-    if (r.ok) {
-      const data = await r.json();
-      const localModels = (data.models || []);
-      if (localModels.length) {
-        opts.push('<option disabled>── Local LLM ──</option>');
-        localModels.forEach(m => opts.push(`<option value="${m}">${m}</option>`));
-      }
-    }
-  } catch { /* bionic not reachable — Claude models only */ }
-
-  sel.innerHTML = opts.join('');
-  // Re-apply saved selection (may be a local model)
-  sel.value = S.model;
-  if (!sel.value) sel.selectedIndex = 0; // fallback if saved model no longer available
-}
-
-function closeSettings() {
-  document.getElementById('settings-overlay').classList.remove('open');
-}
-
-function saveSettings() {
-  const key = document.getElementById('settings-apikey').value.trim();
-  const openaiKey = document.getElementById('settings-openai-apikey').value.trim();
-  const model = document.getElementById('settings-model').value;
-  const cont = document.getElementById('settings-continue').value === 'true';
-  const lmUrl = document.getElementById('settings-lmstudio-url').value.trim() || 'http://localhost:1234/v1';
-  S.apiKey = key;
-  S.openaiApiKey = openaiKey;
-  S.model = model;
-  S.continueOnError = cont;
-  S.lmstudioUrl = lmUrl;
-  ls('tl_apikey', key);
-  ls('tl_openai_apikey', openaiKey);
-  ls('tl_model', model);
-  ls('tl_continue', cont);
-  ls('tl_lmstudio_url', lmUrl);
-  document.getElementById('model-select').value = model;
-  closeSettings();
-  toast('Settings saved', 'success');
-}
-
-// ── Provider toggle ────────────────────────────────────────────────────────
-
-async function setProvider(p) {
-  S.chatProvider = p;
-  ls('tl_chat_provider', p);
-  document.getElementById('provider-claude').classList.toggle('active', p === 'claude');
-  document.getElementById('provider-openai').classList.toggle('active', p === 'openai');
-  document.getElementById('provider-lmstudio').classList.toggle('active', p === 'lmstudio');
-  document.getElementById('model-claude-row').style.display = p === 'claude' ? 'block' : 'none';
-  document.getElementById('model-openai-row').style.display = p === 'openai' ? 'block' : 'none';
-  document.getElementById('model-lmstudio-row').style.display = p === 'lmstudio' ? 'block' : 'none';
-
-  if (p === 'lmstudio') {
-    await refreshLmStudioModels();
-  }
-}
-
-async function refreshLmStudioModels() {
-  const sel = document.getElementById('lmstudio-model-select');
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const url = encodeURIComponent(S.lmstudioUrl);
-    const r = await fetch(`/api/lmstudio/models?baseUrl=${url}`);
-    const data = await r.json();
-    if (data.error) {
-      sel.innerHTML = `<option value="">⚠ ${data.error.slice(0, 60)}</option>`;
-      return;
-    }
-    const models = data.models || [];
-    if (!models.length) {
-      sel.innerHTML = '<option value="">No models loaded in local LLM server</option>';
-      return;
-    }
-    sel.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
-    S.lmstudioModels = models;
-  } catch (err) {
-    sel.innerHTML = `<option value="">⚠ ${err.message}</option>`;
-  }
-}
-
-// ── Toast ──────────────────────────────────────────────────────────────────
-
-function toast(msg, type = 'info') {
-  const c = document.getElementById('toast-container');
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  c.appendChild(el);
-  setTimeout(() => el.remove(), 4000);
-}
-
-// ── Close overlays on backdrop click ──────────────────────────────────────
-
-document.querySelectorAll('.overlay').forEach(o => {
-  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
-});
-
-// ── Keyboard shortcuts ─────────────────────────────────────────────────────
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.querySelectorAll('.overlay.open').forEach(o => o.classList.remove('open'));
-});
-
-// ── Init ───────────────────────────────────────────────────────────────────
-
-initTerminal();
-connectWS();
-loadAgents();
-renderPipeline();
-renderReports();
-
-// Restore model select
-document.getElementById('model-select').value = S.model;
-
-// Restore provider
-setProvider(S.chatProvider);
-
-// Auto-open settings if no API key and using Claude
-if (!S.apiKey && S.chatProvider === 'claude' && !window._settingsOpened) {
-  window._settingsOpened = true;
-  setTimeout(() => {
-    toast('Enter your Anthropic API key in Settings, or switch to Local LLM in the chat panel', 'info');
-  }, 1500);
-}
-</script>
+  <dialog id="video-dialog" class="dialog video-dialog"><div class="dialog-heading"><div><span class="eyebrow">WALKTHROUGH · VOICEOVER</span><h2 id="video-title">Video</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close video">×</button></div><video id="video-player" controls preload="metadata" playsinline></video><p class="small subtle" id="video-missing" hidden>This video has not been rendered on this machine yet. Run <code>npm --prefix web run videos</code> to build the narrated library.</p></dialog>
+  <div id="tip-popover" class="tip-popover" role="tooltip" hidden></div>
+  <output id="toast" class="toast hidden" aria-live="polite"></output>
 </body>
 </html>

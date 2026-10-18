@@ -1,0 +1,47 @@
+# Example: reply to `/threatlint <question>` comments on Azure Repos pull requests.
+# Save as azure-pipelines/threatlint-chat.yml in the repository you want Threatlint to discuss.
+#
+# One-time setup (see docs/ci-templates.md → "Conversing with Threatlint on pull requests"):
+#   1. Project settings → Service connections → New → Incoming WebHook.
+#      WebHook name: threatlint-comments · Service connection name: threatlint-comments
+#      Set a secret; it is used to verify the HMAC signature of each delivery.
+#   2. Project settings → Service hooks → + → Web Hooks → "Pull request commented on"
+#      (filter to this repository). URL:
+#      https://dev.azure.com/<org>/_apis/public/distributedtask/webhooks/threatlint-comments?api-version=6.0-preview
+#      Use the same secret as step 1 (HTTP header signature).
+#   3. Create a pipeline from this file. Add ANTHROPIC_API_KEY (or OPENAI_API_KEY) as a secret variable.
+#   4. Repos → Security → "<Project> Build Service (<org>)" → Contribute to pull requests: Allow.
+
+trigger: none
+pr: none
+
+resources:
+  webhooks:
+    - webhook: threatlintComments      # alias used below
+      connection: threatlint-comments   # Incoming WebHook service connection
+      filters:
+        - path: eventType
+          value: ms.vss-code.git-pullrequest-comment-event
+  repositories:
+    - repository: threatlint
+      type: github
+      name: InfoSec-Actions/threatlint
+      ref: refs/tags/<version>          # or a full commit SHA
+      endpoint: github-threatlint
+
+jobs:
+  - job: threatlint_chat
+    displayName: Threatlint PR chat
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 10
+    steps:
+      - checkout: threatlint            # only Threatlint; the PR code is never checked out
+        fetchDepth: 1
+        persistCredentials: false
+      - template: azure-pipelines/templates/threatlint-pr-chat.yml@threatlint
+        parameters:
+          event: ${{ parameters.threatlintComments }}
+          provider: claude
+          anthropicApiKey: $(ANTHROPIC_API_KEY)
+          # allowedAuthors: alice@contoso.com,bob@contoso.com

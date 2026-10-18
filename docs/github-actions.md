@@ -2,6 +2,11 @@
 
 `threatlint` provides two GitHub Actions workflows for automated security analysis. Both support three AI providers — Claude, OpenAI, and GitHub Models (Copilot-aligned) — and automatically open GitHub issues for qualifying findings.
 
+> **Reusing Threatlint from another repository?** Call the reusable workflow
+> [`threatlint-reusable.yml`](../.github/workflows/threatlint-reusable.yml) or the composite action
+> [`.github/actions/threatlint`](../.github/actions/threatlint/action.yml) instead of copying these files.
+> See [Reusable CI templates](ci-templates.md).
+
 ## Included Workflows
 
 | Workflow | File | Trigger | Provider | Output |
@@ -107,6 +112,26 @@ Both labels are created automatically if they do not already exist. The issue bo
 The report appears in the workflow run log. Any findings at or above `APPSEC_MIN_ISSUE_SEVERITY` (default: `HIGH`) that are not already tracked by an open issue are filed automatically.
 
 The workflow skips pull requests from forks. GitHub does not expose repository secrets to fork-triggered `pull_request` workflows, and running an AI agent with credentials against untrusted fork code is an unnecessary risk. Review fork contributions manually.
+
+## Warn vs fail
+
+Every workflow that gates on severity reads two repository variables
+(**Settings → Secrets and variables → Actions → Variables**):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `APPSEC_GATE_SEVERITY` | `CRITICAL` | Findings at or above this level (CONFIRMED/PLAUSIBLE) hit the gate. Empty disables it. |
+| `APPSEC_GATE_MODE` | `warn` | `warn` adds a `::warning::` annotation per finding and keeps the check green. `fail` fails the check so branch protection can block the merge. |
+
+A run that produced no report warns rather than passes silently.
+
+## Conversing on pull requests
+
+Comment `/threatlint <question>` on a pull request, for example `/threatlint why is CR-002 high?`, and
+[`threatlint-pr-chat.yml`](../.github/workflows/threatlint-pr-chat.yml) replies in the same
+conversation using the configured model, the PR diff, and the latest Threatlint report comment.
+Only owners, members, and collaborators can invoke it, and PR code is never checked out. See
+[Conversing with Threatlint on pull requests](ci-templates.md#conversing-with-threatlint-on-pull-requests).
 
 ## Security Controls
 

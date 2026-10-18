@@ -1,0 +1,41 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Threatlint: browser workbench",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"web",
+				"start"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Threatlint: desktop workbench",
+			"type": "shell",
+			"command": "npm",
+			"args": ["--prefix", "web", "run", "desktop"],
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Threatlint: test workbench",
+			"type": "shell",
+			"command": "npm",
+			"args": ["--prefix", "web", "test"],
+			"group": "test",
+			"problemMatcher": []
+		},
+		{
+			"label": "Threatlint: package desktop",
+			"type": "shell",
+			"command": "npm",
+			"args": ["--prefix", "web", "run", "desktop:pack"],
+			"group": "build",
+			"problemMatcher": []
+		}
+	]
+}

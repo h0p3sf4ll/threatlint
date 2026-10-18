@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { server } = require('../server.js');
+const { SKILL_MAP } = require('../lib/agents.cjs');
 
 let baseUrl;
 
@@ -61,18 +62,11 @@ describe('GET /api/agents', () => {
     assert.ok(Array.isArray(body));
   });
 
-  it('includes all 14 agents', async () => {
+  it('includes exactly the registered agents and their ordered skills', async () => {
     const { body } = await get('/api/agents');
-    const ids = new Set(body.map(a => a.id));
-    const expected = [
-      'appsec-threat-modeler', 'appsec-code-reviewer', 'appsec-dependency-auditor',
-      'appsec-secrets-scanner', 'appsec-iac-reviewer', 'appsec-cicd-auditor',
-      'appsec-api-security-reviewer', 'appsec-auth-reviewer', 'appsec-fp-reviewer',
-      'appsec-compliance-checker', 'appsec-attack-tree', 'appsec-red-team',
-      'appsec-threat-delta', 'appsec-verify-fix',
-    ];
-    for (const id of expected) {
-      assert.ok(ids.has(id), `Missing: ${id}`);
+    assert.deepEqual(body.map(agent => agent.id).sort(), Object.keys(SKILL_MAP).sort());
+    for (const agent of body) {
+      assert.deepEqual(agent.skills.map(skill => skill.id), SKILL_MAP[agent.id]);
     }
   });
 
@@ -95,6 +89,12 @@ describe('GET /api/agents', () => {
     assert.equal(byId['appsec-red-team']?.category, 'Adversarial');
     assert.equal(byId['appsec-threat-delta']?.category, 'Analysis');
     assert.equal(byId['appsec-verify-fix']?.category, 'Analysis');
+    for (const id of ['appsec-runtime-reviewer', 'appsec-business-logic-reviewer',
+      'appsec-client-security-reviewer', 'appsec-crypto-reviewer',
+      'appsec-ai-security-reviewer', 'appsec-security-test-planner',
+      'appsec-secure-codegen-reviewer', 'appsec-privacy-reviewer']) {
+      assert.equal(byId[id]?.category, 'Analysis', id);
+    }
   });
 });
 
