@@ -5,15 +5,18 @@
   "version": "1.0.0",
   "publisher": "threatlint",
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
+  "engines": { "vscode": "^1.90.0" },
   "categories": ["Linters", "Other"],
   "keywords": ["security", "appsec", "sast", "ai", "copilot", "secure-by-default"],
   "main": "./extension.js",
+  "scripts": { "test": "node --test test/models.test.js" },
   "activationEvents": ["onStartupFinished"],
   "contributes": {
     "commands": [
       { "command": "threatlint.scanWorkspace", "title": "Threatlint: Scan workspace" },
       { "command": "threatlint.scanFile", "title": "Threatlint: Scan current file" },
+      { "command": "threatlint.selectModel", "title": "Threatlint: Select model (Copilot or Claude)" },
+      { "command": "threatlint.explainFinding", "title": "Threatlint: Explain finding with selected model" },
       { "command": "threatlint.openWorkbench", "title": "Threatlint: Open Workbench" },
       { "command": "threatlint.installInstructions", "title": "Threatlint: Install secure-by-default AI instructions" }
     ],
@@ -24,6 +27,7 @@
         "threatlint.scanOnSave": { "type": "boolean", "default": true, "description": "Run threatlint guard when a file is saved." },
         "threatlint.scanOnOpen": { "type": "boolean", "default": true, "description": "Run threatlint guard when a file is opened." },
         "threatlint.workbenchUrl": { "type": "string", "default": "http://127.0.0.1:3000", "description": "Local Threatlint Workbench URL (start it with `npm --prefix web start`)." },
+        "threatlint.claudeExecutable": { "type": "string", "default": "claude", "description": "Path to the Claude Code CLI used when Claude is signed in locally without an API key." },
         "threatlint.minimumSeverity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"], "default": "low", "description": "Hide findings below this severity." }
       }
     }
