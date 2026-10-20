@@ -11,6 +11,7 @@ const { AGENTS, SKILLS, publicAgent } = require('../agents.cjs');
 const { parseReport } = require('../reports.cjs');
 const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
+const servicenow = require('../servicenow.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -18,12 +19,16 @@ const MODEL_LIST_TIMEOUT_MS = 5000;
 const EXAMPLES = path.join(__dirname, '../../examples');
 const expandHome = value => value.replace(/^~(?=\/|$)/, os.homedir());
 
-function registerWorkspaceRoutes(app, { store, reports, build }) {
+function registerWorkspaceRoutes(app, { store, reports, build, integrations = {} }) {
   const { sessions } = store;
   const sessionFor = id => sessions.get(id) || (() => { throw new HttpError('Session not found', 404); })();
 
-  app.get('/api/config', (_req, res) => res.json({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
-    providers: { anthropic: !!process.env.ANTHROPIC_API_KEY, openai: !!process.env.OPENAI_API_KEY } }));
+  app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
+    providers: { anthropic: !!process.env.ANTHROPIC_API_KEY, openai: !!process.env.OPENAI_API_KEY },
+    semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
+    servicenow: { ...servicenow.ACCESS, instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
+  // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
+  app.post('/api/servicenow/parameter-store', handle(req => (integrations.readParameterStore || servicenow.readParameterStore)({ profile: req.body?.profile || undefined })));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));

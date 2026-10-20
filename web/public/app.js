@@ -12,14 +12,15 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
+  const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
   const state = {
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
-    credentials: { claude: '', openai: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
@@ -89,7 +90,7 @@
         if (state.running) return;
         state.pipeline = [...preset.agents]; state.statuses = {}; state.preset = preset.id;
         renderPipeline(); renderPresets(); renderAgents();
-        if (preset.id === 'triage' && !state.attachment) toast('Attach scanner findings, or specify a findings path in the review scope.');
+        if (preset.id === 'triage' && !state.attachment) toast('Attach scanner findings, enter ServiceNow AVITs, or specify a findings path in the review scope.');
       });
       node.disabled = state.running;
       const top = el('div', 'workflow-top'); top.append(el('span', 'workflow-icon', preset.icon), el('span', 'workflow-arrow', '↗'));
@@ -149,6 +150,8 @@
     $('browse-agents').disabled = state.running;
     $('target').disabled = state.running;
     $('attach-findings').disabled = state.running;
+    $('avit-list').disabled = state.running;
+    $('avit-section').hidden = !state.pipeline.includes(FP_REVIEWER);
     $('remove-attachment').disabled = state.running;
     $('choose-repo').disabled = state.running;
     $('settings-button').disabled = state.running;
@@ -373,8 +376,34 @@
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
+    $('snow-instance').value = state.preferences.snowInstance || state.config.servicenow?.instance || '';
+    $('snow-client-id').value = state.credentials.snowClientId;
+    $('snow-client-secret').value = state.credentials.snowClientSecret;
+    updateSnowStatus();
     updateSettingsFields(provider);
     $('settings-dialog').showModal();
+  }
+  function servicenowReady() { return !!(state.preferences.snowInstance && state.credentials.snowClientId && state.credentials.snowClientSecret); }
+  function updateSnowStatus(message) {
+    $('snow-status').textContent = message || (servicenowReady()
+      ? 'Configured for this session. The secret stays in memory and is sent only to your ServiceNow instance.'
+      : 'Not configured. Authenticate through SSO first; the secret stays in memory for this session only.');
+  }
+  /** The instance must be HTTPS without credentials or a path; the server also restricts it to ServiceNow hosts. */
+  function snowInstanceUrl(value) {
+    if (!value) return '';
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) throw new Error('Invalid instance');
+    return url.origin;
+  }
+  async function readSnowParameters() {
+    $('snow-read-parameters').disabled = true; updateSnowStatus('Reading Parameter Store with your AWS CLI session…');
+    try {
+      const values = await request('/api/servicenow/parameter-store', { method: 'POST', body: JSON.stringify({ profile: $('snow-aws-profile').value.trim() || undefined }) });
+      $('snow-client-id').value = values.clientId; $('snow-client-secret').value = values.clientSecret;
+      updateSnowStatus('Loaded from Parameter Store. Save preferences to use them for this session.');
+    } catch (error) { updateSnowStatus(error.message); }
+    finally { $('snow-read-parameters').disabled = false; }
   }
   function updateSettingsFields(provider) {
     const local = provider === 'lmstudio';
@@ -399,14 +428,20 @@
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid model-server URL');
       if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote servers require HTTPS');
     } catch { $('settings-error').textContent = 'Use an HTTP(S) model-server URL without credentials. Remote servers require HTTPS.'; return; }
+    let snowInstance;
+    try { snowInstance = snowInstanceUrl($('snow-instance').value.trim()); } catch { $('settings-error').textContent = 'Use the HTTPS ServiceNow instance URL, e.g. https://<instance>.service-now.com'; return; }
+    const snowClientId = $('snow-client-id').value.trim(), snowClientSecret = $('snow-client-secret').value.trim();
+    if ((snowClientId || snowClientSecret) && !(snowInstance && snowClientId && snowClientSecret)) { $('settings-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
+    state.preferences.snowInstance = snowInstance;
+    state.credentials.snowClientId = snowClientId; state.credentials.snowClientSecret = snowClientSecret;
     state.preferences.provider = provider;
     state.preferences.models[provider] = model;
     state.preferences.model = model;
     state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
     if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
     if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl })); } catch { /* in-memory operation remains available */ }
-    $('api-key').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+    $('api-key').value = ''; $('snow-client-secret').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
   }
   async function discoverModels() {
     $('discover-models').disabled = true; $('settings-error').textContent = '';
@@ -450,6 +485,8 @@
   }
   function handleEvent(event) {
     switch (event.type) {
+      case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
+      case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}`, event.missing.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${selectedModel()}`); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
@@ -480,13 +517,35 @@
     });
     socket.addEventListener('error', () => { $('connection-status').textContent = 'Reconnecting'; });
   }
-  function startRun() {
+  function parseAvits(text) {
+    const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+    const invalid = tokens.filter(token => !/^AVIT\d{4,12}$/.test(token));
+    if (invalid.length) throw new Error(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected e.g. AVIT0012345)`);
+    return [...new Set(tokens)];
+  }
+  /** Semgrep is checked live, so installing it and retrying works without restarting the Workbench. */
+  async function requireSemgrep() {
+    if (!state.pipeline.some(id => (state.config.semgrepAgents || []).includes(id))) return true;
+    try { state.config = await request('/api/config'); } catch { return true; /* the runner enforces it */ }
+    if (state.config.semgrep) return true;
+    toast('Semgrep Community Edition is required for Findings triage. Install it with `python3 -m pip install semgrep` (or `brew install semgrep`), confirm `semgrep --version`, then run again.', true);
+    return false;
+  }
+  async function startRun() {
     if (state.running || !state.session || !state.pipeline.length || !state.connected) return;
+    let avits = [];
+    if (state.pipeline.includes(FP_REVIEWER)) {
+      try { avits = parseAvits($('avit-list').value); } catch (error) { toast(error.message, true); $('avit-list').focus(); return; }
+      if (avits.length > (state.config.servicenow?.maxAvits || 50)) { toast(`Review at most ${state.config.servicenow?.maxAvits || 50} AVITs per report.`, true); return; }
+      if (avits.length && state.attachment) { toast('Use either an attached findings file or ServiceNow AVITs for one review, not both.', true); return; }
+      if (avits.length && !servicenowReady()) { showSettings(); toast('Authenticate through SSO and set the ServiceNow instance, client ID, and secret first.', true); return; }
+    }
     if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     const provider = state.preferences.provider;
     if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider === 'claude' ? 'anthropic' : 'openai']) { showSettings(); toast('A provider API key is required for this review.', true); return; }
-    if (state.pipeline.includes('appsec-fp-reviewer') && !state.attachment && !$('target').value.trim() && state.pipeline[0] === 'appsec-fp-reviewer') { toast('Attach findings or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
+    if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
+    if (!await requireSemgrep() || state.running || !state.connected) return;
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
     $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden'); $('activity-log').replaceChildren(); state.activityCount = 0;
     $('activity-badge').classList.add('running'); $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode('Reviewing'));
@@ -494,7 +553,8 @@
       model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       apiKey: provider === 'claude' ? state.credentials.claude : undefined,
       openaiApiKey: provider === 'openai' ? state.credentials.openai : undefined,
-      attachment: state.attachment || undefined, continueOnError: false };
+      attachment: state.attachment || undefined, continueOnError: false,
+      ...(avits.length ? { avits, servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } } : {}) };
     try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
     renderPipeline(); renderPresets(); renderAgents();
   }
@@ -518,7 +578,8 @@
       $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
       updateSettingsFields(settingsProvider);
     });
-    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; settingsProvider = state.preferences.provider; });
+    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; settingsProvider = state.preferences.provider; });
+    $('snow-read-parameters').addEventListener('click', readSnowParameters);
     $('model-url').addEventListener('input', () => { updateSettingsFields('lmstudio'); $('cloud-consent').checked = false; });
     $('attach-findings').addEventListener('click', chooseFindings);
     $('findings-file').addEventListener('change', async event => {
@@ -537,7 +598,12 @@
       state.pipeline = []; state.statuses = {}; state.preset = ''; renderPipeline(); renderPresets(); renderAgents();
     });
     $('agent-search').addEventListener('input', renderAgents); $('agent-category').addEventListener('change', renderAgents); $('skill-search').addEventListener('input', renderSkills);
-    $('start-run').addEventListener('click', startRun);
+    let starting = false;
+    $('start-run').addEventListener('click', () => {
+      if (starting) return;
+      starting = true;
+      startRun().catch(error => toast(error.message, true)).finally(() => { starting = false; });
+    });
     $('cancel-run').addEventListener('click', () => { if (state.running && state.connected) { state.ws.send(JSON.stringify({ action: 'cancel' })); $('activity-detail').textContent = 'Stopping the current model request…'; } });
     $('clear-activity').addEventListener('click', () => { $('activity-log').replaceChildren(); state.activityCount = 0; if (!state.running) { $('activity-log').classList.add('hidden'); $('activity-empty').classList.remove('hidden'); } });
     $('preview-example').addEventListener('click', openExample); $('reports-example').addEventListener('click', openExample);

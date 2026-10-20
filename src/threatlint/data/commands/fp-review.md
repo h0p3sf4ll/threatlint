@@ -1,12 +1,22 @@
 ---
 description: "Triage security scanner findings as true or false positives. Generates precise Semgrep rule tuning for FPs and confirms exploit paths for TPs. Accepts a SARIF file, Semgrep JSON output, or a threatlint report."
-argument-hint: "Path to SARIF file, Semgrep JSON, or threatlint report (e.g., security-review-2026-01-15.docx or /tmp/semgrep.json)"
+argument-hint: "Path to SARIF file, Semgrep JSON, threatlint report, or ServiceNow AVIT numbers (e.g., /tmp/semgrep.json or AVIT0012345 AVIT0012346)"
 ---
 
 Invoke the `appsec-fp-reviewer` agent to triage security scanner findings.
 
+## Prerequisite: Semgrep Community Edition
+
+Before any triage or rule validation, run `semgrep --version`. If it fails, stop and tell the user to install Semgrep Community Edition (`python3 -m pip install semgrep` or `brew install semgrep`), confirm with `semgrep --version`, and rerun this command. Do not continue without it.
+
 ## Routing
 
+- If `$ARGUMENTS` contains ServiceNow AVIT numbers (`AVIT` followed by digits, e.g. `AVIT0012345`), fetch them into one findings file and use that file as the findings source:
+  ```
+  TIMESTAMP=$(date +%s)
+  threatlint avit fetch <AVIT numbers> -o /tmp/avits_${TIMESTAMP}.md
+  ```
+  The command needs the ServiceNow instance (`--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`) and reads the OAuth client from AWS Parameter Store (`/cfc-appsec-snow-vulnerabilities-prod/client-id` and `/cfc-appsec-snow-vulnerabilities-prod/client-secret`, us-west-2) with the user's AWS CLI credentials (`--aws-profile` if needed). If it fails with an access error, tell the user to sign in through PepsiCo AWS SSO (https://secure.pepsico.com/app/amazon_aws_sso/exk1l68v83cNqrsYG0h8/sso/saml), request access to the ServiceNow keys if needed, refresh their AWS CLI credentials, and retry; never ask them to paste the secret into the conversation. Triage every AVIT as one finding in a single report, keeping each AVIT number as the original finding ID, and delete the temporary file afterwards.
 - If `$ARGUMENTS` is empty: look for a SARIF file, Semgrep JSON, or threatlint report in the current directory. Check these locations in order: `.sarif`, `semgrep.json`, `semgrep-results.json`, `results.sarif`, `*.sarif`, any `*.json` matching `semgrep` in the filename, or the most recent `*.md` threatlint report in the repo root.
 - If `$ARGUMENTS` is a file path: use that file as the findings source.
 - If `$ARGUMENTS` is a finding ID or range (e.g., `TM-001` or `TM-001..TM-005`): look for those findings in the most recent threatlint report in the repo root.

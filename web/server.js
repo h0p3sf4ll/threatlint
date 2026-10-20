@@ -41,7 +41,8 @@ function buildInfo() {
 
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
- * runProvider (replaces model calls for reviews and conversations in tests/recordings).
+ * runProvider (replaces model calls for reviews and conversations in tests/recordings),
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore } for Semgrep and ServiceNow).
  */
 function createWorkbench(options = {}) {
   const app = express();
@@ -53,7 +54,7 @@ function createWorkbench(options = {}) {
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
-  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider });
+  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
 
   app.use(securityHeaders(server));
@@ -62,7 +63,7 @@ function createWorkbench(options = {}) {
   app.get('/vendor/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.min.js')));
   app.use(express.static(path.join(__dirname, 'public')));
 
-  registerWorkspaceRoutes(app, { store, reports, build: buildInfo() });
+  registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
   registerSourceRoutes(app, { store, scm });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations });

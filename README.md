@@ -405,6 +405,31 @@ threatlint install --copilot --local -y
 threatlint install --lmstudio -y
 ```
 
+#### Triage ServiceNow application vulnerable items (AVITs)
+
+The FP reviewer can pull AVITs straight from ServiceNow (`sn_vul_app_vulnerable_item`) and triage
+a list of them in one report. The OAuth client is stored in AWS Parameter Store (us-west-2) as
+`/cfc-appsec-snow-vulnerabilities-prod/client-id` and `/cfc-appsec-snow-vulnerabilities-prod/client-secret`.
+To read it, sign in through [PepsiCo AWS SSO](https://secure.pepsico.com/app/amazon_aws_sso/exk1l68v83cNqrsYG0h8/sso/saml)
+and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must
+be installed (`python3 -m pip install semgrep`); the FP review will not start without it.
+
+- **Workbench:** in *Model & settings → ServiceNow AVIT import*, enter the instance URL and either
+  paste the client ID and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
+  or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs. The
+  values stay in memory for the session only.
+- **CLI:** uses your signed-in AWS CLI credentials, and prompts for the values if Parameter Store
+  can't be read.
+
+```bash
+export THREATLINT_SNOW_INSTANCE=https://<instance>.service-now.com
+threatlint run fp-review --avit AVIT0012345,AVIT0012346 --aws-profile <profile> --model YOUR_LOCAL_MODEL
+threatlint avit fetch AVIT0012345 AVIT0012346 -o avits.md    # findings file for /fp-review or --findings
+```
+
+Only `*.service-now.com` and `*.servicenowservices.com` instances are accepted, because the client
+secret is sent there; add custom domains to `THREATLINT_SNOW_ALLOWED_HOSTS`.
+
 Uninstall removes only bundled skill files and leaves third-party skills and custom additions
 untouched. Report-format warnings in the UI are structural checks, not verification that a finding,
 patch, or scanner rule is correct. Human review and real regression testing remain required.
