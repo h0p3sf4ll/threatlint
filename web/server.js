@@ -22,6 +22,7 @@ const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
 const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/runtime.cjs');
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
+const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -42,7 +43,7 @@ function buildInfo() {
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
  * runProvider (replaces model calls for reviews and conversations in tests/recordings),
- * integrations ({ semgrepVersion, fetchImpl, readParameterStore } for Semgrep and ServiceNow).
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken } for Semgrep and ServiceNow).
  */
 function createWorkbench(options = {}) {
   const app = express();
@@ -67,6 +68,7 @@ function createWorkbench(options = {}) {
   registerSourceRoutes(app, { store, scm });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations });
+  registerTriageRoutes(app, { reports, integrations: options.integrations });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));

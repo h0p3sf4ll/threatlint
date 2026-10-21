@@ -408,7 +408,11 @@ threatlint install --lmstudio -y
 #### Triage ServiceNow application vulnerable items (AVITs)
 
 The FP reviewer can pull AVITs straight from ServiceNow (`sn_vul_app_vulnerable_item`) and triage
-a list of them in one report. The OAuth client is stored in AWS Parameter Store (us-west-2) as
+a list of them in one report. Only AVITs in AVR's **CodeSecurity** view are triaged or closed, because
+Semgrep produces only code findings; AVITs from other views are skipped and listed as excluded. An AVIT
+counts as CodeSecurity when its source, scanner, category, or type field (or its vulnerability entry)
+matches `code security`, `SAST`, `static application`, or `Semgrep`; override with
+`THREATLINT_SNOW_CODE_SECURITY_PATTERN` (a regular expression). The OAuth client is stored in AWS Parameter Store (us-west-2) as
 `/cfc-appsec-snow-vulnerabilities-prod/client-id` and `/cfc-appsec-snow-vulnerabilities-prod/client-secret`.
 To read it, sign in through [PepsiCo AWS SSO](https://secure.pepsico.com/app/amazon_aws_sso/exk1l68v83cNqrsYG0h8/sso/saml)
 and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must
@@ -429,6 +433,26 @@ threatlint avit fetch AVIT0012345 AVIT0012346 -o avits.md    # findings file for
 
 Only `*.service-now.com` and `*.servicenowservices.com` instances are accepted, because the client
 secret is sent there; add custom domains to `THREATLINT_SNOW_ALLOWED_HOSTS`.
+
+#### Close false positives and tune Semgrep
+
+In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings triage report has a
+*Close FP & tune Semgrep…* action. Each step runs only after you confirm it:
+
+1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the report
+   attached (as `AVIT0012345-threatlint-fp-review.md`, plus `.docx` when Word export is available),
+   then is set to *Closed / False Positive* with a "Closed by Threatlint" work note. The state and
+   substate values come from the instance's `sys_choice` table (override them with
+   `THREATLINT_SNOW_FP_STATE` / `THREATLINT_SNOW_FP_SUBSTATE`). If a business rule holds the closure
+   for approval, the dialog reports the state ServiceNow actually stored. The OAuth client needs
+   write access to `sn_vul_app_vulnerable_item` and `sys_attachment`.
+2. **Tune Semgrep.** The Semgrep API token is read from Parameter Store
+   (`/cfc-appsec-semgrep-scan/semgrep-token`, or `SEMGREP_APP_TOKEN`) with your AWS CLI session.
+   *Find matches* lists open findings for exactly that rule, project, and file (±3 lines). The
+   findings you confirm are triaged as *ignored / false_positive* with a note that references the
+   report and AVIT. Semgrep keeps that triage for the same fingerprint on later scans and other
+   branches. The public API cannot edit rule logic, so any rule change (a `pattern-not` or path
+   exclusion) stays a proposal in the report for the scanner owner.
 
 Uninstall removes only bundled skill files and leaves third-party skills and custom additions
 untouched. Report-format warnings in the UI are structural checks, not verification that a finding,

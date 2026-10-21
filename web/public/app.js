@@ -324,10 +324,85 @@
       if (finding.disposition) header.append(el('span', 'disposition-badge', finding.disposition));
       const body = el('div', 'markdown'); safeMarkdown(body, finding.body);
       const actions = el('div', 'finding-card-actions');
+      if (!state.report.example && state.report.id && state.report.agentId === FP_REVIEWER && finding.disposition === 'FALSE POSITIVE') {
+        actions.append(button('Close FP & tune Semgrep…', 'button primary small-button', () => openFalsePositiveActions(finding)));
+      }
       if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
       card.append(header, body, actions); list.append(card);
     }
     if (!findings.length) { const empty = el('div', 'empty-state'); empty.append(el('h3', '', 'No findings match this view.'), el('p', '', state.report?.findings?.length ? 'Adjust the severity or disposition filter.' : 'No structured finding blocks were detected. Read the full report for conclusions, scope, and limitations.')); list.append(empty); }
+  }
+
+  // Pre-fills from the finding's Original finding line: "AVIT0012345; rule.id; path/file.js:42".
+  function falsePositiveTarget(finding) {
+    const original = /Original finding\W*:\s*(.+)/i.exec(finding.body)?.[1] || '';
+    const avits = [...new Set((original.match(/AVIT\d{4,12}/gi) || finding.title.match(/AVIT\d{4,12}/gi) || finding.body.match(/AVIT\d{4,12}/gi) || []).map(item => item.toUpperCase()))];
+    const location = finding.evidence?.[0] || '';
+    const [path, line] = location.split(':');
+    const rule = original.split(/[;,]/).map(part => part.replaceAll(/[`*]/g, '').trim()).find(part => /^[\w-]+(?:\.[\w-]+){2,}$/.test(part) && !/\.(?:js|ts|py|java|go|rb|cs|php|tsx|jsx)$/.test(part)) || '';
+    return { avit: avits.length === 1 ? avits[0] : '', rule, path: path || '', line: /^\d+$/.test(line || '') ? line : '' };
+  }
+  function fpStatus(id, text, tone = '') { const node = $(id); node.textContent = text; node.className = `field-note small ${tone ? `fp-status-${tone}` : ''}`; }
+  function fpTarget() {
+    return { rule: $('fp-semgrep-rule').value.trim(), repo: $('fp-semgrep-repo').value.trim(), path: $('fp-semgrep-path').value.trim(),
+      line: $('fp-semgrep-line').value.trim() || null, deployment: $('fp-semgrep-deployment').value.trim() || undefined };
+  }
+  function openFalsePositiveActions(finding) {
+    const target = falsePositiveTarget(finding);
+    state.fpAction = { finding, avit: target.avit, matches: [], deployment: null };
+    $('fp-action-title').textContent = `${finding.id} · ${finding.title}`;
+    $('fp-action-summary').textContent = target.avit ? `ServiceNow ${target.avit} · FALSE POSITIVE · confidence ${finding.confidence}` : `FALSE POSITIVE · confidence ${finding.confidence} · no AVIT number found in this finding`;
+    $('fp-snow-section').hidden = !target.avit;
+    $('fp-close-avit').hidden = !target.avit; $('fp-close-avit').disabled = false;
+    $('fp-attachment-name').textContent = target.avit ? `${target.avit}-threatlint-fp-review.md` : '';
+    fpStatus('fp-snow-status', servicenowReady() ? '' : 'ServiceNow is not configured. Add the instance, client ID, and secret in Model & settings first.', servicenowReady() ? '' : 'warn');
+    $('fp-semgrep-rule').value = target.rule; $('fp-semgrep-path').value = target.path; $('fp-semgrep-line').value = target.line;
+    if (!$('fp-semgrep-repo').value && state.session?.repoPath) $('fp-semgrep-repo').value = state.session.provenance?.repository || repoName(state.session.repoPath);
+    $('fp-semgrep-matches').replaceChildren(); fpStatus('fp-semgrep-status', ''); $('fp-action-error').textContent = '';
+    $('fp-ignore-semgrep').disabled = true;
+    $('fp-action-dialog').showModal();
+  }
+  async function closeAvitFalsePositive() {
+    const action = state.fpAction; if (!action?.avit) return;
+    if (!servicenowReady()) { fpStatus('fp-snow-status', 'Configure ServiceNow in Model & settings first.', 'warn'); return; }
+    if (!window.confirm(`Close ${action.avit} in ServiceNow as Closed / False Positive and attach this report?`)) return;
+    $('fp-close-avit').disabled = true; fpStatus('fp-snow-status', `Attaching the report and closing ${action.avit}…`);
+    try {
+      const result = await request('/api/servicenow/close-false-positive', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id,
+        servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } }) });
+      const files = result.attachments.map(item => item.name).join(', ');
+      if (result.closed) fpStatus('fp-snow-status', `${result.avit} closed as false positive. Attached ${files}.`, 'ok');
+      else { fpStatus('fp-snow-status', `${result.avit}: report attached (${files}) and work note added, but ServiceNow kept state ${result.state} / ${result.substate} (likely pending approval).`, 'warn'); $('fp-close-avit').disabled = false; }
+    } catch (error) { fpStatus('fp-snow-status', error.message, 'warn'); $('fp-close-avit').disabled = false; }
+  }
+  async function findSemgrepMatches() {
+    const action = state.fpAction; if (!action) return;
+    $('fp-action-error').textContent = ''; $('fp-semgrep-find').disabled = true; $('fp-ignore-semgrep').disabled = true;
+    fpStatus('fp-semgrep-status', 'Reading the Semgrep token and searching open findings…'); $('fp-semgrep-matches').replaceChildren();
+    try {
+      const result = await request('/api/semgrep/false-positive/matches', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, target: fpTarget(),
+        profile: $('snow-aws-profile').value.trim() || undefined }) });
+      action.matches = result.matches; action.deployment = result.deployment.slug;
+      for (const match of result.matches) {
+        const label = el('label'); const box = el('input'); box.type = 'checkbox'; box.checked = true; box.value = String(match.id);
+        label.append(box, document.createTextNode(`#${match.id} · ${match.rule} · ${match.path}:${match.line ?? '?'}${match.ref ? ` · ${match.ref}` : ''}`)); $('fp-semgrep-matches').append(label);
+      }
+      fpStatus('fp-semgrep-status', result.matches.length ? `${result.matches.length} open finding${result.matches.length > 1 ? 's' : ''} in ${result.deployment.name || result.deployment.slug} match this rule and file.` : 'No open Semgrep findings match this rule, project, and file. Check the rule ID and paths.', result.matches.length ? '' : 'warn');
+      $('fp-ignore-semgrep').disabled = !result.matches.length;
+    } catch (error) { fpStatus('fp-semgrep-status', error.message, 'warn'); }
+    finally { $('fp-semgrep-find').disabled = false; }
+  }
+  async function ignoreSemgrepFalsePositive() {
+    const action = state.fpAction; if (!action?.matches.length) return;
+    const issueIds = [...$('fp-semgrep-matches').querySelectorAll('input:checked')].map(box => Number(box.value));
+    if (!issueIds.length) { fpStatus('fp-semgrep-status', 'Select at least one finding to ignore.', 'warn'); return; }
+    if (!window.confirm(`Ignore ${issueIds.length} Semgrep finding${issueIds.length > 1 ? 's' : ''} as false positive?`)) return;
+    $('fp-ignore-semgrep').disabled = true; fpStatus('fp-semgrep-status', 'Updating Semgrep triage…');
+    try {
+      const result = await request('/api/semgrep/false-positive/ignore', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, target: { ...fpTarget(), deployment: action.deployment },
+        issueIds, profile: $('snow-aws-profile').value.trim() || undefined }) });
+      fpStatus('fp-semgrep-status', `Semgrep ignored ${result.triaged} finding${result.triaged === 1 ? '' : 's'} as false positive (including the same fingerprint on other branches).`, 'ok');
+    } catch (error) { fpStatus('fp-semgrep-status', error.message, 'warn'); $('fp-ignore-semgrep').disabled = false; }
   }
 
   async function chooseRepository() {
@@ -486,7 +561,7 @@
   function handleEvent(event) {
     switch (event.type) {
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
-      case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}`, event.missing.length ? 'error' : 'success'); break;
+      case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${selectedModel()}`); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
@@ -580,6 +655,9 @@
     });
     $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; settingsProvider = state.preferences.provider; });
     $('snow-read-parameters').addEventListener('click', readSnowParameters);
+    $('fp-close-avit').addEventListener('click', closeAvitFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
+    $('fp-ignore-semgrep').addEventListener('click', ignoreSemgrepFalsePositive); $('fp-action-form').addEventListener('submit', event => event.preventDefault());
+    for (const id of ['fp-semgrep-rule', 'fp-semgrep-repo', 'fp-semgrep-path', 'fp-semgrep-line', 'fp-semgrep-deployment']) $(id).addEventListener('input', () => { $('fp-ignore-semgrep').disabled = true; });
     $('model-url').addEventListener('input', () => { updateSettingsFields('lmstudio'); $('cloud-consent').checked = false; });
     $('attach-findings').addEventListener('click', chooseFindings);
     $('findings-file').addEventListener('change', async event => {

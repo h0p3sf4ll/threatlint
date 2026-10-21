@@ -60,19 +60,21 @@ def test_avits_become_one_untrusted_findings_artifact(monkeypatch):
         if "sn_vul_app_vulnerable_item" in url:
             assert headers["Authorization"] == "Bearer token"
             return {"result": [
-                {"number": {"display_value": "AVIT0000002"}, "description": {"display_value": "a\nb"}},
+                {"number": {"display_value": "AVIT0000002"}, "source": {"display_value": "CodeSecurity"}, "description": {"display_value": "a\nb"}},
+                {"number": {"display_value": "AVIT0000005"}, "source": {"display_value": "Dynamic Application Security (DAST)"}},
                 {"number": {"display_value": "AVIT0000001"},
                  "vulnerability": {"display_value": "SSRF", "link": f"{INSTANCE}/api/now/table/sn_vul_app_vulnerability_entry/1"}},
-                {"number": {"display_value": "AVIT0000003"},
+                {"number": {"display_value": "AVIT0000003"}, "scanner": {"display_value": "Semgrep"},
                  "vulnerability": {"display_value": "x", "link": "https://attacker.example/api/now/table/x/1"}},
             ]}
         assert url.startswith(f"{INSTANCE}/api/now/table/sn_vul_app_vulnerability_entry/1")
-        return {"result": {"cwe": "CWE-918"}}
+        return {"result": {"cwe": "CWE-918", "category": "SAST"}}
 
     monkeypatch.setattr(servicenow, "_request_json", fake_request)
-    numbers = ["AVIT0000001", "AVIT0000002", "AVIT0000003", "AVIT0000004"]
-    content, count, missing = servicenow.load_avits(INSTANCE, numbers, "id", "secret")
-    assert (count, missing) == (3, ["AVIT0000004"])
+    numbers = ["AVIT0000001", "AVIT0000002", "AVIT0000003", "AVIT0000004", "AVIT0000005"]
+    content, count, missing, excluded = servicenow.load_avits(INSTANCE, numbers, "id", "secret")
+    assert (count, missing, excluded) == (3, ["AVIT0000004"], ["AVIT0000005"])
+    assert "## AVIT0000005" not in content and "Excluded (not in the CodeSecurity view; Semgrep does not cover them): AVIT0000005" in content
     assert content.index("## AVIT0000001") < content.index("## AVIT0000002")
     assert "CWE-918" in content and "~~~text\na\nb\n~~~" in content and "secret" not in content
 
@@ -101,7 +103,7 @@ def test_fp_review_with_avits_sends_one_artifact(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_lmstudio_models", lambda _url: ["m"])
     monkeypatch.setattr(cli, "_semgrep_version", lambda: "1.99.0")
     monkeypatch.setattr(servicenow, "resolve_credentials", lambda _profile: ("id", "secret"))
-    monkeypatch.setattr(servicenow, "load_avits", lambda instance, numbers, *_: ("## AVIT0000001\n", 1, numbers[1:]))
+    monkeypatch.setattr(servicenow, "load_avits", lambda instance, numbers, *_: ("## AVIT0000001\n", 1, numbers[1:], []))
     captured = {}
 
     def fake_agent(_base, _model, _system, message, _root, api_key=""):
@@ -123,8 +125,20 @@ def test_avits_are_rejected_for_other_modes(tmp_path):
 
 def test_avit_fetch_writes_a_findings_file(monkeypatch, tmp_path):
     monkeypatch.setattr(servicenow, "resolve_credentials", lambda _profile: ("id", "secret"))
-    monkeypatch.setattr(servicenow, "load_avits", lambda instance, numbers, *_: ("# AVITs\n", 1, []))
+    monkeypatch.setattr(servicenow, "load_avits", lambda instance, numbers, *_: ("# AVITs\n", 1, [], []))
     output = tmp_path / "avits.md"
     args = cli.build_parser().parse_args(["avit", "fetch", "AVIT0000001", "--snow-instance", INSTANCE, "-o", str(output)])
     assert servicenow.cmd_avit(args) == 0
     assert output.read_text() == "# AVITs\n"
+
+
+def test_only_code_security_avits_are_triaged(monkeypatch):
+    def fake_request(url, *, data=None, headers):
+        if url.endswith("/oauth_token.do"):
+            return {"access_token": "token"}
+        return {"result": [{"number": {"display_value": "AVIT0000009"}, "source": {"display_value": "Container Security"}}]}
+    monkeypatch.setattr(servicenow, "_request_json", fake_request)
+    with pytest.raises(servicenow.ServiceNowError, match="CodeSecurity"):
+        servicenow.load_avits(INSTANCE, ["AVIT0000009"], "id", "secret")
+    monkeypatch.setenv(servicenow.CODE_SECURITY_PATTERN_ENV, "container")
+    assert servicenow.load_avits(INSTANCE, ["AVIT0000009"], "id", "secret")[1] == 1

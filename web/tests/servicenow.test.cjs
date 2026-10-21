@@ -31,16 +31,18 @@ describe('AVIT retrieval', () => {
       calls.push({ url, options });
       if (url.endsWith('/oauth_token.do')) return json({ access_token: 'token' });
       if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [
-        { number: { display_value: 'AVIT0000002' }, sys_mod_count: { value: '4' }, description: { display_value: 'line one\nline two' } },
+        { number: { display_value: 'AVIT0000002' }, source: { display_value: 'CodeSecurity' }, sys_mod_count: { value: '4' }, description: { display_value: 'line one\nline two' } },
+        { number: { display_value: 'AVIT0000005' }, source: { display_value: 'Infrastructure (Cloud) Security' } },
         { number: { display_value: 'AVIT0000001' }, vulnerability: { display_value: 'SSRF rule', link: `${INSTANCE}/api/now/table/sn_vul_app_vulnerability_entry/abc` } },
-        { number: { display_value: 'AVIT0000003' }, vulnerability: { display_value: 'x', link: 'https://attacker.example/api/now/table/x/1' } },
+        { number: { display_value: 'AVIT0000003' }, scanner: { display_value: 'Semgrep' }, vulnerability: { display_value: 'x', link: 'https://attacker.example/api/now/table/x/1' } },
       ] });
-      if (url.includes('sn_vul_app_vulnerability_entry/abc')) return json({ result: { id: 'semgrep:tainted-ssrf', cwe: 'CWE-918' } });
+      if (url.includes('sn_vul_app_vulnerability_entry/abc')) return json({ result: { id: 'semgrep:tainted-ssrf', cwe: 'CWE-918', category: 'SAST' } });
       throw new Error(`unexpected ${url}`);
     };
-    const { items, missing } = await fetchAvits({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT0000001', 'AVIT0000002', 'AVIT0000003', 'AVIT0000004'], { fetchImpl });
+    const { items, missing, excluded } = await fetchAvits({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT0000001', 'AVIT0000002', 'AVIT0000003', 'AVIT0000004', 'AVIT0000005'], { fetchImpl });
     assert.deepEqual(items.map(item => item.fields.number), ['AVIT0000001', 'AVIT0000002', 'AVIT0000003']);
     assert.deepEqual(missing, ['AVIT0000004']);
+    assert.deepEqual(excluded, ['AVIT0000005']);
     assert.equal(items[0].references.vulnerability.cwe, 'CWE-918');
     assert.deepEqual(items[2].references, {});
     assert.equal(items[1].fields.sys_mod_count, undefined);
@@ -58,5 +60,9 @@ describe('AVIT retrieval', () => {
     await assert.rejects(fetchAvits({ instance: INSTANCE, clientId: 'id', clientSecret: 'very-secret' }, ['AVIT0000001'], { fetchImpl: denied }), error => /HTTP 401/.test(error.message) && !/very-secret/.test(error.message));
     const empty = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : { result: [] });
     await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT0000001'], { fetchImpl: empty }), /No AVITs were returned/);
+  });
+  it('triages only AVR CodeSecurity AVITs because Semgrep covers code findings only', async () => {
+    const other = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : { result: [{ number: { display_value: 'AVIT0000009' }, source: { display_value: 'Container Security' } }] });
+    await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT0000009'], { fetchImpl: other }), error => error.status === 422 && /CodeSecurity/.test(error.message));
   });
 });

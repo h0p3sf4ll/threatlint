@@ -18,7 +18,7 @@ async function fakeServiceNow(url, options) {
   const json = body => ({ ok: true, status: 200, json: async () => body });
   if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
   return json({ result: [{ number: { display_value: 'AVIT0010001', value: 'AVIT0010001' }, short_description: { display_value: 'Tainted SSRF in ReplayService' },
-    rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' } }] });
+    rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' }, source: { display_value: 'CodeSecurity' } }] });
 }
 const finalReport = '# Findings Report\n\n## Executive Summary\nOne hypothetical test finding.\n\n#### [FP-001] — Test query binding\n**Severity**: HIGH\n**Confidence**: CONFIRMED\n**Disposition**: TRUE POSITIVE\n**Evidence**: src/example.js:1 — observed fixture\n### Proposed Fix\nBind the value; PROPOSED — NOT APPLIED.\n### Regression Tests\nNOT RUN. Reject unsafe input.\n**Acceptance Criteria**: constant statement text.\n';
 
@@ -154,7 +154,7 @@ describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
       avits: ['AVIT0010001', 'avit0010002'], servicenow });
     socket.close();
     assert.equal(events.at(-1).status, 'complete');
-    assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT0010002'] });
+    assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT0010002'], excluded: [] });
     const message = observed[before].userMessage;
     assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT0010001/); assert.match(message, /single cohesive report/);
     assert.match(message, /Semgrep Community Edition is installed/);

@@ -135,7 +135,7 @@ function createPipeline({ sessions, reports, override, integrations = {} }) {
       if (avitRequest) {
         send({ type: 'avit_fetch', count: avitRequest.numbers.length, instance: avitRequest.credentials.instance });
         const imported = await servicenow.loadAvitAttachment(avitRequest.credentials, avitRequest.numbers, { fetchImpl: integrations.fetchImpl, signal: controller.signal });
-        send({ type: 'avit_loaded', retrieved: imported.retrieved, missing: imported.missing });
+        send({ type: 'avit_loaded', retrieved: imported.retrieved, missing: imported.missing, excluded: imported.excluded });
         attachment = imported.attachment;
       }
       context = { semgrep, avits: avitRequest?.numbers || null };
