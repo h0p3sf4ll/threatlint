@@ -418,18 +418,10 @@ To read it, sign in through [PepsiCo AWS SSO](https://secure.pepsico.com/app/ama
 and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must
 be installed (`python3 -m pip install semgrep`); the FP review will not start without it.
 
-- **Workbench:** in *Model & settings → ServiceNow AVIT import*, enter the instance URL and click
-  **Sign in with AWS SSO**. No AWS CLI is needed. The first time, open *Access portal* and enter
-  the AWS access portal URL (`https://<name>.awsapps.com/start`) and IAM Identity Center region;
-  both are remembered (or set `THREATLINT_AWS_SSO_START_URL` / `THREATLINT_AWS_SSO_REGION`).
-  Sign-in opens in a **private window** of your default browser (Chrome/Brave/Chromium/Vivaldi
-  `--incognito`, Edge `--inprivate`, Firefox `-private-window`). If the default browser has no
-  scriptable private mode (e.g. Safari, Dia, Arc), the first installed browser that has one is used.
-  A normal window shares your existing Okta session and fails with *Conflicting User IDs specified on
-  state token*. Confirm the code shown in the Workbench, pick the account role if you have several,
-  and the ServiceNow client ID/secret and the Semgrep token are loaded from Parameter Store
-  (us-west-2). They stay in memory for the session only and are never written to disk. Then select
-  *Find signal in the noise* and list the AVITs.
+- **Workbench:** in *Model & settings → ServiceNow AVIT import*, enter the instance URL and either
+  paste the client ID and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
+  or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs. The
+  values stay in memory for the session only.
 - **CLI:** uses your signed-in AWS CLI credentials, and prompts for the values if Parameter Store
   can't be read.
 
@@ -455,7 +447,7 @@ In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings t
    for approval, the dialog reports the state ServiceNow actually stored. The OAuth client needs
    write access to `sn_vul_app_vulnerable_item` and `sys_attachment`.
 2. **Tune Semgrep.** The Semgrep API token is read from Parameter Store
-   (`/cfc-appsec-semgrep-scan/semgrep-token`, or `SEMGREP_APP_TOKEN`) during the AWS SSO sign-in.
+   (`/cfc-appsec-semgrep-scan/semgrep-token`, or `SEMGREP_APP_TOKEN`) with your AWS CLI session.
    *Find matches* lists open findings for exactly that rule, project, and file (±3 lines). The
    findings you confirm are triaged as *ignored / false_positive* with a note that references the
    report and AVIT. Semgrep keeps that triage for the same fingerprint on later scans and other

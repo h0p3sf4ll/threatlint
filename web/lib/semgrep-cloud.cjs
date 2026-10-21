@@ -5,12 +5,12 @@
  * logic, so the narrowest durable tuning is triage: matching findings are set to ignored /
  * false_positive with a note, and Semgrep carries that triage to the same fingerprint on later
  * scans and other branches. Matching is limited to one rule, one repository, and one file, and the
- * user confirms the exact finding IDs before anything is ignored. The API token comes from the browser
- * SSO sign-in (Parameter Store /cfc-appsec-semgrep-scan/semgrep-token) in session memory, or SEMGREP_APP_TOKEN. Rule-logic changes stay a
+ * user confirms the exact finding IDs before anything is ignored. Rule-logic changes stay a
  * scanner-owner task, proposed in the FP report.
  */
 
 const { HttpError } = require('./http.cjs');
+const { readParameters } = require('./servicenow.cjs');
 
 const API = 'https://semgrep.app/api/v1';
 const TOKEN_PARAMETER = '/cfc-appsec-semgrep-scan/semgrep-token';
@@ -21,10 +21,11 @@ const MAX_NOTE = 3000;
 const SLUG = /^[\w.-]{1,100}$/;
 const REPO = /^[\w.@/-]{1,200}$/;
 
-function semgrepToken({ token } = {}) {
-  const value = typeof token === 'string' && token.trim() ? token.trim() : process.env.SEMGREP_APP_TOKEN;
-  if (!value || value.length > 500) throw new HttpError(`Sign in with AWS SSO in Model & settings to load the Semgrep token (${TOKEN_PARAMETER}).`, 401);
-  return value;
+async function semgrepToken({ profile } = {}) {
+  if (process.env.SEMGREP_APP_TOKEN) return process.env.SEMGREP_APP_TOKEN;
+  const token = (await readParameters([TOKEN_PARAMETER], { profile }))[TOKEN_PARAMETER];
+  if (!token) throw new HttpError(`Your AWS identity cannot read ${TOKEN_PARAMETER}. Request access through SSO.`, 403);
+  return token;
 }
 
 async function requestJson(fetchImpl, url, options = {}) {

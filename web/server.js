@@ -43,7 +43,7 @@ function buildInfo() {
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
  * runProvider (replaces model calls for reviews and conversations in tests/recordings),
- * integrations ({ semgrepVersion, fetchImpl, awsSso, semgrepToken } for Semgrep, ServiceNow, and the AWS SSO sign-in).
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken } for Semgrep and ServiceNow).
  */
 function createWorkbench(options = {}) {
   const app = express();

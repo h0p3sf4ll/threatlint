@@ -12,7 +12,6 @@ const { parseReport } = require('../reports.cjs');
 const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
-const { createAwsSso } = require('../aws-sso.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -27,14 +26,9 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
     providers: { anthropic: !!process.env.ANTHROPIC_API_KEY, openai: !!process.env.OPENAI_API_KEY },
     semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
-    servicenow: { ...servicenow.ACCESS, instance: process.env.THREATLINT_SNOW_INSTANCE || '' },
-    awsSso: { startUrl: process.env.THREATLINT_AWS_SSO_START_URL || '', region: process.env.THREATLINT_AWS_SSO_REGION || '' } })));
-  // Browser SSO sign-in (private window) that reads the ServiceNow client and Semgrep token; values return only to this loopback UI.
-  const sso = integrations.awsSso || createAwsSso({ fetchImpl: integrations.fetchImpl });
-  app.post('/api/aws-sso/start', handle(req => sso.start({ startUrl: req.body?.startUrl, region: req.body?.region })));
-  app.post('/api/aws-sso/poll', handle(req => sso.poll(req.body?.loginId)));
-  app.post('/api/aws-sso/values', handle(req => sso.values(req.body?.loginId, { accountId: req.body?.accountId, roleName: req.body?.roleName })));
-  app.post('/api/aws-sso/cancel', handle(req => { sso.cancel(req.body?.loginId); return { cancelled: true }; }));
+    servicenow: { ...servicenow.ACCESS, instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
+  // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
+  app.post('/api/servicenow/parameter-store', handle(req => (integrations.readParameterStore || servicenow.readParameterStore)({ profile: req.body?.profile || undefined })));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));

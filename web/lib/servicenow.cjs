@@ -4,7 +4,7 @@
  * ServiceNow Application Vulnerable Item (AVIT) import for the FP reviewer, and the Semgrep
  * preflight for agents whose proposals are validated with Semgrep. Mirrors
  * src/threatlint/servicenow.py so the CLI and Workbench produce the same findings artifact.
- * Credentials arrive per run from the UI (session memory, filled by the browser SSO sign-in in aws-sso.cjs) and are never stored.
+ * Credentials arrive per run from the UI (session memory) or the local AWS CLI and are never stored.
  */
 
 const { execFile } = require('node:child_process');
@@ -23,6 +23,7 @@ const MAX_AVITS = 50;
 const AVIT_PATTERN = /^AVIT\d{4,12}$/;
 const SERVICENOW_DOMAINS = ['.service-now.com', '.servicenowservices.com'];
 const HTTP_TIMEOUT_MS = 30_000;
+const AWS_TIMEOUT_MS = 60_000;
 const SEMGREP_TIMEOUT_MS = 30_000;
 const MAX_FIELD_CHARS = 4000;
 const INLINE_LIMIT = 160;
@@ -76,6 +77,29 @@ function validateCredentials(value) {
     throw new HttpError('Add the ServiceNow client ID and secret in Settings. They are in AWS Parameter Store; sign in through SSO to request access.');
   }
   return { instance: validateInstanceUrl(credentials.instance), clientId: clientId.trim(), clientSecret: clientSecret.trim() };
+}
+
+/** Decrypted Parameter Store values by name, via the local AWS CLI and the user's own SSO-derived credentials. */
+async function readParameters(names, { profile } = {}) {
+  if (profile != null && (typeof profile !== 'string' || !/^[\w.@+-]{1,128}$/.test(profile))) throw new HttpError('Invalid AWS profile name');
+  const args = ['ssm', 'get-parameters', '--names', ...names, '--with-decryption', '--region', AWS_REGION, '--output', 'json',
+    ...(profile ? ['--profile', profile] : [])];
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync('aws', args, { timeout: AWS_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true }));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new HttpError('The AWS CLI is not installed. Sign in through SSO and copy the values from the Parameter Store console instead.', 503);
+    const reason = String(error.stderr || error.message).trim().split('\n').pop().slice(0, 300);
+    throw new HttpError(`Parameter Store access failed: ${reason}. Sign in through SSO (and request access if needed), then refresh your AWS CLI credentials.`, 403);
+  }
+  try { return Object.fromEntries((JSON.parse(stdout).Parameters || []).map(item => [item.Name, item.Value])); } catch { throw new HttpError('Unexpected AWS CLI response from Parameter Store', 502); }
+}
+
+/** Client ID and secret via the local AWS CLI and the user's own SSO-derived credentials. */
+async function readParameterStore({ profile } = {}) {
+  const values = await readParameters([CLIENT_ID_PARAMETER, CLIENT_SECRET_PARAMETER], { profile });
+  if (!values[CLIENT_ID_PARAMETER] || !values[CLIENT_SECRET_PARAMETER]) throw new HttpError('Your AWS identity cannot read both ServiceNow parameters. Request access through SSO.', 403);
+  return { clientId: values[CLIENT_ID_PARAMETER], clientSecret: values[CLIENT_SECRET_PARAMETER] };
 }
 
 async function requestJson(fetchImpl, url, options, signal) {
@@ -258,4 +282,4 @@ async function semgrepVersion() {
 }
 
 module.exports = { ACCESS, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
-  fetchAvits, closeAvitAsFalsePositive, avitsMarkdown, loadAvitAttachment, semgrepVersion };
+  readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, avitsMarkdown, loadAvitAttachment, semgrepVersion };

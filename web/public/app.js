@@ -12,7 +12,7 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '', ssoStartUrl: '', ssoRegion: '' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -20,7 +20,7 @@
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
-    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '', semgrepToken: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
@@ -380,7 +380,8 @@
     $('fp-action-error').textContent = ''; $('fp-semgrep-find').disabled = true; $('fp-ignore-semgrep').disabled = true;
     fpStatus('fp-semgrep-status', 'Reading the Semgrep token and searching open findings…'); $('fp-semgrep-matches').replaceChildren();
     try {
-      const result = await request('/api/semgrep/false-positive/matches', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, target: fpTarget(), semgrepToken: state.credentials.semgrepToken || undefined }) });
+      const result = await request('/api/semgrep/false-positive/matches', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, target: fpTarget(),
+        profile: $('snow-aws-profile').value.trim() || undefined }) });
       action.matches = result.matches; action.deployment = result.deployment.slug;
       for (const match of result.matches) {
         const label = el('label'); const box = el('input'); box.type = 'checkbox'; box.checked = true; box.value = String(match.id);
@@ -399,7 +400,7 @@
     $('fp-ignore-semgrep').disabled = true; fpStatus('fp-semgrep-status', 'Updating Semgrep triage…');
     try {
       const result = await request('/api/semgrep/false-positive/ignore', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, target: { ...fpTarget(), deployment: action.deployment },
-        issueIds, semgrepToken: state.credentials.semgrepToken || undefined }) });
+        issueIds, profile: $('snow-aws-profile').value.trim() || undefined }) });
       fpStatus('fp-semgrep-status', `Semgrep ignored ${result.triaged} finding${result.triaged === 1 ? '' : 's'} as false positive (including the same fingerprint on other branches).`, 'ok');
     } catch (error) { fpStatus('fp-semgrep-status', error.message, 'warn'); $('fp-ignore-semgrep').disabled = false; }
   }
@@ -453,8 +454,6 @@
     $('snow-instance').value = state.preferences.snowInstance || state.config.servicenow?.instance || '';
     $('snow-client-id').value = state.credentials.snowClientId;
     $('snow-client-secret').value = state.credentials.snowClientSecret;
-    $('aws-sso-start-url').value = state.preferences.ssoStartUrl || state.config.awsSso?.startUrl || '';
-    $('aws-sso-region').value = state.preferences.ssoRegion || state.config.awsSso?.region || '';
     updateSnowStatus();
     updateSettingsFields(provider);
     $('settings-dialog').showModal();
@@ -463,7 +462,7 @@
   function updateSnowStatus(message) {
     $('snow-status').textContent = message || (servicenowReady()
       ? 'Configured for this session. The secret stays in memory and is sent only to your ServiceNow instance.'
-      : 'Not configured. Use “Sign in with AWS SSO”; the keys stay in memory for this session only.');
+      : 'Not configured. Authenticate through SSO first; the secret stays in memory for this session only.');
   }
   /** The instance must be HTTPS without credentials or a path; the server also restricts it to ServiceNow hosts. */
   function snowInstanceUrl(value) {
@@ -472,61 +471,15 @@
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) throw new Error('Invalid instance');
     return url.origin;
   }
-  function savePreferences() {
-    const { provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion } = state.preferences;
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion })); } catch { /* in-memory operation remains available */ }
-  }
-  function ssoStatus(text, tone = '') { const node = $('aws-sso-status'); node.textContent = text; node.className = `field-note small ${tone ? `fp-status-${tone}` : ''}`; }
-  function resetSso() {
-    if (state.sso?.timer) clearTimeout(state.sso.timer);
-    state.sso = null;
-    $('aws-sso-signin').disabled = false; $('aws-sso-cancel').classList.add('hidden');
-    $('aws-sso-code').classList.add('hidden'); $('aws-sso-role-row').classList.add('hidden');
-  }
-  async function signInWithSso() {
-    resetSso();
-    const startUrl = $('aws-sso-start-url').value.trim(), region = $('aws-sso-region').value.trim();
-    if (!startUrl || !region) { $('aws-sso-start-url').closest('details').open = true; ssoStatus('Enter the AWS access portal URL and region once (saved with preferences).', 'warn'); $(startUrl ? 'aws-sso-region' : 'aws-sso-start-url').focus(); return; }
-    $('aws-sso-signin').disabled = true; ssoStatus('Opening a private browser window…');
+  async function readSnowParameters() {
+    $('snow-read-parameters').disabled = true; updateSnowStatus('Reading Parameter Store with your AWS CLI session…');
     try {
-      const login = await request('/api/aws-sso/start', { method: 'POST', body: JSON.stringify({ startUrl, region }) });
-      state.preferences.ssoStartUrl = startUrl; state.preferences.ssoRegion = region; savePreferences();
-      state.sso = { loginId: login.loginId };
-      $('aws-sso-user-code').textContent = login.userCode; $('aws-sso-link').href = login.verificationUrl;
-      $('aws-sso-code').classList.remove('hidden'); $('aws-sso-cancel').classList.remove('hidden');
-      if (login.openError) ssoStatus(`${login.openError} Use “Copy sign-in link” and paste it into a private window.`, 'warn');
-      else ssoStatus(login.usedDefault ? `Signing in through a private ${login.browser} window. Approve the request there.` : `Your default browser has no scriptable private mode, so a private ${login.browser} window was opened. Approve the request there.`);
-      const poll = async () => {
-        if (!state.sso || state.sso.loginId !== login.loginId) return;
-        try {
-          const result = await request('/api/aws-sso/poll', { method: 'POST', body: JSON.stringify({ loginId: login.loginId }) });
-          if (result.status === 'pending') { state.sso.timer = setTimeout(poll, result.interval * 1000); return; }
-          $('aws-sso-code').classList.add('hidden');
-          const select = $('aws-sso-role'); select.replaceChildren();
-          for (const role of result.roles) { const option = el('option', '', `${role.accountName} · ${role.roleName}`); option.value = JSON.stringify({ accountId: role.accountId, roleName: role.roleName }); select.append(option); }
-          if (result.roles.length === 1) { await loadSsoKeys(); return; }
-          $('aws-sso-role-row').classList.remove('hidden'); ssoStatus('Signed in. Choose the role with access to the AppSec keys.', 'ok');
-        } catch (error) { ssoStatus(error.message, 'warn'); resetSso(); }
-      };
-      state.sso.timer = setTimeout(poll, login.interval * 1000);
-    } catch (error) { ssoStatus(error.message, 'warn'); resetSso(); }
-  }
-  async function loadSsoKeys() {
-    if (!state.sso) return;
-    $('aws-sso-load').disabled = true; ssoStatus('Reading the ServiceNow keys and Semgrep token from Parameter Store…');
-    try {
-      const role = $('aws-sso-role').value ? JSON.parse($('aws-sso-role').value) : {};
-      const values = await request('/api/aws-sso/values', { method: 'POST', body: JSON.stringify({ loginId: state.sso.loginId, ...role }) });
+      const values = await request('/api/servicenow/parameter-store', { method: 'POST', body: JSON.stringify({ profile: $('snow-aws-profile').value.trim() || undefined }) });
       $('snow-client-id').value = values.clientId; $('snow-client-secret').value = values.clientSecret;
-      state.credentials.snowClientId = values.clientId; state.credentials.snowClientSecret = values.clientSecret;
-      state.credentials.semgrepToken = values.semgrepToken || '';
-      resetSso();
-      ssoStatus(`Keys loaded from ${values.account}${values.semgrepToken ? ', including the Semgrep token' : ` (Semgrep token unavailable: ${values.semgrepError})`}. They stay in memory for this session.`, values.semgrepToken ? 'ok' : 'warn');
-      updateSnowStatus();
-    } catch (error) { ssoStatus(error.message, 'warn'); }
-    finally { $('aws-sso-load').disabled = false; }
+      updateSnowStatus('Loaded from Parameter Store. Save preferences to use them for this session.');
+    } catch (error) { updateSnowStatus(error.message); }
+    finally { $('snow-read-parameters').disabled = false; }
   }
-  function cancelSso() { if (state.sso) void request('/api/aws-sso/cancel', { method: 'POST', body: JSON.stringify({ loginId: state.sso.loginId }) }).catch(() => {}); resetSso(); ssoStatus('Sign-in cancelled.'); }
   function updateSettingsFields(provider) {
     const local = provider === 'lmstudio';
     $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
@@ -562,7 +515,7 @@
     state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
     if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
     if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
-    savePreferences();
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
     $('api-key').value = ''; $('snow-client-secret').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
   }
   async function discoverModels() {
@@ -701,8 +654,7 @@
       updateSettingsFields(settingsProvider);
     });
     $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; settingsProvider = state.preferences.provider; });
-    $('aws-sso-signin').addEventListener('click', signInWithSso); $('aws-sso-load').addEventListener('click', loadSsoKeys); $('aws-sso-cancel').addEventListener('click', cancelSso);
-    $('aws-sso-link').addEventListener('click', event => { event.preventDefault(); void navigator.clipboard?.writeText($('aws-sso-link').href).then(() => toast('Sign-in link copied. Paste it into a private window.')).catch(() => toast($('aws-sso-link').href)); });
+    $('snow-read-parameters').addEventListener('click', readSnowParameters);
     $('fp-close-avit').addEventListener('click', closeAvitFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
     $('fp-ignore-semgrep').addEventListener('click', ignoreSemgrepFalsePositive); $('fp-action-form').addEventListener('submit', event => event.preventDefault());
     for (const id of ['fp-semgrep-rule', 'fp-semgrep-repo', 'fp-semgrep-path', 'fp-semgrep-line', 'fp-semgrep-deployment']) $(id).addEventListener('input', () => { $('fp-ignore-semgrep').disabled = true; });
