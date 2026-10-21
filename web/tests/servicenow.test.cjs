@@ -10,6 +10,8 @@ describe('AVIT numbers and instance URLs', () => {
   it('normalizes, de-duplicates, and bounds AVIT lists', () => {
     assert.deepEqual(parseAvitNumbers('avit0001234, AVIT0001235\nAVIT0001234'), ['AVIT0001234', 'AVIT0001235']);
     assert.throws(() => parseAvitNumbers('AVIT12'), /Not an AVIT/);
+    assert.deepEqual(parseAvitNumbers('AVIT000000095938462'), ['AVIT000000095938462'], 'production AVITs have 15 digits');
+    assert.throws(() => parseAvitNumbers('AVIT0000000959384621'), /Not an AVIT/);
     assert.throws(() => parseAvitNumbers(''), /at least one/);
     assert.throws(() => parseAvitNumbers(Array.from({ length: 51 }, (_, i) => `AVIT${String(i).padStart(7, '0')}`)), /at most 50/);
   });

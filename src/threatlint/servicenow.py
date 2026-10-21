@@ -31,7 +31,7 @@ SERVICENOW_DOMAINS = (".service-now.com", ".servicenowservices.com")
 
 AVIT_TABLE = "sn_vul_app_vulnerable_item"
 MAX_AVITS = 50
-_AVIT_PATTERN = re.compile(r"AVIT\d{4,12}")
+_AVIT_PATTERN = re.compile(r"AVIT\d{4,15}")
 _HTTP_TIMEOUT_S = 30
 _AWS_TIMEOUT_S = 60
 _MAX_FIELD_CHARS = 4000
