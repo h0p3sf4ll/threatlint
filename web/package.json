@@ -53,6 +53,7 @@
     "appId": "io.threatlint.workbench",
     "productName": "Threatlint",
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },

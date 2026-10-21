@@ -15,7 +15,12 @@ const { SKILL_MAP } = require('../lib/agents.cjs');
   if (!process.env.THREATLINT_DESKTOP_EXECUTABLE) args.unshift(path.resolve(__dirname, '..'));
   const application = await electron.launch({ executablePath, args, env });
   try {
-    const page = await application.firstWindow();
+    // The first window is the launch splash; the workbench is the one served from the local runner.
+    let page;
+    for (const deadline = Date.now() + 60_000; !page && Date.now() < deadline; await new Promise(resolve => setTimeout(resolve, 100))) {
+      page = application.windows().find(win => win.url().startsWith('http://127.0.0.1:'));
+    }
+    assert.ok(page, 'Workbench window did not open');
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.waitForSelector('#connection-status.online');
     assert.equal(await page.locator('.agent-card').count(), Object.keys(SKILL_MAP).length);
@@ -25,7 +30,7 @@ const { SKILL_MAP } = require('../lib/agents.cjs');
     await page.locator('#preview-example').click(); await page.locator('#report-dialog[open]').waitFor();
     await page.locator('#report-tab-findings').click(); assert.equal(await page.locator('.finding-card').count(), 2);
     const isolation = await application.evaluate(({ BrowserWindow }) => {
-      const settings = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
+      const settings = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().startsWith('http://127.0.0.1:')).webContents.getLastWebPreferences();
       return { sandbox: settings.sandbox, contextIsolation: settings.contextIsolation, nodeIntegration: settings.nodeIntegration };
     });
     assert.deepEqual(isolation, { sandbox: true, contextIsolation: true, nodeIntegration: false });
