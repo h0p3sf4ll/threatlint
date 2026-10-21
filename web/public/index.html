@@ -268,12 +268,6 @@
 <label for="snow-client-id">Client ID</label><input id="snow-client-id" autocomplete="off" spellcheck="false">
 <label for="snow-client-secret">Client secret</label><input id="snow-client-secret" type="password" autocomplete="off">
 <p id="snow-status" class="field-note small subtle" aria-live="polite">Not configured. The secret stays in memory for this session and is sent only to your ServiceNow instance.</p></fieldset>
-<fieldset class="servicenow-settings"><legend>Azure DevOps Boards &amp; GitHub Advanced Security <span class="subtle">session only</span></legend>
-<p class="field-note small subtle">Close CodeSecurity false positives tracked as Azure DevOps work items or GitHub code-scanning alerts. ADO needs a PAT with Work Items: Read &amp; write; GitHub needs a token with <code>security_events</code> (Code scanning alerts: write) and Issues: write.</p>
-<div class="fp-grid"><div><label for="ado-organization">ADO organization</label><input id="ado-organization" autocomplete="off" spellcheck="false" placeholder="contoso"></div><div><label for="ado-project">Project</label><input id="ado-project" autocomplete="off" spellcheck="false"></div></div>
-<label for="ado-token">ADO personal access token</label><input id="ado-token" type="password" autocomplete="off">
-<label for="github-token">GitHub token</label><input id="github-token" type="password" autocomplete="off">
-<p id="tracker-status" class="field-note small subtle" aria-live="polite"></p></fieldset>
 <div class="privacy-notice"><span>◇</span><p>Credentials stay in memory and are never saved. Non-secret preferences and report history are stored locally. A remote provider receives prompts and the source inspected by its agents.</p></div><label class="checkbox-label" id="cloud-consent-label"><input type="checkbox" id="cloud-consent"><span>I authorize sending review context to the selected remote model provider.</span></label><p class="form-error" id="settings-error" role="alert"></p><div class="dialog-footer"><span class="small subtle">No model requests are made until you start.</span><button class="button primary" type="submit">Save preferences</button></div></form></dialog>
 
   <dialog id="detail-dialog" class="dialog detail-dialog"><div class="dialog-heading"><div><span class="eyebrow" id="detail-eyebrow">SPECIALIST PROFILE</span><h2 id="detail-title">Details</h2></div><button class="icon-button close-dialog" aria-label="Close details">×</button></div><div id="detail-content"></div><div class="dialog-footer" id="detail-footer"></div></dialog>
@@ -282,7 +276,7 @@
 
   <dialog id="fp-action-dialog" class="dialog fp-action-dialog"><form id="fp-action-form"><div class="dialog-heading"><div><span class="eyebrow" id="fp-action-eyebrow">FALSE POSITIVE · CONFIRM</span><h2 id="fp-action-title">Act on false positive</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close false-positive dialog">×</button></div>
 <p id="fp-action-summary" class="subtle"></p>
-<section id="fp-snow-section"><h3 class="fp-step" id="fp-close-heading">1 · Close in ServiceNow</h3><p class="field-note small subtle" id="fp-close-explainer"></p><p id="fp-snow-status" class="field-note small" aria-live="polite"></p></section>
+<section id="fp-snow-section"><h3 class="fp-step">1 · Close in ServiceNow</h3><p class="field-note small subtle">Sets the AVIT to Closed / False Positive, adds a work note “Closed by Threatlint”, and attaches this report as <code id="fp-attachment-name"></code>. Uses the ServiceNow keys loaded by AWS SSO sign-in in Model &amp; settings.</p><p id="fp-snow-status" class="field-note small" aria-live="polite"></p></section>
 <section id="fp-semgrep-section"><h3 class="fp-step">2 · Tune Semgrep</h3><p class="field-note small subtle">Ignores the matching open finding in Semgrep AppSec Platform as a false positive. Semgrep keeps that triage for the same fingerprint on later scans and other branches. The token is loaded by AWS SSO sign-in in Model &amp; settings (<code>/cfc-appsec-semgrep-scan/semgrep-token</code>).</p>
 <label for="fp-semgrep-rule">Rule ID</label><input id="fp-semgrep-rule" autocomplete="off" spellcheck="false" placeholder="e.g. javascript.express.security.audit.xss">
 <label for="fp-semgrep-repo">Semgrep project</label><input id="fp-semgrep-repo" autocomplete="off" spellcheck="false" placeholder="org/repository">

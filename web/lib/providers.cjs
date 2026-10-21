@@ -11,8 +11,6 @@ const TOOL_SCHEMAS = [
 
 const DEFAULT_ITERATIONS = 80;
 const MAX_OUTPUT_TOKENS = 16000;
-// Claude streams, so multi-finding FP reports (several thousand tokens per finding) get more room.
-const CLAUDE_MAX_OUTPUT_TOKENS = 64000;
 
 function checkAbort(signal) { if (signal?.aborted) throw new Error('Cancelled'); }
 
@@ -93,7 +91,7 @@ async function runClaude({ systemPrompt, userMessage, history = [], model, key, 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const stream = client.messages.stream({ model, max_tokens: CLAUDE_MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
+    const stream = client.messages.stream({ model, max_tokens: MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
     for await (const event of stream) {
       checkAbort(signal);
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') onEvent({ type: 'text_chunk', text: event.delta.text });

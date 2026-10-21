@@ -444,18 +444,8 @@ secret is sent there; add custom domains to `THREATLINT_SNOW_ALLOWED_HOSTS`.
 
 #### Close false positives and tune Semgrep
 
-Confirmed false positives can be closed in **ServiceNow AVR**, **Azure DevOps Boards**, or **GitHub
-Advanced Security code scanning**. In each, the report is attached under a name prefixed with the
-item's ID, and the item is closed with a "Closed by Threatlint" note. Only CodeSecurity findings
-qualify, because Semgrep reports code findings only. Azure DevOps needs a PAT with
-*Work Items: Read & write*; GitHub needs a token with *Code scanning alerts: write* and
-*Issues: write*. Enter both in *Model & settings*. Code-scanning alerts cannot hold files, so for
-GitHub the report goes into a closed tracking issue and the dismissal comment links to it. See
-[docs/fp-closure.md](docs/fp-closure.md) for the full flow, the CodeSecurity rules for each tracker,
-and the efficacy evaluation. The deck is [docs/threatlint-fp-closure.pptx](docs/threatlint-fp-closure.pptx).
-
 In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings triage report has a
-*Close FP & tune Semgrep…* action. Each step runs only after you confirm it. The ServiceNow flow is:
+*Close FP & tune Semgrep…* action. Each step runs only after you confirm it:
 
 1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the report
    attached (as `AVIT0012345-threatlint-fp-review.md`, plus `.docx` when Word export is available),

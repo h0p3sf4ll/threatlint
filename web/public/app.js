@@ -12,7 +12,7 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '', ssoStartUrl: '', ssoRegion: '', adoOrganization: '', adoProject: '' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '', ssoStartUrl: '', ssoRegion: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -20,7 +20,7 @@
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
-    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '', semgrepToken: '', adoToken: '', githubToken: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '', semgrepToken: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
@@ -347,50 +347,32 @@
     return { rule: $('fp-semgrep-rule').value.trim(), repo: $('fp-semgrep-repo').value.trim(), path: $('fp-semgrep-path').value.trim(),
       line: $('fp-semgrep-line').value.trim() || null, deployment: $('fp-semgrep-deployment').value.trim() || undefined };
   }
-  const TRACKERS = {
-    servicenow: { name: 'ServiceNow', button: 'Close AVIT as false positive', ready: () => servicenowReady(), missing: 'Sign in with AWS SSO in Model & settings to load the ServiceNow keys.',
-      explain: name => `Sets the AVIT to Closed / False Positive, adds a work note “Closed by Threatlint”, and attaches this report as ${name}.`,
-      credentials: () => ({ servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } }) },
-    'azure-devops': { name: 'Azure DevOps Boards', button: 'Close work item as false positive', ready: () => !!(state.preferences.adoOrganization && state.preferences.adoProject && state.credentials.adoToken),
-      missing: 'Add the Azure DevOps organization, project, and PAT in Model & settings.',
-      explain: name => `Attaches this report as ${name}, adds a “Closed by Threatlint” discussion comment, and moves the work item to its Closed state.`,
-      credentials: () => ({ azureDevOps: { organization: state.preferences.adoOrganization, project: state.preferences.adoProject, token: state.credentials.adoToken } }) },
-    github: { name: 'GitHub Advanced Security', button: 'Dismiss alert as false positive', ready: () => !!state.credentials.githubToken, missing: 'Add a GitHub token in Model & settings.',
-      explain: name => `Code-scanning alerts cannot hold files, so the report (${name}) is filed in a closed tracking issue; the alert is dismissed as “false positive” with a “Closed by Threatlint” comment linking it.`,
-      credentials: () => ({ github: { token: state.credentials.githubToken } }) },
-  };
-  async function openFalsePositiveActions(finding) {
+  function openFalsePositiveActions(finding) {
     const target = falsePositiveTarget(finding);
-    state.fpAction = { finding, avit: target.avit, ref: null, matches: [], deployment: null };
+    state.fpAction = { finding, avit: target.avit, matches: [], deployment: null };
     $('fp-action-title').textContent = `${finding.id} · ${finding.title}`;
-    let refs = [];
-    try { refs = (await request('/api/trackers/references', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: finding.id }) })).references; } catch (error) { toast(error.message, true); }
-    const ref = refs.length === 1 ? refs[0] : null; state.fpAction.ref = ref;
-    const tracker = ref && TRACKERS[ref.tracker];
-    $('fp-action-summary').textContent = ref ? `${tracker.name} ${ref.label} · FALSE POSITIVE · confidence ${finding.confidence}` : `FALSE POSITIVE · confidence ${finding.confidence} · ${refs.length > 1 ? 'several tracker items referenced; close them from a report with one per finding' : 'no ServiceNow, Azure DevOps, or GitHub item referenced'}`;
-    $('fp-snow-section').hidden = !ref; $('fp-close-avit').hidden = !ref; $('fp-close-avit').disabled = false;
-    if (ref) {
-      $('fp-close-heading').textContent = `1 · Close in ${tracker.name}`; $('fp-close-avit').textContent = tracker.button;
-      $('fp-close-explainer').textContent = tracker.explain(`${ref.label}-threatlint-fp-review.md`);
-      fpStatus('fp-snow-status', tracker.ready() ? '' : tracker.missing, tracker.ready() ? '' : 'warn');
-    }
+    $('fp-action-summary').textContent = target.avit ? `ServiceNow ${target.avit} · FALSE POSITIVE · confidence ${finding.confidence}` : `FALSE POSITIVE · confidence ${finding.confidence} · no AVIT number found in this finding`;
+    $('fp-snow-section').hidden = !target.avit;
+    $('fp-close-avit').hidden = !target.avit; $('fp-close-avit').disabled = false;
+    $('fp-attachment-name').textContent = target.avit ? `${target.avit}-threatlint-fp-review.md` : '';
+    fpStatus('fp-snow-status', servicenowReady() ? '' : 'ServiceNow is not configured. Add the instance, client ID, and secret in Model & settings first.', servicenowReady() ? '' : 'warn');
     $('fp-semgrep-rule').value = target.rule; $('fp-semgrep-path').value = target.path; $('fp-semgrep-line').value = target.line;
-    if (!$('fp-semgrep-repo').value && state.session?.repoPath) $('fp-semgrep-repo').value = (ref?.tracker === 'github' ? `${ref.owner}/${ref.repo}` : '') || state.session.provenance?.repository || repoName(state.session.repoPath);
+    if (!$('fp-semgrep-repo').value && state.session?.repoPath) $('fp-semgrep-repo').value = state.session.provenance?.repository || repoName(state.session.repoPath);
     $('fp-semgrep-matches').replaceChildren(); fpStatus('fp-semgrep-status', ''); $('fp-action-error').textContent = '';
     $('fp-ignore-semgrep').disabled = true;
     $('fp-action-dialog').showModal();
   }
-  async function closeTrackerFalsePositive() {
-    const action = state.fpAction, ref = action?.ref; if (!ref) return;
-    const tracker = TRACKERS[ref.tracker];
-    if (!tracker.ready()) { fpStatus('fp-snow-status', tracker.missing, 'warn'); return; }
-    if (!window.confirm(`${tracker.button.replace(' as false positive', '')} ${ref.label} in ${tracker.name} as a false positive and attach this report?`)) return;
-    $('fp-close-avit').disabled = true; fpStatus('fp-snow-status', `Attaching the report and closing ${ref.label}…`);
+  async function closeAvitFalsePositive() {
+    const action = state.fpAction; if (!action?.avit) return;
+    if (!servicenowReady()) { fpStatus('fp-snow-status', 'Configure ServiceNow in Model & settings first.', 'warn'); return; }
+    if (!window.confirm(`Close ${action.avit} in ServiceNow as Closed / False Positive and attach this report?`)) return;
+    $('fp-close-avit').disabled = true; fpStatus('fp-snow-status', `Attaching the report and closing ${action.avit}…`);
     try {
-      const result = await request('/api/trackers/close-false-positive', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id, tracker: ref.tracker, ...tracker.credentials() }) });
-      const files = result.attachments.map(item => item.name).join(', ') || 'none';
-      if (result.closed) fpStatus('fp-snow-status', `${result.item} ${result.alreadyClosed ? 'was already closed' : 'closed as false positive'}. Attached ${files}.`, 'ok');
-      else { fpStatus('fp-snow-status', `${result.item}: report attached (${files}) and note added, but ${tracker.name} kept state ${result.state}${result.substate ? ` / ${result.substate}` : ''} (likely pending approval or a workflow rule).`, 'warn'); $('fp-close-avit').disabled = false; }
+      const result = await request('/api/servicenow/close-false-positive', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id,
+        servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } }) });
+      const files = result.attachments.map(item => item.name).join(', ');
+      if (result.closed) fpStatus('fp-snow-status', `${result.avit} closed as false positive. Attached ${files}.`, 'ok');
+      else { fpStatus('fp-snow-status', `${result.avit}: report attached (${files}) and work note added, but ServiceNow kept state ${result.state} / ${result.substate} (likely pending approval).`, 'warn'); $('fp-close-avit').disabled = false; }
     } catch (error) { fpStatus('fp-snow-status', error.message, 'warn'); $('fp-close-avit').disabled = false; }
   }
   async function findSemgrepMatches() {
@@ -473,8 +455,6 @@
     $('snow-client-secret').value = state.credentials.snowClientSecret;
     $('aws-sso-start-url').value = state.preferences.ssoStartUrl || state.config.awsSso?.startUrl || '';
     $('aws-sso-region').value = state.preferences.ssoRegion || state.config.awsSso?.region || '';
-    $('ado-organization').value = state.preferences.adoOrganization || ''; $('ado-project').value = state.preferences.adoProject || '';
-    $('ado-token').value = state.credentials.adoToken; $('github-token').value = state.credentials.githubToken;
     updateSnowStatus();
     updateSettingsFields(provider);
     $('settings-dialog').showModal();
@@ -493,8 +473,8 @@
     return url.origin;
   }
   function savePreferences() {
-    const { provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion, adoOrganization, adoProject } = state.preferences;
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion, adoOrganization, adoProject })); } catch { /* in-memory operation remains available */ }
+    const { provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion } = state.preferences;
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance, ssoStartUrl, ssoRegion })); } catch { /* in-memory operation remains available */ }
   }
   function ssoStatus(text, tone = '') { const node = $('aws-sso-status'); node.textContent = text; node.className = `field-note small ${tone ? `fp-status-${tone}` : ''}`; }
   function resetSso() {
@@ -575,8 +555,6 @@
     const snowClientId = $('snow-client-id').value.trim(), snowClientSecret = $('snow-client-secret').value.trim();
     if ((snowClientId || snowClientSecret) && !(snowInstance && snowClientId && snowClientSecret)) { $('settings-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
     state.preferences.snowInstance = snowInstance;
-    state.preferences.adoOrganization = $('ado-organization').value.trim(); state.preferences.adoProject = $('ado-project').value.trim();
-    state.credentials.adoToken = $('ado-token').value.trim(); state.credentials.githubToken = $('github-token').value.trim();
     state.credentials.snowClientId = snowClientId; state.credentials.snowClientSecret = snowClientSecret;
     state.preferences.provider = provider;
     state.preferences.models[provider] = model;
@@ -585,7 +563,7 @@
     if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
     if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
     savePreferences();
-    $('api-key').value = ''; $('snow-client-secret').value = ''; $('ado-token').value = ''; $('github-token').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
+    $('api-key').value = ''; $('snow-client-secret').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
   }
   async function discoverModels() {
     $('discover-models').disabled = true; $('settings-error').textContent = '';
@@ -722,10 +700,10 @@
       $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
       updateSettingsFields(settingsProvider);
     });
-    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; $('ado-token').value = ''; $('github-token').value = ''; settingsProvider = state.preferences.provider; });
+    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; settingsProvider = state.preferences.provider; });
     $('aws-sso-signin').addEventListener('click', signInWithSso); $('aws-sso-load').addEventListener('click', loadSsoKeys); $('aws-sso-cancel').addEventListener('click', cancelSso);
     $('aws-sso-link').addEventListener('click', event => { event.preventDefault(); void navigator.clipboard?.writeText($('aws-sso-link').href).then(() => toast('Sign-in link copied. Paste it into a private window.')).catch(() => toast($('aws-sso-link').href)); });
-    $('fp-close-avit').addEventListener('click', closeTrackerFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
+    $('fp-close-avit').addEventListener('click', closeAvitFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
     $('fp-ignore-semgrep').addEventListener('click', ignoreSemgrepFalsePositive); $('fp-action-form').addEventListener('submit', event => event.preventDefault());
     for (const id of ['fp-semgrep-rule', 'fp-semgrep-repo', 'fp-semgrep-path', 'fp-semgrep-line', 'fp-semgrep-deployment']) $(id).addEventListener('input', () => { $('fp-ignore-semgrep').disabled = true; });
     $('model-url').addEventListener('input', () => { updateSettingsFields('lmstudio'); $('cloud-consent').checked = false; });
