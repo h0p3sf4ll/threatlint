@@ -1,0 +1,147 @@
+{
+  "generatedAt": "2026-10-21T23:16:50.573Z",
+  "metrics": {
+    "total": 6,
+    "correct": 6,
+    "fpCorrect": 3,
+    "fpTotal": 3,
+    "tpCorrect": 3,
+    "tpTotal": 3,
+    "unsafeClosures": 0,
+    "ambiguous": 0,
+    "excludedNonCodeSecurity": [
+      "AVIT0090007"
+    ],
+    "toolCalls": 12,
+    "seconds": 231,
+    "model": "claude-opus-5-5",
+    "mode": "fixture AVITs (real Semgrep results)",
+    "formatIssues": []
+  },
+  "rows": [
+    {
+      "avit": "AVIT0090001",
+      "expected": "FALSE POSITIVE",
+      "finding": "FP-001",
+      "disposition": "FALSE POSITIVE",
+      "confidence": "CONFIRMED",
+      "title": "Shell exec in /export with an allow-listed format argument",
+      "correct": true,
+      "rule": "javascript.lang.security.detect-child-process.detect-child-process",
+      "location": "src/server.js:22",
+      "why": "`format` is checked against a fixed allow-list before exec"
+    },
+    {
+      "avit": "AVIT0090002",
+      "expected": "TRUE POSITIVE",
+      "finding": "FP-002",
+      "disposition": "TRUE POSITIVE",
+      "confidence": "CONFIRMED",
+      "title": "OS command injection in /ping via unvalidated host query parameter",
+      "correct": true,
+      "rule": "javascript.lang.security.detect-child-process.detect-child-process",
+      "location": "src/server.js:27",
+      "why": "query parameter concatenated into a shell command"
+    },
+    {
+      "avit": "AVIT0090003",
+      "expected": "FALSE POSITIVE",
+      "finding": "FP-003",
+      "disposition": "FALSE POSITIVE",
+      "confidence": "CONFIRMED",
+      "title": "path.resolve with route parameter in /reports/:name (traversal check present)",
+      "correct": true,
+      "rule": "javascript.express.security.audit.express-path-join-resolve-traversal.express-path-join-resolve-traversal",
+      "location": "src/server.js:32",
+      "why": "resolved path is confined to REPORTS with a separator-aware prefix check"
+    },
+    {
+      "avit": "AVIT0090004",
+      "expected": "FALSE POSITIVE",
+      "finding": "FP-004",
+      "disposition": "FALSE POSITIVE",
+      "confidence": "PLAUSIBLE",
+      "title": "res.send of report file Buffer flagged as direct response write (XSS)",
+      "correct": true,
+      "rule": "javascript.express.security.audit.xss.direct-response-write.direct-response-write",
+      "location": "src/server.js:34",
+      "why": "response is a server-generated report file, not reflected input"
+    },
+    {
+      "avit": "AVIT0090005",
+      "expected": "TRUE POSITIVE",
+      "finding": "FP-005",
+      "disposition": "TRUE POSITIVE",
+      "confidence": "CONFIRMED",
+      "title": "Server-side template injection in /greet: escaped input concatenated into rendertemplatestring source",
+      "correct": true,
+      "rule": "python.flask.security.injection.raw-html-concat.raw-html-format",
+      "location": "app/views.py:12",
+      "why": "HTML is escaped, but user input becomes Jinja template source (SSTI)"
+    },
+    {
+      "avit": "AVIT0090006",
+      "expected": "TRUE POSITIVE",
+      "finding": "FP-006",
+      "disposition": "TRUE POSITIVE",
+      "confidence": "CONFIRMED",
+      "title": "OS command injection in /archive via subprocess.checkoutput(..., shell=True)",
+      "correct": true,
+      "rule": "python.flask.security.injection.subprocess-injection.subprocess-injection",
+      "location": "app/views.py:18",
+      "why": "query parameter reaches subprocess with shell=True"
+    }
+  ],
+  "closures": [
+    {
+      "avit": "AVIT0090001",
+      "status": 200,
+      "closed": true,
+      "attachments": [
+        "AVIT0090001-threatlint-fp-review.md"
+      ],
+      "calls": [
+        "POST /oauth_token.do",
+        "GET /api/now/table/sn_vul_app_vulnerable_item",
+        "GET /api/now/table/sys_choice",
+        "POST /api/now/attachment/file",
+        "PATCH /api/now/table/sn_vul_app_vulnerable_item/00000000000000000000000000090001"
+      ]
+    },
+    {
+      "avit": "AVIT0090003",
+      "status": 200,
+      "closed": true,
+      "attachments": [
+        "AVIT0090003-threatlint-fp-review.md"
+      ],
+      "calls": [
+        "POST /oauth_token.do",
+        "GET /api/now/table/sn_vul_app_vulnerable_item",
+        "GET /api/now/table/sys_choice",
+        "POST /api/now/attachment/file",
+        "PATCH /api/now/table/sn_vul_app_vulnerable_item/00000000000000000000000000090003"
+      ]
+    },
+    {
+      "avit": "AVIT0090004",
+      "status": 200,
+      "closed": true,
+      "attachments": [
+        "AVIT0090004-threatlint-fp-review.md"
+      ],
+      "calls": [
+        "POST /oauth_token.do",
+        "GET /api/now/table/sn_vul_app_vulnerable_item",
+        "GET /api/now/table/sys_choice",
+        "POST /api/now/attachment/file",
+        "PATCH /api/now/table/sn_vul_app_vulnerable_item/00000000000000000000000000090004"
+      ]
+    },
+    {
+      "avit": "AVIT0090002",
+      "status": 400,
+      "refused": "FP-002 is TRUE POSITIVE, not FALSE POSITIVE"
+    }
+  ]
+}

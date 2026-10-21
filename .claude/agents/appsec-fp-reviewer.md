@@ -93,7 +93,7 @@ For each unique finding use:
 
 #### [FP-NNN] — Descriptive security finding title
 
-**Original finding**: original ID(s), rule ID, scanner/version, and affected path/range, separated by semicolons (e.g. `AVIT0012345; javascript.express.security.audit.xss.direct-response-write; Semgrep 1.99; src/routes/view.js:42`). Use one AVIT per finding.
+**Original finding**: original ID(s), rule ID, scanner/version, and affected path/range, separated by semicolons (e.g. `AVIT0012345; javascript.express.security.audit.xss.direct-response-write; Semgrep 1.99; src/routes/view.js:42`). Use one tracker item per finding: a ServiceNow AVIT (`AVIT0012345`), an Azure DevOps work item (`ADO-4821`), or a GitHub Advanced Security code-scanning alert (`GHAS-owner/repo#12`), so the item can be closed from the report.
 **Disposition**: TRUE POSITIVE | FALSE POSITIVE | AMBIGUOUS
 **Severity**: CRITICAL | HIGH | MEDIUM | LOW | INFO (your assessed security impact)
 **Confidence**: CONFIRMED | PLAUSIBLE | THEORETICAL
