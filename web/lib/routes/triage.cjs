@@ -64,7 +64,7 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
   app.post('/api/semgrep/false-positive/matches', handle(async req => {
     falsePositive(req.body?.reportId, req.body?.findingId);
     const target = semgrep.validateTarget(req.body?.target);
-    return semgrep.matchFindings(await tokenFor({ profile: req.body?.profile || undefined }), target, { fetchImpl });
+    return semgrep.matchFindings(await tokenFor({ token: req.body?.semgrepToken }), target, { fetchImpl });
   }));
 
   app.post('/api/semgrep/false-positive/ignore', handle(async req => {
@@ -73,7 +73,7 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     try { avit = avitFor(finding); } catch { /* Semgrep tuning does not require an AVIT */ }
     const note = `False positive per Threatlint ${report.label}, ${finding.id}${avit ? ` (ServiceNow ${avit})` : ''}: ${finding.title}`;
     const target = semgrep.validateTarget(req.body?.target);
-    const token = await tokenFor({ profile: req.body?.profile || undefined });
+    const token = await tokenFor({ token: req.body?.semgrepToken });
     // Re-match server-side so only findings inside the narrow rule/repo/file scope can be ignored.
     const { deployment, matches } = await semgrep.matchFindings(token, target, { fetchImpl });
     const allowed = new Set(matches.map(match => match.id));
