@@ -12,6 +12,7 @@ const { parseReport } = require('../reports.cjs');
 const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
+const catalog = require('../model-catalog.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -20,11 +21,12 @@ const EXAMPLES = path.join(__dirname, '../../examples');
 const expandHome = value => value.replace(/^~(?=\/|$)/, os.homedir());
 
 function registerWorkspaceRoutes(app, { store, reports, build, integrations = {} }) {
+  const credentialSources = integrations.credentialSources || catalog.credentialSources;
   const { sessions } = store;
   const sessionFor = id => sessions.get(id) || (() => { throw new HttpError('Session not found', 404); })();
 
   app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
-    providers: { anthropic: !!process.env.ANTHROPIC_API_KEY, openai: !!process.env.OPENAI_API_KEY },
+    providers: await credentialSources(),
     semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
     servicenow: { ...servicenow.ACCESS, instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
   // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
@@ -34,6 +36,13 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));
   app.get('/api/examples/runtime', (_req, res) => res.json(JSON.parse(fs.readFileSync(path.join(EXAMPLES, 'runtime-scan.json'), 'utf8'))));
 
+  // Models the configured (or session) credential can use, for the settings dropdown. POST keeps a typed key out of URLs and logs.
+  app.post('/api/models', handle(async req => {
+    const provider = String(req.body?.provider || '');
+    if (!['claude', 'openai', 'copilot'].includes(provider)) throw new HttpError('Unknown model provider');
+    const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key);
+    return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }) };
+  }));
   app.get('/api/lmstudio/models', handle(async req => {
     const baseUrl = validateBaseUrl(typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined);
     let data;

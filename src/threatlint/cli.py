@@ -920,8 +920,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_guard_parser(sub)
     add_ide_parser(sub)
     add_avit_parser(sub)
+    from threatlint.aws_login import add_aws_parser
+    add_aws_parser(sub)
 
     return parser
+
+
+def _cmd_aws(args: argparse.Namespace) -> int:
+    from threatlint.aws_login import cmd_aws
+    return cmd_aws(args)
 
 
 def main() -> None:
@@ -931,7 +938,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws}
     handler = commands.get(args.command)
     if handler is None:
         parser.print_help()

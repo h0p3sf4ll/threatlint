@@ -12,12 +12,13 @@ const { executeTool } = require('./tools.cjs');
 const { runClaude, runOpenAi, validateBaseUrl } = require('./providers.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
+const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
 
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
 const CONTEXT_BUDGET = 48_000;
 const MAX_SCOPE = 12_000;
-const PROVIDERS = ['claude', 'openai', 'lmstudio'];
+const PROVIDERS = ['claude', 'openai', 'copilot', 'lmstudio'];
 const SECRET_PATTERN = /(?:sk-|ghp_|github_pat_)[\w-]+/g;
 
 const redact = message => String(message).replace(SECRET_PATTERN, '[REDACTED]').slice(0, 500);
@@ -57,18 +58,19 @@ function buildUserMessage(repoPath, target = '', chainContexts = [], attachment 
 function providerRequest(message) {
   const provider = message.provider || 'claude';
   if (!PROVIDERS.includes(provider)) throw new HttpError('Unknown model provider');
-  const keys = { claude: message.apiKey || process.env.ANTHROPIC_API_KEY, openai: message.openaiApiKey || process.env.OPENAI_API_KEY };
-  const key = keys[provider];
-  if (provider !== 'lmstudio' && !key) throw new HttpError('Add a provider API key in Settings or configure the server environment');
+  const sessionKey = { claude: message.apiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
+  const credential = provider === 'lmstudio' ? { key: null } : configuredKey(provider, sessionKey);
+  const key = credential.key;
+  if (provider !== 'lmstudio' && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
   const model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
   if (typeof model !== 'string' || !model.trim() || model.length > 200) throw new HttpError('Choose a model in Settings before running');
-  const baseUrl = { openai: 'https://api.openai.com/v1', lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
-  return { provider, key, model: model.trim(), baseUrl };
+  const baseUrl = { claude: credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
+  return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl, headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
 }
 
 /** One model run with read-only repository tools. `override` replaces the provider in tests and recordings. */
 function runModel({ settings, systemPrompt, userMessage, history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
-  const args = { systemPrompt, userMessage, history, maxIterations, key: settings.key, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
+  const args = { systemPrompt, userMessage, history, maxIterations, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
     execute: (name, input) => executeTool(name, input, repoPath) };
   if (override) return override({ ...args, provider: settings.provider, agentId, purpose });
   return (settings.provider === 'claude' ? runClaude : runOpenAi)(args);
