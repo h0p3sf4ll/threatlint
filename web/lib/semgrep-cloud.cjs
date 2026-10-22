@@ -10,9 +10,11 @@
  */
 
 const { HttpError } = require('./http.cjs');
+const { readSemgrep } = require('./threatlint-config.cjs');
 const { readParameters } = require('./servicenow.cjs');
 
-const API = 'https://semgrep.app/api/v1';
+// semgrep.dev serves the same API and resolves on networks that block semgrep.app.
+const API = `${(process.env.THREATLINT_SEMGREP_API || 'https://semgrep.dev').replace(/\/$/, '')}/api/v1`;
 const TOKEN_PARAMETER = '/cfc-appsec-semgrep-scan/semgrep-token';
 const HTTP_TIMEOUT_MS = 30_000;
 const PAGE_SIZE = 100;
@@ -21,8 +23,11 @@ const MAX_NOTE = 3000;
 const SLUG = /^[\w.-]{1,100}$/;
 const REPO = /^[\w.@/-]{1,200}$/;
 
+/** SEMGREP_APP_TOKEN, then the token saved in Settings (or by `threatlint semgrep login`), then Parameter Store. */
 async function semgrepToken({ profile } = {}) {
   if (process.env.SEMGREP_APP_TOKEN) return process.env.SEMGREP_APP_TOKEN;
+  const saved = readSemgrep().token;
+  if (saved) return saved;
   const token = (await readParameters([TOKEN_PARAMETER], { profile }))[TOKEN_PARAMETER];
   if (!token) throw new HttpError(`Your AWS identity cannot read ${TOKEN_PARAMETER}. Request access through SSO.`, 403);
   return token;

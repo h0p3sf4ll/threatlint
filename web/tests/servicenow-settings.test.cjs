@@ -17,7 +17,7 @@ describe('Saved ServiceNow settings', () => {
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
   });
-  after(async () => { await instance.close(); fs.rmSync(home, { recursive: true, force: true }); });
+  after(async () => { await instance.close(); });
   const call = async (method, body) => {
     const response = await fetch(`${base}/api/servicenow/settings`, { method, headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
@@ -36,5 +36,27 @@ describe('Saved ServiceNow settings', () => {
   });
   it('rejects incomplete or non-ServiceNow settings', async () => {
     assert.equal((await call('POST', { instance: 'https://attacker.example', clientId: 'x', clientSecret: 'y' })).status, 400);
+  });
+});
+
+describe('Saved Semgrep token', () => {
+  it('validates against Semgrep, saves owner-only, and never returns the token', async () => {
+    const fsx = require('node:fs'), pathx = require('node:path'), osx = require('node:os');
+    const calls = [];
+    const wb = createWorkbench({ storageDir: fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'tl-')), integrations: { fetchImpl: async (url, options) => {
+      calls.push({ url, auth: options.headers.Authorization });
+      return { ok: true, status: 200, json: async () => ({ deployments: [{ id: 1, slug: 'pepsico_poc' }] }) };
+    } } });
+    await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${wb.server.address().port}/api/semgrep/settings`;
+    try {
+      const saved = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: 'a'.repeat(64) }) })).json();
+      assert.equal(saved.hasToken, true); assert.equal(saved.deployment, 'pepsico_poc');
+      assert.match(calls[0].url, /^https:\/\/semgrep\.dev\/api\/v1\/deployments$/);
+      assert.doesNotMatch(JSON.stringify(await (await fetch(url)).json()), /aaaaaaaaaa/);
+      const file = pathx.join(process.env.THREATLINT_HOME, 'semgrep.json');
+      if (process.platform !== 'win32') assert.equal(fsx.statSync(file).mode & 0o777, 0o600);
+      assert.equal(require('../lib/threatlint-config.cjs').readSemgrep().token, 'a'.repeat(64));
+    } finally { await wb.close(); }
   });
 });

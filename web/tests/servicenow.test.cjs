@@ -1,4 +1,6 @@
 'use strict';
+// Never read the developer's saved ~/.threatlint config.
+process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseAvitNumbers, validateInstanceUrl, validateCredentials, fetchAvits, avitsMarkdown, loadAvitAttachment } = require('../lib/servicenow.cjs');

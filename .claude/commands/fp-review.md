@@ -25,7 +25,7 @@ This works on macOS, Linux, and Windows. Use a temporary working directory from 
 
 Use `$WORK` for every path below. Never hard-code `/tmp`.
 
-**Credentials.**
+**Credentials.** Run `threatlint setup` once. It configures AWS SSO, ServiceNow, the Azure DevOps PAT, and the Semgrep token.
 - The ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`.
 - The OAuth client and the Semgrep token (`/cfc-appsec-semgrep-scan/semgrep-token`) are read from AWS Parameter Store (us-west-2) with the user's AWS CLI profile (`--aws-profile`). If that fails, tell the user to run `threatlint aws login`, which signs in through a **private browser window** (avoiding Okta's "Conflicting User IDs specified on state token"), then retry.
 - Azure DevOps access comes from `threatlint ado login` (a saved, validated PAT with Code: Read), `THREATLINT_ADO_PAT`, or `az login`. Check it with `threatlint ado status`.
@@ -55,14 +55,16 @@ For each AVIT number:
    - **Secrets:** decide whether the value is a real, usable credential, not a placeholder, test fixture, revoked key, or secret-store reference. **Never print the secret value.**
    - Write *Original finding* as `<AVIT>; <rule or vulnerability>; <scanner>; <path:line>`, one AVIT per finding.
 4. **Save the report** as described under *Output*, using the AVIT checkout's repository name and branch in the filename. Keep the Markdown at `$WORK/fp_review.md`.
-5. **Resolve the AVIT.** Show the user the disposition and ask for confirmation, then run:
+5. **Resolve the AVIT without asking.** Show the user the disposition, then run:
    ```
-   threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx <saved .docx> --yes
+   threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx <saved .docx> --checkout $WORK/repo --yes
    ```
-   - **TRUE POSITIVE:** the report is attached as `<AVIT>-threatlint-fp-review.md` (and `.docx`) with a work note. The AVIT stays open.
+   For a SAST or Secrets false positive, the agent's report must contain a `**Tuned rule**:` YAML block, with the original rule plus the narrowest `pattern-not` or sanitizer, and optionally a `**Tuned rule fixtures**:` block. With a token, `curl -H "Authorization: Bearer $SEMGREP_APP_TOKEN" https://semgrep.dev/c/r/<rule-id>` returns the original Pro rule. Threatlint publishes and swaps the rule only when the original reproduces the finding and the tuned rule does not.
+   - **TRUE POSITIVE:** only the Word report is attached, as `<AVIT>-threatlint-fp-review.docx`, with the work note "True positive, see attached report." The AVIT stays open.
    - **FALSE POSITIVE:**
      - The report is attached first.
-     - The AVIT is set to Closed / False Positive with the comment "Closed as false positive by Threatlint fp-review agent".
+     - The AVIT is closed (state 3 / substate 3) with the work note "Closed by Threatlint as a false positive, see attached report."
+     - For SAST and Secrets, the rule is replaced in Semgrep by the validated tuned rule.
      - Matching open Semgrep findings are ignored as `false_positive`: Semgrep Code for SAST, Supply Chain for SCA, and Secrets for Secrets.
    - **AMBIGUOUS:** nothing changes.
 6. **Clean up.** Delete `$WORK`.

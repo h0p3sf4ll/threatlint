@@ -1,4 +1,11 @@
 'use strict';
+// Never read the developer's saved ~/.threatlint config.
+process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
+// Deterministic Word export: a stub "python" that writes the .docx argument.
+const stubDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-docx-'));
+const stub = require('node:path').join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
+require('node:fs').writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
+process.env.THREATLINT_PYTHON = stub;
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -26,7 +33,7 @@ function fakeServiceNow(calls, { storedState = '3', inView = true } = {}) {
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
     if (url.includes('/api/now/table/sys_choice')) return json({ result: CHOICES });
     if (url.includes('/api/now/attachment/file')) return json({ result: { sys_id: 'b'.repeat(32) } });
-    if (options.method === 'PATCH') return json({ result: { number: 'AVIT000000000010001', state: storedState, substate: '6' } });
+    if (options.method === 'PATCH') return json({ result: { number: 'AVIT000000000010001', state: storedState, substate: '3' } });
     if (url.includes('/sysrule_view')) return json({ result: [{ condition: 'u_scm_toolISNOTEMPTY' }] });
     if (url.includes('u_scm_toolISNOTEMPTY')) return json({ result: inView ? [{ number: 'AVIT000000000010001' }] : [] });
     if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: 'AVIT000000000010001' }, state: { value: '1' }, u_scm_tool: { display_value: 'ADO' }, u_repository: { display_value: 'web' } }] });
@@ -53,17 +60,17 @@ describe('Closing an AVIT as a false positive', () => {
   it('attaches the report before closing, adds the Threatlint note, and uses the Closed / False Positive choices', async () => {
     const calls = [];
     const result = await closeAvitAsFalsePositive(CREDENTIALS, 'avit000000000010001', { note: 'Closed by Threatlint as a false positive.',
-      files: [{ name: 'AVIT000000000010001-threatlint-fp-review.md', content: Buffer.from('# report'), type: 'text/markdown' }] }, { fetchImpl: fakeServiceNow(calls) });
+      files: [{ name: 'AVIT000000000010001-threatlint-fp-review.docx', content: Buffer.from('PK-docx'), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }] }, { fetchImpl: fakeServiceNow(calls) });
     assert.equal(result.closed, true);
     assert.equal(result.avit, 'AVIT000000000010001');
     const attach = calls.findIndex(call => call.url.includes('/api/now/attachment/file'));
     const patch = calls.findIndex(call => call.options.method === 'PATCH');
     assert.ok(attach > 0 && patch > attach, 'report is attached before the state change');
-    assert.match(calls[attach].url, /table_name=sn_vul_app_vulnerable_item/); assert.match(calls[attach].url, /file_name=AVIT000000000010001-threatlint-fp-review\.md/);
+    assert.match(calls[attach].url, /table_name=sn_vul_app_vulnerable_item/); assert.match(calls[attach].url, /file_name=AVIT000000000010001-threatlint-fp-review\.docx/);
     assert.match(calls[attach].url, new RegExp(`table_sys_id=${SYS_ID}`));
     assert.ok(calls[patch].url.includes(`/api/now/table/sn_vul_app_vulnerable_item/${SYS_ID}`));
     const update = JSON.parse(calls[patch].options.body);
-    assert.deepEqual({ state: update.state, substate: update.substate }, { state: '3', substate: '6' });
+    assert.deepEqual({ state: update.state, substate: update.substate }, { state: '3', substate: '3' });
     assert.match(update.work_notes, /Closed by Threatlint/);
     assert.ok(calls.every(call => call.options.redirect === 'error'));
   });
@@ -121,7 +128,7 @@ describe('False-positive action routes', () => {
     const snow = fakeServiceNow(snowCalls), sg = fakeSemgrep(semgrepCalls);
     instance = createWorkbench({ storageDir: storage, runProvider: async args => { args.onEvent({ type: 'text_chunk', text: report }); return report; },
       integrations: { semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
-        fetchImpl: (url, options) => (url.startsWith('https://semgrep.app') ? sg : snow)(url, options) } });
+        fetchImpl: (url, options) => (url.startsWith('https://semgrep.dev') ? sg : snow)(url, options) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
     const { sessionId } = await post('/api/session/local', { repoPath: root });
@@ -148,11 +155,9 @@ describe('False-positive action routes', () => {
   it('closes the AVIT with the report attached under an AVIT-prefixed name', async () => {
     const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS });
     assert.equal(result.closed, true);
-    assert.deepEqual(result.attachments.map(item => item.name)[0], 'AVIT000000000010001-threatlint-fp-review.md');
+    assert.deepEqual(result.attachments.map(item => item.name), ['AVIT000000000010001-threatlint-fp-review.docx'], 'only the Word report');
     const patch = snowCalls.find(call => call.options.method === 'PATCH');
-    assert.match(JSON.parse(patch.options.body).work_notes, /Closed by Threatlint as a false positive[\s\S]*FP-001/);
-    const upload = snowCalls.find(call => call.url.includes('/attachment/file'));
-    assert.match(String(upload.options.body), /FP-001/);
+    assert.equal(JSON.parse(patch.options.body).work_notes, 'Closed by Threatlint as a false positive, see attached report.');
   });
   it('refuses findings that are not FALSE POSITIVE', async () => {
     const error = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-002', servicenow: CREDENTIALS });

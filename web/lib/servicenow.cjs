@@ -242,22 +242,10 @@ async function loadAvitAttachment(credentials, numbers, options = {}) {
   return { attachment: { name: `servicenow-avits-${numbers.length}.md`, content: avitsMarkdown(credentials.instance, items, numbers, missing, new Date(), excluded) }, retrieved: items.length, missing, excluded };
 }
 
-// Closed / False Positive choice values come from sys_choice so instance customisations are respected;
-// the most specific table wins. THREATLINT_SNOW_FP_STATE / _SUBSTATE override the lookup.
-const CHOICE_TABLES = [AVIT_TABLE, 'sn_vul_app_vul_entry', 'sn_vul_entry', 'task'];
-
-async function falsePositiveChoices(instance, headers, fetchImpl, signal) {
-  const override = { state: process.env.THREATLINT_SNOW_FP_STATE, substate: process.env.THREATLINT_SNOW_FP_SUBSTATE };
-  if (override.state && override.substate) return override;
-  const query = new URLSearchParams({ sysparm_query: `nameIN${CHOICE_TABLES.join(',')}^elementINstate,substate^inactive=false`, sysparm_fields: 'name,element,value,label', sysparm_limit: '500' });
-  const rows = (await requestJson(fetchImpl, `${instance}/api/now/table/sys_choice?${query}`, { headers }, signal)).result || [];
-  const pick = (element, label) => rows.filter(row => row.element === element && label.test(String(row.label).trim()))
-    .sort((a, b) => CHOICE_TABLES.indexOf(a.name) - CHOICE_TABLES.indexOf(b.name))[0]?.value;
-  const choices = { state: override.state || pick('state', /^closed$/i), substate: override.substate || pick('substate', /^false[ -]?positive$/i) };
-  if (!choices.state || !choices.substate) {
-    throw new HttpError('ServiceNow has no readable Closed / False Positive choices for AVITs. Set THREATLINT_SNOW_FP_STATE and THREATLINT_SNOW_FP_SUBSTATE to the choice values.', 502);
-  }
-  return choices;
+// AVR Closed state / substate for a false positive. The OAuth client cannot read sys_choice, so the values are
+// fixed; THREATLINT_SNOW_FP_STATE / _SUBSTATE override them.
+async function falsePositiveChoices() {
+  return { state: process.env.THREATLINT_SNOW_FP_STATE || '3', substate: process.env.THREATLINT_SNOW_FP_SUBSTATE || '3' };
 }
 
 /**

@@ -924,8 +924,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_aws_parser(sub)
     from threatlint.ado_login import add_ado_parser
     add_ado_parser(sub)
+    from threatlint.semgrep_platform import add_semgrep_parser
+    add_semgrep_parser(sub)
+    from threatlint.setup_wizard import add_setup_parser
+    add_setup_parser(sub)
 
     return parser
+
+
+def _cmd_semgrep(args: argparse.Namespace) -> int:
+    from threatlint.semgrep_platform import cmd_semgrep
+    return cmd_semgrep(args)
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    from threatlint.setup_wizard import cmd_setup
+    return cmd_setup(args)
 
 
 def _cmd_ado(args: argparse.Namespace) -> int:
@@ -950,7 +964,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "semgrep": _cmd_semgrep, "setup": _cmd_setup}
     handler = commands.get(args.command)
     if handler is None:
         parser.print_help()

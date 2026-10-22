@@ -407,6 +407,24 @@ threatlint install --lmstudio -y
 
 #### Triage ServiceNow application vulnerable items (AVITs)
 
+> **Full process and data flows:** [docs/avit-integration.md](docs/avit-integration.md)
+
+**First run:** `threatlint setup`. It handles, in order:
+- AWS SSO in a private browser window;
+- the ServiceNow instance and OAuth client;
+- an Azure DevOps PAT;
+- the Semgrep API token.
+
+The Workbench's *Settings → ServiceNow / Semgrep* sections write the same configuration.
+
+**Results:**
+- **False positive:** closed automatically. The Word report is attached, the state is set to 3 /
+  substate 3, and the work note reads *"Closed by Threatlint as a false positive, see attached report."*
+  The matching Semgrep finding is ignored. For SAST and Secrets, the rule is replaced with a tuned
+  version, but only after the original rule is shown to report the finding and the tuned one not to.
+- **True positive:** stays open, with the report attached and the work note *"True positive, see attached
+  report."*
+
 **One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by exactly 15 digits.
 Threatlint reads the AVIT and takes the review target from its fields:
 
@@ -441,13 +459,12 @@ label. The flow is:
 2. The FP reviewer triages the finding on that branch and saves the report.
 3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks
    for confirmation (`--yes` skips the prompts).
-   - **TRUE POSITIVE:** the report is attached as `<AVIT>-threatlint-fp-review.md` (and `.docx`) with a
-     work note, and the AVIT stays open.
+   - **TRUE POSITIVE:** the Word report is attached as `<AVIT>-threatlint-fp-review.docx` with the work
+     note "True positive, see attached report.", and the AVIT stays open.
    - **FALSE POSITIVE:**
      - The report is attached first.
-     - The AVIT is set to Closed / False Positive with the comment *"Closed as false positive by
-       Threatlint fp-review agent"*. The state values come from `sys_choice`, or from
-       `THREATLINT_SNOW_FP_STATE` / `_SUBSTATE`.
+     - The AVIT is set to state 3 / substate 3 with the work note *"Closed by Threatlint as a false
+       positive, see attached report."* Override the values with `THREATLINT_SNOW_FP_STATE` / `_SUBSTATE`.
      - The matching open Semgrep finding is ignored as `false_positive`: same project and file, within
        ±3 lines, and the same rule for Code. SAST AVITs are ignored in Semgrep Code, SCA AVITs in Supply
        Chain, and Secrets AVITs in Semgrep Secrets. The token comes from `/cfc-appsec-semgrep-scan/semgrep-token`, or

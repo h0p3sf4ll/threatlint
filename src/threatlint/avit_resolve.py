@@ -2,9 +2,10 @@
 
 `threatlint avit resolve <AVIT> --report report.md [--docx report.docx]` reads the AVIT's disposition
 from the report the FP reviewer wrote and then:
-  TRUE POSITIVE  -> attaches the report (prefixed with the AVIT number) and adds a work note; stays open.
-  FALSE POSITIVE -> attaches the report, closes the AVIT as Closed / False Positive with the comment
-                    "Closed as false positive by Threatlint fp-review agent", and ignores the matching
+  TRUE POSITIVE  -> attaches the Word report (prefixed with the AVIT number) and adds the work note
+                    "True positive, see attached report."; stays open.
+  FALSE POSITIVE -> attaches the Word report, closes the AVIT (state 3, substate 3) with the work note
+                    "Closed by Threatlint as a false positive, see attached report.", and ignores the matching
                     open Semgrep finding(s) as false_positive (Code for SAST, Supply Chain for SCA, Secrets for Secrets).
   AMBIGUOUS      -> changes nothing.
 Every write needs confirmation (--yes for non-interactive use). Tokens are used per run and never stored.
@@ -24,10 +25,14 @@ import urllib.request
 
 from threatlint import servicenow as sn
 
-CLOSING_COMMENT = "Closed as false positive by Threatlint fp-review agent"
-REVIEWED_COMMENT = "Reviewed by Threatlint fp-review agent"
+# Work notes, exactly as AppSec asked for them.
+CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
+TRUE_POSITIVE_COMMENT = "True positive, see attached report."
+# AVR Closed state / substate for a false positive (override with THREATLINT_SNOW_FP_STATE / _SUBSTATE).
+CLOSED_STATE, CLOSED_SUBSTATE = "3", "3"
 SEMGREP_TOKEN_PARAMETER = "/cfc-appsec-semgrep-scan/semgrep-token"
-SEMGREP_API = "https://semgrep.app/api/v1"
+# semgrep.dev serves the same API as semgrep.app and resolves on networks that block semgrep.app.
+SEMGREP_API = os.environ.get("THREATLINT_SEMGREP_API", "https://semgrep.dev").rstrip("/") + "/api/v1"
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
 
@@ -80,28 +85,23 @@ def _record(instance: str, token: str, avit: str) -> dict:
             "in_view": None if members is None else avit in members}
 
 
-def _false_positive_choices(instance: str, token: str) -> tuple[str, str]:
-    """Closed / False Positive choice values from sys_choice (THREATLINT_SNOW_FP_STATE/_SUBSTATE override)."""
-    state, substate = os.environ.get("THREATLINT_SNOW_FP_STATE"), os.environ.get("THREATLINT_SNOW_FP_SUBSTATE")
-    if state and substate:
-        return state, substate
-    tables = [sn.AVIT_TABLE, "sn_vul_app_vul_entry", "sn_vul_entry", "task"]
-    query = urllib.parse.urlencode({"sysparm_query": f"nameIN{','.join(tables)}^elementINstate,substate^inactive=false",
-                                    "sysparm_fields": "name,element,value,label", "sysparm_limit": "500"})
-    rows = sn._request_json(f"{instance}/api/now/table/sys_choice?{query}", headers={"Authorization": f"Bearer {token}"}).get("result", [])
-    def pick(element, label):
-        found = sorted((row for row in rows if row.get("element") == element and re.fullmatch(label, str(row.get("label", "")).strip(), re.IGNORECASE)),
-                       key=lambda row: tables.index(row.get("name")) if row.get("name") in tables else 99)
-        return found[0]["value"] if found else None
-    state, substate = state or pick("state", r"closed"), substate or pick("substate", r"false[ -]?positive")
-    if not state or not substate:
-        raise ResolveError("ServiceNow has no readable Closed / False Positive choices; set THREATLINT_SNOW_FP_STATE and THREATLINT_SNOW_FP_SUBSTATE")
-    return state, substate
+def _false_positive_choices() -> tuple[str, str]:
+    """Closed (3) / substate 3 on PepsiCo AVR; the OAuth client cannot read sys_choice, so values are fixed."""
+    return os.environ.get("THREATLINT_SNOW_FP_STATE") or CLOSED_STATE, os.environ.get("THREATLINT_SNOW_FP_SUBSTATE") or CLOSED_SUBSTATE
 
 
 def attach(instance: str, token: str, sys_id: str, name: str, content: bytes, content_type: str) -> None:
     query = urllib.parse.urlencode({"table_name": sn.AVIT_TABLE, "table_sys_id": sys_id, "file_name": name})
     sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=content, headers={"Authorization": f"Bearer {token}", "Content-Type": content_type})
+
+
+def attachment_names(instance: str, token: str, sys_id: str) -> set[str]:
+    query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
+    try:
+        rows = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"}).get("result", [])
+    except sn.ServiceNowError:
+        return set()
+    return {str(row.get("file_name", "")) for row in rows if isinstance(row, dict)}
 
 
 def update(instance: str, token: str, sys_id: str, values: dict[str, str]) -> dict:
@@ -113,19 +113,12 @@ def update(instance: str, token: str, sys_id: str, values: dict[str, str]) -> di
 # ── Semgrep ──────────────────────────────────────────────────────────────────
 
 def semgrep_token(profile: str | None) -> str:
-    if os.environ.get("SEMGREP_APP_TOKEN"):
-        return os.environ["SEMGREP_APP_TOKEN"]
-    aws = shutil.which("aws")
-    if not aws:
-        raise ResolveError("The AWS CLI is required to read the Semgrep token (or set SEMGREP_APP_TOKEN)")
-    command = [aws, "ssm", "get-parameter", "--name", SEMGREP_TOKEN_PARAMETER, "--with-decryption", "--region", sn.AWS_REGION,
-               "--query", "Parameter.Value", "--output", "text", *(["--profile", profile] if profile else [])]
-    from threatlint.tls import tool_env  # noqa: PLC0415
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=tool_env())
-    if result.returncode != 0 or not result.stdout.strip():
-        reason = (result.stderr.strip().splitlines() or ["no value"])[-1][:300]
-        raise ResolveError(f"Could not read {SEMGREP_TOKEN_PARAMETER}: {reason}. Run `threatlint aws login`.")
-    return result.stdout.strip()
+    """SEMGREP_APP_TOKEN, the token saved by `threatlint semgrep login`, or Parameter Store."""
+    from threatlint.semgrep_platform import SemgrepError, resolve_token  # noqa: PLC0415
+    try:
+        return resolve_token(profile)[0]
+    except SemgrepError as exc:
+        raise ResolveError(str(exc)) from exc
 
 
 def _semgrep(path: str, token: str, *, body: dict | None = None) -> dict:
@@ -222,9 +215,11 @@ def add_resolve_parsers(actions) -> None:
     resolve = actions.add_parser("resolve", help="Upload the FP report to the AVIT; close it and tune Semgrep when it is a false positive")
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
-    resolve.add_argument("--docx", help="Word copy of the report to attach as well")
+    resolve.add_argument("--docx", required=True, help="Word report to attach (the only file attached to the AVIT)")
     resolve.add_argument("--semgrep-deployment", help="Semgrep deployment slug when the token can access several")
-    resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage")
+    resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")
+    resolve.add_argument("--skip-rule-tuning", action="store_true", help="Ignore the Semgrep finding but do not replace the rule")
+    resolve.add_argument("--checkout", help="The AVIT checkout (from `avit checkout`), used to validate the tuned rule")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
 
@@ -280,22 +275,23 @@ def cmd_resolve(args) -> int:
         raise ResolveError(f"{avit} is not in the AVR CodeSecurity view; Threatlint does not change it")
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
-    files = [(f"{avit}-threatlint-fp-review.md", markdown.encode("utf-8"), "text/markdown")]
-    if args.docx:
-        with open(os.path.expanduser(args.docx), "rb") as handle:
-            files.append((f"{avit}-threatlint-fp-review.docx", handle.read(), _DOCX))
+    # One attachment: the Word report. The Markdown is only read here for the verdict.
+    with open(os.path.expanduser(args.docx), "rb") as handle:
+        files = [(f"{avit}-threatlint-fp-review.docx", handle.read(), _DOCX)]
     action = "attach the report and close it as Closed / False Positive" if false_positive else "attach the report and add a TRUE POSITIVE work note (it stays open)"
     _confirm(f"{avit}: {action}?", args.yes)
     # Attach first so the AVIT is never closed without its evidence.
+    existing = attachment_names(instance, token, record["sys_id"])
     for name, content, content_type in files:
+        if name in existing:
+            print(f"  ✓ {name} is already attached")
+            continue
         attach(instance, token, record["sys_id"], name, content, content_type)
         print(f"  ✓ Attached {name}")
-    note = "\n".join([CLOSING_COMMENT if false_positive else f"{REVIEWED_COMMENT}: TRUE POSITIVE (left open for remediation).", "",
-                      f"Finding: {verdict['id']} — {verdict['title']}", f"Disposition: {verdict['disposition']} (confidence {verdict['confidence'] or 'not stated'})",
-                      f"Report attached: {', '.join(name for name, _c, _t in files)}"])
+    note = CLOSING_COMMENT if false_positive else TRUE_POSITIVE_COMMENT
     values = {"work_notes": note}
     if false_positive:
-        state, substate = _false_positive_choices(instance, token)
+        state, substate = _false_positive_choices()
         values.update({"state": state, "substate": substate, "close_notes": note})
     stored = update(instance, token, record["sys_id"], values)
     if false_positive:
@@ -306,16 +302,40 @@ def cmd_resolve(args) -> int:
     if false_positive and not args.skip_semgrep:
         sg_token = semgrep_token(args.aws_profile)
         target = sn.repository_target(record["context"])
-        dep, matches = semgrep_matches(sg_token, kind, target, record["context"], args.semgrep_deployment)
+        try:
+            dep, matches = semgrep_matches(sg_token, kind, target, record["context"], args.semgrep_deployment)
+        except ResolveError as exc:
+            # The AVIT is already closed; a Semgrep gap is reported, not treated as a failure of the close.
+            print(f"  ! Semgrep unchanged: {exc}. The token's deployment may not scan this repository; pass --semgrep-deployment.")
+            return 0
         if not matches:
             print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; Semgrep unchanged")
         else:
             for match in matches:
                 print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
-            _confirm(f"Ignore {len(matches)} Semgrep finding(s) as false positive?", args.yes)
-            count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"{CLOSING_COMMENT} ({avit}, {verdict['id']}): {verdict['title']}")
+            count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}")
             print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive (kept for this fingerprint on later scans and branches)")
+        # SAST and Secrets: replace the rule with the reviewer's tuned rule so the same false positive does not return.
+        if kind in ("sast", "secrets") and not args.skip_rule_tuning:
+            from threatlint import semgrep_platform as sp  # noqa: PLC0415
+            path = record["context"].get("file_path", "")
+            checkout = getattr(args, "checkout", None)
+            target_file = os.path.join(checkout, path) if checkout and path else ""
+            line = int(record["context"]["line"]) if record["context"].get("line", "").isdigit() else _report_line(markdown, avit)
+            rule = record["context"].get("rule", "")
+            if not (rule and target_file and os.path.exists(target_file)):
+                print("  ! Rule not tuned: pass --checkout <AVIT checkout> so the tuned rule can be validated against the flagged file")
+            else:
+                try:
+                    sp.tune_rule(markdown, kind, rule, target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]})
+                except sp.SemgrepError as exc:
+                    print(f"  ! Rule not tuned: {exc}")
     return 0
+
+
+def _report_line(report: str, avit: str) -> int | None:
+    match = re.search(rf"Original finding\W*:\s*{avit};[^\n]*:(\d+)\s*$", report, re.M)
+    return int(match.group(1)) if match else None
 
 
 def run(handler, args) -> int:

@@ -105,6 +105,8 @@ class FakeServiceNow:
         if "/sys_choice" in url:
             return {"result": [{"name": sn.AVIT_TABLE, "element": "state", "value": "3", "label": "Closed"},
                                {"name": sn.AVIT_TABLE, "element": "substate", "value": "6", "label": "False Positive"}]}
+        if url.split("?")[0].endswith("/api/now/attachment"):
+            return {"result": []}
         if "/attachment/file" in url:
             return {"result": {"sys_id": "b" * 32}}
         if method == "PATCH":
@@ -114,10 +116,11 @@ class FakeServiceNow:
 
 
 def _args(tmp_path, report, **extra):
-    path = tmp_path / "report.md"
+    path, docx = tmp_path / "report.md", tmp_path / "report.docx"
     path.write_text(report)
-    return types.SimpleNamespace(number=AVIT, report=str(path), docx=None, snow_instance=INSTANCE, aws_profile=None,
-                                 semgrep_deployment=None, skip_semgrep=False, yes=True, **extra)
+    docx.write_bytes(b"PK-docx")
+    return types.SimpleNamespace(number=AVIT, report=str(path), docx=str(docx), snow_instance=INSTANCE, aws_profile=None,
+                                 semgrep_deployment=None, skip_semgrep=False, skip_rule_tuning=True, checkout=None, yes=True, **extra)
 
 
 def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ignores_semgrep(monkeypatch, tmp_path):
@@ -145,9 +148,10 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     patch = next(i for i, (m, _u) in enumerate(methods) if m == "PATCH")
     assert attach < patch, "the report is attached before the AVIT is closed"
     body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
-    assert (body["state"], body["substate"]) == ("3", "6") and body["work_notes"].startswith(ar.CLOSING_COMMENT)
-    upload = next(u for m, u, _d in fake.calls if "attachment" in u)
-    assert upload.endswith("/attachment/file")
+    assert (body["state"], body["substate"]) == ("3", "3")
+    assert body["work_notes"] == "Closed by Threatlint as a false positive, see attached report."
+    uploads = [u for m, u, _d in fake.calls if u.endswith("/attachment/file")]
+    assert len(uploads) == 1, "only the Word report is attached"
     triage = semgrep_calls[-1][1]
     assert triage["issue_type"] == "secrets" and triage["issue_ids"] == [55] and triage["new_triage_reason"] == "false_positive"
     assert "Closed as false positive" in out.getvalue()
@@ -161,7 +165,7 @@ def test_true_positive_attaches_the_report_and_leaves_the_avit_open(monkeypatch,
     monkeypatch.setattr("sys.stdout", io.StringIO())
     assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
     body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
-    assert "state" not in body and "TRUE POSITIVE" in body["work_notes"]
+    assert "state" not in body and body["work_notes"] == "True positive, see attached report."
     assert any("attachment/file" in u for _m, u, _d in fake.calls)
 
 
@@ -195,3 +199,18 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
     report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json")
     assert ar.cmd_resolve(_args(tmp_path, report)) == 0
     assert calls[-1][1]["issue_type"] == "sca" and calls[-1][1]["issue_ids"] == [91]
+
+
+def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    original = fake.__call__
+    def existing(url, **kw):
+        if url.split("?")[0].endswith("/api/now/attachment"):
+            return {"result": [{"file_name": f"{AVIT}-threatlint-fp-review.docx"}]}
+        return original(url, **kw)
+    monkeypatch.setattr(sn, "_request_json", existing)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
+    assert ar.cmd_resolve(args) == 0
+    assert not any(u.endswith("/attachment/file") for _m, u, _d in fake.calls)

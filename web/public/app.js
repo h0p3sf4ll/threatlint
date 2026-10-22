@@ -457,13 +457,13 @@
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
-    fillServiceNowForm();
+    fillServiceNowForm(); void loadSemgrepSettings();
     updateSettingsFields(provider);
   }
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(section === 'servicenow' ? 'settings-servicenow' : 'settings-model');
+    const target = $(`settings-${['servicenow', 'semgrep'].includes(section) ? section : 'model'}`);
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
     for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
@@ -475,6 +475,21 @@
     $('snow-client-id').value = state.credentials.snowClientId || saved.clientId || '';
     $('snow-client-secret').value = state.credentials.snowClientSecret ? state.credentials.snowClientSecret : saved.hasSecret ? MASK : '';
     updateSnowStatus();
+  }
+  async function loadSemgrepSettings() {
+    try { state.semgrepSaved = await request('/api/semgrep/settings'); } catch { state.semgrepSaved = null; }
+    const saved = state.semgrepSaved || {};
+    $('semgrep-token').value = saved.hasToken ? MASK : '';
+    $('semgrep-status').textContent = saved.inKeyring ? 'Saved by `threatlint semgrep login` in the OS credential store (CLI only). Enter it here to use it in the Workbench too.'
+      : saved.hasToken ? `Saved in ${saved.path}${saved.deployment ? ` · deployment ${saved.deployment}` : ''}. The token is never shown.` : 'Not configured.';
+  }
+  async function saveSemgrep(event) {
+    event.preventDefault(); $('semgrep-error').textContent = '';
+    const typed = $('semgrep-token').value.trim();
+    if (!typed || typed === MASK) { toast('The saved Semgrep token is unchanged.'); return; }
+    try { state.semgrepSaved = await request('/api/semgrep/settings', { method: 'POST', body: JSON.stringify({ token: typed }) }); }
+    catch (error) { $('semgrep-error').textContent = error.message; return; }
+    await loadSemgrepSettings(); toast('Semgrep token validated and saved. It is never shown again.');
   }
   async function loadSavedServiceNow() {
     try { state.snowSaved = await request('/api/servicenow/settings'); } catch { state.snowSaved = null; }
@@ -706,8 +721,8 @@
     $('refresh-sessions').addEventListener('click', () => refreshSessions().catch(error => toast(error.message, true)));
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
     $('configure-provider').addEventListener('click', showSettings);
-    $('servicenow-form').addEventListener('submit', saveServiceNow);
-    for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href') === '#settings-servicenow' ? 'servicenow' : 'model'); });
+    $('servicenow-form').addEventListener('submit', saveServiceNow); $('semgrep-form').addEventListener('submit', saveSemgrep);
+    for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });
     $('settings-form').addEventListener('submit', saveSettings);
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });
     $('model-id').addEventListener('change', () => fillModelSelect([...$('model-select').options].filter(option => option.value && !option.textContent.endsWith('(current)')).map(option => ({ id: option.value, name: option.textContent.split(' · ')[0] })), $('model-id').value.trim())); $('discover-models').addEventListener('click', discoverModels);

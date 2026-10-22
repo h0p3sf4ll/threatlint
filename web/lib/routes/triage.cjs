@@ -26,13 +26,7 @@ function avitFor(finding) {
   throw new HttpError(`${finding.id} does not reference an AVIT number`);
 }
 
-function closingNote(finding, report, files) {
-  return [`Closed by Threatlint as a false positive.`, '',
-    `Finding: ${finding.id} — ${finding.title}`, `Disposition: FALSE POSITIVE (confidence ${finding.confidence})`,
-    `Reviewed by: Threatlint ${report.label} (${report.agentId}), ${new Date(report.timestamp).toISOString()}`,
-    `Report attached: ${files.map(file => file.name).join(', ')}`, '',
-    'The attached report holds the evidence and reasoning for this verdict.'].join('\n');
-}
+function closingNote() { return 'Closed by Threatlint as a false positive, see attached report.'; }
 
 function registerTriageRoutes(app, { reports, integrations = {} }) {
   const fetchImpl = integrations.fetchImpl;
@@ -53,11 +47,10 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     const { report, finding } = falsePositive(req.body?.reportId, req.body?.findingId);
     const avit = avitFor(finding);
     const credentials = servicenow.validateCredentials(req.body?.servicenow);
-    const files = [{ name: `${avit}-threatlint-fp-review.md`, content: fs.readFileSync(report.mdPath), type: 'text/markdown' }];
-    if (report.docxPath && fs.existsSync(report.docxPath)) {
-      files.push({ name: `${avit}-threatlint-fp-review.docx`, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    }
-    return servicenow.closeAvitAsFalsePositive(credentials, avit, { note: closingNote(finding, report, files), files }, { fetchImpl });
+    // The Word report is the one attachment.
+    if (!report.docxPath || !fs.existsSync(report.docxPath)) throw new HttpError('The Word report is unavailable; install python-docx so the report can be attached', 409);
+    const files = [{ name: `${avit}-threatlint-fp-review.docx`, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }];
+    return servicenow.closeAvitAsFalsePositive(credentials, avit, { note: closingNote(), files }, { fetchImpl });
   }));
 
   // Preview: the open Semgrep findings this tuning would ignore. Nothing changes until /ignore.

@@ -47,6 +47,22 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     threatlintConfig.writeServiceNow({ instance, clientId, clientSecret });
     return threatlintConfig.publicServiceNow();
   }));
+  // Semgrep API token for rule tuning and triage. GET never returns the token.
+  app.get('/api/semgrep/settings', handle(() => threatlintConfig.publicSemgrep()));
+  app.post('/api/semgrep/settings', handle(async req => {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const current = threatlintConfig.readSemgrep();
+    if (!token) return threatlintConfig.publicSemgrep();
+    if (!/^[A-Za-z0-9._~+/=-]{20,200}$/.test(token)) throw new HttpError('That does not look like a Semgrep API token');
+    const api = `${(process.env.THREATLINT_SEMGREP_API || 'https://semgrep.dev').replace(/\/$/, '')}/api/v1/deployments`;
+    let response;
+    try { response = await (integrations.fetchImpl || fetch)(api, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(15_000) }); }
+    catch (error) { throw new HttpError(`Semgrep could not be reached: ${error.cause?.message || error.message}`, 502); }
+    if (!response.ok) throw new HttpError(`Semgrep rejected the token (HTTP ${response.status})`, 400);
+    const deployments = (await response.json()).deployments || [];
+    threatlintConfig.writeSemgrep({ token, deployment: deployments.length === 1 ? deployments[0].slug : current.deployment });
+    return threatlintConfig.publicSemgrep();
+  }));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));

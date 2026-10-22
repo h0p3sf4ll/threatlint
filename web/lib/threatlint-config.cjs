@@ -42,4 +42,24 @@ function clearServiceNow() {
   try { fs.unlinkSync(configPath()); return true; } catch { return false; }
 }
 
-module.exports = { configPath, readServiceNow, writeServiceNow, publicServiceNow, clearServiceNow };
+// Semgrep API token, shared with `threatlint semgrep login`. A token the CLI put in the OS credential store
+// ("storage": "keyring") is not readable here; the settings page can save one to the file instead.
+function semgrepPath() { return path.join(path.dirname(configPath()), 'semgrep.json'); }
+function readSemgrep() {
+  try { const value = JSON.parse(fs.readFileSync(semgrepPath(), 'utf8')); return { token: String(value.token || ''), deployment: String(value.deployment || ''), storage: String(value.storage || '') }; }
+  catch { return { token: '', deployment: '', storage: '' }; }
+}
+function writeSemgrep(values) {
+  const file = semgrepPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify({ ...values, storage: 'file' }, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temp, file);
+  if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+}
+function publicSemgrep() {
+  const saved = readSemgrep();
+  return { hasToken: !!saved.token || saved.storage === 'keyring', inKeyring: saved.storage === 'keyring' && !saved.token, deployment: saved.deployment, path: semgrepPath() };
+}
+
+module.exports = { configPath, readServiceNow, writeServiceNow, publicServiceNow, clearServiceNow, readSemgrep, writeSemgrep, publicSemgrep };
