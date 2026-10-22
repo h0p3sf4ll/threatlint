@@ -7,7 +7,8 @@
  *   Anthropic: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (and ANTHROPIC_BASE_URL for a gateway), then the `env` block of ~/.claude/settings.json
  *              (%USERPROFILE%\.claude\settings.json on Windows). Claude Code's subscription OAuth login
  *              (macOS Keychain / ~/.claude/.credentials.json) is never read.
- *   OpenAI:    OPENAI_API_KEY.
+ *   OpenAI:    OPENAI_API_KEY, then an API key saved by the Codex CLI in ~/.codex/auth.json (API-key sign-in only;
+ *              a ChatGPT-account Codex sign-in is a subscription credential for Codex itself and is never used).
  *   Copilot:   COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, then `gh auth token` (the GitHub CLI sign-in).
  * Keys never leave this process except to the provider's own API; the UI only learns which source exists.
  */
@@ -45,6 +46,10 @@ function anthropicBaseUrl({ env = process.env, home = os.homedir() } = {}) {
   return url.toString().replace(/\/$/, '');
 }
 
+function codexAuth(home = os.homedir()) {
+  try { return JSON.parse(fs.readFileSync(path.join(home, '.codex', 'auth.json'), 'utf8')) || {}; } catch { return {}; }
+}
+
 async function ghToken(run = execFileAsync) {
   try { return (await run('gh', ['auth', 'token'], { timeout: LIST_TIMEOUT_MS, windowsHide: true })).stdout.trim() || ''; } catch { return ''; }
 }
@@ -65,7 +70,11 @@ function configuredKey(provider, sessionKey, { env = process.env, home = os.home
     }
     if (env.ANTHROPIC_AUTH_TOKEN) return { key: env.ANTHROPIC_AUTH_TOKEN, source: `ANTHROPIC_AUTH_TOKEN${gateway}`, bearer: true, baseUrl };
   }
-  if (provider === 'openai' && env.OPENAI_API_KEY) return { key: env.OPENAI_API_KEY, source: 'OPENAI_API_KEY' };
+  if (provider === 'openai') {
+    if (env.OPENAI_API_KEY) return { key: env.OPENAI_API_KEY, source: 'OPENAI_API_KEY' };
+    const codex = codexAuth(home);
+    if (typeof codex.OPENAI_API_KEY === 'string' && codex.OPENAI_API_KEY) return { key: codex.OPENAI_API_KEY, source: '~/.codex/auth.json (Codex API key)' };
+  }
   if (provider === 'copilot') {
     for (const name of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']) if (env[name]) return { key: env[name], source: name };
     if (cachedGhToken) return { key: cachedGhToken, source: 'GitHub CLI (gh auth token)' };
@@ -97,7 +106,16 @@ async function listJson(fetchImpl, url, headers) {
 
 /** [{ id, name }] the credential can use. */
 async function listModels(provider, credential, { fetchImpl = fetch } = {}) {
-  if (!credential.key) throw new HttpError(`No ${provider === 'copilot' ? 'GitHub token' : 'API key'} is configured. Enter one, or set it in the environment.`, 401);
+  if (!credential.key) {
+    const hints = {
+      claude: 'Set ANTHROPIC_API_KEY (or the env block of ~/.claude/settings.json), or enter a key. A Claude Code subscription login cannot be used by other apps.',
+      openai: codexAuth().auth_mode === 'chatgpt'
+        ? 'Codex is signed in with a ChatGPT account, which only works inside Codex. Run `codex login --with-api-key`, set OPENAI_API_KEY, or enter an API key here.'
+        : 'Set OPENAI_API_KEY, sign Codex in with an API key, or enter a key here.',
+      copilot: 'Run `gh auth login` (GitHub CLI) with an account that has Copilot, set GH_TOKEN, or enter a token here.',
+    };
+    throw new HttpError(hints[provider] || 'No credential is configured.', 401);
+  }
   if (provider === 'claude') {
     const headers = { 'anthropic-version': '2023-06-01', ...(credential.bearer ? { Authorization: `Bearer ${credential.key}` } : { 'x-api-key': credential.key }) };
     const models = [];

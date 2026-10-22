@@ -22,6 +22,7 @@ const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
 const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/runtime.cjs');
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
+const { prepareProcess } = require('./lib/system-env.cjs');
 const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 
 const BODY_LIMIT = '7mb';
@@ -46,6 +47,8 @@ function buildInfo() {
  * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken } for Semgrep and ServiceNow).
  */
 function createWorkbench(options = {}) {
+  // OS certificate store and the user's PATH, so gateways behind TLS inspection and CLIs like `gh` work from the Dock.
+  prepareProcess();
   const app = express();
   app.disable('x-powered-by');
   const server = http.createServer(app);

@@ -72,9 +72,10 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos' };
+    const titles = { settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
+    if (name === 'settings') loadSettingsForm();
     for (const view of document.querySelectorAll('.view')) { const active = view.id === `view-${name}`; view.hidden = !active; view.classList.toggle('active', active); }
     for (const item of document.querySelectorAll('[data-view]')) { item.classList.toggle('active', item.dataset.view === name); item.setAttribute('aria-current', item.dataset.view === name ? 'page' : 'false'); }
     $('breadcrumb-title').textContent = titles[name];
@@ -447,7 +448,8 @@
     $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', openai: 'OpenAI', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
     updateRunControls();
   }
-  function showSettings() {
+  function showSettings() { showView('settings'); }
+  function loadSettingsForm() {
     const provider = state.preferences.provider;
     document.querySelector(`input[name=provider][value="${provider}"]`).checked = true;
     $('model-url').value = state.preferences.lmstudioUrl;
@@ -460,7 +462,13 @@
     $('snow-client-secret').value = state.credentials.snowClientSecret;
     updateSnowStatus();
     updateSettingsFields(provider);
-    $('settings-dialog').showModal();
+  }
+  // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
+  function showSettingsSection(section) {
+    showSettings();
+    const target = $(section === 'servicenow' ? 'settings-servicenow' : 'settings-model');
+    target?.scrollIntoView({ behavior: 'instant', block: 'start' });
+    for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
   function servicenowReady() { return !!(state.preferences.snowInstance && state.credentials.snowClientId && state.credentials.snowClientSecret); }
   function updateSnowStatus(message) {
@@ -491,7 +499,8 @@
     const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
     $('environment-key-note').textContent = local ? '' : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
     if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; }
-    if (!local && (source || $('api-key').value.trim()) && !$('model-select').dataset.loaded) void discoverModels();
+    // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
+    if (!local && !$('model-select').dataset.loaded) void discoverModels();
     // Remote LM Studio-compatible servers also require explicit data-sharing consent.
     let remote = !local;
     if (local) { try { remote = !['localhost', '127.0.0.1', '[::1]'].includes(new URL($('model-url').value).hostname); } catch { remote = true; } }
@@ -508,20 +517,30 @@
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid model-server URL');
       if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote servers require HTTPS');
     } catch { $('settings-error').textContent = 'Use an HTTP(S) model-server URL without credentials. Remote servers require HTTPS.'; return; }
-    let snowInstance;
-    try { snowInstance = snowInstanceUrl($('snow-instance').value.trim()); } catch { $('settings-error').textContent = 'Use the HTTPS ServiceNow instance URL, e.g. https://<instance>.service-now.com'; return; }
-    const snowClientId = $('snow-client-id').value.trim(), snowClientSecret = $('snow-client-secret').value.trim();
-    if ((snowClientId || snowClientSecret) && !(snowInstance && snowClientId && snowClientSecret)) { $('settings-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
-    state.preferences.snowInstance = snowInstance;
-    state.credentials.snowClientId = snowClientId; state.credentials.snowClientSecret = snowClientSecret;
+    $('settings-error').textContent = '';
     state.preferences.provider = provider;
     state.preferences.models[provider] = model;
     state.preferences.model = model;
     state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
     if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
     if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
-    $('api-key').value = ''; $('snow-client-secret').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
+    savePreferences();
+    updateProviderDisplay(); toast('Model settings saved. Credentials remain in memory only.');
+  }
+  function savePreferences() {
+    const { provider, models, lmstudioUrl, snowInstance } = state.preferences;
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+  }
+  function saveServiceNow(event) {
+    event.preventDefault();
+    $('servicenow-error').textContent = '';
+    let snowInstance;
+    try { snowInstance = snowInstanceUrl($('snow-instance').value.trim()); } catch { $('servicenow-error').textContent = 'Use the HTTPS ServiceNow instance URL, e.g. https://<instance>.service-now.com'; return; }
+    const snowClientId = $('snow-client-id').value.trim(), snowClientSecret = $('snow-client-secret').value.trim();
+    if ((snowClientId || snowClientSecret) && !(snowInstance && snowClientId && snowClientSecret)) { $('servicenow-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
+    state.preferences.snowInstance = snowInstance;
+    state.credentials.snowClientId = snowClientId; state.credentials.snowClientSecret = snowClientSecret;
+    savePreferences(); updateSnowStatus(); toast('ServiceNow settings saved. The secret remains in memory only.');
   }
   // The dropdown is the normal path; the manual field remains for IDs a list omits. Selecting one fills the other.
   function fillModelSelect(models, selected) {
@@ -635,7 +654,7 @@
       try { avits = parseAvits($('avit-list').value); } catch (error) { toast(error.message, true); $('avit-list').focus(); return; }
       if (avits.length > (state.config.servicenow?.maxAvits || 50)) { toast(`Review at most ${state.config.servicenow?.maxAvits || 50} AVITs per report.`, true); return; }
       if (avits.length && state.attachment) { toast('Use either an attached findings file or ServiceNow AVITs for one review, not both.', true); return; }
-      if (avits.length && !servicenowReady()) { showSettings(); toast('Authenticate through SSO and set the ServiceNow instance, client ID, and secret first.', true); return; }
+      if (avits.length && !servicenowReady()) { showSettingsSection('servicenow'); toast('Authenticate through SSO and set the ServiceNow instance, client ID, and secret first.', true); return; }
     }
     if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
@@ -665,7 +684,9 @@
     $('browse-repository').addEventListener('click', () => browseDirectory($('repo-path').value.trim()).catch(error => { $('repository-error').textContent = error.message; }));
     $('refresh-sessions').addEventListener('click', () => refreshSessions().catch(error => toast(error.message, true)));
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
-    $('settings-button').addEventListener('click', showSettings); $('configure-provider').addEventListener('click', showSettings);
+    $('configure-provider').addEventListener('click', showSettings);
+    $('servicenow-form').addEventListener('submit', saveServiceNow);
+    for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href') === '#settings-servicenow' ? 'servicenow' : 'model'); });
     $('settings-form').addEventListener('submit', saveSettings);
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });
     $('model-id').addEventListener('change', () => fillModelSelect([...$('model-select').options].filter(option => option.value && !option.textContent.endsWith('(current)')).map(option => ({ id: option.value, name: option.textContent.split(' · ')[0] })), $('model-id').value.trim())); $('discover-models').addEventListener('click', discoverModels);
@@ -676,7 +697,6 @@
       $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
       updateSettingsFields(settingsProvider);
     });
-    $('settings-dialog').addEventListener('close', () => { $('api-key').value = ''; $('snow-client-secret').value = ''; settingsProvider = state.preferences.provider; });
     $('snow-read-parameters').addEventListener('click', readSnowParameters);
     $('fp-close-avit').addEventListener('click', closeAvitFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
     $('fp-ignore-semgrep').addEventListener('click', ignoreSemgrepFalsePositive); $('fp-action-form').addEventListener('submit', event => event.preventDefault());

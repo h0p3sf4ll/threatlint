@@ -65,7 +65,11 @@ describe('Model lists for the settings dropdown', () => {
     assert.equal(seen.options.headers.Authorization, 'Bearer gho'); assert.equal(seen.options.headers['Copilot-Integration-Id'], COPILOT_HEADERS['Copilot-Integration-Id']);
   });
   it('explains a missing credential', async () => {
-    await assert.rejects(listModels('copilot', { key: '' }), /GitHub token/);
+    await assert.rejects(listModels('copilot', { key: '' }), /gh auth login/);
+    const dir = home(); fs.mkdirSync(path.join(dir, '.codex')); fs.writeFileSync(path.join(dir, '.codex/auth.json'), JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-codex' }));
+    assert.deepEqual(await resolveKey('openai', '', { env: {}, home: dir }), { key: 'sk-codex', source: '~/.codex/auth.json (Codex API key)' });
+    fs.writeFileSync(path.join(dir, '.codex/auth.json'), JSON.stringify({ auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: { access_token: 'subscription' } }));
+    assert.equal((await resolveKey('openai', '', { env: {}, home: dir })).key, '', 'ChatGPT-account Codex tokens are never used');
   });
 });
 

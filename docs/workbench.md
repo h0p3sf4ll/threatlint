@@ -33,6 +33,11 @@ account/server. No hard-coded cloud model catalogue is assumed.
   <http://localhost:1234/v1>, and click **Load models**. The model must support OpenAI-compatible
   streamed tool calls for repository inspection. HTTP is restricted to loopback hosts; remote
   compatible servers require HTTPS.
+- **Settings page:** *Settings* in the sidebar is a normal page with two sections, **Model provider** and
+  **ServiceNow** (instance, OAuth client, AWS CLI read), each saved separately.
+- **Desktop app:** it trusts the OS certificate store (macOS Keychain / Windows certificate store), so model
+  gateways behind corporate TLS inspection work, and it adds your login-shell PATH so `gh`, `git`, `az`, and
+  `aws` are found when launched from the Dock or Start menu.
 - **Anthropic / OpenAI / Copilot:** choose the provider, and the **Model** dropdown fills with the
   models your credential can use (click **Load models** to refresh). *Enter a model ID manually*
   still accepts any ID. A session-only key typed in the dialog takes priority; otherwise the
@@ -41,7 +46,7 @@ account/server. No hard-coded cloud model catalogue is assumed.
   | Provider | Looked up in order |
   | --- | --- |
   | Anthropic | `ANTHROPIC_API_KEY` → `env` block of `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json` on Windows: `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` (environment or settings.json) routes model listing and reviews through your gateway. |
-  | OpenAI | `OPENAI_API_KEY` |
+  | OpenAI | `OPENAI_API_KEY` → an API key saved by Codex (`codex login --with-api-key`, in `~/.codex/auth.json`). A Codex *ChatGPT-account* sign-in only works inside Codex and is not used. |
   | GitHub Copilot | `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → the GitHub CLI sign-in (`gh auth token`; run `gh auth login` once) |
 
   Copilot lists only models your plan enables that support `/chat/completions` with tool calls,
