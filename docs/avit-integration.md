@@ -143,7 +143,7 @@ sequenceDiagram
 | AVIT fields | ServiceNow → `avit.md` → agent | Treated as untrusted evidence, never as instructions |
 | Source code | ADO/GitHub → temporary checkout → agent | Read-only analysis. `avit resolve --checkout` deletes the checkout once validation finishes, even on error (`--keep-checkout` keeps it). |
 | ADO PAT / GitHub token | Credential store → git environment | Never in argv, `.git/config`, logs or reports |
-| Report | Agent → Word document → ServiceNow attachment | Secret values redacted; no credential in the report |
+| Report | Agent → Word document (temporary folder) → ServiceNow attachment | Secret values redacted; no credential in the report; never saved elsewhere locally, and deleted after upload |
 | Semgrep token | Credential store / Parameter Store → `semgrep.dev` | Fixed HTTPS host; redirects refused |
 | Model traffic (Workbench) | Prompts and inspected source → selected provider | Requires explicit consent; keys from the session, environment, `~/.claude/settings.json`, Codex API key or `gh auth token` |
 
@@ -155,13 +155,15 @@ commas, spaces or new lines. AVITs run **one at a time**, and each gets its own 
 1. **Fetch** (`threatlint avit fetch`). AVITs outside the CodeSecurity view are marked *Out of scope*.
 2. **Clone** (`threatlint avit checkout`) the AVIT's repository and branch.
 3. **Triage** with the Findings triage agent and the model chosen in *Settings*.
-4. **Save** the AVIT's own Markdown and Word report. Credential-like values from the flagged file
-   and its directory are replaced with `[REDACTED]` before saving, in case the model printed one.
+4. **Write** the AVIT's own Markdown and Word report in a temporary folder. Credential-like values from
+   the flagged file and its directory are replaced with `[REDACTED]` first, in case the model printed one.
 5. **Resolve** (`threatlint avit resolve --checkout`). This attaches that AVIT's Word report,
    closes it as a false positive or leaves it open with the true-positive note, then ignores and
    tunes in Semgrep. It also deletes the checkout.
 
-Each card shows the stage, disposition, ServiceNow and Semgrep outcome, and links to the report. One
+Each card shows the stage, disposition, and ServiceNow and Semgrep outcome. **Reports are not kept
+locally:** once a report is attached to its AVIT, its files and history entry are deleted, so
+ServiceNow holds the only copy. One
 AVIT failing does not stop the rest. *Stop* cancels before the next AVIT starts. A ServiceNow update
 that has already started always finishes, so an AVIT is never left half-updated.
 

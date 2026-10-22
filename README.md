@@ -484,6 +484,9 @@ for an AVIT Threatlint has already closed as a false positive. It checks Service
 **Rule tuning runs once per rule.** If a policy already runs a `<rule>.tuned` version of the rule,
 later false positives of that rule are only triaged in Semgrep; the rule is not tuned again.
 
+**Reports are not saved locally for AVITs.** `/fp-review` and the Workbench write the Word report
+to a temporary folder, attach it to the AVIT, and delete it. ServiceNow holds the only copy.
+
 **Clean-up.** `threatlint avit resolve --checkout <dir>` deletes the AVIT checkout once validation
 finishes, whether or not it succeeds, because the checkout is a copy of another team's source and may
 contain live secrets. Pass `--keep-checkout` to keep it.

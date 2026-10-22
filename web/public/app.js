@@ -702,7 +702,7 @@
   function handleEvent(event) {
     switch (event.type) {
       case 'avit_batch_start': for (const avit of event.avits) avitCard(avit); break;
-      case 'avit_item': renderAvitItem(event); if (event.done && event.report) void refreshReports().catch(() => {}); break;
+      case 'avit_item': renderAvitItem(event); break;
       case 'avit_batch_complete': fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
       case 'avit_batch_error': fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;

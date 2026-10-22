@@ -5,11 +5,12 @@
  *   1. `threatlint avit fetch`    – the AVIT, if it is in the AVR CodeSecurity view
  *   2. `threatlint avit checkout` – its repository and branch, from the AVIT fields
  *   3. the Findings triage agent, with the selected model, against that checkout
- *   4. the report, saved as Markdown and Word (secrets found in the flagged files are redacted first)
+ *   4. the report, written as Markdown and Word (secrets found in the flagged files are redacted first)
  *   5. `threatlint avit resolve`  – attach the Word report; close a false positive and tune Semgrep;
  *                                   leave a true positive open with a work note; deletes the checkout
  * ServiceNow, Git, and Semgrep work goes through the Python CLI so the Workbench and `/fp-review` behave
  * identically. Each AVIT gets its own report and its own closure; one AVIT failing does not stop the rest.
+ * The report is not kept locally: it is attached to the AVIT, then its files and history entry are deleted.
  */
 
 const fs = require('node:fs');
@@ -124,6 +125,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   async function reviewOne(avit, { settings, message, semgrep, env, profile, signal, send }) {
     const step = (stage, detail = '', extra = {}) => send({ type: 'avit_item', avit, stage, detail, ...extra });
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-avit-'));
+    let created = null, sessionId = null;
     const repo = path.join(work, 'repo');
     try {
       step('fetching', 'Reading the AVIT from ServiceNow');
@@ -139,7 +141,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       try { target = JSON.parse(lastLine(checkout.stdout)); } catch { /* the review still runs; context is in avit.md */ }
       step('triage', `${target.kind?.toUpperCase() || 'Finding'} in ${target.name || 'repository'} · ${target.branch || 'default branch'} · ${target.file_path || ''}`, { target });
 
-      const sessionId = store.create(repo, true, work);
+      sessionId = store.create(repo, true, work);
       const session = store.sessions.get(sessionId);
       session.provenance = { provider: target.scm || null, repository: target.organization && target.name ? `${target.project || target.organization}/${target.name}` : target.name || null, branch: target.branch || null, webUrl: target.web_url || null, avit };
       const attachment = { name: `servicenow-${avit}.md`, content: fs.readFileSync(path.join(work, 'avit.md'), 'utf8') };
@@ -156,19 +158,21 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       const report = await reports.save(AGENT_ID, markdown, sessionId);
       const finding = report.findings.find(item => (item.body.match(/Original finding\W*:\s*(.+)/i)?.[1] || '').toUpperCase().includes(avit)) || report.findings[0];
       const disposition = finding?.disposition || 'UNSPECIFIED';
-      const meta = reports.metadata(report);
-      step('reported', count ? `Report saved (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report saved', { disposition, report: meta });
-      if (!report.docxPath) return step('error', 'The Word report could not be generated (install python-docx for THREATLINT_PYTHON); nothing was attached or closed', { disposition, report: meta, done: true });
+      created = report;
+      step('reported', count ? `Report written (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report written', { disposition });
+      if (!report.docxPath) return step('error', 'The Word report could not be generated (install python-docx for THREATLINT_PYTHON); nothing was attached or closed', { disposition, done: true });
 
       step('resolving', disposition === 'FALSE POSITIVE' ? 'Attaching the report, closing the AVIT, and tuning Semgrep' : disposition === 'TRUE POSITIVE' ? 'Attaching the report and adding the true-positive work note' : 'No change for this disposition');
       // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
       const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath, '--checkout', repo, '--yes', ...profile], { env });
       const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);
-      return step(resolved.code === 0 ? 'done' : 'error', resolved.code === 0 ? '' : errorOf(resolved), { disposition, report: meta, outcome, done: true });
+      return step(resolved.code === 0 ? 'done' : 'error', resolved.code === 0 ? 'Report attached to the AVIT in ServiceNow (not kept locally)' : errorOf(resolved), { disposition, outcome, done: true });
     } catch (error) {
       return step(signal.aborted ? 'cancelled' : 'error', signal.aborted ? 'Cancelled' : error.message, { done: true });
     } finally {
-      // The checkout is a copy of another team's source and may hold live secrets.
+      // The checkout is a copy of another team's source and may hold live secrets. The report is kept only in ServiceNow.
+      if (created) reports.remove(created);
+      if (sessionId) { store.sessions.delete(sessionId); store.save(); }
       fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
     }
   }

@@ -16,6 +16,7 @@ fs.writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : 
 process.env.THREATLINT_PYTHON = stub;
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
+let storage;
 const SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x.y; Semgrep Code; app.yaml:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: app.yaml:2 — value ${SECRET}\nBlast radius: one rule. Acceptance criteria: x. Proposed fix: y.\n`;
 
@@ -44,7 +45,8 @@ describe('False positive review batch', () => {
       }
       throw new Error(`unexpected ${args.join(' ')}`);
     };
-    wb = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-store-')),
+    storage = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-store-'));
+    wb = createWorkbench({ storageDir: storage,
       runProvider: async args => { const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1]; const text = report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE'); args.onEvent({ type: 'text_chunk', text }); return text; },
       integrations: { semgrepVersion: async () => '1.107.0', threatlintCli } });
     await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
@@ -65,8 +67,12 @@ describe('False positive review batch', () => {
     assert.equal(final[FP].stage, 'done'); assert.equal(final[FP].disposition, 'FALSE POSITIVE'); assert.equal(final[FP].outcome.closed, true);
     assert.equal(final[TP].stage, 'done'); assert.equal(final[TP].outcome.leftOpen, true);
     assert.equal(final[OUT].stage, 'out-of-scope');
-    assert.notEqual(final[FP].report.id, final[TP].report.id, 'one report per AVIT');
+    assert.equal(final[FP].report, undefined, 'no local report is offered');
+    const reportDirs = calls.filter(args => args[1] === 'resolve').map(args => args[args.indexOf('--report') + 1]);
+    assert.equal(new Set(reportDirs).size, 2, 'one report per AVIT');
+    for (const file of reportDirs) assert.ok(!fs.existsSync(file), 'reports are not kept locally');
     assert.deepEqual(calls.filter(args => args[1] === 'resolve').map(args => args[2]), [FP, TP], 'one closure per AVIT, in order');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8')), [], 'no report history kept');
     for (const args of calls.filter(item => item[1] === 'checkout')) assert.ok(!fs.existsSync(args[args.indexOf('--dir') + 1]), 'checkouts are deleted');
   });
   it('redacts credential-like values from the flagged file and parses resolve output', () => {

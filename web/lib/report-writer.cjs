@@ -67,7 +67,14 @@ function createReportWriter(store) {
 
   function read(report) { return parseReport(fs.readFileSync(report.mdPath, 'utf8'), report.agentId); }
 
-  return { save, metadata, find, read };
+  /** Deletes a report's files and history entry (AVIT reports live only in ServiceNow). */
+  function remove(report) {
+    for (const file of [report.mdPath, report.docxPath]) if (file) fs.rmSync(file, { force: true });
+    const session = store.sessions.get(report.sessionId);
+    if (session) { session.reports = session.reports.filter(item => item.id !== report.id); session.updatedAt = Date.now(); store.save(); }
+  }
+
+  return { save, metadata, find, read, remove };
 }
 
 module.exports = { createReportWriter };
