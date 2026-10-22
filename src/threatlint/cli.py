@@ -922,8 +922,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_avit_parser(sub)
     from threatlint.aws_login import add_aws_parser
     add_aws_parser(sub)
+    from threatlint.ado_login import add_ado_parser
+    add_ado_parser(sub)
 
     return parser
+
+
+def _cmd_ado(args: argparse.Namespace) -> int:
+    from threatlint.ado_login import cmd_ado
+    return cmd_ado(args)
 
 
 def _cmd_aws(args: argparse.Namespace) -> int:
@@ -935,10 +942,15 @@ def main() -> None:
     from threatlint.guard import cmd_guard
     from threatlint.ide import cmd_ide
 
+    # Windows consoles on legacy code pages cannot encode ✓ / →; substitute rather than crash.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado}
     handler = commands.get(args.command)
     if handler is None:
         parser.print_help()

@@ -87,6 +87,26 @@ def _candidates(default_id: str):
     return preferred + [entry for entry in _PRIVATE if entry not in preferred], bool(preferred)
 
 
+def _windows_exe(exe: str) -> str | None:
+    """Browser executable on Windows: PATH, then the App Paths registration browsers install."""
+    found = shutil.which(exe)
+    if found:
+        return found
+    try:
+        import winreg  # noqa: PLC0415 - Windows only
+    except ImportError:
+        return None
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}.exe") as handle:
+                value = winreg.QueryValueEx(handle, "")[0]
+                if value and Path(value.strip('"')).exists():
+                    return value.strip('"')
+        except OSError:
+            continue
+    return None
+
+
 def _launch(entry, url: str) -> bool:
     _name, _bundle, app, _progid, exe, flag = entry
     try:
@@ -96,7 +116,11 @@ def _launch(entry, url: str) -> bool:
                 return False
             subprocess.run(["/usr/bin/open", "-na", str(path), "--args", flag, url], check=True, timeout=15)
         elif sys.platform == "win32":
-            subprocess.run(["cmd.exe", "/d", "/c", "start", '""', exe, flag, url], check=True, timeout=15)
+            path = _windows_exe(exe)
+            if not path:
+                return False
+            subprocess.Popen([path, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
         else:
             if not shutil.which(exe):
                 return False

@@ -33,9 +33,11 @@ describe('AVIT retrieval', () => {
     const fetchImpl = async (url, options) => {
       calls.push({ url, options });
       if (url.endsWith('/oauth_token.do')) return json({ access_token: 'token' });
+      if (url.includes('/sysrule_view')) return json({ result: [{ condition: 'u_scm_toolISNOTEMPTY' }] });
+      if (url.includes('u_scm_toolISNOTEMPTY')) return json({ result: ['AVIT000000000000001', 'AVIT000000000000002', 'AVIT000000000000003'].map(number => ({ number })) });
       if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [
-        { number: { display_value: 'AVIT000000000000002' }, source: { display_value: 'CodeSecurity' }, sys_mod_count: { value: '4' }, description: { display_value: 'line one\nline two' } },
-        { number: { display_value: 'AVIT000000000000005' }, source: { display_value: 'Infrastructure (Cloud) Security' } },
+        { number: { display_value: 'AVIT000000000000002' }, u_security_finding_source: { display_value: 'SCA' }, sys_mod_count: { value: '4' }, description: { display_value: 'line one\nline two' } },
+        { number: { display_value: 'AVIT000000000000005' }, u_security_finding_source: { display_value: 'SAST' } },
         { number: { display_value: 'AVIT000000000000001' }, vulnerability: { display_value: 'SSRF rule', link: `${INSTANCE}/api/now/table/sn_vul_app_vulnerability_entry/abc` } },
         { number: { display_value: 'AVIT000000000000003' }, scanner: { display_value: 'Semgrep' }, vulnerability: { display_value: 'x', link: 'https://attacker.example/api/now/table/x/1' } },
       ] });
@@ -49,7 +51,7 @@ describe('AVIT retrieval', () => {
     assert.equal(items[0].references.vulnerability.cwe, 'CWE-918');
     assert.deepEqual(items[2].references, {});
     assert.equal(items[1].fields.sys_mod_count, undefined);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 5, 'token, AVITs, reference, view rule, view membership');
     assert.match(calls[0].options.body, /grant_type=client_credentials/);
     assert.equal(calls[1].options.headers.Authorization, 'Bearer token');
     assert.ok(calls.every(call => call.options.redirect === 'error'));
@@ -64,8 +66,8 @@ describe('AVIT retrieval', () => {
     const empty = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : { result: [] });
     await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT000000000000001'], { fetchImpl: empty }), /No AVITs were returned/);
   });
-  it('triages only AVR CodeSecurity AVITs because Semgrep covers code findings only', async () => {
-    const other = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : { result: [{ number: { display_value: 'AVIT000000000000009' }, source: { display_value: 'Container Security' } }] });
+  it('skips AVITs outside the CodeSecurity view, whatever their finding source (no view rule: SCM fields decide)', async () => {
+    const other = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : url.includes('/sysrule_view') ? { result: [] } : { result: [{ number: { display_value: 'AVIT000000000000009' }, u_security_finding_source: { display_value: 'Secrets' } }] });
     await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT000000000000009'], { fetchImpl: other }), error => error.status === 422 && /CodeSecurity/.test(error.message));
   });
 });

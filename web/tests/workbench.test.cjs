@@ -18,7 +18,7 @@ async function fakeServiceNow(url, options) {
   const json = body => ({ ok: true, status: 200, json: async () => body });
   if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
   return json({ result: [{ number: { display_value: 'AVIT000000000010001', value: 'AVIT000000000010001' }, short_description: { display_value: 'Tainted SSRF in ReplayService' },
-    rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' }, source: { display_value: 'CodeSecurity' } }] });
+    rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' }, u_scm_tool: { display_value: 'ADO' }, u_repository: { display_value: 'example' } }] });
 }
 const finalReport = '# Findings Report\n\n## Executive Summary\nOne hypothetical test finding.\n\n#### [FP-001] — Test query binding\n**Severity**: HIGH\n**Confidence**: CONFIRMED\n**Disposition**: TRUE POSITIVE\n**Evidence**: src/example.js:1 — observed fixture\n### Proposed Fix\nBind the value; PROPOSED — NOT APPLIED.\n### Regression Tests\nNOT RUN. Reject unsafe input.\n**Acceptance Criteria**: constant statement text.\n';
 
@@ -159,7 +159,7 @@ describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
     assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT000000000010001/); assert.match(message, /single cohesive report/);
     assert.match(message, /Semgrep Community Edition is installed/);
     assert.ok(snowRequests.every(request => request.options.redirect === 'error'));
-    assert.match(snowRequests.at(-1).url, /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT000000000010001%2CAVIT000000000010002)/);
+    assert.ok(snowRequests.some(request => /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT000000000010001%2CAVIT000000000010002)&/.test(request.url)));
     assert.doesNotMatch(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8'), /secret|snow-token/);
   });
   it('rejects AVITs without the FP reviewer, non-ServiceNow hosts, or missing credentials', async () => {

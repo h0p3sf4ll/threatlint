@@ -5,7 +5,7 @@ from the report the FP reviewer wrote and then:
   TRUE POSITIVE  -> attaches the report (prefixed with the AVIT number) and adds a work note; stays open.
   FALSE POSITIVE -> attaches the report, closes the AVIT as Closed / False Positive with the comment
                     "Closed as false positive by Threatlint fp-review agent", and ignores the matching
-                    open Semgrep finding(s) as false_positive (Code for CodeSecurity, Secrets for Secret).
+                    open Semgrep finding(s) as false_positive (Code for SAST, Supply Chain for SCA, Secrets for Secrets).
   AMBIGUOUS      -> changes nothing.
 Every write needs confirmation (--yes for non-interactive use). Tokens are used per run and never stored.
 """
@@ -75,7 +75,9 @@ def _record(instance: str, token: str, avit: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{32}", sys_id):
         raise ResolveError(f"{avit} returned an unexpected sys_id")
     fields = sn._flatten(row)
-    return {"sys_id": sys_id, "fields": fields, "context": sn.avit_context(fields, sn.field_labels(instance, token)), "references": {}}
+    members = sn.view_members(instance, token, [avit])
+    return {"sys_id": sys_id, "fields": fields, "context": sn.avit_context(fields, sn.field_labels(instance, token)), "references": {},
+            "in_view": None if members is None else avit in members}
 
 
 def _false_positive_choices(instance: str, token: str) -> tuple[str, str]:
@@ -170,13 +172,14 @@ def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict
         raise ResolveError(f"No Semgrep project matches repository {target['name']}")
     near = lambda found: not line.isdigit() or found is None or abs(int(found) - int(line)) <= 3
     matches = []
-    if kind == "sast":
+    if kind in ("sast", "sca"):
         for project in named:
             for page in range(20):
-                query = urllib.parse.urlencode({"issue_type": "sast", "repos": project, "status": "open", "dedup": "true", "page": page, "page_size": 100})
+                query = urllib.parse.urlencode({"issue_type": kind, "repos": project, "status": "open", "dedup": "true", "page": page, "page_size": 100})
                 findings = _semgrep(f"/deployments/{urllib.parse.quote(dep['slug'])}/findings?{query}", token).get("findings", [])
                 for finding in findings:
-                    name, location = str(finding.get("rule_name", "")), finding.get("location") or {}
+                    name = str(finding.get("rule_name") or (finding.get("rule") or {}).get("name", ""))
+                    location = finding.get("location") or {}
                     if rule and not (name == rule or name.endswith("." + rule) or rule.endswith("." + name)):
                         continue
                     if _same_path(location.get("file_path", ""), path) and near(location.get("line")):
@@ -246,10 +249,14 @@ def cmd_checkout(args) -> int:
     [avit] = sn.parse_avit_numbers(args.number)
     instance, token = _session(args)
     record = _record(instance, token, avit)
+    if not sn.in_code_security_view(record):
+        raise ResolveError(f"{avit} is not in the AVR CodeSecurity view; Threatlint reviews only CodeSecurity AVITs")
     kind = sn.finding_kind(record)
-    if not kind:
-        raise ResolveError(f"{avit} is not a CodeSecurity or Secret finding (Security Finding Source: {record['context'].get('finding_source', 'unknown')})")
     target = sn.repository_target(record["context"])
+    if target["scm"] == "azure-devops" and not sn.git_credential("azure-devops")[0] and sys.stdin.isatty():
+        from threatlint.ado_login import prompt_and_save  # noqa: PLC0415
+        print("  No Azure DevOps credential found; set up a PAT now (Code: Read).")
+        print(f"  ✓ Saved to {prompt_and_save(target['organization'])}")
     print(f"  {avit} : {target['web_url']} · branch {target['branch'] or '(default)'} · {record['context'].get('file_path', 'no file path')}")
     sn.checkout_repository(target, args.dir)
     print(f"✓ Checked out to {args.dir}")
@@ -268,9 +275,9 @@ def cmd_resolve(args) -> int:
         return 0
     instance, token = _session(args)
     record = _record(instance, token, avit)
+    if not sn.in_code_security_view(record):
+        raise ResolveError(f"{avit} is not in the AVR CodeSecurity view; Threatlint does not change it")
     kind = sn.finding_kind(record)
-    if not kind:
-        raise ResolveError(f"{avit} is not a CodeSecurity or Secret finding; Threatlint does not change it")
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
     files = [(f"{avit}-threatlint-fp-review.md", markdown.encode("utf-8"), "text/markdown")]
     if args.docx:
@@ -300,7 +307,7 @@ def cmd_resolve(args) -> int:
         target = sn.repository_target(record["context"])
         dep, matches = semgrep_matches(sg_token, kind, target, record["context"], args.semgrep_deployment)
         if not matches:
-            print(f"  ! No open Semgrep {'Secrets' if kind == 'secrets' else 'Code'} finding matches {record['context'].get('file_path')}; Semgrep unchanged")
+            print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; Semgrep unchanged")
         else:
             for match in matches:
                 print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")

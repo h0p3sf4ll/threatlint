@@ -415,15 +415,29 @@ Threatlint reads the AVIT and takes the review target from its fields:
 | SCM Tool, Organization Name, Project Name, Repository | ADO: `https://dev.azure.com/{Organization}/{Project}/_git/{Repository}`; GitHub: `https://github.com/{Organization}/{Repository}` |
 | Project Branch | the branch that is cloned and reviewed |
 | File Path, Line, Rule | where the agent starts and what it checks |
-| Security Finding Source | scope: **CodeSecurity** and **Secret** AVITs are triaged; other AVR views are skipped |
+| Security Finding Source | how to triage, and which Semgrep product to tune: SAST → Code, SCA → Supply Chain, Secrets → Secrets |
+
+**Scope is the AVR CodeSecurity view, not the finding source.** An AVIT qualifies when the CodeSecurity
+form view's rule (`sysrule_view`, evaluated by ServiceNow) selects it, whatever its Security Finding Source
+(SAST, SCA, or Secrets). If the OAuth client cannot read view rules, AVITs that carry the view's SCM
+fields (SCM Tool and Repository) qualify. To use a view with a different name, set `THREATLINT_SNOW_VIEW`.
 
 Field labels are resolved through `sys_documentation`, so custom `u_` columns are found by their form
 label. The flow is:
 
-1. `threatlint avit checkout <AVIT> --dir <dir>` clones that branch shallowly. Credentials come from
-   `THREATLINT_ADO_PAT` (Code: Read) or `az login` for ADO, and from `gh auth login` / `GH_TOKEN` for
-   GitHub. They are passed to git as environment config, never on the command line or in
-   `.git/config`.
+1. `threatlint avit checkout <AVIT> --dir <dir>` clones that branch shallowly. Credentials are passed to
+   git as environment config, never on the command line or in `.git/config`.
+   - **Azure DevOps:** run `threatlint ado login --organization PepsiCoIT` once.
+     - It asks for a PAT with **Code: Read**, input hidden, created at
+       `https://dev.azure.com/<org>/_usersSettings/tokens`.
+     - It checks the PAT against the organization, then saves it in the OS credential store when the
+       optional `keyring` package is installed (macOS Keychain or Windows Credential Manager).
+     - Without `keyring`, it saves to `~/.threatlint/ado.json` (`%USERPROFILE%\.threatlint\ado.json`
+       on Windows), readable only by you.
+     - `threatlint ado status` shows where the PAT comes from, and `threatlint ado logout` removes it.
+     - `THREATLINT_ADO_PAT`, `AZURE_DEVOPS_EXT_PAT`, or `az login` also work.
+     - If none is configured, `avit checkout` offers the PAT setup interactively.
+   - **GitHub:** `gh auth login` or `GH_TOKEN`.
 2. The FP reviewer triages the finding on that branch and saves the report.
 3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks
    for confirmation (`--yes` skips the prompts).
@@ -435,20 +449,23 @@ label. The flow is:
        Threatlint fp-review agent"*. The state values come from `sys_choice`, or from
        `THREATLINT_SNOW_FP_STATE` / `_SUBSTATE`.
      - The matching open Semgrep finding is ignored as `false_positive`: same project and file, within
-       ±3 lines, and the same rule for Code. CodeSecurity AVITs are ignored in Semgrep Code and Secret
-       AVITs in Semgrep Secrets. The token comes from `/cfc-appsec-semgrep-scan/semgrep-token`, or
+       ±3 lines, and the same rule for Code. SAST AVITs are ignored in Semgrep Code, SCA AVITs in Supply
+       Chain, and Secrets AVITs in Semgrep Secrets. The token comes from `/cfc-appsec-semgrep-scan/semgrep-token`, or
        `SEMGREP_APP_TOKEN`.
    - **AMBIGUOUS:** nothing changes.
 
 The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
-access to `sys_choice` and `sys_documentation`.
+access to `sys_choice`, `sys_documentation`, and `sysrule_view`.
+
+**macOS and Windows.** Every command runs on both:
+- Tools (`git`, `aws`, `az`, `gh`) are resolved from `PATH`, so Windows `.exe`/`.cmd` installs work.
+- The private sign-in window uses the browser's own command-line flag. On Windows the browser is found
+  through the App Paths registration.
+- The `/fp-review` workflow uses an OS temporary directory instead of `/tmp`.
 
 The FP reviewer can pull AVITs straight from ServiceNow (`sn_vul_app_vulnerable_item`) and triage
-a list of them in one report. Only AVITs in AVR's **CodeSecurity** and **Secret** views are triaged or closed, because
-Semgrep produces only code and secret findings; AVITs from other views are skipped and listed as excluded. An AVIT
-counts as CodeSecurity when its source, scanner, category, or type field (or its vulnerability entry)
-matches `code security`, `SAST`, `static application`, or `Semgrep`; override with
-`THREATLINT_SNOW_CODE_SECURITY_PATTERN` (a regular expression). The OAuth client is stored in AWS Parameter Store (us-west-2) as
+a list of them in one report. Only AVITs in AVR's **CodeSecurity** view are triaged or closed (their finding source may be SAST, SCA, or Secrets); AVITs from other views are skipped and listed as excluded
+(see *Scope* below). The OAuth client is stored in AWS Parameter Store (us-west-2) as
 `/cfc-appsec-snow-vulnerabilities-prod/client-id` and `/cfc-appsec-snow-vulnerabilities-prod/client-secret`.
 To read it, sign in through [PepsiCo AWS SSO](https://secure.pepsico.com/app/amazon_aws_sso/exk1l68v83cNqrsYG0h8/sso/saml)
 and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must

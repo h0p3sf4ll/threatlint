@@ -19,41 +19,53 @@ Before any triage or rule validation, run `semgrep --version`. If it fails, stop
 
 ## AVIT workflow
 
-Credentials: the ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`. The OAuth client and the Semgrep token (`/cfc-appsec-semgrep-scan/semgrep-token`) are read from AWS Parameter Store (us-west-2) with the user's AWS CLI profile (`--aws-profile`). If access fails, tell the user to run `threatlint aws login`, which signs in through a **private browser window** to avoid the Okta "Conflicting User IDs specified on state token" error, and retry. Never ask the user to paste a secret into the conversation.
+This works on macOS, Linux, and Windows. Use a temporary working directory from the OS:
+- macOS/Linux: `WORK=$(mktemp -d)`
+- Windows PowerShell: `$WORK = Join-Path $env:TEMP "threatlint-$(Get-Random)"; New-Item -ItemType Directory $WORK`
+
+Use `$WORK` for every path below. Never hard-code `/tmp`.
+
+**Credentials.**
+- The ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`.
+- The OAuth client and the Semgrep token (`/cfc-appsec-semgrep-scan/semgrep-token`) are read from AWS Parameter Store (us-west-2) with the user's AWS CLI profile (`--aws-profile`). If that fails, tell the user to run `threatlint aws login`, which signs in through a **private browser window** (avoiding Okta's "Conflicting User IDs specified on state token"), then retry.
+- Azure DevOps access comes from `threatlint ado login` (a saved, validated PAT with Code: Read), `THREATLINT_ADO_PAT`, or `az login`. Check it with `threatlint ado status`.
+- Never ask the user to paste a secret or PAT into the conversation. They run the login commands in their own terminal.
 
 For each AVIT number:
 
 1. **Fetch the AVIT and check its scope.**
    ```
-   TIMESTAMP=$(date +%s)
-   threatlint avit fetch <AVIT> -o /tmp/avit_${TIMESTAMP}.md
+   threatlint avit fetch <AVIT> -o $WORK/avit.md
    ```
-   The file's *Review target* table lists the finding type, repository URL, branch, file, line, and rule taken from the AVIT fields (SCM Tool, Organization Name, Project Name, Repository, Project Branch, File Path, Security Finding Source).
-   - Only **CodeSecurity** and **Secret** AVITs qualify. AVITs from other AVR views are listed as excluded: report them as out of scope and change nothing.
+   - Only AVITs in the AVR **CodeSecurity** view qualify. Membership is the view's rule, evaluated by ServiceNow.
+   - The *Security Finding Source* (SAST, SCA, or Secrets) does not affect scope. It only decides how to triage and which Semgrep product to tune.
+   - AVITs outside the view are listed as excluded: report them as out of scope and change nothing.
+   - The file's *Review target* table lists the finding type, repository URL, branch, file, line, and rule taken from the AVIT fields.
 2. **Check out exactly that repository and branch.**
    ```
-   threatlint avit checkout <AVIT> --dir /tmp/avit_${TIMESTAMP}_repo
+   threatlint ado status
+   threatlint avit checkout <AVIT> --dir $WORK/repo
    ```
-   - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}`.
-   - Authentication comes from `THREATLINT_ADO_PAT` (Code: Read), `az login`, or the user's git credential helper for ADO, and from `gh auth login` / `GH_TOKEN` for GitHub.
-   - If the clone fails, stop and report the access hint. Do not triage against a different branch or a local copy.
-3. **Triage against that checkout.** Give the agent the AVIT file as the findings source and the checkout as the repository.
-   - Start at the AVIT's File Path (and line/rule, when given), reading the file on that branch.
-   - For a Secret finding, decide whether the flagged value is a real, usable credential, not a placeholder, test fixture, example, revoked or rotated key, or reference to a secret store. Check git history on that branch for the value, but **never print the secret value**; redact it in the report.
-   - Write *Original finding* as `<AVIT>; <rule>; <scanner>; <path:line>`, one AVIT per finding.
-4. **Save the report** as described under *Output*. Use the AVIT checkout's repository name and branch in the filename and save it in the current repository root. Also keep the Markdown at `/tmp/fp_review_${TIMESTAMP}.md` for step 5.
+   - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with `gh auth login` or `GH_TOKEN`.
+   - If `threatlint ado status` shows no PAT and the clone fails, stop. Tell the user to run `threatlint ado login --organization <Organization Name>` in their terminal, then retry.
+   - Do not triage against a different branch or a local copy.
+3. **Triage against that checkout.** Give the agent `$WORK/avit.md` as the findings source and `$WORK/repo` as the repository. Start at the AVIT's File Path (and line/rule, when given) on that branch.
+   - **SAST:** trace source to sink.
+   - **SCA:** confirm the vulnerable package and version are actually resolved in the lockfile or manifest on that branch, and whether the vulnerable function or feature is reachable. For example, whether fast-xml-parser parses untrusted XML with `processEntities` enabled.
+   - **Secrets:** decide whether the value is a real, usable credential, not a placeholder, test fixture, revoked key, or secret-store reference. **Never print the secret value.**
+   - Write *Original finding* as `<AVIT>; <rule or vulnerability>; <scanner>; <path:line>`, one AVIT per finding.
+4. **Save the report** as described under *Output*, using the AVIT checkout's repository name and branch in the filename. Keep the Markdown at `$WORK/fp_review.md`.
 5. **Resolve the AVIT.** Show the user the disposition and ask for confirmation, then run:
    ```
-   threatlint avit resolve <AVIT> --report /tmp/fp_review_${TIMESTAMP}.md --docx <saved .docx> --yes
+   threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx <saved .docx> --yes
    ```
-   - **TRUE POSITIVE:** the report is attached to the AVIT as `<AVIT>-threatlint-fp-review.md` (and `.docx`), with a work note. The AVIT stays open for remediation.
+   - **TRUE POSITIVE:** the report is attached as `<AVIT>-threatlint-fp-review.md` (and `.docx`) with a work note. The AVIT stays open.
    - **FALSE POSITIVE:**
      - The report is attached first.
      - The AVIT is set to Closed / False Positive with the comment "Closed as false positive by Threatlint fp-review agent".
-     - Matching open Semgrep findings (same project and file, within ±3 lines, and the same rule for CodeSecurity) are ignored as `false_positive`. CodeSecurity AVITs are ignored in Semgrep Code and Secret AVITs in Semgrep Secrets.
-     - Rule-logic changes remain proposals in the report.
+     - Matching open Semgrep findings are ignored as `false_positive`: Semgrep Code for SAST, Supply Chain for SCA, and Secrets for Secrets.
    - **AMBIGUOUS:** nothing changes.
-6. **Clean up.** Delete `/tmp/avit_${TIMESTAMP}.md`, `/tmp/fp_review_${TIMESTAMP}.md`, and the checkout directory.
+6. **Clean up.** Delete `$WORK`.
 
 ## Instructions for the Agent
 
@@ -92,10 +104,9 @@ After the agent delivers its report:
 
 3. **Convert to Word document**:
    ```
-   TIMESTAMP=$(date +%s)
-   Write the full report text to /tmp/fp_review_${TIMESTAMP}.md
-   python3 ~/.claude/scripts/md_to_docx.py /tmp/fp_review_${TIMESTAMP}.md <output-dir>/<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx
-   rm /tmp/fp_review_${TIMESTAMP}.md
+   Write the full report text to a file in a temporary directory (`$WORK/fp_review.md`; see above)
+   python3 ~/.claude/scripts/md_to_docx.py $WORK/fp_review.md <output-dir>/<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx
+   (on Windows use `python` and `$HOME\.claude\scripts\md_to_docx.py`), then delete the temporary file
    ```
 
 4. **Confirm** the saved path to the user.

@@ -20,14 +20,16 @@ const CHOICES = [
   { name: 'sn_vul_app_vulnerable_item', element: 'substate', value: '6', label: 'False Positive' },
 ];
 
-function fakeServiceNow(calls, { storedState = '3', source = 'CodeSecurity' } = {}) {
+function fakeServiceNow(calls, { storedState = '3', inView = true } = {}) {
   return async (url, options = {}) => {
     calls.push({ url, options });
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
     if (url.includes('/api/now/table/sys_choice')) return json({ result: CHOICES });
     if (url.includes('/api/now/attachment/file')) return json({ result: { sys_id: 'b'.repeat(32) } });
     if (options.method === 'PATCH') return json({ result: { number: 'AVIT000000000010001', state: storedState, substate: '6' } });
-    if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: 'AVIT000000000010001' }, state: { value: '1' }, source: { display_value: source } }] });
+    if (url.includes('/sysrule_view')) return json({ result: [{ condition: 'u_scm_toolISNOTEMPTY' }] });
+    if (url.includes('u_scm_toolISNOTEMPTY')) return json({ result: inView ? [{ number: 'AVIT000000000010001' }] : [] });
+    if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: 'AVIT000000000010001' }, state: { value: '1' }, u_scm_tool: { display_value: 'ADO' }, u_repository: { display_value: 'web' } }] });
     throw new Error(`unexpected ${url}`);
   };
 }
@@ -72,7 +74,7 @@ describe('Closing an AVIT as a false positive', () => {
   it('refuses to close AVITs outside the AVR CodeSecurity view, before attaching or changing anything', async () => {
     const calls = [];
     await assert.rejects(closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [{ name: 'f.md', content: Buffer.from('x'), type: 'text/markdown' }] },
-      { fetchImpl: fakeServiceNow(calls, { source: 'Dynamic Application Security (DAST)' }) }), error => error.status === 422 && /CodeSecurity/.test(error.message));
+      { fetchImpl: fakeServiceNow(calls, { inView: false }) }), error => error.status === 422 && /CodeSecurity/.test(error.message));
     assert.ok(!calls.some(call => call.url.includes('/attachment/') || call.options.method === 'PATCH'));
   });
   it('requires exactly one AVIT per finding', () => {

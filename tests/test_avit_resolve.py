@@ -54,9 +54,11 @@ def test_context_comes_from_form_labels_and_targets_the_ado_repo_branch_and_file
     assert sn.avit_context(fields)["repository"] == "eip-infra-aws-terraform-support"
 
 
-def test_scope_is_codesecurity_and_secret_only():
+def test_finding_source_only_selects_the_semgrep_product():
     kind = lambda source: sn.finding_kind({"fields": {}, "context": {"finding_source": source}})
-    assert (kind("Secret"), kind("CodeSecurity"), kind("DAST"), kind("Container Security")) == ("secrets", "sast", None, None)
+    assert (kind("SAST"), kind("SCA"), kind("Secrets"), kind("Secret"), kind("")) == ("sast", "sca", "secrets", "secrets", "sast")
+    assert sn.in_code_security_view({"in_view": False, "context": {"scm_tool": "ADO", "repository": "r"}}) is False
+    assert sn.in_code_security_view({"in_view": None, "context": {"scm_tool": "ADO", "repository": "r"}}) is True
 
 
 def test_unsafe_repository_values_are_refused():
@@ -70,10 +72,11 @@ def test_unsafe_repository_values_are_refused():
 def test_checkout_clones_only_the_avit_branch_with_credentials_out_of_argv(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setenv("THREATLINT_ADO_PAT", "pat-value")
+    monkeypatch.setattr(sn.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(sn.subprocess, "run", lambda command, **kw: seen.update(command=command, env=kw["env"]) or types.SimpleNamespace(returncode=0, stderr=""))
     target = sn.repository_target({"scm_tool": "ADO", "organization": "PepsiCoIT", "project": "EIP-Infrastructure", "repository": "r", "branch": "pepgenx-troubleshooting"})
     sn.checkout_repository(target, str(tmp_path / "co"))
-    assert seen["command"][-2:] == [target["clone_url"], str(tmp_path / "co")]
+    assert seen["command"][0] == "/usr/bin/git" and seen["command"][-2:] == [target["clone_url"], str(tmp_path / "co")]
     assert ["--branch", "pepgenx-troubleshooting"] == seen["command"][seen["command"].index("--branch"):seen["command"].index("--branch") + 2]
     assert "pat-value" not in " ".join(seen["command"])
     assert seen["env"]["GIT_CONFIG_KEY_0"] == "http.https://dev.azure.com/.extraHeader"
@@ -95,6 +98,10 @@ class FakeServiceNow:
             return {"access_token": "t"}
         if "/sys_documentation" in url:
             return {"result": LABELS}
+        if "/sysrule_view" in url:
+            return {"result": [{"condition": "u_scm_toolISNOTEMPTY"}]}
+        if "u_scm_toolISNOTEMPTY" in url:
+            return {"result": [{"number": AVIT}]}
         if "/sys_choice" in url:
             return {"result": [{"name": sn.AVIT_TABLE, "element": "state", "value": "3", "label": "Closed"},
                                {"name": sn.AVIT_TABLE, "element": "substate", "value": "6", "label": "False Positive"}]}
@@ -162,3 +169,29 @@ def test_ambiguous_changes_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(sn, "_request_json", lambda *a, **k: pytest.fail("no ServiceNow call for AMBIGUOUS"))
     monkeypatch.setattr("sys.stdout", io.StringIO())
     assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "AMBIGUOUS"))) == 0
+
+
+def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_path):
+    row = {key: value for key, value in ROW.items() if key != "u_line_number"}
+    row.update({"u_security_finding_source": {"display_value": "SCA"}, "u_file_path": {"display_value": "package-lock.json"}})
+    fake = FakeServiceNow()
+    original = fake.__call__
+    monkeypatch.setattr(sn, "_request_json", lambda url, **kw: {"result": [row]} if "sysparm_query=number%3D" in url else original(url, **kw))
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
+    calls = []
+    def semgrep(path, token, *, body=None):
+        calls.append((path, body))
+        if path == "/deployments":
+            return {"deployments": [{"id": 7, "slug": "pepsico"}]}
+        if "/projects" in path:
+            return {"projects": [{"name": "eip-infra-aws-terraform-support"}]}
+        if "/findings?" in path:
+            assert "issue_type=sca" in path
+            return {"findings": [{"id": 91, "rule": {"name": "ssc-dc3aa06a"}, "location": {"file_path": "package-lock.json", "line": 40}}]}
+        return {"num_triaged": len(body["issue_ids"])}
+    monkeypatch.setattr(ar, "_semgrep", semgrep)
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json")
+    assert ar.cmd_resolve(_args(tmp_path, report)) == 0
+    assert calls[-1][1]["issue_type"] == "sca" and calls[-1][1]["issue_ids"] == [91]

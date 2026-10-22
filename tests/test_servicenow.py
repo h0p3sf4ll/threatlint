@@ -57,11 +57,17 @@ def test_avits_become_one_untrusted_findings_artifact(monkeypatch):
         if url.endswith("/oauth_token.do"):
             assert b"grant_type=client_credentials" in data
             return {"access_token": "token"}
+        if "/sysrule_view" in url:
+            return {"result": [{"condition": "u_scm_toolISNOTEMPTY"}]}
+        if "/sys_documentation" in url:
+            return {"result": []}
+        if "u_scm_toolISNOTEMPTY" in url:
+            return {"result": [{"number": number} for number in ("AVIT000000000000001", "AVIT000000000000002", "AVIT000000000000003")]}
         if "sn_vul_app_vulnerable_item" in url:
             assert headers["Authorization"] == "Bearer token"
             return {"result": [
-                {"number": {"display_value": "AVIT000000000000002"}, "source": {"display_value": "CodeSecurity"}, "description": {"display_value": "a\nb"}},
-                {"number": {"display_value": "AVIT000000000000005"}, "source": {"display_value": "Dynamic Application Security (DAST)"}},
+                {"number": {"display_value": "AVIT000000000000002"}, "u_security_finding_source": {"display_value": "SCA"}, "description": {"display_value": "a\nb"}},
+                {"number": {"display_value": "AVIT000000000000005"}, "u_security_finding_source": {"display_value": "SAST"}},
                 {"number": {"display_value": "AVIT000000000000001"},
                  "vulnerability": {"display_value": "SSRF", "link": f"{INSTANCE}/api/now/table/sn_vul_app_vulnerability_entry/1"}},
                 {"number": {"display_value": "AVIT000000000000003"}, "scanner": {"display_value": "Semgrep"},
@@ -74,7 +80,7 @@ def test_avits_become_one_untrusted_findings_artifact(monkeypatch):
     numbers = ["AVIT000000000000001", "AVIT000000000000002", "AVIT000000000000003", "AVIT000000000000004", "AVIT000000000000005"]
     content, count, missing, excluded = servicenow.load_avits(INSTANCE, numbers, "id", "client-secret-value")
     assert (count, missing, excluded) == (3, ["AVIT000000000000004"], ["AVIT000000000000005"])
-    assert "## AVIT000000000000005" not in content and "Excluded (not a CodeSecurity or Secret finding; Semgrep does not cover them): AVIT000000000000005" in content
+    assert "## AVIT000000000000005" not in content and "Excluded (not in the AVR CodeSecurity view): AVIT000000000000005" in content
     assert content.index("## AVIT000000000000001") < content.index("## AVIT000000000000002")
     assert "CWE-918" in content and "~~~text\na\nb\n~~~" in content and "client-secret-value" not in content
 
@@ -132,13 +138,20 @@ def test_avit_fetch_writes_a_findings_file(monkeypatch, tmp_path):
     assert output.read_text() == "# AVITs\n"
 
 
-def test_only_code_security_avits_are_triaged(monkeypatch):
+def test_scope_is_the_codesecurity_view_not_the_finding_source(monkeypatch):
+    rows = [{"number": {"display_value": "AVIT000000000000009"}, "u_security_finding_source": {"display_value": "Secrets"}},
+            {"number": {"display_value": "AVIT000000000000008"}, "u_security_finding_source": {"display_value": "SCA"},
+             "u_scm_tool": {"display_value": "ADO"}, "u_repository": {"display_value": "askada-frontend"}}]
     def fake_request(url, *, data=None, headers):
         if url.endswith("/oauth_token.do"):
             return {"access_token": "token"}
-        return {"result": [{"number": {"display_value": "AVIT000000000000009"}, "source": {"display_value": "Container Security"}}]}
+        if "/sysrule_view" in url or "/sys_documentation" in url:
+            return {"result": []}
+        return {"result": rows}
     monkeypatch.setattr(servicenow, "_request_json", fake_request)
-    with pytest.raises(servicenow.ServiceNowError, match="CodeSecurity"):
+    # No readable view rule: the CodeSecurity view's SCM fields decide; finding source is irrelevant.
+    _content, count, _missing, excluded = servicenow.load_avits(INSTANCE, ["AVIT000000000000008", "AVIT000000000000009"], "id", "secret")
+    assert (count, excluded) == (1, ["AVIT000000000000009"])
+    rows.pop()
+    with pytest.raises(servicenow.ServiceNowError, match="CodeSecurity view"):
         servicenow.load_avits(INSTANCE, ["AVIT000000000000009"], "id", "secret")
-    monkeypatch.setenv(servicenow.CODE_SECURITY_PATTERN_ENV, "container")
-    assert servicenow.load_avits(INSTANCE, ["AVIT000000000000009"], "id", "secret")[1] == 1
