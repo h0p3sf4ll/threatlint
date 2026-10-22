@@ -70,3 +70,8 @@ def test_error_messages_with_aws_urls_never_open_a_browser(monkeypatch):
     except aws_login.AwsLoginError as exc:
         assert "before showing a sign-in page" in str(exc)
     assert opened == []
+
+
+def test_region_is_detected_from_the_portal(monkeypatch):
+    monkeypatch.setattr(aws_login, "portal_accepts", lambda url, region: region == "us-east-1")
+    assert aws_login.detect_region("https://console-pepsico.awsapps.com/start", "us-east-2") == "us-east-1"

@@ -173,11 +173,40 @@ def existing_profile(profile: str, path: Path | None = None) -> dict[str, str] |
     return dict(config.items(section)) if config.has_section(section) else None
 
 
+def existing_session(name: str, path: Path | None = None) -> dict[str, str]:
+    config = configparser.RawConfigParser()
+    config.read(path or aws_config_path(), encoding="utf-8")
+    section = f"sso-session {name}"
+    return dict(config.items(section)) if name and config.has_section(section) else {}
+
+
 def _aws() -> str:
     aws = shutil.which("aws")
     if not aws:
         raise AwsLoginError("The AWS CLI v2 is required: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html")
     return aws
+
+
+# Identity Center regions to try when the entered one rejects the portal (most common first).
+_REGIONS = ("us-east-1", "us-east-2", "us-west-2", "us-west-1", "eu-central-1", "eu-west-1", "eu-west-2", "ap-southeast-1",
+            "ap-southeast-2", "ap-northeast-1", "ap-south-1", "ca-central-1", "sa-east-1")
+
+
+def portal_accepts(start_url: str, region: str) -> bool:
+    """True when Identity Center in this region hosts the portal; a wrong region answers InvalidRequestException."""
+    result = subprocess.run([_aws(), "sso-oidc", "register-client", "--client-name", "threatlint-region-check", "--client-type", "public",
+                             "--grant-types", "authorization_code", "refresh_token", "--redirect-uris", "http://127.0.0.1/oauth/callback",
+                             "--issuer-url", start_url, "--scopes", "sso:account:access", "--region", region, "--query", "clientIdIssuedAt"],
+                            capture_output=True, text=True, timeout=30, check=False, env=tool_env())
+    return result.returncode == 0
+
+
+def detect_region(start_url: str, preferred: str = "") -> str:
+    """The Identity Center region for the portal, trying the preferred one first."""
+    for region in dict.fromkeys([preferred, *_REGIONS]):
+        if region and portal_accepts(start_url, region):
+            return region
+    raise AwsLoginError(f"No IAM Identity Center region accepted {start_url}. Check the access portal URL.")
 
 
 def sso_login(profile: str, opener=open_private, out=sys.stdout) -> None:
@@ -230,7 +259,7 @@ def add_aws_parser(sub) -> None:
     login.add_argument("--profile", default=DEFAULT_PROFILE, help=f"Profile name to create or use (default: {DEFAULT_PROFILE})")
     login.add_argument("--start-url", default=os.environ.get(START_URL_ENV, ""),
                        help=f"AWS access portal URL, e.g. https://<name>.awsapps.com/start (or {START_URL_ENV})")
-    login.add_argument("--sso-region", default=os.environ.get(SSO_REGION_ENV, ""), help=f"IAM Identity Center region (or {SSO_REGION_ENV})")
+    login.add_argument("--sso-region", default=os.environ.get(SSO_REGION_ENV, ""), help=f"IAM Identity Center region (or {SSO_REGION_ENV}); detected from the portal when omitted or wrong")
     login.add_argument("--account-id", help="AWS account ID holding the AppSec parameters")
     login.add_argument("--role", help="Permission set (role) name to assume")
 
@@ -256,11 +285,18 @@ def cmd_aws(args) -> int:
             start_url = _ask("AWS access portal URL (https://<name>.awsapps.com/start)", args.start_url, _START_URL)
             if not _START_URL.fullmatch(start_url):
                 raise AwsLoginError("The access portal URL must look like https://<name>.awsapps.com/start")
-            region = _ask("IAM Identity Center region (e.g. us-east-1)", args.sso_region, _REGION)
+            region = detect_region(start_url.split("#")[0].rstrip("/"), args.sso_region if _REGION.fullmatch(args.sso_region or "") else "")
+            print(f"  Identity Center region: {region}")
             account = _ask("AWS account ID", args.account_id or "", re.compile(r"\d{12}"))
             role = _ask("Role (permission set) name", args.role or "", _NAME)
             ensure_profile(profile, start_url.split("#")[0].rstrip("/"), region, account, role)
             print(f"✓ Saved AWS profile '{profile}' in {aws_config_path()}")
+        # Repair a saved profile whose region does not host the portal (AWS answers InvalidRequestException).
+        session = existing_session(current.get("sso_session", ""))
+        if session.get("sso_start_url") and session.get("sso_region") and not portal_accepts(session["sso_start_url"], session["sso_region"]):
+            region = detect_region(session["sso_start_url"])
+            ensure_profile(profile, session["sso_start_url"], region, current.get("sso_account_id", ""), current.get("sso_role_name", ""), session=current["sso_session"])
+            print(f"✓ Corrected Identity Center region {session['sso_region']} → {region} for {session['sso_start_url']}")
         sso_login(profile)
         identity = caller_identity(profile)
         print(f"✓ Signed in as {identity.get('Arn', 'unknown')}")
