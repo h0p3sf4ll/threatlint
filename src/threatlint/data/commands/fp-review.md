@@ -67,7 +67,9 @@ For each AVIT number:
      - For SAST and Secrets, the rule is replaced in Semgrep by the validated tuned rule.
      - Matching open Semgrep findings are ignored as `false_positive`: Semgrep Code for SAST, Supply Chain for SCA, and Secrets for Secrets.
    - **AMBIGUOUS:** nothing changes.
-6. **Clean up.** Delete `$WORK`.
+6. **Clean up.** `threatlint avit resolve --checkout $WORK/repo` deletes the checkout itself once validation finishes. Then delete `$WORK`. Never leave a copy of the AVIT repository on the local drive, because it may contain live secrets.
+
+Rule tuning runs once per rule. If a Semgrep policy already runs `<rule>.tuned`, later false positives of that rule are only triaged, not tuned again.
 
 ## Instructions for the Agent
 

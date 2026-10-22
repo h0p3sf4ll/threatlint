@@ -472,7 +472,14 @@ label. The flow is:
    - **AMBIGUOUS:** nothing changes.
 
 The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
-access to `sys_choice`, `sys_documentation`, and `sysrule_view`.
+access to `sys_documentation` and `sysrule_view`.
+
+**Rule tuning runs once per rule.** If a policy already runs a `<rule>.tuned` version of the rule,
+later false positives of that rule are only triaged in Semgrep; the rule is not tuned again.
+
+**Clean-up.** `threatlint avit resolve --checkout <dir>` deletes the AVIT checkout once validation
+finishes, whether or not it succeeds, because the checkout is a copy of another team's source and may
+contain live secrets. Pass `--keep-checkout` to keep it.
 
 **macOS and Windows.** Every command runs on both:
 - Tools (`git`, `aws`, `az`, `gh`) are resolved from `PATH`, so Windows `.exe`/`.cmd` installs work.
@@ -488,10 +495,9 @@ To read it, sign in through [PepsiCo AWS SSO](https://secure.pepsico.com/app/ama
 and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must
 be installed (`python3 -m pip install semgrep`); the FP review will not start without it.
 
-- **Workbench:** in *Model & settings → ServiceNow AVIT import*, enter the instance URL and either
-  paste the client ID and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
-  or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs. The
-  values stay in memory for the session only.
+- **Workbench:** in *Settings → ServiceNow*, enter the instance URL and either paste the client ID
+  and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
+  or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs.
 - **Saved once:** *Settings → ServiceNow* saves the instance URL, client ID, and secret to
   `~/.threatlint/servicenow.json` (`%USERPROFILE%\.threatlint\servicenow.json` on Windows;
   `THREATLINT_HOME` overrides). The file is readable only by you. The Workbench and the CLI both read it,
@@ -531,22 +537,22 @@ secret is sent there; add custom domains to `THREATLINT_SNOW_ALLOWED_HOSTS`.
 #### Close false positives and tune Semgrep
 
 In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings triage report has a
-*Close FP & tune Semgrep…* action. Each step runs only after you confirm it:
+*Close FP & tune Semgrep…* action. (The `/fp-review` CLI flow closes false positives without
+prompting; see [docs/avit-integration.md](docs/avit-integration.md).)
 
-1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the report
-   attached (as `AVIT000000095938462-threatlint-fp-review.md`, plus `.docx` when Word export is available),
-   then is set to *Closed / False Positive* with a "Closed by Threatlint" work note. The state and
-   substate values come from the instance's `sys_choice` table (override them with
-   `THREATLINT_SNOW_FP_STATE` / `THREATLINT_SNOW_FP_SUBSTATE`). If a business rule holds the closure
-   for approval, the dialog reports the state ServiceNow actually stored. The OAuth client needs
-   write access to `sn_vul_app_vulnerable_item` and `sys_attachment`.
-2. **Tune Semgrep.** The Semgrep API token is read from Parameter Store
-   (`/cfc-appsec-semgrep-scan/semgrep-token`, or `SEMGREP_APP_TOKEN`) with your AWS CLI session.
-   *Find matches* lists open findings for exactly that rule, project, and file (±3 lines). The
-   findings you confirm are triaged as *ignored / false_positive* with a note that references the
-   report and AVIT. Semgrep keeps that triage for the same fingerprint on later scans and other
-   branches. The public API cannot edit rule logic, so any rule change (a `pattern-not` or path
-   exclusion) stays a proposal in the report for the scanner owner.
+1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the Word
+   report attached as `AVIT000000095938462-threatlint-fp-review.docx`, the only attachment. It is then
+   set to state 3 / substate 3 with the work note "Closed by Threatlint as a false positive, see
+   attached report." Override the values with `THREATLINT_SNOW_FP_STATE` /
+   `THREATLINT_SNOW_FP_SUBSTATE`. If a business rule changes the stored state, the dialog shows what
+   ServiceNow actually kept.
+2. **Tune Semgrep.** The token comes from *Settings → Semgrep*, `threatlint semgrep login`,
+   `SEMGREP_APP_TOKEN`, or Parameter Store `/cfc-appsec-semgrep-scan/semgrep-token`.
+   - *Find matches* lists open findings for exactly that rule, project and file (±3 lines).
+   - The findings you confirm are triaged as *ignored / false_positive*. Semgrep keeps that triage
+     for the same fingerprint on later scans and branches.
+   - Rule replacement for SAST and Secrets is done by `threatlint avit resolve`, as described above.
+     It runs once per rule, and only when it can be validated.
 
 Uninstall removes only bundled skill files and leaves third-party skills and custom additions
 untouched. Report-format warnings in the UI are structural checks, not verification that a finding,

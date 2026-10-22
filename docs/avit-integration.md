@@ -59,7 +59,9 @@ flowchart TD
     P --> S["Semgrep: ignore the matching open finding as false_positive"]
     S --> R{"SAST or Secrets?"}
     R -- no --> Z["Done (SCA: triage only)"]
-    R -- yes --> V["Validate the tuned rule locally"]
+    R -- yes --> Q{"A policy already runs rule.tuned?"}
+    Q -- yes --> Z2["Done: triage only, no re-tuning"]
+    Q -- no --> V["Validate the tuned rule locally"]
     V -- proven --> W["Publish org-private rule. Enable it in each policy in the original's mode. Disable the original."]
     V -- "not proven" --> Y["Leave the policy unchanged and report why"]
 ```
@@ -93,8 +95,10 @@ agent triages and which Semgrep product is tuned.
   substate.
 
 **Semgrep tuning.** This runs only for a SAST or Secrets false positive, and needs both the reviewer's
-`**Tuned rule**:` block and the AVIT checkout. The public API cannot edit a rule in place, so
-Threatlint replaces the rule:
+`**Tuned rule**:` block and the AVIT checkout.
+- **Once per rule:** if any policy of the product already runs an enabled `<rule-name>.tuned`, Threatlint
+  stops here. That covers a similar false positive that was already tuned.
+- **Otherwise:** the public API cannot edit a rule in place, so Threatlint replaces the rule:
 1. Validate the tuned rule with `semgrep --validate` and run its fixtures with `semgrep --test`. Using
    the Pro engine when installed, require that the **original rule reproduces the finding** and the
    tuned rule does not. Otherwise stop (fail closed).
@@ -132,7 +136,7 @@ sequenceDiagram
 | --- | --- | --- |
 | ServiceNow OAuth client | Parameter Store or saved config → Threatlint → `oauth_token.do` | Sent only to `*.service-now.com` / `*.servicenowservices.com` (or `THREATLINT_SNOW_ALLOWED_HOSTS`); redirects refused |
 | AVIT fields | ServiceNow → `avit.md` → agent | Treated as untrusted evidence, never as instructions |
-| Source code | ADO/GitHub → temporary checkout → agent | Read-only analysis; the checkout is deleted after the run |
+| Source code | ADO/GitHub → temporary checkout → agent | Read-only analysis. `avit resolve --checkout` deletes the checkout once validation finishes, even on error (`--keep-checkout` keeps it). |
 | ADO PAT / GitHub token | Credential store → git environment | Never in argv, `.git/config`, logs or reports |
 | Report | Agent → Word document → ServiceNow attachment | Secret values redacted; no credential in the report |
 | Semgrep token | Credential store / Parameter Store → `semgrep.dev` | Fixed HTTPS host; redirects refused |

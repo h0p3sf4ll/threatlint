@@ -1,5 +1,6 @@
 """Semgrep token setup and rule tuning: nothing is published unless the tuned rule is proven."""
 
+import os
 import types
 
 import pytest
@@ -28,6 +29,7 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
     monkeypatch.delenv("SEMGREP_APP_TOKEN", raising=False)
     monkeypatch.setattr(sp, "_keyring", lambda: None)
+    monkeypatch.setattr(sp, "existing_tuning", lambda *a: [])
 
 
 def test_token_is_saved_privately_and_resolved_first(monkeypatch):
@@ -77,3 +79,16 @@ def test_tuning_fails_closed_when_the_original_rule_does_not_reproduce(monkeypat
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("must not publish an unproven tuning"))
     with pytest.raises(sp.SemgrepError, match="does not reproduce"):
         sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1})
+
+
+def test_a_rule_already_tuned_is_not_tuned_again(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    def call(path, token, *, method="GET", body=None):
+        assert method == "GET", "nothing may change"
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SAST"}]}
+        return {"rules": [{"path": "org.js.rule.tuned", "policyMode": "MODE_BLOCK"}, {"path": "js.rule", "policyMode": "MODE_DISABLED"}]}
+    monkeypatch.setattr(sp, "call", call)
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *a: pytest.fail("must not re-validate or publish"))
+    assert sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []

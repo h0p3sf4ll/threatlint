@@ -263,8 +263,29 @@ def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tu
     return changes
 
 
+def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
+    """Policies already running a Threatlint-tuned version of this rule (rule path ends with `<rule-name>.tuned`)."""
+    product = PRODUCT_POLICY[kind]
+    leaf = original_rule.rsplit(".", 1)[-1]
+    found = []
+    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
+        if policy.get("productType") != product:
+            continue
+        for rule in _policy_rules(str(dep["id"]), str(policy["id"]), token):
+            path = str(rule.get("path", ""))
+            if path.endswith(f"{leaf}.tuned") and rule.get("policyMode") != "MODE_DISABLED":
+                found.append({"policy": policy.get("name"), "tuned": path, "mode": rule.get("policyMode")})
+    return found
+
+
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
               out=sys.stdout) -> list[dict]:
+    # One tuning per rule: a later false positive of the same rule is triaged, not tuned again.
+    already = existing_tuning(token, dep, kind, original_rule)
+    if already:
+        for item in already:
+            print(f"  ✓ {item['policy']} already runs the tuned rule {item['tuned']} ({item['mode']}); not tuning again", file=out)
+        return []
     rule_yaml = tuned_rule_from_report(report)
     if not rule_yaml:
         raise SemgrepError("The report has no `**Tuned rule**:` block, so the rule was not changed")

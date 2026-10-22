@@ -1,6 +1,7 @@
 """AVIT -> repository/branch/file context, checkout, and resolve (upload, close FP, tune Semgrep)."""
 
 import io
+import os
 import json
 import types
 
@@ -214,3 +215,17 @@ def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path)
     args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
     assert ar.cmd_resolve(args) == 0
     assert not any(u.endswith("/attachment/file") for _m, u, _d in fake.calls)
+
+
+def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypatch):
+    checkout = tmp_path / "repo"
+    (checkout / ".git" / "objects").mkdir(parents=True)
+    (checkout / ".git" / "objects" / "pack").write_text("x")
+    os.chmod(checkout / ".git" / "objects" / "pack", 0o444)
+    args = types.SimpleNamespace(avit_command="resolve", checkout=str(checkout), keep_checkout=False)
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    def fails(_args):
+        raise ar.ResolveError("boom")
+    assert ar.run(fails, args) == 1
+    assert not checkout.exists()
+    assert ar.remove_checkout(str(tmp_path)) is False, "only git checkouts are deleted"

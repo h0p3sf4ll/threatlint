@@ -219,7 +219,8 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--semgrep-deployment", help="Semgrep deployment slug when the token can access several")
     resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")
     resolve.add_argument("--skip-rule-tuning", action="store_true", help="Ignore the Semgrep finding but do not replace the rule")
-    resolve.add_argument("--checkout", help="The AVIT checkout (from `avit checkout`), used to validate the tuned rule")
+    resolve.add_argument("--checkout", help="The AVIT checkout (from `avit checkout`); used to validate the tuned rule, then deleted")
+    resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
 
@@ -338,9 +339,27 @@ def _report_line(report: str, avit: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def remove_checkout(path: str | None) -> bool:
+    """Delete the AVIT checkout once triage and validation are done; read-only git objects are made writable first."""
+    if not path or not os.path.isdir(path) or not os.path.isdir(os.path.join(path, ".git")):
+        return False
+    import shutil  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+
+    def writable(function, target, _info):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+    shutil.rmtree(path, onerror=writable)  # onerror: Windows marks git pack files read-only
+    return True
+
+
 def run(handler, args) -> int:
     try:
         return handler(args)
     except (ResolveError, sn.ServiceNowError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    finally:
+        # The checkout holds a copy of someone else's source (possibly live secrets); never leave it on disk.
+        if getattr(args, "avit_command", "") == "resolve" and not getattr(args, "keep_checkout", False) and remove_checkout(getattr(args, "checkout", None)):
+            print(f"  ✓ Deleted the local checkout {args.checkout}")
