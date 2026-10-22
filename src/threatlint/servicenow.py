@@ -453,11 +453,25 @@ def checkout_repository(target: dict[str, str], directory: str) -> str:
     return directory
 
 
+def saved_config() -> dict[str, str]:
+    """ServiceNow connection saved by the Workbench in ~/.threatlint/servicenow.json (THREATLINT_HOME overrides)."""
+    home = os.environ.get("THREATLINT_HOME") or os.path.join(os.path.expanduser("~"), ".threatlint")
+    try:
+        with open(os.path.join(home, "servicenow.json"), encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return {key: str(value.get(key) or "") for key in ("instance", "clientId", "clientSecret")} if isinstance(value, dict) else {}
+
+
 def resolve_credentials(profile: str | None = None) -> tuple[str, str]:
-    """Environment overrides first, then Parameter Store."""
+    """Environment overrides first, then the saved Threatlint config, then Parameter Store."""
     client_id, client_secret = os.environ.get(CLIENT_ID_ENV, ""), os.environ.get(CLIENT_SECRET_ENV, "")
     if client_id and client_secret:
         return client_id, client_secret
+    saved = saved_config()
+    if saved.get("clientId") and saved.get("clientSecret"):
+        return saved["clientId"], saved["clientSecret"]
     return read_parameter_store(profile)
 
 
@@ -481,8 +495,8 @@ def add_avit_arguments(parser) -> None:
         help="ServiceNow AVIT number to triage (repeatable; comma-separated lists accepted)")
     parser.add_argument("--avit-file", metavar="PATH",
         help="Text file of AVIT numbers, separated by commas, spaces, or newlines")
-    parser.add_argument("--snow-instance", metavar="URL", default=os.environ.get(INSTANCE_ENV, ""),
-        help=f"ServiceNow instance URL, e.g. https://<instance>.service-now.com (or set {INSTANCE_ENV})")
+    parser.add_argument("--snow-instance", metavar="URL", default=os.environ.get(INSTANCE_ENV, "") or saved_config().get("instance", ""),
+        help=f"ServiceNow instance URL, e.g. https://<instance>.service-now.com (or set {INSTANCE_ENV}; defaults to the Workbench's saved instance)")
     parser.add_argument("--aws-profile", metavar="PROFILE",
         help="AWS CLI profile with access to the ServiceNow parameters (default: AWS CLI default chain)")
 

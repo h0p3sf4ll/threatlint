@@ -457,10 +457,7 @@
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
-    $('snow-instance').value = state.preferences.snowInstance || state.config.servicenow?.instance || '';
-    $('snow-client-id').value = state.credentials.snowClientId;
-    $('snow-client-secret').value = state.credentials.snowClientSecret;
-    updateSnowStatus();
+    fillServiceNowForm();
     updateSettingsFields(provider);
   }
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
@@ -470,11 +467,28 @@
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
     for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
-  function servicenowReady() { return !!(state.preferences.snowInstance && state.credentials.snowClientId && state.credentials.snowClientSecret); }
+  // The saved connection lives in the Threatlint config (shared with the CLI); the secret never reaches the page.
+  const MASK = '••••••••••••';
+  function fillServiceNowForm() {
+    const saved = state.snowSaved || {};
+    $('snow-instance').value = state.preferences.snowInstance || saved.instance || state.config.servicenow?.instance || '';
+    $('snow-client-id').value = state.credentials.snowClientId || saved.clientId || '';
+    $('snow-client-secret').value = state.credentials.snowClientSecret ? state.credentials.snowClientSecret : saved.hasSecret ? MASK : '';
+    updateSnowStatus();
+  }
+  async function loadSavedServiceNow() {
+    try { state.snowSaved = await request('/api/servicenow/settings'); } catch { state.snowSaved = null; }
+    if (state.snowSaved?.instance && !state.preferences.snowInstance) state.preferences.snowInstance = state.snowSaved.instance;
+  }
+  function servicenowReady() {
+    const saved = state.snowSaved || {};
+    return !!((state.preferences.snowInstance || saved.instance) && (state.credentials.snowClientId || saved.clientId) && (state.credentials.snowClientSecret || saved.hasSecret));
+  }
   function updateSnowStatus(message) {
-    $('snow-status').textContent = message || (servicenowReady()
-      ? 'Configured for this session. The secret stays in memory and is sent only to your ServiceNow instance.'
-      : 'Not configured. Authenticate through SSO first; the secret stays in memory for this session only.');
+    $('snow-status').textContent = message || (state.snowSaved?.hasSecret
+      ? `Saved in ${state.snowSaved.path}. The secret is never shown and is sent only to your ServiceNow instance.`
+      : servicenowReady() ? 'Configured for this session only. Save to keep it in the Threatlint config.'
+        : 'Not configured. Enter the instance URL, client ID, and secret once; they are saved in the Threatlint config.');
   }
   /** The instance must be HTTPS without credentials or a path; the server also restricts it to ServiceNow hosts. */
   function snowInstanceUrl(value) {
@@ -488,7 +502,7 @@
     try {
       const values = await request('/api/servicenow/parameter-store', { method: 'POST', body: JSON.stringify({ profile: $('snow-aws-profile').value.trim() || undefined }) });
       $('snow-client-id').value = values.clientId; $('snow-client-secret').value = values.clientSecret;
-      updateSnowStatus('Loaded from Parameter Store. Save preferences to use them for this session.');
+      updateSnowStatus('Loaded from Parameter Store. Click Save ServiceNow settings to keep them.');
     } catch (error) { updateSnowStatus(error.message); }
     finally { $('snow-read-parameters').disabled = false; }
   }
@@ -531,16 +545,23 @@
     const { provider, models, lmstudioUrl, snowInstance } = state.preferences;
     try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
   }
-  function saveServiceNow(event) {
+  async function saveServiceNow(event) {
     event.preventDefault();
     $('servicenow-error').textContent = '';
     let snowInstance;
     try { snowInstance = snowInstanceUrl($('snow-instance').value.trim()); } catch { $('servicenow-error').textContent = 'Use the HTTPS ServiceNow instance URL, e.g. https://<instance>.service-now.com'; return; }
-    const snowClientId = $('snow-client-id').value.trim(), snowClientSecret = $('snow-client-secret').value.trim();
-    if ((snowClientId || snowClientSecret) && !(snowInstance && snowClientId && snowClientSecret)) { $('servicenow-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
+    const snowClientId = $('snow-client-id').value.trim(), typed = $('snow-client-secret').value.trim();
+    // The masked placeholder means "keep the saved secret".
+    const snowClientSecret = typed === MASK ? '' : typed;
+    const hasSecret = !!snowClientSecret || (typed === MASK && state.snowSaved?.hasSecret);
+    if ((snowClientId || hasSecret) && !(snowInstance && snowClientId && hasSecret)) { $('servicenow-error').textContent = 'ServiceNow needs the instance URL, client ID, and client secret together.'; return; }
+    try {
+      state.snowSaved = await request('/api/servicenow/settings', { method: 'POST', body: JSON.stringify({ instance: snowInstance, clientId: snowClientId, clientSecret: snowClientSecret || undefined }) });
+    } catch (error) { $('servicenow-error').textContent = error.message; return; }
     state.preferences.snowInstance = snowInstance;
-    state.credentials.snowClientId = snowClientId; state.credentials.snowClientSecret = snowClientSecret;
-    savePreferences(); updateSnowStatus(); toast('ServiceNow settings saved. The secret remains in memory only.');
+    // The server now holds the credentials; requests send blanks and it fills them in.
+    state.credentials.snowClientId = ''; state.credentials.snowClientSecret = '';
+    savePreferences(); fillServiceNowForm(); toast('ServiceNow settings saved to the Threatlint config. The secret is never shown again.');
   }
   // The dropdown is the normal path; the manual field remains for IDs a list omits. Selecting one fills the other.
   function fillModelSelect(models, selected) {
@@ -760,6 +781,7 @@
     if (desktop) { $('runtime-badge').textContent = 'DESKTOP WORKBENCH'; $('app-version').textContent = desktop.version; }
     try {
       [state.agents, state.skills, state.config] = await Promise.all([request('/api/agents'), request('/api/skills'), request('/api/config')]);
+      await loadSavedServiceNow();
       const build = state.config.build;
       if (build) {
         const label = build.fingerprint === 'source' ? 'live' : build.commit;

@@ -475,8 +475,14 @@ be installed (`python3 -m pip install semgrep`); the FP review will not start wi
   paste the client ID and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
   or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs. The
   values stay in memory for the session only.
-- **CLI:** uses your signed-in AWS CLI credentials, and prompts for the values if Parameter Store
-  can't be read.
+- **Saved once:** *Settings → ServiceNow* saves the instance URL, client ID, and secret to
+  `~/.threatlint/servicenow.json` (`%USERPROFILE%\.threatlint\servicenow.json` on Windows;
+  `THREATLINT_HOME` overrides). The file is readable only by you. The Workbench and the CLI both read it,
+  so you don't re-enter them. The secret is never sent back to the page: it shows masked, leaving it as is
+  keeps it, and typing a new one replaces it.
+- **CLI:** uses `THREATLINT_SNOW_CLIENT_ID` / `_SECRET`, then the saved config, then your signed-in AWS CLI
+  credentials, and prompts for the values if none of those work. `--snow-instance` defaults to the saved
+  instance.
 - **Sign in to AWS once:** `threatlint aws login` creates an SSO profile (default `appsec`) in
   `~/.aws/config` the first time. It asks for the access portal URL, Identity Center region, account ID,
   and role, or takes them as `--start-url` / `--sso-region` / `--account-id` / `--role` (or

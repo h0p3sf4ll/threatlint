@@ -10,6 +10,7 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { HttpError } = require('./http.cjs');
+const { readServiceNow } = require('./threatlint-config.cjs');
 
 const execFileAsync = promisify(execFile);
 
@@ -71,8 +72,12 @@ function validateInstanceUrl(value) {
   return url.origin;
 }
 
+/** Credentials from the request, with any field left empty taken from the saved Threatlint config. */
 function validateCredentials(value) {
-  const credentials = value && typeof value === 'object' ? value : {};
+  const sent = value && typeof value === 'object' ? value : {};
+  const saved = readServiceNow();
+  const pick = name => (typeof sent[name] === 'string' && sent[name].trim()) || saved[name];
+  const credentials = { instance: pick('instance'), clientId: pick('clientId'), clientSecret: pick('clientSecret') };
   const { clientId, clientSecret } = credentials;
   if (typeof clientId !== 'string' || !clientId.trim() || typeof clientSecret !== 'string' || !clientSecret.trim() || clientId.length > 500 || clientSecret.length > 2000) {
     throw new HttpError('Add the ServiceNow client ID and secret in Settings. They are in AWS Parameter Store; sign in through SSO to request access.');

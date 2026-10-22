@@ -13,6 +13,7 @@ const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
 const catalog = require('../model-catalog.cjs');
+const threatlintConfig = require('../threatlint-config.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -31,6 +32,21 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     servicenow: { ...servicenow.ACCESS, instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
   // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
   app.post('/api/servicenow/parameter-store', handle(req => (integrations.readParameterStore || servicenow.readParameterStore)({ profile: req.body?.profile || undefined })));
+  // Saved ServiceNow connection (shared with the CLI). GET never returns the secret.
+  app.get('/api/servicenow/settings', handle(() => threatlintConfig.publicServiceNow()));
+  app.post('/api/servicenow/settings', handle(req => {
+    const body = req.body || {};
+    const saved = threatlintConfig.readServiceNow();
+    const instance = body.instance ? servicenow.validateInstanceUrl(body.instance) : '';
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+    // An omitted secret keeps the saved one, so the masked field can be left untouched.
+    const clientSecret = typeof body.clientSecret === 'string' && body.clientSecret.trim() ? body.clientSecret.trim() : saved.clientSecret;
+    if (clientId.length > 500 || clientSecret.length > 2000) throw new HttpError('ServiceNow client ID or secret is too long');
+    if ((clientId || clientSecret) && !(instance && clientId && clientSecret)) throw new HttpError('ServiceNow needs the instance URL, client ID, and client secret together');
+    if (!instance && !clientId) { threatlintConfig.clearServiceNow(); return threatlintConfig.publicServiceNow(); }
+    threatlintConfig.writeServiceNow({ instance, clientId, clientSecret });
+    return threatlintConfig.publicServiceNow();
+  }));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));

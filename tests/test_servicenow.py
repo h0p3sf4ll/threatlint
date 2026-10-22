@@ -155,3 +155,14 @@ def test_scope_is_the_codesecurity_view_not_the_finding_source(monkeypatch):
     rows.pop()
     with pytest.raises(servicenow.ServiceNowError, match="CodeSecurity view"):
         servicenow.load_avits(INSTANCE, ["AVIT000000000000009"], "id", "secret")
+
+
+def test_saved_workbench_config_supplies_instance_and_keys(monkeypatch, tmp_path):
+    import json as _json
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.delenv(servicenow.CLIENT_ID_ENV, raising=False)
+    monkeypatch.delenv(servicenow.CLIENT_SECRET_ENV, raising=False)
+    (tmp_path / "servicenow.json").write_text(_json.dumps({"instance": INSTANCE, "clientId": "saved-id", "clientSecret": "saved-secret"}))
+    monkeypatch.setattr(servicenow, "read_parameter_store", lambda _p: pytest.fail("saved config should be used first"))
+    assert servicenow.resolve_credentials() == ("saved-id", "saved-secret")
+    assert servicenow.saved_config()["instance"] == INSTANCE
