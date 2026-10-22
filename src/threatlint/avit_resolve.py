@@ -254,10 +254,51 @@ def cmd_checkout(args) -> int:
         print("  No Azure DevOps credential found; set up a PAT now (Code: Read).")
         print(f"  ✓ Saved to {prompt_and_save(target['organization'])}")
     print(f"  {avit} : {target['web_url']} · branch {target['branch'] or '(default)'} · {record['context'].get('file_path', 'no file path')}")
-    sn.checkout_repository(target, args.dir)
+    try:
+        sn.checkout_repository(target, args.dir)
+    except sn.ServiceNowError as exc:
+        renamed = renamed_ado_repository(target, args) if target["scm"] == "azure-devops" and "not found" in str(exc) else None
+        if not renamed:
+            raise
+        print(f"  ! {target['name']} was renamed in Azure DevOps to {renamed}; cloning it (Semgrep still uses the original project name)")
+        quote = lambda value: urllib.parse.quote(value, safe="")
+        url = f"https://dev.azure.com/{quote(target['organization'])}/{quote(target['project'])}/_git/{quote(renamed)}"
+        target = {**target, "clone_url": url, "web_url": url, "renamed_to": renamed}
+        sn.checkout_repository(target, args.dir)
     print(f"✓ Checked out to {args.dir}")
     print(json.dumps({"avit": avit, "kind": kind, "checkout": os.path.abspath(args.dir), **target, **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
     return 0
+
+
+def renamed_ado_repository(target: dict[str, str], args) -> str | None:
+    """Current name of an ADO repository the AVIT knows by an old name.
+
+    ServiceNow keeps the name from scan time. Semgrep's project record keeps the repository's GUID in its
+    URL, and Azure DevOps resolves a GUID under the current name.
+    """
+    import base64  # noqa: PLC0415
+    from threatlint import semgrep_platform as sp  # noqa: PLC0415
+    from threatlint.ado_login import load  # noqa: PLC0415
+    from threatlint.tls import ssl_context  # noqa: PLC0415
+    try:
+        token = sp.resolve_token(getattr(args, "aws_profile", None))[0]
+        dep = sp.deployment(token)
+        project = sp.call(f"/api/v1/deployments/{urllib.parse.quote(dep['slug'])}/projects/{urllib.parse.quote(target['project'] + '/' + target['name'], safe='/')}", token)
+    except sp.SemgrepError:
+        return None
+    url = str((project.get("project") or project).get("url", ""))
+    match = re.search(r"/_apis/git/repositories/([0-9a-f-]{36})", url)
+    pat, _source = load()
+    if not match or not pat:
+        return None
+    request = urllib.request.Request(f"https://dev.azure.com/{urllib.parse.quote(target['organization'])}/_apis/git/repositories/{match.group(1)}?api-version=7.1",
+                                     headers={"Authorization": "Basic " + base64.b64encode(f":{pat}".encode()).decode(), "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=ssl_context()) as response:  # noqa: S310 - fixed HTTPS host
+            name = json.loads(response.read()).get("name")
+    except (urllib.error.URLError, ValueError):
+        return None
+    return name if isinstance(name, str) and name and name != target["name"] else None
 
 
 def cmd_resolve(args) -> int:

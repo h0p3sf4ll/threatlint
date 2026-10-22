@@ -242,3 +242,22 @@ def test_semgrep_rerun_requires_a_threatlint_false_positive_closure(monkeypatch)
     args = types.SimpleNamespace(number=AVIT, snow_instance=INSTANCE, aws_profile=None, line=None, semgrep_deployment=None)
     with pytest.raises(ar.ResolveError, match="not closed as a false positive"):
         ar.cmd_semgrep(args)
+
+
+def test_a_renamed_ado_repository_is_followed_through_its_guid(monkeypatch):
+    target = sn.repository_target({"scm_tool": "ADO", "organization": "PepsiCoIT", "project": "EIAP_Projects", "repository": "pepgpt-workflow-api", "branch": "b"})
+    import threatlint.semgrep_platform as sp
+    monkeypatch.setattr(sp, "resolve_token", lambda *_a: ("t", "x"))
+    monkeypatch.setattr(sp, "deployment", lambda *_a: {"id": 26306, "slug": "pepsico_poc"})
+    seen = {}
+    def call(path, token, **_k):
+        seen["path"] = path
+        return {"project": {"url": "https://dev.azure.com/PepsiCoIT/698f/_apis/git/repositories/b13a53cc-86f7-4d90-a055-b754186e580f"}}
+    monkeypatch.setattr(sp, "call", call)
+    monkeypatch.setattr("threatlint.ado_login.load", lambda: ("pat", "x"))
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(ar.urllib.request, "urlopen", lambda request, **_k: Response(b'{"name": "pepgpt-pro-api"}') if "b13a53cc" in request.full_url else pytest.fail(request.full_url))
+    assert ar.renamed_ado_repository(target, types.SimpleNamespace(aws_profile=None)) == "pepgpt-pro-api"
+    assert seen["path"].endswith("/projects/EIAP_Projects/pepgpt-workflow-api")

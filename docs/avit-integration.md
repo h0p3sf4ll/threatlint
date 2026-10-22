@@ -76,6 +76,11 @@ agent triages and which Semgrep product is tuned.
 - SCM Tool, Organization Name, Project Name, Repository, Project Branch, File Path.
 - ADO maps to `https://dev.azure.com/{Organization}/{Project}/_git/{Repository}`; GitHub maps to
   `https://github.com/{Organization}/{Repository}`.
+- **Renamed repositories:** ServiceNow keeps the repository name from scan time. If an ADO clone
+  fails with *not found*, Threatlint reads the repository's GUID from the Semgrep project
+  (`{Project}/{Repository}`), asks Azure DevOps for that GUID's current name, and clones that instead.
+  For example, `pepgpt-workflow-api` was renamed to `pepgpt-pro-api`. Semgrep matching keeps using
+  the original project name, which is what Semgrep still calls it.
 - The clone is shallow and single-branch. Credentials go to git through `GIT_CONFIG_*` environment
   variables, never on the command line or in `.git/config`.
 

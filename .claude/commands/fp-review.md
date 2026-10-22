@@ -111,6 +111,7 @@ After the agent delivers its report:
    Write the full report text to a file in a temporary directory (`$WORK/fp_review.md`; see above)
    python3 ~/.claude/scripts/md_to_docx.py $WORK/fp_review.md <output-dir>/<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx
    (on Windows use `python` and `$HOME\.claude\scripts\md_to_docx.py`), then delete the temporary file
+   Use a Python that has `python-docx` (check with `python3 -c "import docx"`). If the conversion fails, stop: do not run `avit resolve` until the Word report exists.
    ```
 
 4. **Confirm** the saved path to the user.
