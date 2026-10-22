@@ -145,25 +145,17 @@ def _same_path(found: str, wanted: str) -> bool:
 
 def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict[str, str], deployment: str | None = None) -> tuple[dict, list[dict]]:
     """Open Semgrep findings for the same project, file, and rule/line as the AVIT."""
-    deployments = _semgrep("/deployments", token).get("deployments", [])
-    chosen = [item for item in deployments if not deployment or item.get("slug") == deployment]
-    if len(chosen) != 1:
-        raise ResolveError("Choose the Semgrep deployment with --semgrep-deployment" if chosen else f"The token cannot access deployment {deployment}")
-    dep = chosen[0]
+    from threatlint.semgrep_platform import deployment as find_deployment, SemgrepError  # noqa: PLC0415
+    try:
+        dep = find_deployment(token, deployment or "")
+    except SemgrepError as exc:
+        raise ResolveError(str(exc)) from exc
     path, line, rule = context.get("file_path", ""), context.get("line", ""), context.get("rule", "")
     if not path:
         raise ResolveError("The AVIT has no File Path, so its Semgrep finding cannot be matched narrowly")
-    projects, page = [], 0
-    while page < 20:
-        batch = _semgrep(f"/deployments/{urllib.parse.quote(dep['slug'])}/projects?page={page}&page_size=100", token).get("projects", [])
-        projects += batch
-        if len(batch) < 100:
-            break
-        page += 1
-    repo = target["name"].lower()
-    named = [p["name"] for p in projects if str(p.get("name", "")).lower() == repo or str(p.get("name", "")).lower().endswith("/" + repo)]
-    if not named:
-        raise ResolveError(f"No Semgrep project matches repository {target['name']}")
+    # Semgrep names ADO projects "{Project}/{Repository}" and GitHub ones "{owner}/{repo}".
+    named = list(dict.fromkeys(name for name in (f"{target.get('project')}/{target['name']}" if target.get("project") else "",
+                                                 f"{target.get('organization')}/{target['name']}") if name and not name.startswith("/")))
     near = lambda found: not line.isdigit() or found is None or abs(int(found) - int(line)) <= 3
     matches = []
     if kind in ("sast", "sca"):
@@ -180,6 +172,8 @@ def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict
                         matches.append({"id": int(finding["id"]), "rule": name, "path": location.get("file_path"), "line": location.get("line"), "ref": finding.get("ref")})
                 if len(findings) < 100:
                     break
+            if matches:
+                break
     else:
         cursor = ""
         for _ in range(20):

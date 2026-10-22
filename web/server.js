@@ -23,6 +23,7 @@ const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
 const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/runtime.cjs');
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
 const { prepareProcess } = require('./lib/system-env.cjs');
+const { createAvitBatch } = require('./lib/avit-batch.cjs');
 const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 
 const BODY_LIMIT = '7mb';
@@ -44,7 +45,7 @@ function buildInfo() {
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
  * runProvider (replaces model calls for reviews and conversations in tests/recordings),
- * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken } for Semgrep and ServiceNow).
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli } for Semgrep, ServiceNow, and the AVIT batch).
  */
 function createWorkbench(options = {}) {
   // OS certificate store and the user's PATH, so gateways behind TLS inspection and CLIs like `gh` work from the Dock.
@@ -77,7 +78,8 @@ function createWorkbench(options = {}) {
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
   app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413 ? 'Request exceeds the 7 MB limit' : 'Request could not be processed' }));
 
-  const wss = attachSocket(server, { pipeline, conversations });
+  const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const wss = attachSocket(server, { pipeline, conversations, avitBatch });
 
   async function close() {
     pipeline.abortAll();

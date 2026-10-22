@@ -146,12 +146,20 @@ def call(path: str, token: str, *, method: str = "GET", body: dict | None = None
         raise SemgrepError(f"Semgrep request failed: {exc}") from exc
 
 
+# PepsiCo's only Semgrep deployment. The v1 findings/triage API addresses it by slug (pepsico_poc); the
+# policies and agent APIs by this numeric ID. THREATLINT_SEMGREP_DEPLOYMENT overrides it.
+DEFAULT_DEPLOYMENT_ID = "26306"
+
+
 def deployment(token: str, wanted: str = "") -> dict:
+    """{id, slug, name} for the deployment, chosen by numeric ID (default 26306) or slug."""
     deployments = call("/api/v1/deployments", token).get("deployments", [])
-    wanted = wanted or _read_store().get("deployment", "")
+    wanted = wanted or os.environ.get("THREATLINT_SEMGREP_DEPLOYMENT", "") or DEFAULT_DEPLOYMENT_ID
     chosen = [item for item in deployments if not wanted or wanted in (item.get("slug"), str(item.get("id")))]
+    if not chosen and len(deployments) == 1 and not os.environ.get("THREATLINT_SEMGREP_DEPLOYMENT"):
+        chosen = deployments
     if len(chosen) != 1:
-        raise SemgrepError("The token can access several Semgrep deployments; pass --semgrep-deployment" if chosen else f"No Semgrep deployment {wanted}")
+        raise SemgrepError("The token can access several Semgrep deployments; pass --semgrep-deployment" if chosen else f"The token cannot access Semgrep deployment {wanted}")
     return chosen[0]
 
 
@@ -321,7 +329,7 @@ def login(token: str = "", deployment_slug: str = "", from_stdin: bool = False, 
     if not _TOKEN.fullmatch(token):
         raise SemgrepError("That does not look like a Semgrep API token")
     dep = deployment(token, deployment_slug)
-    where = save_token(token, dep.get("slug", ""))
+    where = save_token(token, str(dep.get("id", "")))
     return f"{where} (deployment {dep.get('name') or dep.get('slug')})"
 
 

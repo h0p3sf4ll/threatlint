@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const WEB = path.resolve(__dirname, '..');
-const INPUTS = ['server.js', 'package.json', 'package-lock.json', 'lib', 'public', 'desktop', 'examples', '../src/threatlint/data'];
+const INPUTS = ['server.js', 'package.json', 'package-lock.json', 'lib', 'public', 'desktop', 'examples', '../src/threatlint'];
 const INFO = path.join(WEB, 'build-assets/build-info.json');
 
 function files(entry) {

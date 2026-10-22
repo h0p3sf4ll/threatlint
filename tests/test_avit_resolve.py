@@ -133,14 +133,16 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     def semgrep(path, token, *, body=None):
         semgrep_calls.append((path, body))
         if path == "/deployments":
-            return {"deployments": [{"id": 7, "slug": "pepsico"}]}
+            return {"deployments": [{"id": 26306, "slug": "pepsico_poc"}]}
         if "/projects" in path:
-            return {"projects": [{"name": "PepsiCoIT/EIP-Infrastructure/eip-infra-aws-terraform-support"}, {"name": "other"}]}
+            return {"projects": []}
         if "/secrets" in path:
+            assert path.startswith("/deployments/26306/secrets") and "repo=EIP-Infrastructure%2Feip-infra-aws-terraform-support" in path
             return {"findings": [{"id": "55", "type": "AWS", "findingPath": "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "status": "FINDING_STATUS_OPEN"},
                                  {"id": "56", "type": "AWS", "findingPath": "src/other.tfvars:12", "status": "FINDING_STATUS_OPEN"}]}
         return {"num_triaged": len(body["issue_ids"])}
     monkeypatch.setattr(ar, "_semgrep", semgrep)
+    monkeypatch.setattr("threatlint.semgrep_platform.deployment", lambda token, wanted="": {"id": 26306, "slug": "pepsico_poc"})
     out = io.StringIO()
     monkeypatch.setattr("sys.stdout", out)
     assert ar.cmd_resolve(_args(tmp_path, REPORT)) == 0
@@ -188,14 +190,15 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
     def semgrep(path, token, *, body=None):
         calls.append((path, body))
         if path == "/deployments":
-            return {"deployments": [{"id": 7, "slug": "pepsico"}]}
+            return {"deployments": [{"id": 26306, "slug": "pepsico_poc"}]}
         if "/projects" in path:
-            return {"projects": [{"name": "eip-infra-aws-terraform-support"}]}
+            return {"projects": []}
         if "/findings?" in path:
-            assert "issue_type=sca" in path
+            assert "issue_type=sca" in path and path.startswith("/deployments/pepsico_poc/findings") and "EIP-Infrastructure%2Feip-infra-aws-terraform-support" in path
             return {"findings": [{"id": 91, "rule": {"name": "ssc-dc3aa06a"}, "location": {"file_path": "package-lock.json", "line": 40}}]}
         return {"num_triaged": len(body["issue_ids"])}
     monkeypatch.setattr(ar, "_semgrep", semgrep)
+    monkeypatch.setattr("threatlint.semgrep_platform.deployment", lambda token, wanted="": {"id": 26306, "slug": "pepsico_poc"})
     monkeypatch.setattr("sys.stdout", io.StringIO())
     report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json")
     assert ar.cmd_resolve(_args(tmp_path, report)) == 0

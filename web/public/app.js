@@ -72,7 +72,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos' };
+    const titles = { fpreview: 'False positive review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -635,8 +635,76 @@
     renderPipeline(); renderPresets(); renderAgents();
     refreshReports().catch(error => toast(error.message, true)); refreshSessions().catch(() => {});
   }
+  // ── False positive review (AVIT batch) ──
+  const STAGES = { fetching: 'Fetching', checkout: 'Cloning', triage: 'Triaging', reported: 'Reported', resolving: 'Updating ServiceNow',
+    done: 'Done', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', queued: 'Queued' };
+  function avitCard(avit) {
+    let card = document.getElementById(`avit-${avit}`);
+    if (card) return card;
+    card = el('article', 'avit-card'); card.id = `avit-${avit}`;
+    const header = el('header'); header.append(el('span', 'avit-id', avit), el('span', 'avit-stage stage-queued', 'Queued'), el('span', 'avit-disposition'));
+    card.append(header, el('div', 'avit-detail'), el('ul', 'avit-outcome'), el('div', 'avit-actions'));
+    $('fpreview-results').append(card);
+    return card;
+  }
+  function renderAvitItem(event) {
+    const card = avitCard(event.avit);
+    const stage = card.querySelector('.avit-stage');
+    if (event.stage && STAGES[event.stage]) { stage.textContent = STAGES[event.stage]; stage.className = `avit-stage stage-${event.stage}`; }
+    if (event.tool) { state.avitTools[event.avit] = (state.avitTools[event.avit] || 0) + 1; card.querySelector('.avit-detail').textContent = `Inspecting the repository (${state.avitTools[event.avit]} tool calls)…`; }
+    else if (event.detail !== undefined) card.querySelector('.avit-detail').textContent = event.detail;
+    if (event.disposition) { const badge = card.querySelector('.avit-disposition'); badge.className = 'avit-disposition disposition-badge'; badge.textContent = event.disposition; }
+    if (event.outcome) {
+      const list = card.querySelector('.avit-outcome'); list.replaceChildren();
+      const o = event.outcome;
+      if (o.attached) list.append(el('li', '', 'Word report attached to the AVIT'));
+      if (o.closed === true) list.append(el('li', '', 'Closed as false positive with the Threatlint work note'));
+      if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
+      if (o.leftOpen) list.append(el('li', '', 'Left open with “True positive, see attached report.”'));
+      for (const line of o.semgrep || []) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
+    }
+    if (event.report && !card.querySelector('.avit-actions button')) {
+      card.querySelector('.avit-actions').append(button('Read report ↗', 'button secondary small-button', () => openReportUrl(event.report.previewUrl).catch(error => toast(error.message, true))));
+      if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; card.querySelector('.avit-actions').append(word); }
+    }
+  }
+  function fpreviewRunning(running) {
+    state.fpreviewRunning = running;
+    $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
+  }
+  function updateFpreviewSetup() {
+    const missing = [];
+    if (!servicenowReady()) missing.push('ServiceNow (Settings → ServiceNow)');
+    if (!state.semgrepSaved?.hasToken && !state.semgrepSaved?.cliSource) missing.push('Semgrep token (Settings → Semgrep, or `threatlint semgrep login`)');
+    $('fpreview-setup').textContent = missing.length ? `Not configured: ${missing.join('; ')}. An Azure DevOps PAT (\`threatlint ado login\`) is needed to clone ADO repositories.` : 'ServiceNow and Semgrep are configured. Azure DevOps repositories are cloned with the PAT from `threatlint ado login`.';
+    $('fpreview-setup').className = `field-note small ${missing.length ? 'fp-status-warn' : 'subtle'}`;
+    $('fpreview-model').textContent = selectedModel() ? `Model: ${selectedModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
+  }
+  async function startAvitBatch(event) {
+    event.preventDefault(); $('fpreview-error').textContent = '';
+    let avits;
+    try { avits = parseAvits($('fpreview-avits').value); } catch (error) { $('fpreview-error').textContent = error.message; return; }
+    if (!avits.length) { $('fpreview-error').textContent = 'Enter at least one AVIT number.'; return; }
+    if (avits.length > 50) { $('fpreview-error').textContent = 'Review at most 50 AVITs at a time.'; return; }
+    if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
+    if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
+    if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
+    if (!state.connected || state.running || state.fpreviewRunning) { toast('Another review is running, or the Workbench is not connected.', true); return; }
+    if (!await requireSemgrep()) return;
+    state.avitTools = {}; $('fpreview-results').replaceChildren(); for (const avit of avits) avitCard(avit);
+    fpreviewRunning(true);
+    const provider = state.preferences.provider;
+    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits, provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+      ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
+      servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
+  }
+
   function handleEvent(event) {
     switch (event.type) {
+      case 'avit_batch_start': for (const avit of event.avits) avitCard(avit); break;
+      case 'avit_item': renderAvitItem(event); if (event.done && event.report) void refreshReports().catch(() => {}); break;
+      case 'avit_batch_complete': fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
+      case 'avit_batch_error': fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${selectedModel()}`); break;
@@ -721,7 +789,9 @@
     $('refresh-sessions').addEventListener('click', () => refreshSessions().catch(error => toast(error.message, true)));
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
     $('configure-provider').addEventListener('click', showSettings);
-    $('servicenow-form').addEventListener('submit', saveServiceNow); $('semgrep-form').addEventListener('submit', saveSemgrep);
+    $('servicenow-form').addEventListener('submit', saveServiceNow);
+    $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
+    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep);
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });
     $('settings-form').addEventListener('submit', saveSettings);
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });

@@ -48,7 +48,16 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     return threatlintConfig.publicServiceNow();
   }));
   // Semgrep API token for rule tuning and triage. GET never returns the token.
-  app.get('/api/semgrep/settings', handle(() => threatlintConfig.publicSemgrep()));
+  // Also reports a token the CLI saved in the OS credential store (`threatlint semgrep login`), by source only.
+  app.get('/api/semgrep/settings', handle(async () => {
+    const saved = threatlintConfig.publicSemgrep();
+    if (saved.hasToken && !saved.inKeyring) return saved;
+    try {
+      const result = await (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(['semgrep', 'status']);
+      const source = /^Semgrep token: (.+)$/m.exec(result.stdout)?.[1] || null;
+      return { ...saved, cliSource: source };
+    } catch { return saved; }
+  }));
   app.post('/api/semgrep/settings', handle(async req => {
     const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
     const current = threatlintConfig.readSemgrep();

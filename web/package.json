@@ -83,6 +83,15 @@
       {
         "from": "build-assets/build-info.json",
         "to": "build-info.json"
+      },
+      {
+        "from": "../src/threatlint",
+        "to": "python/threatlint",
+        "filter": [
+          "**/*.py",
+          "data/**/*",
+          "!**/__pycache__/**"
+        ]
       }
     ],
     "mac": {

@@ -22,7 +22,7 @@ function createReportWriter(store) {
 
   async function convertToWord(mdPath, docxPath) {
     try {
-      await execFileAsync(process.env.THREATLINT_PYTHON || 'python3', [path.join(DATA_DIR, 'scripts/md_to_docx.py'), mdPath, docxPath], { timeout: CONVERSION_TIMEOUT_MS, windowsHide: true });
+      await execFileAsync(require('./avit-batch.cjs').python(), [path.join(DATA_DIR, 'scripts/md_to_docx.py'), mdPath, docxPath], { timeout: CONVERSION_TIMEOUT_MS, windowsHide: true });
       if (!fs.existsSync(docxPath)) return false;
       fs.chmodSync(docxPath, 0o600);
       return true;

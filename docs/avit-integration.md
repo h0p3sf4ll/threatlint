@@ -142,7 +142,29 @@ sequenceDiagram
 | Semgrep token | Credential store / Parameter Store → `semgrep.dev` | Fixed HTTPS host; redirects refused |
 | Model traffic (Workbench) | Prompts and inspected source → selected provider | Requires explicit consent; keys from the session, environment, `~/.claude/settings.json`, Codex API key or `gh auth token` |
 
-## Workbench path
+## Workbench: False positive review
+
+**Test → False positive review** in the sidebar takes one AVIT or a list of up to 50, separated by
+commas, spaces or new lines. AVITs run **one at a time**, and each gets its own result card:
+
+1. **Fetch** (`threatlint avit fetch`). AVITs outside the CodeSecurity view are marked *Out of scope*.
+2. **Clone** (`threatlint avit checkout`) the AVIT's repository and branch.
+3. **Triage** with the Findings triage agent and the model chosen in *Settings*.
+4. **Save** the AVIT's own Markdown and Word report. Credential-like values from the flagged file
+   and its directory are replaced with `[REDACTED]` before saving, in case the model printed one.
+5. **Resolve** (`threatlint avit resolve --checkout`). This attaches that AVIT's Word report,
+   closes it as a false positive or leaves it open with the true-positive note, then ignores and
+   tunes in Semgrep. It also deletes the checkout.
+
+Each card shows the stage, disposition, ServiceNow and Semgrep outcome, and links to the report. One
+AVIT failing does not stop the rest. *Stop* cancels before the next AVIT starts. A ServiceNow update
+that has already started always finishes, so an AVIT is never left half-updated.
+
+ServiceNow, Git and Semgrep steps go through the same Python CLI as `/fp-review`, so behaviour is
+identical. The desktop app bundles the CLI under `Resources/python`. It uses the first Python on
+`PATH` that has `python-docx` and `keyring` (override with `THREATLINT_PYTHON`).
+
+## Workbench: report reader
 
 The Workbench runs the same triage with the configured model.
 - **Settings:** *Settings → ServiceNow / Semgrep* holds the shared configuration.
@@ -158,8 +180,12 @@ The Workbench runs the same triage with the configured model.
   disallows it. The resolver reports the stored value.
 - **Pro and interfile rules:** these may not reproduce locally. Tuning then fails closed and the
   finding is only triaged.
-- **Deployments:** the Semgrep token covers one deployment (`pepsico_poc`). Repositories scanned in
-  another deployment are reported as *Semgrep unchanged*; pass `--semgrep-deployment` when the token
-  can see more than one.
+- **Deployment:** PepsiCo has one Semgrep deployment, ID **26306** (`https://semgrep.dev/api/agent/deployments/26306`).
+  Threatlint selects it by ID; `THREATLINT_SEMGREP_DEPLOYMENT` or `--semgrep-deployment` override it.
+  Semgrep's v1 findings and triage endpoints only accept the deployment's slug in the path
+  (`pepsico_poc`, which they look up from the ID). The policies and secrets endpoints take the ID.
+- **Project names:** Semgrep names ADO projects `{Project Name}/{Repository}` (e.g.
+  `Development_Solutions/Canvas-dev2.bijay.shrestha`), and GitHub projects `{owner}/{repo}`. Findings
+  are matched on that name, the AVIT's file, ±3 lines, and the rule.
 - **Network:** `semgrep.app` may not resolve on corporate DNS. `THREATLINT_SEMGREP_API` defaults to
   `https://semgrep.dev`.

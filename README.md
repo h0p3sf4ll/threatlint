@@ -409,6 +409,10 @@ threatlint install --lmstudio -y
 
 > **Full process and data flows:** [docs/avit-integration.md](docs/avit-integration.md)
 
+**Workbench:** *Test → False positive review* takes one AVIT or a list (up to 50) and runs this whole
+flow for each AVIT in turn. Each AVIT gets its own Word report and its own ServiceNow and Semgrep
+updates, shown on its own result card.
+
 **First run:** `threatlint setup`. It handles, in order:
 - AWS SSO in a private browser window;
 - the ServiceNow instance and OAuth client;

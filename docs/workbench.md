@@ -33,8 +33,10 @@ account/server. No hard-coded cloud model catalogue is assumed.
   <http://localhost:1234/v1>, and click **Load models**. The model must support OpenAI-compatible
   streamed tool calls for repository inspection. HTTP is restricted to loopback hosts; remote
   compatible servers require HTTPS.
-- **Settings page:** *Settings* in the sidebar is a normal page with two sections, **Model provider** and
-  **ServiceNow** (instance, OAuth client, AWS CLI read), each saved separately.
+- **False positive review:** *Test → False positive review* reviews one AVIT or a list, one at a time.
+  Each AVIT gets its own report, and its own closure or work note. See [avit-integration.md](avit-integration.md).
+- **Settings page:** *Settings* in the sidebar is a normal page with **Model provider**, **ServiceNow**
+  (instance, OAuth client, AWS CLI read), and **Semgrep** (API token) sections, each saved separately.
 - **Desktop app:** it trusts the OS certificate store (macOS Keychain / Windows certificate store), so model
   gateways behind corporate TLS inspection work, and it adds your login-shell PATH so `gh`, `git`, `az`, and
   `aws` are found when launched from the Dock or Start menu.
