@@ -26,8 +26,8 @@ function fakeServiceNow(calls, { storedState = '3', source = 'CodeSecurity' } = 
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
     if (url.includes('/api/now/table/sys_choice')) return json({ result: CHOICES });
     if (url.includes('/api/now/attachment/file')) return json({ result: { sys_id: 'b'.repeat(32) } });
-    if (options.method === 'PATCH') return json({ result: { number: 'AVIT0010001', state: storedState, substate: '6' } });
-    if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: 'AVIT0010001' }, state: { value: '1' }, source: { display_value: source } }] });
+    if (options.method === 'PATCH') return json({ result: { number: 'AVIT000000000010001', state: storedState, substate: '6' } });
+    if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: 'AVIT000000000010001' }, state: { value: '1' }, source: { display_value: source } }] });
     throw new Error(`unexpected ${url}`);
   };
 }
@@ -50,14 +50,14 @@ function fakeSemgrep(calls) {
 describe('Closing an AVIT as a false positive', () => {
   it('attaches the report before closing, adds the Threatlint note, and uses the Closed / False Positive choices', async () => {
     const calls = [];
-    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'avit0010001', { note: 'Closed by Threatlint as a false positive.',
-      files: [{ name: 'AVIT0010001-threatlint-fp-review.md', content: Buffer.from('# report'), type: 'text/markdown' }] }, { fetchImpl: fakeServiceNow(calls) });
+    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'avit000000000010001', { note: 'Closed by Threatlint as a false positive.',
+      files: [{ name: 'AVIT000000000010001-threatlint-fp-review.md', content: Buffer.from('# report'), type: 'text/markdown' }] }, { fetchImpl: fakeServiceNow(calls) });
     assert.equal(result.closed, true);
-    assert.equal(result.avit, 'AVIT0010001');
+    assert.equal(result.avit, 'AVIT000000000010001');
     const attach = calls.findIndex(call => call.url.includes('/api/now/attachment/file'));
     const patch = calls.findIndex(call => call.options.method === 'PATCH');
     assert.ok(attach > 0 && patch > attach, 'report is attached before the state change');
-    assert.match(calls[attach].url, /table_name=sn_vul_app_vulnerable_item/); assert.match(calls[attach].url, /file_name=AVIT0010001-threatlint-fp-review\.md/);
+    assert.match(calls[attach].url, /table_name=sn_vul_app_vulnerable_item/); assert.match(calls[attach].url, /file_name=AVIT000000000010001-threatlint-fp-review\.md/);
     assert.match(calls[attach].url, new RegExp(`table_sys_id=${SYS_ID}`));
     assert.ok(calls[patch].url.includes(`/api/now/table/sn_vul_app_vulnerable_item/${SYS_ID}`));
     const update = JSON.parse(calls[patch].options.body);
@@ -66,18 +66,18 @@ describe('Closing an AVIT as a false positive', () => {
     assert.ok(calls.every(call => call.options.redirect === 'error'));
   });
   it('reports a closure ServiceNow did not apply instead of claiming success', async () => {
-    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT0010001', { note: 'n', files: [] }, { fetchImpl: fakeServiceNow([], { storedState: '1' }) });
+    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [] }, { fetchImpl: fakeServiceNow([], { storedState: '1' }) });
     assert.equal(result.closed, false); assert.equal(result.state, '1');
   });
   it('refuses to close AVITs outside the AVR CodeSecurity view, before attaching or changing anything', async () => {
     const calls = [];
-    await assert.rejects(closeAvitAsFalsePositive(CREDENTIALS, 'AVIT0010001', { note: 'n', files: [{ name: 'f.md', content: Buffer.from('x'), type: 'text/markdown' }] },
+    await assert.rejects(closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [{ name: 'f.md', content: Buffer.from('x'), type: 'text/markdown' }] },
       { fetchImpl: fakeServiceNow(calls, { source: 'Dynamic Application Security (DAST)' }) }), error => error.status === 422 && /CodeSecurity/.test(error.message));
     assert.ok(!calls.some(call => call.url.includes('/attachment/') || call.options.method === 'PATCH'));
   });
   it('requires exactly one AVIT per finding', () => {
-    assert.equal(avitFor({ id: 'FP-001', title: 't', body: '**Original finding**: AVIT0010001; rule.x.y' }), 'AVIT0010001');
-    assert.throws(() => avitFor({ id: 'FP-001', title: 't', body: '**Original finding**: AVIT0010001, AVIT0010002' }), /several AVITs/);
+    assert.equal(avitFor({ id: 'FP-001', title: 't', body: '**Original finding**: AVIT000000000010001; rule.x.y' }), 'AVIT000000000010001');
+    assert.throws(() => avitFor({ id: 'FP-001', title: 't', body: '**Original finding**: AVIT000000000010001, AVIT000000000010002' }), /several AVITs/);
     assert.throws(() => avitFor({ id: 'FP-001', title: 't', body: 'no reference' }), /does not reference/);
   });
 });
@@ -107,9 +107,9 @@ describe('Semgrep false-positive tuning', () => {
 
 describe('False-positive action routes', () => {
   const report = ['# FP Review', '', '## TIER 1 — EXECUTIVE SUMMARY', 'Two findings.', '', '## TIER 2 — DETAILED FINDINGS', '',
-    '#### [FP-001] — Escaped template output flagged as XSS', '**Original finding**: AVIT0010001; xss.direct-response-write; src/routes/view.js:42',
+    '#### [FP-001] — Escaped template output flagged as XSS', '**Original finding**: AVIT000000000010001; xss.direct-response-write; src/routes/view.js:42',
     '**Disposition**: FALSE POSITIVE', '**Severity**: LOW', '**Confidence**: CONFIRMED', '**Evidence**: src/routes/view.js:42 — escaped', 'Blast radius: one rule.', '',
-    '#### [FP-002] — Real injection', '**Original finding**: AVIT0010002', '**Disposition**: TRUE POSITIVE', '**Severity**: HIGH', '**Confidence**: CONFIRMED',
+    '#### [FP-002] — Real injection', '**Original finding**: AVIT000000000010002', '**Disposition**: TRUE POSITIVE', '**Severity**: HIGH', '**Confidence**: CONFIRMED',
     '**Evidence**: src/routes/view.js:50', '### Proposed Fix', 'x', '### Regression Tests', 'acceptance', ''].join('\n');
   let instance, base, root, storage, reportId;
   const snowCalls = [], semgrepCalls = [];
@@ -146,7 +146,7 @@ describe('False-positive action routes', () => {
   it('closes the AVIT with the report attached under an AVIT-prefixed name', async () => {
     const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS });
     assert.equal(result.closed, true);
-    assert.deepEqual(result.attachments.map(item => item.name)[0], 'AVIT0010001-threatlint-fp-review.md');
+    assert.deepEqual(result.attachments.map(item => item.name)[0], 'AVIT000000000010001-threatlint-fp-review.md');
     const patch = snowCalls.find(call => call.options.method === 'PATCH');
     assert.match(JSON.parse(patch.options.body).work_notes, /Closed by Threatlint as a false positive[\s\S]*FP-001/);
     const upload = snowCalls.find(call => call.url.includes('/attachment/file'));
@@ -163,6 +163,6 @@ describe('False-positive action routes', () => {
     const result = await post('/api/semgrep/false-positive/ignore', { reportId, findingId: 'FP-001', target: { ...target, deployment: 'acme' }, issueIds: [101, 102, 103] });
     assert.deepEqual(result.issueIds, [101]);
     const triage = JSON.parse(semgrepCalls.findLast(call => call.url.endsWith('/triage')).options.body);
-    assert.deepEqual(triage.issue_ids, [101]); assert.match(triage.new_note, /FP-001 \(ServiceNow AVIT0010001\)/);
+    assert.deepEqual(triage.issue_ids, [101]); assert.match(triage.new_note, /FP-001 \(ServiceNow AVIT000000000010001\)/);
   });
 });

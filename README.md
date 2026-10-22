@@ -407,9 +407,45 @@ threatlint install --lmstudio -y
 
 #### Triage ServiceNow application vulnerable items (AVITs)
 
+**One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by exactly 15 digits.
+Threatlint reads the AVIT and takes the review target from its fields:
+
+| AVIT field | Used for |
+| --- | --- |
+| SCM Tool, Organization Name, Project Name, Repository | ADO: `https://dev.azure.com/{Organization}/{Project}/_git/{Repository}`; GitHub: `https://github.com/{Organization}/{Repository}` |
+| Project Branch | the branch that is cloned and reviewed |
+| File Path, Line, Rule | where the agent starts and what it checks |
+| Security Finding Source | scope: **CodeSecurity** and **Secret** AVITs are triaged; other AVR views are skipped |
+
+Field labels are resolved through `sys_documentation`, so custom `u_` columns are found by their form
+label. The flow is:
+
+1. `threatlint avit checkout <AVIT> --dir <dir>` clones that branch shallowly. Credentials come from
+   `THREATLINT_ADO_PAT` (Code: Read) or `az login` for ADO, and from `gh auth login` / `GH_TOKEN` for
+   GitHub. They are passed to git as environment config, never on the command line or in
+   `.git/config`.
+2. The FP reviewer triages the finding on that branch and saves the report.
+3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks
+   for confirmation (`--yes` skips the prompts).
+   - **TRUE POSITIVE:** the report is attached as `<AVIT>-threatlint-fp-review.md` (and `.docx`) with a
+     work note, and the AVIT stays open.
+   - **FALSE POSITIVE:**
+     - The report is attached first.
+     - The AVIT is set to Closed / False Positive with the comment *"Closed as false positive by
+       Threatlint fp-review agent"*. The state values come from `sys_choice`, or from
+       `THREATLINT_SNOW_FP_STATE` / `_SUBSTATE`.
+     - The matching open Semgrep finding is ignored as `false_positive`: same project and file, within
+       ±3 lines, and the same rule for Code. CodeSecurity AVITs are ignored in Semgrep Code and Secret
+       AVITs in Semgrep Secrets. The token comes from `/cfc-appsec-semgrep-scan/semgrep-token`, or
+       `SEMGREP_APP_TOKEN`.
+   - **AMBIGUOUS:** nothing changes.
+
+The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
+access to `sys_choice` and `sys_documentation`.
+
 The FP reviewer can pull AVITs straight from ServiceNow (`sn_vul_app_vulnerable_item`) and triage
-a list of them in one report. Only AVITs in AVR's **CodeSecurity** view are triaged or closed, because
-Semgrep produces only code findings; AVITs from other views are skipped and listed as excluded. An AVIT
+a list of them in one report. Only AVITs in AVR's **CodeSecurity** and **Secret** views are triaged or closed, because
+Semgrep produces only code and secret findings; AVITs from other views are skipped and listed as excluded. An AVIT
 counts as CodeSecurity when its source, scanner, category, or type field (or its vulnerability entry)
 matches `code security`, `SAST`, `static application`, or `Semgrep`; override with
 `THREATLINT_SNOW_CODE_SECURITY_PATTERN` (a regular expression). The OAuth client is stored in AWS Parameter Store (us-west-2) as
@@ -424,11 +460,27 @@ be installed (`python3 -m pip install semgrep`); the FP review will not start wi
   values stay in memory for the session only.
 - **CLI:** uses your signed-in AWS CLI credentials, and prompts for the values if Parameter Store
   can't be read.
+- **Sign in to AWS once:** `threatlint aws login` creates an SSO profile (default `appsec`) in
+  `~/.aws/config` the first time. It asks for the access portal URL, Identity Center region, account ID,
+  and role, or takes them as `--start-url` / `--sso-region` / `--account-id` / `--role` (or
+  `THREATLINT_AWS_SSO_START_URL` / `THREATLINT_AWS_SSO_REGION`). It then runs `aws sso login` and opens
+  the sign-in page in a **private window**: Chrome, Brave, Chromium, or Vivaldi use `--incognito`, Edge
+  uses `--inprivate`, and Firefox uses `-private-window`. If the default browser has no private mode
+  that can be opened from the command line (e.g. Safari, Arc, or Dia), the first installed browser
+  that has one is used. A normal window shares your Okta session and fails with *Conflicting User IDs
+  specified on state token*. Afterwards, use `--aws-profile appsec` with `threatlint avit fetch` /
+  `run fp-review`, or enter `appsec` in the Workbench's *AWS CLI profile* field. Re-run the command
+  when the session expires. It needs the AWS CLI v2.
+
+```bash
+threatlint aws login                       # first run prompts for portal URL, region, account, role
+threatlint avit fetch AVIT000000095938462 --aws-profile appsec -o avits.md
+```
 
 ```bash
 export THREATLINT_SNOW_INSTANCE=https://<instance>.service-now.com
-threatlint run fp-review --avit AVIT0012345,AVIT0012346 --aws-profile <profile> --model YOUR_LOCAL_MODEL
-threatlint avit fetch AVIT0012345 AVIT0012346 -o avits.md    # findings file for /fp-review or --findings
+threatlint run fp-review --avit AVIT000000095938462,AVIT000000095938463 --aws-profile <profile> --model YOUR_LOCAL_MODEL
+threatlint avit fetch AVIT000000095938462 AVIT000000095938463 -o avits.md    # findings file for /fp-review or --findings
 ```
 
 Only `*.service-now.com` and `*.servicenowservices.com` instances are accepted, because the client
@@ -440,7 +492,7 @@ In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings t
 *Close FP & tune Semgrep…* action. Each step runs only after you confirm it:
 
 1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the report
-   attached (as `AVIT0012345-threatlint-fp-review.md`, plus `.docx` when Word export is available),
+   attached (as `AVIT000000095938462-threatlint-fp-review.md`, plus `.docx` when Word export is available),
    then is set to *Closed / False Positive* with a "Closed by Threatlint" work note. The state and
    substate values come from the instance's `sys_choice` table (override them with
    `THREATLINT_SNOW_FP_STATE` / `THREATLINT_SNOW_FP_SUBSTATE`). If a business rule holds the closure

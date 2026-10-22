@@ -12,7 +12,7 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '', copilot: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -20,7 +20,7 @@
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
-    credentials: { claude: '', openai: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    credentials: { claude: '', openai: '', copilot: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
@@ -135,7 +135,7 @@
       connected: state.connected, ready: !!selectedModel() && (!cloudProvider() || state.consent.has(consentKey())),
       reports: state.reports.length, ran: state.reports.length > 0,
       socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
-        apiKey: provider === 'claude' ? state.credentials.claude : undefined, openaiApiKey: provider === 'openai' ? state.credentials.openai : undefined },
+        ...providerKeys(provider) },
     }) }));
     for (const [step, done] of [['repo', !!state.session], ['model', !!selectedModel()], ['run', state.reports.length > 0], ['fix', state.reports.length > 0 && state.asked]]) {
       document.querySelector(`#onboarding [data-step="${step}"]`)?.classList.toggle('done', done);
@@ -333,10 +333,10 @@
     if (!findings.length) { const empty = el('div', 'empty-state'); empty.append(el('h3', '', 'No findings match this view.'), el('p', '', state.report?.findings?.length ? 'Adjust the severity or disposition filter.' : 'No structured finding blocks were detected. Read the full report for conclusions, scope, and limitations.')); list.append(empty); }
   }
 
-  // Pre-fills from the finding's Original finding line: "AVIT0012345; rule.id; path/file.js:42".
+  // Pre-fills from the finding's Original finding line: "AVIT000000095938462; rule.id; path/file.js:42".
   function falsePositiveTarget(finding) {
     const original = /Original finding\W*:\s*(.+)/i.exec(finding.body)?.[1] || '';
-    const avits = [...new Set((original.match(/AVIT\d{4,15}/gi) || finding.title.match(/AVIT\d{4,15}/gi) || finding.body.match(/AVIT\d{4,15}/gi) || []).map(item => item.toUpperCase()))];
+    const avits = [...new Set((original.match(/AVIT\d{15}/gi) || finding.title.match(/AVIT\d{15}/gi) || finding.body.match(/AVIT\d{15}/gi) || []).map(item => item.toUpperCase()))];
     const location = finding.evidence?.[0] || '';
     const [path, line] = location.split(':');
     const rule = original.split(/[;,]/).map(part => part.replaceAll(/[`*]/g, '').trim()).find(part => /^[\w-]+(?:\.[\w-]+){2,}$/.test(part) && !/\.(?:js|ts|py|java|go|rb|cs|php|tsx|jsx)$/.test(part)) || '';
@@ -439,15 +439,19 @@
     else $('findings-file').click();
   }
 
+  function providerKeys(provider) {
+    return { apiKey: provider === 'claude' ? state.credentials.claude || undefined : undefined, openaiApiKey: provider === 'openai' ? state.credentials.openai || undefined : undefined,
+      copilotToken: provider === 'copilot' ? state.credentials.copilot || undefined : undefined };
+  }
   function updateProviderDisplay() {
-    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', openai: 'OpenAI' }[state.preferences.provider] || 'Local';
+    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', openai: 'OpenAI', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
     updateRunControls();
   }
   function showSettings() {
     const provider = state.preferences.provider;
     document.querySelector(`input[name=provider][value="${provider}"]`).checked = true;
     $('model-url').value = state.preferences.lmstudioUrl;
-    $('model-id').value = selectedModel();
+    $('model-id').value = selectedModel(); state.modelListProvider = null;
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
@@ -483,10 +487,11 @@
   function updateSettingsFields(provider) {
     const local = provider === 'lmstudio';
     $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
-    $('discover-models').classList.toggle('hidden', !local);
-    $('model-id').placeholder = local ? 'Load models or enter a model ID' : 'Exact provider model ID';
-    const providerName = provider === 'claude' ? 'anthropic' : 'openai';
-    $('environment-key-note').textContent = state.config.providers[providerName] ? 'A server environment key is available. You may leave this field empty.' : 'No server environment key detected. Enter a key for this session.';
+    $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : 'API key ';
+    const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
+    $('environment-key-note').textContent = local ? '' : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
+    if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; }
+    if (!local && (source || $('api-key').value.trim()) && !$('model-select').dataset.loaded) void discoverModels();
     // Remote LM Studio-compatible servers also require explicit data-sharing consent.
     let remote = !local;
     if (local) { try { remote = !['localhost', '127.0.0.1', '[::1]'].includes(new URL($('model-url').value).hostname); } catch { remote = true; } }
@@ -496,7 +501,7 @@
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
     const model = $('model-id').value.trim();
-    if (!model) { $('settings-error').textContent = 'Enter a model ID or load an available local model.'; return; }
+    if (!model) { $('settings-error').textContent = 'Load models and choose one, or enter a model ID.'; return; }
     let url;
     try {
       url = new URL($('model-url').value || DEFAULTS.lmstudioUrl);
@@ -518,15 +523,32 @@
     try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models: state.preferences.models, lmstudioUrl: state.preferences.lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
     $('api-key').value = ''; $('snow-client-secret').value = ''; $('settings-dialog').close(); updateProviderDisplay(); toast('Preferences saved. Credentials remain in memory only.');
   }
+  // The dropdown is the normal path; the manual field remains for IDs a list omits. Selecting one fills the other.
+  function fillModelSelect(models, selected) {
+    const select = $('model-select');
+    const options = models.map(model => { const option = el('option', '', model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id); option.value = model.id; return option; });
+    if (selected && !models.some(model => model.id === selected)) { const option = el('option', '', `${selected} (current)`); option.value = selected; options.unshift(option); }
+    if (!options.length) { const option = el('option', '', 'Load models to choose'); option.value = ''; options.push(option); }
+    select.replaceChildren(...options); select.value = selected || options[0].value; select.dataset.loaded = models.length ? '1' : '';
+    $('model-id').value = select.value;
+  }
   async function discoverModels() {
-    $('discover-models').disabled = true; $('settings-error').textContent = '';
+    const provider = document.querySelector('input[name=provider]:checked').value;
+    $('discover-models').disabled = true; $('settings-error').textContent = ''; $('model-source').textContent = 'Loading models…';
     try {
-      const data = await request(`/api/lmstudio/models?baseUrl=${encodeURIComponent($('model-url').value || DEFAULTS.lmstudioUrl)}`);
-      $('local-models').replaceChildren(...data.models.map(model => { const option = el('option'); option.value = model; return option; }));
-      if (!data.models.length) throw new Error('The server is reachable but no model is loaded. Load a model in LM Studio.');
-      if (!$('model-id').value || !data.models.includes($('model-id').value)) $('model-id').value = data.models[0];
-      toast(`${data.models.length} local model${data.models.length > 1 ? 's' : ''} available.`);
-    } catch (error) { $('settings-error').textContent = error.message; }
+      let models, source;
+      if (provider === 'lmstudio') {
+        models = (await request(`/api/lmstudio/models?baseUrl=${encodeURIComponent($('model-url').value || DEFAULTS.lmstudioUrl)}`)).models.map(id => ({ id, name: id }));
+        source = 'your model server';
+        if (!models.length) throw new Error('The server is reachable but no model is loaded. Load a model in LM Studio.');
+      } else {
+        ({ models, source } = await request('/api/models', { method: 'POST', body: JSON.stringify({ provider, key: $('api-key').value.trim() || state.credentials[provider] || undefined }) }));
+        if (!models.length) throw new Error('No models are available for this key. Check the account or plan.');
+      }
+      const current = $('model-id').value.trim() || state.preferences.models[provider];
+      fillModelSelect(models, models.some(model => model.id === current) ? current : models[0].id);
+      $('model-source').textContent = `${models.length} model${models.length > 1 ? 's' : ''} available · listed with ${source === 'session' ? 'the key entered here' : source}`;
+    } catch (error) { $('model-source').textContent = ''; $('settings-error').textContent = error.message; }
     finally { $('discover-models').disabled = false; }
   }
 
@@ -594,8 +616,8 @@
   }
   function parseAvits(text) {
     const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
-    const invalid = tokens.filter(token => !/^AVIT\d{4,15}$/.test(token));
-    if (invalid.length) throw new Error(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected e.g. AVIT0012345)`);
+    const invalid = tokens.filter(token => !/^AVIT\d{15}$/.test(token));
+    if (invalid.length) throw new Error(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 15 digits, e.g. AVIT000000095938462)`);
     return [...new Set(tokens)];
   }
   /** Semgrep is checked live, so installing it and retrying works without restarting the Workbench. */
@@ -618,7 +640,7 @@
     if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     const provider = state.preferences.provider;
-    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider === 'claude' ? 'anthropic' : 'openai']) { showSettings(); toast('A provider API key is required for this review.', true); return; }
+    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : 'A provider API key is required for this review.', true); return; }
     if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
     if (!await requireSemgrep() || state.running || !state.connected) return;
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
@@ -626,8 +648,7 @@
     $('activity-badge').classList.add('running'); $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode('Reviewing'));
     const payload = { action: 'run_pipeline', sessionId: state.session.id, agentIds: [...state.pipeline], target: $('target').value.trim(), provider,
       model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
-      apiKey: provider === 'claude' ? state.credentials.claude : undefined,
-      openaiApiKey: provider === 'openai' ? state.credentials.openai : undefined,
+      ...providerKeys(provider),
       attachment: state.attachment || undefined, continueOnError: false,
       ...(avits.length ? { avits, servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } } : {}) };
     try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
@@ -645,7 +666,9 @@
     $('refresh-sessions').addEventListener('click', () => refreshSessions().catch(error => toast(error.message, true)));
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
     $('settings-button').addEventListener('click', showSettings); $('configure-provider').addEventListener('click', showSettings);
-    $('settings-form').addEventListener('submit', saveSettings); $('discover-models').addEventListener('click', discoverModels);
+    $('settings-form').addEventListener('submit', saveSettings);
+    $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });
+    $('model-id').addEventListener('change', () => fillModelSelect([...$('model-select').options].filter(option => option.value && !option.textContent.endsWith('(current)')).map(option => ({ id: option.value, name: option.textContent.split(' · ')[0] })), $('model-id').value.trim())); $('discover-models').addEventListener('click', discoverModels);
     let settingsProvider = state.preferences.provider;
     for (const radio of document.querySelectorAll('input[name=provider]')) radio.addEventListener('change', () => {
       if (settingsProvider !== 'lmstudio') state.credentials[settingsProvider] = $('api-key').value.trim();

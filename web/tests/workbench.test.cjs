@@ -17,7 +17,7 @@ async function fakeServiceNow(url, options) {
   snowRequests.push({ url, options });
   const json = body => ({ ok: true, status: 200, json: async () => body });
   if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
-  return json({ result: [{ number: { display_value: 'AVIT0010001', value: 'AVIT0010001' }, short_description: { display_value: 'Tainted SSRF in ReplayService' },
+  return json({ result: [{ number: { display_value: 'AVIT000000000010001', value: 'AVIT000000000010001' }, short_description: { display_value: 'Tainted SSRF in ReplayService' },
     rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' }, source: { display_value: 'CodeSecurity' } }] });
 }
 const finalReport = '# Findings Report\n\n## Executive Summary\nOne hypothetical test finding.\n\n#### [FP-001] — Test query binding\n**Severity**: HIGH\n**Confidence**: CONFIRMED\n**Disposition**: TRUE POSITIVE\n**Evidence**: src/example.js:1 — observed fixture\n### Proposed Fix\nBind the value; PROPOSED — NOT APPLIED.\n### Regression Tests\nNOT RUN. Reject unsafe input.\n**Acceptance Criteria**: constant statement text.\n';
@@ -151,21 +151,21 @@ describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
     const socket = await connect();
     const before = observed.length;
     const events = await run(socket, { action: 'run_pipeline', sessionId: session.sessionId, agentIds: ['appsec-fp-reviewer'], provider: 'lmstudio', model: 'fixture',
-      avits: ['AVIT0010001', 'avit0010002'], servicenow });
+      avits: ['AVIT000000000010001', 'avit000000000010002'], servicenow });
     socket.close();
     assert.equal(events.at(-1).status, 'complete');
-    assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT0010002'], excluded: [] });
+    assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT000000000010002'], excluded: [] });
     const message = observed[before].userMessage;
-    assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT0010001/); assert.match(message, /single cohesive report/);
+    assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT000000000010001/); assert.match(message, /single cohesive report/);
     assert.match(message, /Semgrep Community Edition is installed/);
     assert.ok(snowRequests.every(request => request.options.redirect === 'error'));
-    assert.match(snowRequests.at(-1).url, /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT0010001%2CAVIT0010002)/);
+    assert.match(snowRequests.at(-1).url, /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT000000000010001%2CAVIT000000000010002)/);
     assert.doesNotMatch(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8'), /secret|snow-token/);
   });
   it('rejects AVITs without the FP reviewer, non-ServiceNow hosts, or missing credentials', async () => {
     const { body: session } = await api('/api/session/local', { repoPath: root });
     const socket = await connect();
-    const base = { action: 'run_pipeline', sessionId: session.sessionId, provider: 'lmstudio', model: 'fixture', avits: 'AVIT0010001' };
+    const base = { action: 'run_pipeline', sessionId: session.sessionId, provider: 'lmstudio', model: 'fixture', avits: 'AVIT000000000010001' };
     assert.match((await run(socket, { ...base, agentIds: ['appsec-threat-modeler'], servicenow }))[0].message, /Findings triage/);
     assert.match((await run(socket, { ...base, agentIds: ['appsec-fp-reviewer'], servicenow: { ...servicenow, instance: 'https://attacker.example' } }))[0].message, /not a ServiceNow host/);
     assert.match((await run(socket, { ...base, agentIds: ['appsec-fp-reviewer'], servicenow: { instance: servicenow.instance } }))[0].message, /Parameter Store/);

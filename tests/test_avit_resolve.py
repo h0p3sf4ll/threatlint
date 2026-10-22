@@ -1,0 +1,164 @@
+"""AVIT -> repository/branch/file context, checkout, and resolve (upload, close FP, tune Semgrep)."""
+
+import io
+import json
+import types
+
+import pytest
+
+from threatlint import avit_resolve as ar
+from threatlint import servicenow as sn
+
+AVIT = "AVIT000000095938462"
+INSTANCE = "https://example.service-now.com"
+SYS_ID = "a" * 32
+# Shaped like the AVIT form: custom u_ columns, labels from sys_documentation.
+ROW = {"sys_id": {"value": SYS_ID}, "number": {"value": AVIT}, "state": {"value": "1"},
+       "u_scm_tool": {"display_value": "ADO"}, "u_organization_name": {"display_value": "PepsiCoIT"},
+       "u_project_name": {"display_value": "EIP-Infrastructure"}, "u_repository": {"display_value": "eip-infra-aws-terraform-support"},
+       "u_project_branch": {"display_value": "pepgenx-troubleshooting"},
+       "u_file_path": {"display_value": "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars"},
+       "u_security_finding_source": {"display_value": "Secret"}, "u_line_number": {"display_value": "12"}}
+LABELS = [{"name": sn.AVIT_TABLE, "element": element, "label": label} for element, label in [
+    ("u_scm_tool", "SCM Tool"), ("u_organization_name", "Organization Name"), ("u_project_name", "Project Name"),
+    ("u_repository", "Repository"), ("u_project_branch", "Project Branch"), ("u_file_path", "File Path"),
+    ("u_security_finding_source", "Security Finding Source")]]
+REPORT = f"""# FP Review
+
+#### [FP-001] — AWS key placeholder in terraform.tfvars
+
+**Original finding**: {AVIT}; generic.secrets.aws-access-key; Semgrep Secrets; src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12
+**Disposition**: FALSE POSITIVE
+**Severity**: INFO
+**Confidence**: CONFIRMED
+"""
+
+
+def test_avit_format_is_avit_plus_15_digits():
+    assert sn.parse_avit_numbers(AVIT.lower()) == [AVIT]
+    for bad in ("AVIT0012345", "AVIT0000000959384621", "AVIT00000009593846X"):
+        with pytest.raises(sn.ServiceNowError, match="15 digits"):
+            sn.parse_avit_numbers(bad)
+
+
+def test_context_comes_from_form_labels_and_targets_the_ado_repo_branch_and_file():
+    fields = sn._flatten(ROW)
+    labels = {row["label"].lower(): row["element"] for row in LABELS}
+    context = sn.avit_context(fields, labels)
+    assert context["branch"] == "pepgenx-troubleshooting" and context["file_path"].endswith("terraform.tfvars")
+    target = sn.repository_target(context)
+    assert target["clone_url"] == "https://dev.azure.com/PepsiCoIT/EIP-Infrastructure/_git/eip-infra-aws-terraform-support"
+    assert target["branch"] == "pepgenx-troubleshooting"
+    assert sn.finding_kind({"fields": fields, "context": context}) == "secrets"
+    # Without readable labels, column names still resolve.
+    assert sn.avit_context(fields)["repository"] == "eip-infra-aws-terraform-support"
+
+
+def test_scope_is_codesecurity_and_secret_only():
+    kind = lambda source: sn.finding_kind({"fields": {}, "context": {"finding_source": source}})
+    assert (kind("Secret"), kind("CodeSecurity"), kind("DAST"), kind("Container Security")) == ("secrets", "sast", None, None)
+
+
+def test_unsafe_repository_values_are_refused():
+    base = {"scm_tool": "ADO", "organization": "PepsiCoIT", "project": "EIP", "repository": "repo"}
+    for change in ({"branch": "-c core.sshCommand=x"}, {"branch": "a..b"}, {"organization": "evil.com/x"}, {"scm_tool": "Bitbucket"}):
+        with pytest.raises(sn.ServiceNowError):
+            sn.repository_target({**base, **change})
+    assert sn.repository_target({"scm_tool": "GitHub", "organization": "acme", "repository": "web"})["clone_url"] == "https://github.com/acme/web.git"
+
+
+def test_checkout_clones_only_the_avit_branch_with_credentials_out_of_argv(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "pat-value")
+    monkeypatch.setattr(sn.subprocess, "run", lambda command, **kw: seen.update(command=command, env=kw["env"]) or types.SimpleNamespace(returncode=0, stderr=""))
+    target = sn.repository_target({"scm_tool": "ADO", "organization": "PepsiCoIT", "project": "EIP-Infrastructure", "repository": "r", "branch": "pepgenx-troubleshooting"})
+    sn.checkout_repository(target, str(tmp_path / "co"))
+    assert seen["command"][-2:] == [target["clone_url"], str(tmp_path / "co")]
+    assert ["--branch", "pepgenx-troubleshooting"] == seen["command"][seen["command"].index("--branch"):seen["command"].index("--branch") + 2]
+    assert "pat-value" not in " ".join(seen["command"])
+    assert seen["env"]["GIT_CONFIG_KEY_0"] == "http.https://dev.azure.com/.extraHeader"
+
+
+def test_verdict_is_read_from_the_original_finding_line():
+    assert ar.verdict_for(REPORT, AVIT)["disposition"] == "FALSE POSITIVE"
+    with pytest.raises(ar.ResolveError, match="no finding"):
+        ar.verdict_for(REPORT, "AVIT000000000000001")
+
+
+class FakeServiceNow:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, url, *, data=None, headers, method=None):
+        self.calls.append((method or ("POST" if data is not None else "GET"), url.split("?")[0], data))
+        if url.endswith("/oauth_token.do"):
+            return {"access_token": "t"}
+        if "/sys_documentation" in url:
+            return {"result": LABELS}
+        if "/sys_choice" in url:
+            return {"result": [{"name": sn.AVIT_TABLE, "element": "state", "value": "3", "label": "Closed"},
+                               {"name": sn.AVIT_TABLE, "element": "substate", "value": "6", "label": "False Positive"}]}
+        if "/attachment/file" in url:
+            return {"result": {"sys_id": "b" * 32}}
+        if method == "PATCH":
+            body = json.loads(data)
+            return {"result": {"state": body.get("state", "1"), "substate": body.get("substate", "")}}
+        return {"result": [ROW]}
+
+
+def _args(tmp_path, report, **extra):
+    path = tmp_path / "report.md"
+    path.write_text(report)
+    return types.SimpleNamespace(number=AVIT, report=str(path), docx=None, snow_instance=INSTANCE, aws_profile=None,
+                                 semgrep_deployment=None, skip_semgrep=False, yes=True, **extra)
+
+
+def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ignores_semgrep(monkeypatch, tmp_path):
+    fake, semgrep_calls = FakeServiceNow(), []
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
+
+    def semgrep(path, token, *, body=None):
+        semgrep_calls.append((path, body))
+        if path == "/deployments":
+            return {"deployments": [{"id": 7, "slug": "pepsico"}]}
+        if "/projects" in path:
+            return {"projects": [{"name": "PepsiCoIT/EIP-Infrastructure/eip-infra-aws-terraform-support"}, {"name": "other"}]}
+        if "/secrets" in path:
+            return {"findings": [{"id": "55", "type": "AWS", "findingPath": "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "status": "FINDING_STATUS_OPEN"},
+                                 {"id": "56", "type": "AWS", "findingPath": "src/other.tfvars:12", "status": "FINDING_STATUS_OPEN"}]}
+        return {"num_triaged": len(body["issue_ids"])}
+    monkeypatch.setattr(ar, "_semgrep", semgrep)
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    assert ar.cmd_resolve(_args(tmp_path, REPORT)) == 0
+    methods = [(m, u.rsplit("/api/now/", 1)[-1]) for m, u, _d in fake.calls if "/api/now/" in u]
+    attach = methods.index(("POST", "attachment/file"))
+    patch = next(i for i, (m, _u) in enumerate(methods) if m == "PATCH")
+    assert attach < patch, "the report is attached before the AVIT is closed"
+    body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
+    assert (body["state"], body["substate"]) == ("3", "6") and body["work_notes"].startswith(ar.CLOSING_COMMENT)
+    upload = next(u for m, u, _d in fake.calls if "attachment" in u)
+    assert upload.endswith("/attachment/file")
+    triage = semgrep_calls[-1][1]
+    assert triage["issue_type"] == "secrets" and triage["issue_ids"] == [55] and triage["new_triage_reason"] == "false_positive"
+    assert "Closed as false positive" in out.getvalue()
+
+
+def test_true_positive_attaches_the_report_and_leaves_the_avit_open(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "_semgrep", lambda *a, **k: pytest.fail("Semgrep must not change for a true positive"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
+    body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
+    assert "state" not in body and "TRUE POSITIVE" in body["work_notes"]
+    assert any("attachment/file" in u for _m, u, _d in fake.calls)
+
+
+def test_ambiguous_changes_nothing(monkeypatch, tmp_path):
+    monkeypatch.setattr(sn, "_request_json", lambda *a, **k: pytest.fail("no ServiceNow call for AMBIGUOUS"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "AMBIGUOUS"))) == 0
