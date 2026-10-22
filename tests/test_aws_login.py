@@ -49,3 +49,24 @@ def test_sso_login_opens_the_printed_url_privately(monkeypatch):
     aws_login.sso_login("appsec", opener=lambda url: opened.append(url) or ("Firefox", True), out=out)
     assert opened == ["https://pep.awsapps.com/start/#/device?user_code=ABCD-EFGH"]
     assert "private Firefox window" in out.getvalue()
+
+
+def test_error_messages_with_aws_urls_never_open_a_browser(monkeypatch):
+    printed = "SSL validation failed for https://oidc.us-east-2.amazonaws.com/client/register [SSL: CERTIFICATE_VERIFY_FAILED]\n"
+
+    class Fake:
+        def __init__(self, command, **kwargs):
+            assert kwargs["env"].get("AWS_CA_BUNDLE") or not aws_login.tool_env().get("AWS_CA_BUNDLE")
+            self.stdout = io.StringIO(printed)
+
+        def wait(self):
+            return 255
+
+    monkeypatch.setattr(aws_login, "_aws", lambda: "aws")
+    monkeypatch.setattr(subprocess, "Popen", Fake)
+    opened = []
+    try:
+        aws_login.sso_login("appsec", opener=lambda url: opened.append(url) or ("Chrome", True), out=io.StringIO())
+    except aws_login.AwsLoginError as exc:
+        assert "before showing a sign-in page" in str(exc)
+    assert opened == []

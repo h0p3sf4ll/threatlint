@@ -119,7 +119,8 @@ def read_parameter_store(profile: str | None = None) -> tuple[str, str]:
     if profile:
         command += ["--profile", profile]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=_AWS_TIMEOUT_S, check=False)
+        from threatlint.tls import tool_env  # noqa: PLC0415
+        result = subprocess.run(command, capture_output=True, text=True, timeout=_AWS_TIMEOUT_S, check=False, env=tool_env())
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ServiceNowError(f"AWS CLI could not run: {exc}\n{ACCESS_HELP}") from exc
     if result.returncode != 0:
@@ -142,7 +143,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+def _opener():
+    from threatlint.tls import ssl_context  # noqa: PLC0415
+    return urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ssl_context()))
+
+
+_OPENER = _opener()
 
 
 def _request_json(url: str, *, data: bytes | None = None, headers: dict[str, str], method: str | None = None) -> dict:
@@ -406,7 +412,8 @@ def _run_tool(name: str, args: list[str], timeout: int = 60) -> str:
     if not executable:
         return ""
     try:
-        result = subprocess.run([executable, *args], capture_output=True, text=True, timeout=timeout, check=False)
+        from threatlint.tls import tool_env  # noqa: PLC0415
+        result = subprocess.run([executable, *args], capture_output=True, text=True, timeout=timeout, check=False, env=tool_env())
     except (OSError, subprocess.SubprocessError):
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -444,7 +451,8 @@ def checkout_repository(target: dict[str, str], directory: str) -> str:
         raise ServiceNowError("git is required to check out the AVIT repository")
     command = [git, "clone", "--depth", "50", "--single-branch", "--no-tags", *(["--branch", target["branch"]] if target["branch"] else []),
                "--", target["clone_url"], directory]
-    env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", **_git_auth_env(target["scm"])}
+    from threatlint.tls import tool_env  # noqa: PLC0415
+    env = {**tool_env(), "GIT_LFS_SKIP_SMUDGE": "1", **_git_auth_env(target["scm"])}
     result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False, env=env)
     if result.returncode != 0:
         reason = (result.stderr.strip().splitlines() or ["git clone failed"])[-1][:300]

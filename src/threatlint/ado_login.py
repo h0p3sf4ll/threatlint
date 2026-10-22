@@ -50,7 +50,12 @@ def _keyring():
         return None
 
 
-def validate(organization: str, pat: str, opener=urllib.request.urlopen) -> None:
+def _urlopen(request, timeout):
+    from threatlint.tls import ssl_context  # noqa: PLC0415
+    return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())  # noqa: S310 - fixed HTTPS host
+
+
+def validate(organization: str, pat: str, opener=_urlopen) -> None:
     """A PAT that can list projects in the organization; ADO answers bad tokens with a 203 sign-in page."""
     if not _ORG.fullmatch(organization):
         raise AdoLoginError("Enter the Azure DevOps organization name (e.g. PepsiCoIT), not a URL")

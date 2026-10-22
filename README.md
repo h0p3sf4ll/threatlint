@@ -493,7 +493,9 @@ be installed (`python3 -m pip install semgrep`); the FP review will not start wi
   that has one is used. A normal window shares your Okta session and fails with *Conflicting User IDs
   specified on state token*. Afterwards, use `--aws-profile appsec` with `threatlint avit fetch` /
   `run fp-review`, or enter `appsec` in the Workbench's *AWS CLI profile* field. Re-run the command
-  when the session expires. It needs the AWS CLI v2.
+  when the session expires. It needs the AWS CLI v2. On networks that inspect TLS, Threatlint exports the OS trusted roots (macOS keychains / Windows
+  certificate store) to `~/.threatlint/ca-bundle.pem` and passes it to the AWS CLI (`AWS_CA_BUNDLE`), git
+  (`GIT_SSL_CAINFO`), and its own HTTPS calls; a bundle you set yourself always wins.
 
 ```bash
 threatlint aws login                       # first run prompts for portal URL, region, account, role

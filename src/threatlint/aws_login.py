@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from threatlint.servicenow import AWS_REGION
+from threatlint.tls import tool_env
 
 DEFAULT_PROFILE = "appsec"
 DEFAULT_SESSION = "pepsico"
@@ -29,8 +30,9 @@ SSO_REGION_ENV = "THREATLINT_AWS_SSO_REGION"
 _START_URL = re.compile(r"^https://[a-z0-9-]+\.(?:awsapps\.com|app\.aws)/start/?(?:#.*)?$", re.IGNORECASE)
 _REGION = re.compile(r"^[a-z]{2}(?:-gov)?-[a-z]+-\d$")
 _NAME = re.compile(r"^[\w.@+-]{1,128}$")
-# URLs the AWS CLI prints for the user to open (device or authorization-code flow).
-_VERIFY_URL = re.compile(r"https://[^\s]+(?:awsapps\.com|app\.aws|amazonaws\.com)[^\s]*")
+# Only the sign-in page the AWS CLI asks the user to open: the access portal device page, or the
+# regional device endpoint. Error messages also contain AWS URLs (e.g. oidc.<region>.amazonaws.com) and must not open.
+_VERIFY_URL = re.compile(r"https://(?:[a-z0-9-]+\.(?:awsapps\.com|app\.aws)/start/?#/device|device\.sso\.[a-z0-9-]+\.amazonaws\.com/?)\S*", re.IGNORECASE)
 
 # Browsers whose private mode can be requested from the command line.
 # (name, macOS bundle-ID prefix, macOS app, Windows ProgId prefix, executable, flag)
@@ -181,7 +183,7 @@ def _aws() -> str:
 def sso_login(profile: str, opener=open_private, out=sys.stdout) -> None:
     """Run `aws sso login --no-browser` and open the URL it prints in a private window."""
     process = subprocess.Popen([_aws(), "sso", "login", "--no-browser", "--profile", profile],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=tool_env())
     opened, plain = False, None
     def open_url(url):
         browser, used_default = opener(url)
@@ -207,12 +209,13 @@ def sso_login(profile: str, opener=open_private, out=sys.stdout) -> None:
         opened = True
         open_url(plain)
     if process.wait() != 0:
-        raise AwsLoginError("AWS sign-in did not complete. If the browser showed 'Conflicting User IDs', retry and use only the private window.")
+        hint = "" if opened else " The AWS CLI failed before showing a sign-in page; see its message above."
+        raise AwsLoginError("AWS sign-in did not complete." + (hint or " If the browser showed 'Conflicting User IDs', retry and use only the private window."))
 
 
 def caller_identity(profile: str) -> dict:
     result = subprocess.run([_aws(), "sts", "get-caller-identity", "--profile", profile, "--output", "json"],
-                            capture_output=True, text=True, timeout=60, check=False)
+                            capture_output=True, text=True, timeout=60, check=False, env=tool_env())
     if result.returncode != 0:
         raise AwsLoginError((result.stderr.strip().splitlines() or ["sts get-caller-identity failed"])[-1])
     return json.loads(result.stdout)

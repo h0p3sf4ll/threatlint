@@ -120,7 +120,8 @@ def semgrep_token(profile: str | None) -> str:
         raise ResolveError("The AWS CLI is required to read the Semgrep token (or set SEMGREP_APP_TOKEN)")
     command = [aws, "ssm", "get-parameter", "--name", SEMGREP_TOKEN_PARAMETER, "--with-decryption", "--region", sn.AWS_REGION,
                "--query", "Parameter.Value", "--output", "text", *(["--profile", profile] if profile else [])]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    from threatlint.tls import tool_env  # noqa: PLC0415
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=tool_env())
     if result.returncode != 0 or not result.stdout.strip():
         reason = (result.stderr.strip().splitlines() or ["no value"])[-1][:300]
         raise ResolveError(f"Could not read {SEMGREP_TOKEN_PARAMETER}: {reason}. Run `threatlint aws login`.")
