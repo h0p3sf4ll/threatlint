@@ -232,3 +232,13 @@ def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypat
     assert ar.run(fails, args) == 1
     assert not checkout.exists()
     assert ar.remove_checkout(str(tmp_path)) is False, "only git checkouts are deleted"
+
+
+def test_semgrep_rerun_requires_a_threatlint_false_positive_closure(monkeypatch):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: pytest.fail("Semgrep must not be touched for an open AVIT"))
+    args = types.SimpleNamespace(number=AVIT, snow_instance=INSTANCE, aws_profile=None, line=None, semgrep_deployment=None)
+    with pytest.raises(ar.ResolveError, match="not closed as a false positive"):
+        ar.cmd_semgrep(args)

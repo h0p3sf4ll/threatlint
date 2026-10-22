@@ -206,6 +206,11 @@ def add_resolve_parsers(actions) -> None:
     checkout.add_argument("number", metavar="AVIT")
     checkout.add_argument("--dir", required=True, help="Empty directory to clone into")
     sn.add_avit_arguments(checkout)
+    semgrep = actions.add_parser("semgrep", help="Re-run the Semgrep triage for an AVIT already closed as a false positive by Threatlint")
+    semgrep.add_argument("number", metavar="AVIT")
+    semgrep.add_argument("--line", type=int, help="Flagged line, when the AVIT does not record one (narrows the match to ±3 lines)")
+    semgrep.add_argument("--semgrep-deployment", help="Semgrep deployment ID or slug (default 26306)")
+    sn.add_avit_arguments(semgrep)
     resolve = actions.add_parser("resolve", help="Upload the FP report to the AVIT; close it and tune Semgrep when it is a false positive")
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
@@ -345,6 +350,30 @@ def remove_checkout(path: str | None) -> bool:
         function(target)
     shutil.rmtree(path, onerror=writable)  # onerror: Windows marks git pack files read-only
     return True
+
+
+def cmd_semgrep(args) -> int:
+    """Re-run only the Semgrep triage for an AVIT that Threatlint already closed as a false positive."""
+    [avit] = sn.parse_avit_numbers(args.number)
+    instance, token = _session(args)
+    record = _record(instance, token, avit)
+    notes = record["fields"].get("work_notes", "") + "\n" + record["fields"].get("close_notes", "")
+    if record["fields"].get("state", "").lower() != "closed" or "Closed by Threatlint as a false positive" not in notes:
+        raise ResolveError(f"{avit} is not closed as a false positive by Threatlint; run `avit resolve` with a report instead")
+    kind = sn.finding_kind(record)
+    context = dict(record["context"])
+    if args.line:
+        context["line"] = str(args.line)
+    sg_token = semgrep_token(args.aws_profile)
+    dep, matches = semgrep_matches(sg_token, kind, sn.repository_target(context), context, args.semgrep_deployment)
+    if not matches:
+        print(f"  ! No open Semgrep finding matches {context.get('file_path')}{':' + context['line'] if context.get('line') else ''}; Semgrep unchanged")
+        return 0
+    for match in matches:
+        print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
+    count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT")
+    print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive (kept for this fingerprint on later scans and branches)")
+    return 0
 
 
 def run(handler, args) -> int:

@@ -478,6 +478,9 @@ label. The flow is:
 The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
 access to `sys_documentation` and `sysrule_view`.
 
+**Re-run Semgrep only:** `threatlint avit semgrep <AVIT> --line N` ignores the matching Semgrep finding
+for an AVIT Threatlint has already closed as a false positive. It checks ServiceNow first.
+
 **Rule tuning runs once per rule.** If a policy already runs a `<rule>.tuned` version of the rule,
 later false positives of that rule are only triaged in Semgrep; the rule is not tuned again.
 

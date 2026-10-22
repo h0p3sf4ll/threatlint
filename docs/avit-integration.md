@@ -174,6 +174,22 @@ The Workbench runs the same triage with the configured model.
 - **Semgrep:** `/api/semgrep/false-positive/{matches,ignore}` re-match the narrow rule/project/file
   scope on the server before ignoring anything.
 
+## Re-running the Semgrep step
+
+If the Semgrep step didn't run, or ran against the wrong project, after an AVIT was closed:
+
+```bash
+threatlint avit semgrep <AVIT> [--line N]
+```
+
+- It acts only when ServiceNow shows the AVIT **Closed** with the Threatlint false-positive work note.
+- It matches the AVIT's project, file, rule and line (±3), then ignores those findings as
+  `false_positive`. Use `--line` when the AVIT doesn't record one.
+- Semgrep applies the triage to every finding with the same fingerprint, i.e. the same line on every
+  branch.
+- Without a line, every open finding of that rule in the file is ignored. Pass `--line` so that
+  unrelated lines in the same file stay open.
+
 ## Known limits
 
 - **Substate:** ServiceNow may not store substate 3 for Closed, if a business rule or the choice list
