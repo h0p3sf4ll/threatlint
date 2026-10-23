@@ -46,7 +46,7 @@ function python() {
   return chosenPython;
 }
 
-function runCli(args, { env = {}, signal } = {}) {
+function runCli(args, { env = {}, signal, input } = {}) {
   const python = module.exports.python();
   const pythonpath = [pythonPath(), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
   return new Promise((resolve, reject) => {
@@ -58,6 +58,8 @@ function runCli(args, { env = {}, signal } = {}) {
     child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', error => { clearTimeout(timer); reject(error.code === 'ENOENT' ? new HttpError(`Python was not found (${python}). Set THREATLINT_PYTHON.`, 503) : error); });
     child.on('close', code => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+    // A secret such as a PAT goes to the CLI on stdin, never in argv.
+    if (input !== undefined) child.stdin.end(`${input}\n`);
   });
 }
 
@@ -103,8 +105,16 @@ function resolveOutcome(output) {
   };
 }
 
+/** Required credentials that `threatlint setup --check` reports as missing (ServiceNow, Azure DevOps PAT, Semgrep token). */
+async function setupStatus(cli = runCli, env = {}) {
+  const result = await cli(['setup', '--check', '--json'], { env });
+  try { return JSON.parse(lastLine(result.stdout)); } catch { return []; }
+}
+
 function createAvitBatch({ store, reports, override, integrations = {} }) {
   const cli = integrations.threatlintCli || runCli;
+  // ServiceNow values typed on the page this session count as configured.
+  const missingSetup = async env => (await setupStatus(cli, env)).filter(item => !item.configured && !(item.name.startsWith('ServiceNow') && env.THREATLINT_SNOW_CLIENT_ID));
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
 
   function validate(message) {
@@ -186,6 +196,8 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     const semgrep = await semgrepVersion();
     if (!semgrep) throw Object.assign(new HttpError(servicenow.SEMGREP_INSTALL, 412), { code: 'semgrep_missing' });
     const env = cliEnv(message);
+    const missing = await missingSetup(env);
+    if (missing.length) throw Object.assign(new HttpError(`Finish setup first: ${missing.map(item => `${item.name} (${item.fix})`).join('; ')}`, 412), { code: 'setup_incomplete' });
     const profile = typeof message.awsProfile === 'string' && /^[\w.@+-]{1,128}$/.test(message.awsProfile) ? ['--aws-profile', message.awsProfile] : [];
     send({ type: 'avit_batch_start', avits: numbers });
     for (const avit of numbers) {
@@ -198,4 +210,4 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   return { run };
 }
 
-module.exports = { createAvitBatch, redactSecrets, resolveOutcome, runCli, pythonPath, python };
+module.exports = { createAvitBatch, redactSecrets, resolveOutcome, runCli, setupStatus, pythonPath, python };

@@ -23,18 +23,37 @@ Workbench runs its own path, described at the end.
 
 ```bash
 threatlint setup          # interactive; each step is skipped when already configured
+threatlint setup --check  # which required credentials are missing (never prints a value)
 ```
+
+**Prerequisite login commands.** Run these once, in your own terminal; never paste a secret into a chat.
+
+| Prerequisite | Command | Verify |
+| --- | --- | --- |
+| Semgrep CE and the Pro engine | `python3 -m pip install semgrep` (or `brew install semgrep`), `semgrep login`, `semgrep install-semgrep-pro` | `semgrep --version` |
+| AWS IAM Identity Center | `threatlint aws login` | `aws sts get-caller-identity --profile appsec` |
+| ServiceNow OAuth client (**required**) | `threatlint setup` | `threatlint setup --check` |
+| Azure DevOps PAT, Code: Read (**required**) | `threatlint ado login --organization PepsiCoIT` | `threatlint ado status` |
+| Semgrep API token (**required**) | `threatlint semgrep login` | `threatlint semgrep status` |
+| GitHub, for GitHub-hosted AVITs only | `gh auth login` | `gh auth status` |
+
+The three **required** credentials gate every AVIT review. `threatlint setup` reports setup as incomplete
+until all three are present. The Workbench refuses to start a batch until `threatlint setup --check` passes
+(ServiceNow values typed into the page for the session also count). The Semgrep token is used for
+four things: finding triage, downloading the original rule for the tuning proof, `semgrep publish`, and
+policy changes. It therefore needs Web API access to the deployment.
 
 | Step | Command it runs | Stored where | Secret handling |
 | --- | --- | --- | --- |
 | AWS sign-in | `threatlint aws login` | `~/.aws/config` profile `appsec`; tokens in the AWS CLI cache | Opens a **private** browser window. The Identity Center region is detected from the portal URL. |
-| ServiceNow | asks for the instance URL, then reads the OAuth client from Parameter Store, or prompts with hidden input | `~/.threatlint/servicenow.json` (owner-only) | Validated with a client-credentials token before it is saved |
-| Azure DevOps | `threatlint ado login` | OS credential store (`keyring`), or `~/.threatlint/ado.json` (owner-only) | PAT (Code: Read) validated against the organization |
-| Semgrep | `threatlint semgrep login` | OS credential store, or `~/.threatlint/semgrep.json` (owner-only) | Read from `/cfc-appsec-semgrep-scan/semgrep-token` or prompted with hidden input; validated against `/api/v1/deployments` |
+| ServiceNow (required) | asks for the instance URL, then reads the OAuth client from Parameter Store, or prompts with hidden input | `~/.threatlint/servicenow.json` (owner-only) | Validated with a client-credentials token before it is saved |
+| Azure DevOps (required) | `threatlint ado login` | OS credential store (`keyring`), or `~/.threatlint/ado.json` (owner-only) | PAT (Code: Read) validated against the organization |
+| Semgrep (required) | `threatlint semgrep login` | OS credential store, or `~/.threatlint/semgrep.json` (owner-only) | Read from `/cfc-appsec-semgrep-scan/semgrep-token` or prompted with hidden input; validated against `/api/v1/deployments` |
 
 On Windows, `~` is `%USERPROFILE%`. `THREATLINT_HOME` relocates `~/.threatlint`. The Workbench's
-*Settings* page has a **ServiceNow** section and a **Semgrep** section that write the same files. They
-show secrets masked and never send them back to the page.
+*Settings* page has **ServiceNow**, **Semgrep** and **Azure DevOps** sections that write the same files
+(the Azure DevOps PAT is passed to `threatlint ado login --pat-stdin` on standard input, never in argv).
+They show secrets masked and never send them back to the page.
 
 **Behind a TLS-inspecting proxy:** the macOS keychains or the Windows certificate store are exported
 to `~/.threatlint/ca-bundle.pem`. That bundle is passed to the AWS CLI (`AWS_CA_BUNDLE`), git

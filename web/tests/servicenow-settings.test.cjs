@@ -60,3 +60,30 @@ describe('Saved Semgrep token', () => {
     } finally { await wb.close(); }
   });
 });
+
+describe('Saved Azure DevOps PAT and required setup', () => {
+  it('passes the PAT to `threatlint ado login` on stdin only, and never returns it', async () => {
+    const PAT = 'z'.repeat(52), calls = [];
+    let saved = false;
+    const threatlintCli = async (args, options = {}) => {
+      calls.push({ args, input: options.input });
+      if (args[0] === 'ado' && args[1] === 'login') { saved = options.input === PAT; return { code: 0, stdout: '✓ PAT validated and saved to the OS credential store\n', stderr: '' }; }
+      if (args[0] === 'ado') return { code: 0, stdout: saved ? 'Azure DevOps PAT: OS credential store\n' : 'No Azure DevOps PAT configured.\n', stderr: '' };
+      if (args[0] === 'setup') return { code: 1, stdout: JSON.stringify([{ name: 'Azure DevOps PAT', configured: saved, source: saved ? 'OS credential store' : null, fix: 'threatlint ado login' }]), stderr: '' };
+      throw new Error(args.join(' '));
+    };
+    const wb = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-')), integrations: { threatlintCli } });
+    await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${wb.server.address().port}`;
+    const post = body => fetch(`${base}/api/ado/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    try {
+      assert.equal((await (await fetch(`${base}/api/setup/status`)).json()).items[0].configured, false);
+      assert.equal((await post({ organization: 'https://dev.azure.com/x', pat: PAT })).status, 400);
+      const response = await post({ organization: 'PepsiCoIT', pat: PAT });
+      const text = await response.text();
+      assert.equal(response.status, 200); assert.doesNotMatch(text, /zzzzzzzz/); assert.equal(JSON.parse(text).hasPat, true);
+      assert.ok(calls.every(call => !call.args.includes(PAT)), 'the PAT is never in argv');
+      assert.equal((await (await fetch(`${base}/api/setup/status`)).json()).items[0].configured, true);
+    } finally { await wb.close(); }
+  });
+});

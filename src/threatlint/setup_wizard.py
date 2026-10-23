@@ -1,6 +1,7 @@
 """`threatlint setup`: one-time, interactive setup of every integration the AVIT workflow uses.
 
-Each step is skipped when it is already configured, and can be re-run on its own:
+Steps 2-4 are required for `/fp-review <AVIT>` and the Workbench batch; each is skipped when it is already
+configured, and can be re-run on its own. `threatlint setup --check` reports what is missing without prompting.
   1. AWS IAM Identity Center sign-in in a private browser window   (threatlint aws login)
   2. ServiceNow instance URL and OAuth client, saved for the CLI and Workbench (~/.threatlint/servicenow.json)
   3. Azure DevOps PAT with Code: Read                                (threatlint ado login)
@@ -65,8 +66,8 @@ def step_ado() -> None:
     if source:
         print(f"✓ Azure DevOps PAT: {source}")
         return
-    if _yes("Set up an Azure DevOps PAT (Code: Read) for cloning AVIT repositories?"):
-        print(f"✓ Azure DevOps PAT validated and saved to {ado_login.prompt_and_save()}")
+    print("An Azure DevOps PAT (Code: Read) is required to clone AVIT repositories.")
+    print(f"✓ Azure DevOps PAT validated and saved to {ado_login.prompt_and_save()}")
 
 
 def step_semgrep(profile: str) -> None:
@@ -80,12 +81,41 @@ def step_semgrep(profile: str) -> None:
     print(f"✓ Semgrep token validated and saved to {semgrep_platform.login(profile=profile)}")
 
 
+def check(profile: str | None = None) -> list[tuple[str, str, str]]:
+    """(name, where it comes from or '', the command that fixes it) for each required credential. Never prints a value."""
+    saved = servicenow.saved_config()
+    snow = ("THREATLINT_SNOW_CLIENT_ID / THREATLINT_SNOW_CLIENT_SECRET" if os.environ.get("THREATLINT_SNOW_CLIENT_ID") and os.environ.get("THREATLINT_SNOW_CLIENT_SECRET")
+            else "~/.threatlint/servicenow.json" if saved.get("instance") and saved.get("clientId") and saved.get("clientSecret") else "")
+    _pat, ado = ado_login.load()
+    try:
+        semgrep = semgrep_platform.resolve_token(profile)[1]
+    except semgrep_platform.SemgrepError:
+        semgrep = ""
+    return [("ServiceNow OAuth client", snow, "threatlint setup  (or Workbench → Settings → ServiceNow)"),
+            ("Azure DevOps PAT", ado, "threatlint ado login --organization <org>  (or Workbench → Settings → Azure DevOps)"),
+            ("Semgrep API token", semgrep, "threatlint semgrep login  (or Workbench → Settings → Semgrep)")]
+
+
+def cmd_check(args) -> int:
+    results = check(args.aws_profile)
+    if args.json:
+        print(json.dumps([{"name": name, "configured": bool(source), "source": source or None, "fix": fix} for name, source, fix in results]))
+    else:
+        for name, source, fix in results:
+            print(f"✓ {name}: {source}" if source else f"✗ {name}: not configured. Run: {fix}")
+    return 0 if all(source for _name, source, _fix in results) else 1
+
+
 def add_setup_parser(sub) -> None:
     p = sub.add_parser("setup", help="One-time setup: AWS SSO, ServiceNow, Azure DevOps PAT, and Semgrep token")
     p.add_argument("--aws-profile", default="appsec", help="AWS CLI profile (default: appsec)")
+    p.add_argument("--check", action="store_true", help="Report which required credentials are missing, without prompting")
+    p.add_argument("--json", action="store_true", help="With --check, print the result as JSON")
 
 
 def cmd_setup(args) -> int:
+    if getattr(args, "check", False):
+        return cmd_check(args)
     if not sys.stdin.isatty():
         print("ERROR: `threatlint setup` is interactive; run it in a terminal", file=sys.stderr)
         return 1
@@ -99,5 +129,7 @@ def cmd_setup(args) -> int:
         except (servicenow.ServiceNowError, ado_login.AdoLoginError, semgrep_platform.SemgrepError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             failed.append(name)
+    missing = [name for name, source, _fix in check(args.aws_profile) if not source]
+    failed += [name for name in missing if name not in failed]
     print("\nSetup complete." if not failed else f"\nSetup finished with errors in: {', '.join(failed)}. Re-run `threatlint setup` after fixing them.")
     return 1 if failed else 0

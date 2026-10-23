@@ -25,7 +25,13 @@ This works on macOS, Linux, and Windows. Use a temporary working directory from 
 
 Use `$WORK` for every path below. Never hard-code `/tmp`.
 
-**Credentials.** Run `threatlint setup` once. It configures AWS SSO, ServiceNow, the Azure DevOps PAT, and the Semgrep token.
+**Credentials (required before the first AVIT).** Run `threatlint setup --check`. If it exits non-zero, stop and tell the user which items are missing and the command for each, to run in their own terminal:
+- ServiceNow OAuth client: `threatlint setup` (or Workbench → Settings → ServiceNow)
+- Azure DevOps PAT (Code: Read): `threatlint ado login --organization <Organization Name>` (or Workbench → Settings → Azure DevOps)
+- Semgrep API token: `threatlint semgrep login` (or Workbench → Settings → Semgrep)
+- Reading these from Parameter Store needs `threatlint aws login` first. GitHub AVITs need `gh auth login`.
+
+`threatlint setup` configures all of them in one pass.
 - The ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`.
 - The OAuth client and the Semgrep token (`/cfc-appsec-semgrep-scan/semgrep-token`) are read from AWS Parameter Store (us-west-2) with the user's AWS CLI profile (`--aws-profile`). If that fails, tell the user to run `threatlint aws login`, which signs in through a **private browser window** (avoiding Okta's "Conflicting User IDs specified on state token"), then retry.
 - Azure DevOps access comes from `threatlint ado login` (a saved, validated PAT with Code: Read), `THREATLINT_ADO_PAT`, or `az login`. Check it with `threatlint ado status`.

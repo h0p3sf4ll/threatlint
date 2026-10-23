@@ -413,13 +413,25 @@ threatlint install --lmstudio -y
 flow for each AVIT in turn. Each AVIT gets its own Word report and its own ServiceNow and Semgrep
 updates, shown on its own result card.
 
-**First run:** `threatlint setup`. It handles, in order:
-- AWS SSO in a private browser window;
-- the ServiceNow instance and OAuth client;
-- an Azure DevOps PAT;
-- the Semgrep API token.
+**Required setup (once per machine).** AVIT review does not start until all three credentials below
+are configured. `threatlint setup` walks through every step; each command can also be run on its own.
 
-The Workbench's *Settings → ServiceNow / Semgrep* sections write the same configuration.
+| # | Prerequisite | Command | Workbench alternative | Check |
+| --- | --- | --- | --- | --- |
+| 1 | Semgrep CE (plus Pro engine, recommended) | `python3 -m pip install semgrep` or `brew install semgrep`; then `semgrep login` and `semgrep install-semgrep-pro` | — | `semgrep --version` |
+| 2 | AWS sign-in (reads the ServiceNow client and Semgrep token from Parameter Store) | `threatlint aws login` (private browser window) | — | `aws sts get-caller-identity --profile appsec` |
+| 3 | **ServiceNow** instance + OAuth client (required) | `threatlint setup` | *Settings → ServiceNow* | `threatlint setup --check` |
+| 4 | **Azure DevOps PAT**, scope *Code: Read* (required) | `threatlint ado login --organization PepsiCoIT` | *Settings → Azure DevOps* | `threatlint ado status` |
+| 5 | **Semgrep API token**, Web API scope (required; used for triage, downloading the original rule, publishing the tuned rule and changing policies) | `threatlint semgrep login` (reads `/cfc-appsec-semgrep-scan/semgrep-token` from Parameter Store, or prompts with hidden input) | *Settings → Semgrep* | `threatlint semgrep status` |
+| 6 | GitHub (only for GitHub-hosted AVITs) | `gh auth login`, or set `GH_TOKEN` | — | `gh auth status` |
+
+`threatlint setup --check` lists each required credential and where it comes from, without printing any
+value, and exits non-zero when one is missing. `threatlint setup` ends with the same check and reports
+setup as incomplete until all three are present. The Workbench's *False positive review* page shows the
+same checklist, links each missing item to its Settings section, and refuses to start a batch until it
+is complete. Never paste a secret into a chat; type it into the hidden prompt or the masked field.
+
+The Workbench's *Settings → ServiceNow / Semgrep / Azure DevOps* sections write the same configuration as the CLI.
 
 **Results:**
 - **False positive:** closed automatically. The Word report is attached, the state is set to 3 /
@@ -461,7 +473,8 @@ label. The flow is:
        on Windows), readable only by you.
      - `threatlint ado status` shows where the PAT comes from, and `threatlint ado logout` removes it.
      - `THREATLINT_ADO_PAT`, `AZURE_DEVOPS_EXT_PAT`, or `az login` also work.
-     - If none is configured, `avit checkout` offers the PAT setup interactively.
+     - If none is configured, `avit checkout` offers the PAT setup interactively. The Workbench's
+       *Settings → Azure DevOps* section saves it the same way.
    - **GitHub:** `gh auth login` or `GH_TOKEN`.
 2. The FP reviewer triages the finding on that branch and saves the report.
 3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks

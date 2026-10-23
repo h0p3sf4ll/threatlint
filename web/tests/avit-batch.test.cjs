@@ -23,9 +23,11 @@ const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [];
+  let adoMissing = false;
   before(async () => {
     const threatlintCli = async args => {
       calls.push(args);
+      if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true }, { name: 'Azure DevOps PAT', configured: !adoMissing, fix: 'threatlint ado login --organization <org>' }, { name: 'Semgrep API token', configured: true }]), stderr: '' };
       const [, command, avit] = args;
       if (command === 'fetch') {
         if (avit === OUT) return { code: 1, stdout: '', stderr: `ERROR: None of the requested AVITs are in the AVR CodeSecurity view (${OUT}).` };
@@ -74,6 +76,17 @@ describe('False positive review batch', () => {
     assert.deepEqual(calls.filter(args => args[1] === 'resolve').map(args => args[2]), [FP, TP], 'one closure per AVIT, in order');
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8')), [], 'no report history kept');
     for (const args of calls.filter(item => item[1] === 'checkout')) assert.ok(!fs.existsSync(args[args.indexOf('--dir') + 1]), 'checkouts are deleted');
+  });
+  it('refuses to start until every required credential is configured', async () => {
+    adoMissing = true;
+    const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const event = await new Promise(resolve => {
+      socket.on('message', raw => { const value = JSON.parse(raw); if (value.type === 'avit_batch_error' || value.type === 'avit_batch_start') resolve(value); });
+      socket.send(JSON.stringify({ action: 'run_avit_batch', avits: FP, provider: 'lmstudio', model: 'fixture' }));
+    });
+    socket.close(); adoMissing = false;
+    assert.equal(event.type, 'avit_batch_error'); assert.match(event.message, /Azure DevOps PAT \(threatlint ado login/);
   });
   it('redacts credential-like values from the flagged file and parses resolve output', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-red-'));

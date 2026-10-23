@@ -457,13 +457,13 @@
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
-    fillServiceNowForm(); void loadSemgrepSettings();
+    fillServiceNowForm(); void loadSemgrepSettings(); void loadAdoSettings();
     updateSettingsFields(provider);
   }
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(`settings-${['servicenow', 'semgrep'].includes(section) ? section : 'model'}`);
+    const target = $(`settings-${['servicenow', 'semgrep', 'ado'].includes(section) ? section : 'model'}`);
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
     for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
@@ -490,6 +490,19 @@
     try { state.semgrepSaved = await request('/api/semgrep/settings', { method: 'POST', body: JSON.stringify({ token: typed }) }); }
     catch (error) { $('semgrep-error').textContent = error.message; return; }
     await loadSemgrepSettings(); toast('Semgrep token validated and saved. It is never shown again.');
+  }
+  async function loadAdoSettings() {
+    try { state.adoSaved = await request('/api/ado/settings'); } catch { state.adoSaved = null; }
+    $('ado-pat').value = state.adoSaved?.hasPat ? MASK : '';
+    $('ado-status').textContent = state.adoSaved?.hasPat ? `Saved in ${state.adoSaved.source}. The PAT is never shown.` : 'Not configured. Required to review AVITs.';
+  }
+  async function saveAdo(event) {
+    event.preventDefault(); $('ado-error').textContent = '';
+    const pat = $('ado-pat').value.trim();
+    if (!pat || pat === MASK) { toast('The saved Azure DevOps PAT is unchanged.'); return; }
+    try { await request('/api/ado/settings', { method: 'POST', body: JSON.stringify({ organization: $('ado-organization').value.trim(), pat }) }); }
+    catch (error) { $('ado-error').textContent = error.message; return; }
+    await loadAdoSettings(); toast('Azure DevOps PAT validated and saved. It is never shown again.');
   }
   async function loadSavedServiceNow() {
     try { state.snowSaved = await request('/api/servicenow/settings'); } catch { state.snowSaved = null; }
@@ -672,12 +685,23 @@
     state.fpreviewRunning = running;
     $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
   }
-  function updateFpreviewSetup() {
-    const missing = [];
-    if (!servicenowReady()) missing.push('ServiceNow (Settings → ServiceNow)');
-    if (!state.semgrepSaved?.hasToken && !state.semgrepSaved?.cliSource) missing.push('Semgrep token (Settings → Semgrep, or `threatlint semgrep login`)');
-    $('fpreview-setup').textContent = missing.length ? `Not configured: ${missing.join('; ')}. An Azure DevOps PAT (\`threatlint ado login\`) is needed to clone ADO repositories.` : 'ServiceNow and Semgrep are configured. Azure DevOps repositories are cloned with the PAT from `threatlint ado login`.';
-    $('fpreview-setup').className = `field-note small ${missing.length ? 'fp-status-warn' : 'subtle'}`;
+  // Required setup, as `threatlint setup --check` sees it; ServiceNow values typed this session also count.
+  const SETUP_SECTIONS = { 'ServiceNow OAuth client': 'servicenow', 'Azure DevOps PAT': 'ado', 'Semgrep API token': 'semgrep' };
+  async function updateFpreviewSetup() {
+    let items = [];
+    try { items = (await request('/api/setup/status')).items || []; } catch { /* shown as unknown below */ }
+    state.setupMissing = items.filter(item => !item.configured && !(SETUP_SECTIONS[item.name] === 'servicenow' && servicenowReady())).map(item => item.name);
+    const box = $('fpreview-setup'); box.replaceChildren();
+    const heading = document.createElement('strong'); heading.textContent = state.setupMissing.length ? 'Required setup is incomplete' : 'Required setup complete';
+    const list = document.createElement('ul'); list.className = 'setup-checklist';
+    for (const item of items) {
+      const done = !state.setupMissing.includes(item.name), row = document.createElement('li');
+      row.textContent = `${done ? '✓' : '✗'} ${item.name}${done ? (item.source ? ` · ${item.source}` : '') : ' · '}`;
+      if (!done) { const link = document.createElement('a'); link.href = '#'; link.textContent = 'Set up in Settings'; link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(SETUP_SECTIONS[item.name]); }); row.append(link, document.createTextNode(` or run \`${item.fix.split('  ')[0]}\``)); }
+      list.append(row);
+    }
+    box.append(heading, list);
+    box.className = `field-note small ${state.setupMissing.length ? 'fp-status-warn' : 'subtle'}`;
     $('fpreview-model').textContent = selectedModel() ? `Model: ${selectedModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
   }
   async function startAvitBatch(event) {
@@ -691,6 +715,8 @@
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
     if (!state.connected || state.running || state.fpreviewRunning) { toast('Another review is running, or the Workbench is not connected.', true); return; }
     if (!await requireSemgrep()) return;
+    await updateFpreviewSetup();
+    if (state.setupMissing.length) { $('fpreview-error').textContent = `Finish the required setup first: ${state.setupMissing.join(', ')}.`; return; }
     state.avitTools = {}; $('fpreview-results').replaceChildren(); for (const avit of avits) avitCard(avit);
     fpreviewRunning(true);
     const provider = state.preferences.provider;
@@ -791,7 +817,7 @@
     $('configure-provider').addEventListener('click', showSettings);
     $('servicenow-form').addEventListener('submit', saveServiceNow);
     $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
-    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep);
+    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo);
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });
     $('settings-form').addEventListener('submit', saveSettings);
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });

@@ -72,6 +72,24 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     threatlintConfig.writeSemgrep({ token, deployment: deployments.length === 1 ? deployments[0].slug : current.deployment });
     return threatlintConfig.publicSemgrep();
   }));
+  // Azure DevOps PAT, shared with `threatlint ado login` (OS credential store when available). Never returned.
+  const cli = (...args) => (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(...args);
+  const adoStatus = async () => {
+    const result = await cli(['ado', 'status']);
+    return { hasPat: /^Azure DevOps PAT: /m.test(result.stdout), source: /^Azure DevOps PAT: (.+)$/m.exec(result.stdout)?.[1] || null };
+  };
+  app.get('/api/ado/settings', handle(adoStatus));
+  app.post('/api/ado/settings', handle(async req => {
+    const organization = typeof req.body?.organization === 'string' ? req.body.organization.trim() : '';
+    const pat = typeof req.body?.pat === 'string' ? req.body.pat.trim() : '';
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(organization)) throw new HttpError('Enter the Azure DevOps organization name (e.g. PepsiCoIT), not a URL');
+    if (!/^[A-Za-z0-9._~+/=-]{20,200}$/.test(pat)) throw new HttpError('That does not look like an Azure DevOps PAT');
+    const result = await cli(['ado', 'login', '--organization', organization, '--pat-stdin'], { input: pat });
+    if (result.code !== 0) throw new HttpError((result.stderr.trim().split(/\r?\n/).pop() || 'Azure DevOps rejected the PAT').replace(/^ERROR:\s*/, ''), 400);
+    return adoStatus();
+  }));
+  // Required credentials for AVIT review, by source only (`threatlint setup --check`).
+  app.get('/api/setup/status', handle(async () => ({ items: await require('../avit-batch.cjs').setupStatus(integrations.threatlintCli) })));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));

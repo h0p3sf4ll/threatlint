@@ -36,7 +36,9 @@ account/server. No hard-coded cloud model catalogue is assumed.
 - **False positive review:** *Test → False positive review* reviews one AVIT or a list, one at a time.
   Each AVIT gets its own report, and its own closure or work note. See [avit-integration.md](avit-integration.md).
 - **Settings page:** *Settings* in the sidebar is a normal page with **Model provider**, **ServiceNow**
-  (instance, OAuth client, AWS CLI read), and **Semgrep** (API token) sections, each saved separately.
+  (instance, OAuth client, AWS CLI read), **Semgrep** (API token) and **Azure DevOps** (PAT) sections,
+  each saved separately. ServiceNow, Semgrep and Azure DevOps are required for *False positive review*,
+  which shows a setup checklist and does not start until all three are configured.
 - **Desktop app:** it trusts the OS certificate store (macOS Keychain / Windows certificate store), so model
   gateways behind corporate TLS inspection work, and it adds your login-shell PATH so `gh`, `git`, `az`, and
   `aws` are found when launched from the Dock or Start menu.
