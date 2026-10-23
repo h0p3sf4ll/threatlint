@@ -21,7 +21,8 @@ const CLIENT_ID_PARAMETER = '/cfc-appsec-snow-vulnerabilities-prod/client-id';
 const CLIENT_SECRET_PARAMETER = '/cfc-appsec-snow-vulnerabilities-prod/client-secret';
 const AVIT_TABLE = 'sn_vul_app_vulnerable_item';
 const MAX_AVITS = 50;
-const AVIT_PATTERN = /^AVIT\d{15}$/;
+// AVIT plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
+const AVIT_PATTERN = /^AVIT\d{7,15}$/;
 const SERVICENOW_DOMAINS = ['.service-now.com', '.servicenowservices.com'];
 const HTTP_TIMEOUT_MS = 30_000;
 const AWS_TIMEOUT_MS = 60_000;
@@ -50,7 +51,7 @@ function parseAvitNumbers(value) {
   if (text.length > 64 * 1024) throw new HttpError('The AVIT list is too long');
   const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
   const invalid = tokens.filter(token => !AVIT_PATTERN.test(token));
-  if (invalid.length) throw new HttpError(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 15 digits, e.g. AVIT000000095938462)`);
+  if (invalid.length) throw new HttpError(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599)`);
   const numbers = [...new Set(tokens)];
   if (!numbers.length) throw new HttpError('Enter at least one AVIT number');
   if (numbers.length > MAX_AVITS) throw new HttpError(`Review at most ${MAX_AVITS} AVITs per report`);
@@ -176,8 +177,9 @@ async function fetchAvits(credentials, numbers, { fetchImpl = fetch, signal } = 
   const members = items.length ? await viewMembers(instance, headers, numbers, fetchImpl, signal) : null;
   for (const item of items) item.inView = members ? members.has(item.fields.number) : null;
   const found = new Set(items.map(item => item.fields.number));
-  const excluded = items.filter(item => !isCodeSecurity(item)).map(item => item.fields.number);
-  return { items: items.filter(isCodeSecurity), missing: numbers.filter(number => !found.has(number)), excluded };
+  // Every AVIT is triaged; the CodeSecurity view only decides whether Semgrep is involved.
+  for (const item of items) item.view = isCodeSecurity(item) ? 'CodeSecurity' : 'Other';
+  return { items, missing: numbers.filter(number => !found.has(number)), excluded: [] };
 }
 
 /** AVIT numbers selected by the CodeSecurity view rule; null when no rule is readable. */
@@ -237,7 +239,6 @@ function avitsMarkdown(instance, items, requested, missing, now = new Date(), ex
 /** A findings attachment ({ name, content }) for the requested AVITs; fails when none could be read. */
 async function loadAvitAttachment(credentials, numbers, options = {}) {
   const { items, missing, excluded } = await fetchAvits(credentials, numbers, options);
-  if (!items.length && excluded.length) throw new HttpError(`None of the requested AVITs are in the AVR CodeSecurity view (${excluded.join(', ')}). Findings triage reviews only CodeSecurity AVITs (SAST, SCA, or Secrets).`, 422);
   if (!items.length) throw new HttpError(`No AVITs were returned for ${numbers.join(', ')}. Check the numbers and the OAuth client's table access.`, 404);
   return { attachment: { name: `servicenow-avits-${numbers.length}.md`, content: avitsMarkdown(credentials.instance, items, numbers, missing, new Date(), excluded) }, retrieved: items.length, missing, excluded };
 }
@@ -262,7 +263,6 @@ async function closeAvitAsFalsePositive(credentials, number, { note, files }, { 
   if (!record?.sys_id || !/^[0-9a-f]{32}$/.test(record.sys_id)) throw new HttpError(`${avit} was not found or is not readable by the OAuth client`, 404);
   const members = await viewMembers(instance, headers, [avit], fetchImpl, signal);
   record.inView = members ? members.has(avit) : null;
-  if (!isCodeSecurity(record)) throw new HttpError(`${avit} is not in the AVR CodeSecurity view; Threatlint closes only CodeSecurity AVITs`, 422);
   const choices = await falsePositiveChoices(instance, headers, fetchImpl, signal);
   const attachments = [];
   for (const file of files) {

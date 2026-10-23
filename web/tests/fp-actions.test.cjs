@@ -78,11 +78,10 @@ describe('Closing an AVIT as a false positive', () => {
     const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [] }, { fetchImpl: fakeServiceNow([], { storedState: '1' }) });
     assert.equal(result.closed, false); assert.equal(result.state, '1');
   });
-  it('refuses to close AVITs outside the AVR CodeSecurity view, before attaching or changing anything', async () => {
-    const calls = [];
-    await assert.rejects(closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [{ name: 'f.md', content: Buffer.from('x'), type: 'text/markdown' }] },
-      { fetchImpl: fakeServiceNow(calls, { inView: false }) }), error => error.status === 422 && /CodeSecurity/.test(error.message));
-    assert.ok(!calls.some(call => call.url.includes('/attachment/') || call.options.method === 'PATCH'));
+  it('closes AVITs outside the AVR CodeSecurity view too (no Semgrep step there)', async () => {
+    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [{ name: 'f.docx', content: Buffer.from('x'), type: 'application/octet-stream' }] },
+      { fetchImpl: fakeServiceNow([], { inView: false }) });
+    assert.equal(result.closed, true);
   });
   it('requires exactly one AVIT per finding', () => {
     assert.equal(avitFor({ id: 'FP-001', title: 't', body: '**Original finding**: AVIT000000000010001; rule.x.y' }), 'AVIT000000000010001');

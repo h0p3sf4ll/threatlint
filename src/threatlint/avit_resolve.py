@@ -252,10 +252,14 @@ def cmd_checkout(args) -> int:
     [avit] = sn.parse_avit_numbers(args.number)
     instance, token = _session(args)
     record = _record(instance, token, avit)
-    if not sn.in_code_security_view(record):
-        raise ResolveError(f"{avit} is not in the AVR CodeSecurity view; Threatlint reviews only CodeSecurity AVITs")
     kind = sn.finding_kind(record)
-    target = sn.repository_target(record["context"])
+    try:
+        target = sn.repository_target(record["context"])
+    except sn.ServiceNowError as exc:
+        if sn.in_code_security_view(record):
+            raise
+        # Other tools (DAST, pen test, …) often name no repository; the review uses the AVIT's own evidence.
+        raise ResolveError(f"{avit} names no repository ({exc}); triage it from the AVIT evidence without a checkout") from exc
     if target["scm"] == "azure-devops" and not sn.git_credential("azure-devops")[0] and sys.stdin.isatty():
         from threatlint.ado_login import prompt_and_save  # noqa: PLC0415
         print("  No Azure DevOps credential found; set up a PAT now (Code: Read).")
@@ -319,8 +323,7 @@ def cmd_resolve(args) -> int:
         return 0
     instance, token = _session(args)
     record = _record(instance, token, avit)
-    if not sn.in_code_security_view(record):
-        raise ResolveError(f"{avit} is not in the AVR CodeSecurity view; Threatlint does not change it")
+    code_security = sn.in_code_security_view(record)
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
     # One attachment: the Word report. The Markdown is only read here for the verdict.
@@ -347,7 +350,9 @@ def cmd_resolve(args) -> int:
         print(f"  {'✓ Closed as false positive' if closed else '! ServiceNow kept state ' + str(stored.get('state')) + ' / ' + str(stored.get('substate')) + ' (pending approval?)'}")
     else:
         print("  ✓ Work note added; AVIT left open")
-    if false_positive and not args.skip_semgrep:
+    if false_positive and not code_security:
+        print("  Semgrep not applicable: this AVIT is not a CodeSecurity finding")
+    if false_positive and code_security and not args.skip_semgrep:
         sg_token = semgrep_token(args.aws_profile)
         target = sn.repository_target(record["context"])
         try:

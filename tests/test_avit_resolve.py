@@ -35,12 +35,11 @@ REPORT = f"""# FP Review
 """
 
 
-def test_avit_format_is_avit_plus_15_digits():
-    assert sn.parse_avit_numbers(AVIT.lower()) == [AVIT]
-    for bad in ("AVIT0012345", "AVIT0000000959384621", "AVIT00000009593846X"):
-        with pytest.raises(sn.ServiceNowError, match="15 digits"):
+def test_avit_numbers_are_avit_plus_7_to_15_digits():
+    assert sn.parse_avit_numbers(f"{AVIT.lower()}, AVIT0042599") == [AVIT, "AVIT0042599"]
+    for bad in ("AVIT123456", "AVIT0000000959384621", "AVIT00000009593846X"):
+        with pytest.raises(sn.ServiceNowError, match="7 to 15 digits"):
             sn.parse_avit_numbers(bad)
-
 
 def test_context_comes_from_form_labels_and_targets_the_ado_repo_branch_and_file():
     fields = sn._flatten(ROW)
@@ -275,3 +274,21 @@ def test_semgrep_is_never_matched_without_a_line(monkeypatch):
         {"id": 1, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 268}}, {"id": 2, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 109}}]})
     _dep, matches = ar.semgrep_matches("t", "sast", target, {"file_path": "a.js", "rule": "x.y", "avit": "AVIT000000000000001"}, report_text=report)
     assert [m["id"] for m in matches] == [1]
+
+
+def test_a_non_codesecurity_false_positive_closes_without_semgrep(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    original = fake.__call__
+    def outside_view(url, **kw):
+        if "u_scm_toolISNOTEMPTY" in url:
+            return {"result": []}
+        return original(url, **kw)
+    monkeypatch.setattr(sn, "_request_json", outside_view)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: pytest.fail("Semgrep must not be used outside CodeSecurity"))
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    assert ar.cmd_resolve(_args(tmp_path, REPORT)) == 0
+    body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
+    assert (body["state"], body["substate"]) == ("3", "3")
+    assert "Semgrep not applicable" in out.getvalue()

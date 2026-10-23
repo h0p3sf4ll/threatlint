@@ -66,8 +66,15 @@ flowchart TD
     V -- "not proven" --> Y["Leave the policy unchanged and report why"]
 ```
 
-**Scope.** An AVIT qualifies only when ServiceNow's rule for the **CodeSecurity** form view
-(`sysrule_view`) selects it. If the OAuth client can't read that rule, the view's SCM fields decide
+**Scope.** Every AVIT is reviewed, and its number may be `AVIT` plus 7 to 15 digits. Long numbers come from
+the **CodeSecurity** view (code findings); shorter ones, such as `AVIT0042599`, come from other tools and views.
+An AVIT is CodeSecurity when ServiceNow's rule for that form view (`sysrule_view`) selects it.
+- **CodeSecurity:** the full flow: checkout, triage, closure or work note, and Semgrep.
+- **Other tools:** validated from the AVIT's own evidence: scan details, affected asset or URL, proof, and the
+  vulnerability definition. The code is read as well when a repository is named. Closure and work notes are
+  the same; Semgrep is skipped.
+
+Before this change, AVITs outside the CodeSecurity view were excluded. If the OAuth client can't read that rule, the view's SCM fields decide
 instead. The *Security Finding Source* (SAST, SCA, Secrets) never decides scope. It only sets how the
 agent triages and which Semgrep product is tuned.
 

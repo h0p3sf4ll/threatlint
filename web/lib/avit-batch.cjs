@@ -2,7 +2,7 @@
 
 /**
  * False-positive review of ServiceNow AVITs from the Workbench, one AVIT at a time. For each AVIT:
- *   1. `threatlint avit fetch`    – the AVIT, if it is in the AVR CodeSecurity view
+ *   1. `threatlint avit fetch`    – the AVIT (CodeSecurity, or another tool/view: no Semgrep step)
  *   2. `threatlint avit checkout` – its repository and branch, from the AVIT fields
  *   3. the Findings triage agent, with the selected model, against that checkout
  *   4. the report, written as Markdown and Word (secrets found in the flagged files are redacted first)
@@ -136,10 +136,14 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       }
       step('checkout', 'Cloning the AVIT repository and branch');
       const checkout = await cli(['avit', 'checkout', avit, ...profile, '--dir', repo], { env, signal });
-      if (checkout.code !== 0) return step('error', errorOf(checkout), { done: true });
+      // AVITs from other tools often name no repository; review them from the AVIT evidence alone.
+      const noRepository = checkout.code !== 0 && /names no repository/.test(`${checkout.stdout}${checkout.stderr}`);
+      if (checkout.code !== 0 && !noRepository) return step('error', errorOf(checkout), { done: true });
+      if (noRepository) fs.mkdirSync(repo, { recursive: true });
       let target = {};
       try { target = JSON.parse(lastLine(checkout.stdout)); } catch { /* the review still runs; context is in avit.md */ }
-      step('triage', `${target.kind?.toUpperCase() || 'Finding'} in ${target.name || 'repository'} · ${target.branch || 'default branch'} · ${target.file_path || ''}`, { target });
+      if (noRepository) step('triage', 'No repository on this AVIT; validating from its own evidence');
+      else step('triage', `${target.kind?.toUpperCase() || 'Finding'} in ${target.name || 'repository'} · ${target.branch || 'default branch'} · ${target.file_path || ''}`, { target });
 
       sessionId = store.create(repo, true, work);
       const session = store.sessions.get(sessionId);

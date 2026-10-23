@@ -11,7 +11,7 @@ Before any triage or rule validation, run `semgrep --version`. If it fails, stop
 
 ## Routing
 
-- If `$ARGUMENTS` contains ServiceNow AVIT numbers (`AVIT` followed by exactly 15 digits, e.g. `AVIT000000095938462`), run the **AVIT workflow** below instead of looking for a local findings file. The repository, branch, file, and rule come from the AVIT record itself; the current directory does not need to be the affected repository.
+- If `$ARGUMENTS` contains ServiceNow AVIT numbers (`AVIT` followed by 7 to 15 digits, e.g. `AVIT000000095938462` or `AVIT0042599`), run the **AVIT workflow** below instead of looking for a local findings file. The repository, branch, file, and rule come from the AVIT record itself; the current directory does not need to be the affected repository.
 - If `$ARGUMENTS` is empty: look for a SARIF file, Semgrep JSON, or threatlint report in the current directory. Check these locations in order: `.sarif`, `semgrep.json`, `semgrep-results.json`, `results.sarif`, `*.sarif`, any `*.json` matching `semgrep` in the filename, or the most recent `*.md` threatlint report in the repo root.
 - If `$ARGUMENTS` is a file path: use that file as the findings source.
 - If `$ARGUMENTS` is a finding ID or range (e.g., `TM-001` or `TM-001..TM-005`): look for those findings in the most recent threatlint report in the repo root.
@@ -37,9 +37,9 @@ For each AVIT number:
    ```
    threatlint avit fetch <AVIT> -o $WORK/avit.md
    ```
-   - Only AVITs in the AVR **CodeSecurity** view qualify. Membership is the view's rule, evaluated by ServiceNow.
-   - The *Security Finding Source* (SAST, SCA, or Secrets) does not affect scope. It only decides how to triage and which Semgrep product to tune.
-   - AVITs outside the view are listed as excluded: report them as out of scope and change nothing.
+   - Every AVIT is reviewed. The *Review target* table says whether it is in the AVR **CodeSecurity** view (membership is the view's rule, evaluated by ServiceNow).
+   - **CodeSecurity AVITs** (SAST, SCA, Secrets): the full workflow below, including Semgrep.
+   - **Other tools and views** (shorter numbers such as `AVIT0042599` come from them): validate the finding from its own evidence: scan details, the affected asset or URL, request/response or proof, and the vulnerability definition. If the AVIT names a repository, check it out and read the code too. Semgrep is not involved. If the evidence cannot settle it, the disposition is AMBIGUOUS.
    - The file's *Review target* table lists the finding type, repository URL, branch, file, line, and rule taken from the AVIT fields.
 2. **Check out exactly that repository and branch.**
    ```
@@ -49,6 +49,7 @@ For each AVIT number:
    - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with `gh auth login` or `GH_TOKEN`.
    - If `threatlint ado status` shows no PAT and the clone fails, stop. Tell the user to run `threatlint ado login --organization <Organization Name>` in their terminal, then retry.
    - Do not triage against a different branch or a local copy.
+   - If `avit checkout` reports that the AVIT names no repository (common for non-CodeSecurity tools), skip the checkout and triage from `$WORK/avit.md` alone.
 3. **Triage against that checkout.** Give the agent `$WORK/avit.md` as the findings source and `$WORK/repo` as the repository. Start at the AVIT's File Path (and line/rule, when given) on that branch.
    - **SAST:** trace source to sink.
    - **SCA:** confirm the vulnerable package and version are actually resolved in the lockfile or manifest on that branch, and whether the vulnerable function or feature is reachable. For example, whether fast-xml-parser parses untrusted XML with `processEntities` enabled.

@@ -429,7 +429,7 @@ The Workbench's *Settings → ServiceNow / Semgrep* sections write the same conf
 - **True positive:** stays open, with the report attached and the work note *"True positive, see attached
   report."*
 
-**One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by exactly 15 digits.
+**One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by 7 to 15 digits. Long numbers such as `AVIT000000095938462` are AVR **CodeSecurity** findings; shorter ones such as `AVIT0042599` come from other tools and views. **Every AVIT is reviewed.** CodeSecurity AVITs are checked against their repository and branch and tuned in Semgrep. Other AVITs are validated from their own evidence (scan details, affected asset or URL, proof, vulnerability definition, and the code when a repository is named), and closed or annotated in the same way, with no Semgrep step.
 Threatlint reads the AVIT and takes the review target from its fields:
 
 | AVIT field | Used for |
@@ -439,9 +439,9 @@ Threatlint reads the AVIT and takes the review target from its fields:
 | File Path, Line, Rule | where the agent starts and what it checks |
 | Security Finding Source | how to triage, and which Semgrep product to tune: SAST → Code, SCA → Supply Chain, Secrets → Secrets |
 
-**Scope is the AVR CodeSecurity view, not the finding source.** An AVIT qualifies when the CodeSecurity
-form view's rule (`sysrule_view`, evaluated by ServiceNow) selects it, whatever its Security Finding Source
-(SAST, SCA, or Secrets). If the OAuth client cannot read view rules, AVITs that carry the view's SCM
+**The AVR CodeSecurity view decides whether Semgrep is involved, not whether an AVIT is reviewed.** An AVIT is
+CodeSecurity when the CodeSecurity form view's rule (`sysrule_view`, evaluated by ServiceNow) selects it, whatever
+its Security Finding Source (SAST, SCA, or Secrets). If the OAuth client cannot read view rules, AVITs that carry the view's SCM
 fields (SCM Tool and Repository) qualify. To use a view with a different name, set `THREATLINT_SNOW_VIEW`.
 
 Field labels are resolved through `sys_documentation`, so custom `u_` columns are found by their form

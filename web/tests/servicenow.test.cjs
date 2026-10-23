@@ -12,7 +12,8 @@ describe('AVIT numbers and instance URLs', () => {
   it('normalizes, de-duplicates, and bounds AVIT lists', () => {
     assert.deepEqual(parseAvitNumbers('avit000000000001234, AVIT000000000001235\nAVIT000000000001234'), ['AVIT000000000001234', 'AVIT000000000001235']);
     assert.throws(() => parseAvitNumbers('AVIT12'), /Not an AVIT/);
-    assert.throws(() => parseAvitNumbers('AVIT0012345'), /15 digits/, 'short forms are not the AVIT format');
+    assert.deepEqual(parseAvitNumbers('AVIT0042599'), ['AVIT0042599'], 'other tools use shorter AVIT numbers');
+    assert.throws(() => parseAvitNumbers('AVIT123456'), /7 to 15 digits/);
     assert.deepEqual(parseAvitNumbers('AVIT000000095938462'), ['AVIT000000095938462'], 'production AVITs have 15 digits');
     assert.throws(() => parseAvitNumbers('AVIT0000000959384621'), /Not an AVIT/);
     assert.throws(() => parseAvitNumbers(''), /at least one/);
@@ -47,9 +48,10 @@ describe('AVIT retrieval', () => {
       throw new Error(`unexpected ${url}`);
     };
     const { items, missing, excluded } = await fetchAvits({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT000000000000001', 'AVIT000000000000002', 'AVIT000000000000003', 'AVIT000000000000004', 'AVIT000000000000005'], { fetchImpl });
-    assert.deepEqual(items.map(item => item.fields.number), ['AVIT000000000000001', 'AVIT000000000000002', 'AVIT000000000000003']);
+    assert.deepEqual(items.map(item => item.fields.number), ['AVIT000000000000001', 'AVIT000000000000002', 'AVIT000000000000003', 'AVIT000000000000005']);
     assert.deepEqual(missing, ['AVIT000000000000004']);
-    assert.deepEqual(excluded, ['AVIT000000000000005']);
+    assert.deepEqual(excluded, []);
+    assert.deepEqual(items.map(item => item.view), ['CodeSecurity', 'CodeSecurity', 'CodeSecurity', 'Other']);
     assert.equal(items[0].references.vulnerability.cwe, 'CWE-918');
     assert.deepEqual(items[2].references, {});
     assert.equal(items[1].fields.sys_mod_count, undefined);
@@ -68,8 +70,9 @@ describe('AVIT retrieval', () => {
     const empty = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : { result: [] });
     await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT000000000000001'], { fetchImpl: empty }), /No AVITs were returned/);
   });
-  it('skips AVITs outside the CodeSecurity view, whatever their finding source (no view rule: SCM fields decide)', async () => {
-    const other = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : url.includes('/sysrule_view') ? { result: [] } : { result: [{ number: { display_value: 'AVIT000000000000009' }, u_security_finding_source: { display_value: 'Secrets' } }] });
-    await assert.rejects(loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT000000000000009'], { fetchImpl: other }), error => error.status === 422 && /CodeSecurity/.test(error.message));
+  it('reviews AVITs outside the CodeSecurity view too, marked as another tool', async () => {
+    const other = async url => json(url.endsWith('/oauth_token.do') ? { access_token: 't' } : url.includes('/sysrule_view') ? { result: [] } : { result: [{ number: { display_value: 'AVIT0042599' }, u_scan_source: { display_value: 'DAST' } }] });
+    const loaded = await loadAvitAttachment({ instance: INSTANCE, clientId: 'id', clientSecret: 's' }, ['AVIT0042599'], { fetchImpl: other });
+    assert.equal(loaded.retrieved, 1);
   });
 });

@@ -248,7 +248,7 @@
         <form id="fpreview-form" class="settings-card fpreview-form">
           <label for="fpreview-avits">AVIT numbers</label>
           <textarea id="fpreview-avits" rows="4" spellcheck="false" placeholder="AVIT000000092808580&#10;AVIT000000095995078, AVIT000000041277488"></textarea>
-          <p class="field-note small subtle">AVIT followed by 15 digits, separated by commas, spaces, or new lines (up to 50). Only AVITs in the AVR CodeSecurity view are reviewed.</p>
+          <p class="field-note small subtle">AVIT followed by 7 to 15 digits (e.g. AVIT000000095938462 or AVIT0042599), separated by commas, spaces, or new lines (up to 50). CodeSecurity AVITs are reviewed on their repository and branch and tuned in Semgrep; AVITs from other tools are validated from their own evidence.</p>
           <div class="fpreview-outcomes small subtle"><div><strong>False positive</strong> · Word report attached, closed (state 3 / substate 3) with “Closed by Threatlint as a false positive, see attached report.”, Semgrep finding ignored, and for SAST/Secrets the rule tuned once.</div><div><strong>True positive</strong> · Word report attached, left open with “True positive, see attached report.”</div><div><strong>Ambiguous</strong> · nothing changes.</div></div>
           <p id="fpreview-setup" class="field-note small" aria-live="polite"></p>
           <p class="form-error" id="fpreview-error" role="alert"></p>

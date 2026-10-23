@@ -14,7 +14,7 @@ const servicenow = require('../servicenow.cjs');
 const semgrep = require('../semgrep-cloud.cjs');
 
 const FP_REVIEWER = 'appsec-fp-reviewer';
-const AVIT_TOKEN = /\bAVIT\d{15}\b/g;
+const AVIT_TOKEN = /\bAVIT\d{7,15}\b/g;
 
 /** The AVIT a finding refers to, from its Original finding field, title, or body; exactly one is required. */
 function avitFor(finding) {

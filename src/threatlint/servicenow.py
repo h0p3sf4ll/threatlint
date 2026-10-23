@@ -32,8 +32,8 @@ SERVICENOW_DOMAINS = (".service-now.com", ".servicenowservices.com")
 
 AVIT_TABLE = "sn_vul_app_vulnerable_item"
 MAX_AVITS = 50
-# Production AVIT numbers are "AVIT" followed by exactly 15 digits, e.g. AVIT000000095938462.
-_AVIT_PATTERN = re.compile(r"AVIT\d{15}")
+# AVIT numbers are "AVIT" plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
+_AVIT_PATTERN = re.compile(r"AVIT\d{7,15}")
 AVIT_EXAMPLE = "AVIT000000095938462"
 _HTTP_TIMEOUT_S = 30
 _AWS_TIMEOUT_S = 60
@@ -84,7 +84,7 @@ def parse_avit_numbers(values) -> list[str]:
     tokens = [token for token in re.split(r"[\s,;]+", text.upper()) if token]
     invalid = [token for token in tokens if not _AVIT_PATTERN.fullmatch(token)]
     if invalid:
-        raise ServiceNowError(f"Not an AVIT number: {', '.join(invalid[:5])} (expected AVIT followed by 15 digits, e.g. {AVIT_EXAMPLE})")
+        raise ServiceNowError(f"Not an AVIT number: {', '.join(invalid[:5])} (expected AVIT followed by 7 to 15 digits, e.g. {AVIT_EXAMPLE} or AVIT0042599)")
     numbers = list(dict.fromkeys(tokens))
     if not numbers:
         raise ServiceNowError("Enter at least one AVIT number")
@@ -309,8 +309,10 @@ def fetch_avits(instance: str, token: str, numbers: list[str]) -> tuple[list[dic
     for item in items:
         item["in_view"] = None if members is None else item["fields"].get("number") in members
     found = {item["fields"].get("number") for item in items}
-    excluded = [item["fields"].get("number", "") for item in items if not is_code_security(item)]
-    return [item for item in items if is_code_security(item)], [number for number in numbers if number not in found], excluded
+    # Every AVIT is triaged. The CodeSecurity view only decides whether Semgrep is involved.
+    for item in items:
+        item["view"] = "CodeSecurity" if is_code_security(item) else "Other"
+    return items, [number for number in numbers if number not in found], []
 
 
 def _ordered(fields: dict[str, str]) -> list[tuple[str, str]]:
@@ -355,24 +357,29 @@ def avits_markdown(instance: str, items: list[dict], requested: list[str], missi
 
 
 def _context_lines(item: dict) -> list[str]:
-    """What to review: repository, branch, file, and rule taken from the AVIT."""
+    """What to review: repository, branch, file, and rule from the AVIT, or its own evidence for other tools."""
     context, kind = item.get("context", {}), finding_kind(item)
-    lines = ["### Review target", "", "| Item | Value |", "|---|---|",
-             f"| Finding type | {({'sca': 'SCA (Semgrep Supply Chain)', 'secrets': 'Secrets (Semgrep Secrets)'}).get(kind, 'SAST (Semgrep Code)')} |"]
+    code_security = item.get("view", "CodeSecurity") == "CodeSecurity"
+    tool = context.get("finding_source") or item["fields"].get("u_scan_source") or item["fields"].get("source") or "unknown tool"
+    label = ({"sca": "SCA (Semgrep Supply Chain)", "secrets": "Secrets (Semgrep Secrets)"}).get(kind, "SAST (Semgrep Code)") if code_security else f"Non-CodeSecurity finding ({tool})"
+    lines = ["### Review target", "", "| Item | Value |", "|---|---|", f"| AVR view | {'CodeSecurity' if code_security else 'Other (not CodeSecurity)'} |", f"| Finding type | {label} |"]
     try:
         repo = repository_target(context)
         lines += [f"| Repository | {repo['web_url']} |", f"| Branch | {repo['branch'] or '(default branch)'} |"]
     except ServiceNowError as exc:
-        lines.append(f"| Repository | unavailable: {exc} |")
-    for key, label in (("file_path", "File"), ("line", "Line"), ("rule", "Rule")):
+        lines.append(f"| Repository | none on this AVIT ({exc}) |" if not code_security else f"| Repository | unavailable: {exc} |")
+    for key, label_name in (("file_path", "File"), ("line", "Line"), ("rule", "Rule")):
         if context.get(key):
             cell = context[key].replace("|", "\\|")
-            lines.append(f"| {label} | {cell} |")
-    if item.get("checkout"):
-        lines.append(f"| Local checkout | {item['checkout']} |")
-    lines += ["", "Review this file on this branch. SAST: trace source to sink. SCA: decide whether the vulnerable package and",
-              "version are actually resolved and the vulnerable code is reachable. Secrets: decide whether the value is a real,",
-              "usable credential (not a placeholder, test fixture, revoked key, or secret-store reference)."]
+            lines.append(f"| {label_name} | {cell} |")
+    if code_security:
+        lines += ["", "Review this file on this branch. SAST: trace source to sink. SCA: decide whether the vulnerable package and",
+                  "version are actually resolved and the vulnerable code is reachable. Secrets: decide whether the value is a real,",
+                  "usable credential (not a placeholder, test fixture, revoked key, or secret-store reference)."]
+    else:
+        lines += ["", "This AVIT comes from another tool or view, so Semgrep is not involved. Validate it from its own evidence: the",
+                  "scan details, affected asset or URL, request/response or proof, the vulnerability definition, and the code when a",
+                  "repository is named. Decide TRUE / FALSE POSITIVE only when the evidence supports it; otherwise AMBIGUOUS."]
     return lines
 
 
@@ -484,12 +491,9 @@ def resolve_credentials(profile: str | None = None) -> tuple[str, str]:
 
 
 def load_avits(instance: str, numbers: list[str], client_id: str, client_secret: str) -> tuple[str, int, list[str], list[str]]:
-    """(Markdown artifact, CodeSecurity count, missing numbers, skipped non-CodeSecurity numbers)."""
+    """(Markdown artifact, retrieved count, missing numbers, excluded numbers — always empty; kept for callers)."""
     instance = validate_instance_url(instance)
     items, missing, excluded = fetch_avits(instance, access_token(instance, client_id, client_secret), numbers)
-    if not items and excluded:
-        raise ServiceNowError(f"None of the requested AVITs are in the AVR CodeSecurity view ({', '.join(excluded)}). "
-                              "Findings triage reviews only CodeSecurity AVITs (SAST, SCA, or Secrets).")
     if not items:
         raise ServiceNowError(f"No AVITs were returned for {', '.join(numbers)}. Check the numbers and table access.")
     return avits_markdown(instance, items, numbers, missing, excluded), len(items), missing, excluded

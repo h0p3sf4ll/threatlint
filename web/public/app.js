@@ -337,7 +337,7 @@
   // Pre-fills from the finding's Original finding line: "AVIT000000095938462; rule.id; path/file.js:42".
   function falsePositiveTarget(finding) {
     const original = /Original finding\W*:\s*(.+)/i.exec(finding.body)?.[1] || '';
-    const avits = [...new Set((original.match(/AVIT\d{15}/gi) || finding.title.match(/AVIT\d{15}/gi) || finding.body.match(/AVIT\d{15}/gi) || []).map(item => item.toUpperCase()))];
+    const avits = [...new Set((original.match(/AVIT\d{7,15}/gi) || finding.title.match(/AVIT\d{7,15}/gi) || finding.body.match(/AVIT\d{7,15}/gi) || []).map(item => item.toUpperCase()))];
     const location = finding.evidence?.[0] || '';
     const [path, line] = location.split(':');
     const rule = original.split(/[;,]/).map(part => part.replaceAll(/[`*]/g, '').trim()).find(part => /^[\w-]+(?:\.[\w-]+){2,}$/.test(part) && !/\.(?:js|ts|py|java|go|rb|cs|php|tsx|jsx)$/.test(part)) || '';
@@ -739,8 +739,8 @@
   }
   function parseAvits(text) {
     const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
-    const invalid = tokens.filter(token => !/^AVIT\d{15}$/.test(token));
-    if (invalid.length) throw new Error(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 15 digits, e.g. AVIT000000095938462)`);
+    const invalid = tokens.filter(token => !/^AVIT\d{7,15}$/.test(token));
+    if (invalid.length) throw new Error(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599)`);
     return [...new Set(tokens)];
   }
   /** Semgrep is checked live, so installing it and retrying works without restarting the Workbench. */

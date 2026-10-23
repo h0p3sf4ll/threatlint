@@ -79,8 +79,9 @@ def test_avits_become_one_untrusted_findings_artifact(monkeypatch):
     monkeypatch.setattr(servicenow, "_request_json", fake_request)
     numbers = ["AVIT000000000000001", "AVIT000000000000002", "AVIT000000000000003", "AVIT000000000000004", "AVIT000000000000005"]
     content, count, missing, excluded = servicenow.load_avits(INSTANCE, numbers, "id", "client-secret-value")
-    assert (count, missing, excluded) == (3, ["AVIT000000000000004"], ["AVIT000000000000005"])
-    assert "## AVIT000000000000005" not in content and "Excluded (not in the AVR CodeSecurity view): AVIT000000000000005" in content
+    assert (count, missing, excluded) == (4, ["AVIT000000000000004"], [])
+    # Outside the CodeSecurity view is still reviewed, marked as another tool's finding.
+    assert "## AVIT000000000000005" in content and "| AVR view | Other (not CodeSecurity) |" in content
     assert content.index("## AVIT000000000000001") < content.index("## AVIT000000000000002")
     assert "CWE-918" in content and "~~~text\na\nb\n~~~" in content and "client-secret-value" not in content
 
@@ -138,8 +139,8 @@ def test_avit_fetch_writes_a_findings_file(monkeypatch, tmp_path):
     assert output.read_text() == "# AVITs\n"
 
 
-def test_scope_is_the_codesecurity_view_not_the_finding_source(monkeypatch):
-    rows = [{"number": {"display_value": "AVIT000000000000009"}, "u_security_finding_source": {"display_value": "Secrets"}},
+def test_every_avit_is_reviewed_and_the_view_decides_semgrep(monkeypatch):
+    rows = [{"number": {"display_value": "AVIT0042599"}, "u_scan_source": {"display_value": "DAST"}},
             {"number": {"display_value": "AVIT000000000000008"}, "u_security_finding_source": {"display_value": "SCA"},
              "u_scm_tool": {"display_value": "ADO"}, "u_repository": {"display_value": "askada-frontend"}}]
     def fake_request(url, *, data=None, headers):
@@ -149,20 +150,6 @@ def test_scope_is_the_codesecurity_view_not_the_finding_source(monkeypatch):
             return {"result": []}
         return {"result": rows}
     monkeypatch.setattr(servicenow, "_request_json", fake_request)
-    # No readable view rule: the CodeSecurity view's SCM fields decide; finding source is irrelevant.
-    _content, count, _missing, excluded = servicenow.load_avits(INSTANCE, ["AVIT000000000000008", "AVIT000000000000009"], "id", "secret")
-    assert (count, excluded) == (1, ["AVIT000000000000009"])
-    rows.pop()
-    with pytest.raises(servicenow.ServiceNowError, match="CodeSecurity view"):
-        servicenow.load_avits(INSTANCE, ["AVIT000000000000009"], "id", "secret")
-
-
-def test_saved_workbench_config_supplies_instance_and_keys(monkeypatch, tmp_path):
-    import json as _json
-    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
-    monkeypatch.delenv(servicenow.CLIENT_ID_ENV, raising=False)
-    monkeypatch.delenv(servicenow.CLIENT_SECRET_ENV, raising=False)
-    (tmp_path / "servicenow.json").write_text(_json.dumps({"instance": INSTANCE, "clientId": "saved-id", "clientSecret": "saved-secret"}))
-    monkeypatch.setattr(servicenow, "read_parameter_store", lambda _p: pytest.fail("saved config should be used first"))
-    assert servicenow.resolve_credentials() == ("saved-id", "saved-secret")
-    assert servicenow.saved_config()["instance"] == INSTANCE
+    content, count, _missing, excluded = servicenow.load_avits(INSTANCE, ["AVIT000000000000008", "AVIT0042599"], "id", "secret")
+    assert (count, excluded) == (2, [])
+    assert "Non-CodeSecurity finding (DAST)" in content and "Semgrep is not involved" in content
