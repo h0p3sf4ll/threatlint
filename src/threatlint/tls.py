@@ -64,7 +64,10 @@ def ca_bundle() -> str | None:
     path = Path(os.environ.get("THREATLINT_HOME") or Path.home() / ".threatlint") / "ca-bundle.pem"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(roots), encoding="utf-8")
+        # Write-then-rename: concurrent threatlint processes must never read a half-written bundle.
+        temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        temp.write_text("\n".join(roots), encoding="utf-8")
+        os.replace(temp, path)
     except OSError:
         return None
     _bundle = str(path)

@@ -143,7 +143,8 @@ def _same_path(found: str, wanted: str) -> bool:
     return bool(a and b) and (a == b or a.endswith("/" + b) or b.endswith("/" + a))
 
 
-def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict[str, str], deployment: str | None = None) -> tuple[dict, list[dict]]:
+def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict[str, str], deployment: str | None = None,
+                    report_text: str = "") -> tuple[dict, list[dict]]:
     """Open Semgrep findings for the same project, file, and rule/line as the AVIT."""
     from threatlint.semgrep_platform import deployment as find_deployment, SemgrepError  # noqa: PLC0415
     try:
@@ -156,7 +157,13 @@ def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict
     # Semgrep names ADO projects "{Project}/{Repository}" and GitHub ones "{owner}/{repo}".
     named = list(dict.fromkeys(name for name in (f"{target.get('project')}/{target['name']}" if target.get("project") else "",
                                                  f"{target.get('organization')}/{target['name']}") if name and not name.startswith("/")))
-    near = lambda found: not line.isdigit() or found is None or abs(int(found) - int(line)) <= 3
+    if not line.isdigit():
+        line = _report_line(report_text, context.get("avit", "")) if report_text else None
+        line = str(line) if line else ""
+    if not line.isdigit():
+        # Without a line the match would cover every finding of the rule in the file, including real ones.
+        raise ResolveError("Neither the AVIT nor the report records the flagged line, so the Semgrep finding cannot be matched narrowly; pass --line")
+    near = lambda found: found is not None and abs(int(found) - int(line)) <= 3
     matches = []
     if kind in ("sast", "sca"):
         for project in named:
@@ -344,7 +351,7 @@ def cmd_resolve(args) -> int:
         sg_token = semgrep_token(args.aws_profile)
         target = sn.repository_target(record["context"])
         try:
-            dep, matches = semgrep_matches(sg_token, kind, target, record["context"], args.semgrep_deployment)
+            dep, matches = semgrep_matches(sg_token, kind, target, {**record["context"], "avit": avit}, args.semgrep_deployment, markdown)
         except ResolveError as exc:
             # The AVIT is already closed; a Semgrep gap is reported, not treated as a failure of the close.
             print(f"  ! Semgrep unchanged: {exc}. The token's deployment may not scan this repository; pass --semgrep-deployment.")

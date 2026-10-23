@@ -200,7 +200,7 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
     monkeypatch.setattr(ar, "_semgrep", semgrep)
     monkeypatch.setattr("threatlint.semgrep_platform.deployment", lambda token, wanted="": {"id": 26306, "slug": "pepsico_poc"})
     monkeypatch.setattr("sys.stdout", io.StringIO())
-    report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json")
+    report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json:40")
     assert ar.cmd_resolve(_args(tmp_path, report)) == 0
     assert calls[-1][1]["issue_type"] == "sca" and calls[-1][1]["issue_ids"] == [91]
 
@@ -261,3 +261,17 @@ def test_a_renamed_ado_repository_is_followed_through_its_guid(monkeypatch):
     monkeypatch.setattr(ar.urllib.request, "urlopen", lambda request, **_k: Response(b'{"name": "pepgpt-pro-api"}') if "b13a53cc" in request.full_url else pytest.fail(request.full_url))
     assert ar.renamed_ado_repository(target, types.SimpleNamespace(aws_profile=None)) == "pepgpt-pro-api"
     assert seen["path"].endswith("/projects/EIAP_Projects/pepgpt-workflow-api")
+
+
+def test_semgrep_is_never_matched_without_a_line(monkeypatch):
+    import threatlint.semgrep_platform as sp
+    monkeypatch.setattr(sp, "deployment", lambda *_a: {"id": 26306, "slug": "pepsico_poc"})
+    monkeypatch.setattr(ar, "_semgrep", lambda *a, **k: pytest.fail("no Semgrep query without a line"))
+    target = {"name": "r", "project": "P", "organization": "O"}
+    with pytest.raises(ar.ResolveError, match="flagged line"):
+        ar.semgrep_matches("t", "sast", target, {"file_path": "a.js", "rule": "x.y"})
+    report = "**Original finding**: AVIT000000000000001; x.y; Semgrep Code; a.js:268\n"
+    monkeypatch.setattr(ar, "_semgrep", lambda path, token, **k: {"findings": [
+        {"id": 1, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 268}}, {"id": 2, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 109}}]})
+    _dep, matches = ar.semgrep_matches("t", "sast", target, {"file_path": "a.js", "rule": "x.y", "avit": "AVIT000000000000001"}, report_text=report)
+    assert [m["id"] for m in matches] == [1]
