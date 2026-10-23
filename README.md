@@ -425,7 +425,10 @@ The Workbench's *Settings → ServiceNow / Semgrep* sections write the same conf
 - **False positive:** closed automatically. The Word report is attached, the state is set to 3 /
   substate 3, and the work note reads *"Closed by Threatlint as a false positive, see attached report."*
   The matching Semgrep finding is ignored. For SAST and Secrets, the rule is replaced with a tuned
-  version, but only after the original rule is shown to report the finding and the tuned one not to.
+  version automatically, with no human approval. The proof is the gate: the reviewer's
+  `ruleid:`/`ok:` fixtures must pass `semgrep --test`, the original rule (downloaded with the Semgrep
+  token) must fire on every fixture line, and the tuned rule must no longer report the flagged line.
+  Any failed gate leaves the policy unchanged and says why.
 - **True positive:** stays open, with the report attached and the work note *"True positive, see attached
   report."*
 

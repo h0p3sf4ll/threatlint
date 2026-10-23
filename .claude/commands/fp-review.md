@@ -60,7 +60,7 @@ For each AVIT number:
    ```
    threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx $WORK/<AVIT>-threatlint-fp-review.docx --checkout $WORK/repo --yes
    ```
-   For a SAST or Secrets false positive, the agent's report must contain a `**Tuned rule**:` YAML block, with the original rule plus the narrowest `pattern-not` or sanitizer, and optionally a `**Tuned rule fixtures**:` block. With a token, `curl -H "Authorization: Bearer $SEMGREP_APP_TOKEN" https://semgrep.dev/c/r/<rule-id>` returns the original Pro rule. Threatlint publishes and swaps the rule only when the original reproduces the finding and the tuned rule does not.
+   For a SAST or Secrets false positive, the agent's report must contain a `**Tuned rule**:` YAML block, with the original rule plus the narrowest `pattern-not` or sanitizer, and a `**Tuned rule fixtures**:` block with at least one `// ruleid: <id>.tuned` (true-positive shape) and one `// ok: <id>.tuned` (false-positive shape) line. Write the full YAML and fixtures, never a placeholder. With a token, `curl -H "Authorization: Bearer $SEMGREP_APP_TOKEN" https://semgrep.dev/c/r/<rule-id>` returns the original Pro rule. Threatlint publishes and swaps the rule without human approval, but only when the fixtures pass `semgrep --test`, the original rule fires on every fixture line, and the tuned rule no longer reports the flagged line.
    - **TRUE POSITIVE:** only the Word report is attached, as `<AVIT>-threatlint-fp-review.docx`, with the work note "True positive, see attached report." The AVIT stays open.
    - **FALSE POSITIVE:**
      - The report is attached first.

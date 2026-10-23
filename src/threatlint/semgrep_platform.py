@@ -9,13 +9,14 @@ Token resolution: SEMGREP_APP_TOKEN, then the saved token (OS credential store v
 
 Rule tuning (`tune_rule`) for a confirmed SAST or Secrets false positive. The public API cannot edit a
 rule in place, so the tuned rule replaces the original in the policy:
-  1. validate the tuned rule locally: `semgrep --validate`, its fixtures with `semgrep --test`, and that
-     it no longer matches the false-positive location while the original rule did;
+  1. validate the tuned rule locally: `semgrep --validate`, its fixtures with `semgrep --test`, the original
+     rule (downloaded with the org token) firing on the same fixtures, and the flagged file when local
+     analysis can reproduce it;
   2. publish it as an org-private rule (`semgrep publish --visibility=org_private`);
   3. add it to every policy that runs the original rule, in the original rule's mode;
   4. disable the original rule in those policies.
-Nothing is changed in Semgrep unless step 1 passes. The rollback is printed (re-enable the original,
-disable the tuned rule).
+Nothing is changed in Semgrep unless step 1 passes; no human approval is required. The rollback is printed
+(re-enable the original, disable the tuned rule).
 """
 
 from __future__ import annotations
@@ -184,42 +185,95 @@ def _semgrep(args: list[str], cwd: str | None = None, token: str | None = None) 
     return subprocess.run([semgrep, *args], cwd=cwd, capture_output=True, text=True, timeout=600, check=False, env=env)
 
 
-def _matches(config: str, target: str, line: int | None) -> list[int]:
+def _matches(config: str, target: str, line: int | None, exact: bool = False) -> list[int]:
+    """Lines the config reports in target: all of them, or those within 3 lines of `line` (exactly `line` when exact)."""
     pro = ["--pro"] if _semgrep(["scan", "--pro", "--version"]).returncode == 0 else []
     result = _semgrep(["scan", *pro, "--config", config, "--json", "--quiet", "--metrics", "off", target])
     try:
         found = [item["start"]["line"] for item in json.loads(result.stdout).get("results", [])]
     except (ValueError, KeyError):
         raise SemgrepError(f"Semgrep could not scan with {config}: {(result.stderr or result.stdout).strip()[-300:]}") from None
-    return [value for value in found if line is None or abs(value - line) <= 3]
+    return [value for value in found if line is None or (value == line if exact else abs(value - line) <= 3)]
 
 
-def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, line: int | None, fixtures: str = "") -> dict:
-    """Prove the tuned rule is valid, passes its fixtures, and drops this false positive."""
+def original_rule_yaml(rule: str, token: str) -> str:
+    """The original rule's YAML, including Pro rules, fetched with the org token (`r/<rule>` needs a login)."""
+    request = urllib.request.Request(f"{API}/c/r/{urllib.parse.quote(rule, safe='.')}", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with _OPENER.open(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS host
+            text = response.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise SemgrepError(f"Could not download {rule}: {exc}") from exc
+    if not re.search(r"(?m)^\s*-\s*id:", text):
+        raise SemgrepError(f"Semgrep returned no rule body for {rule} (the token may lack access to it)")
+    return text
+
+
+def _fixture_lines(fixtures: str, rule_id: str) -> tuple[list[int], list[int]]:
+    """Lines expected to match (ruleid) and not to match (ok), as `semgrep --test` reads them."""
+    expect, avoid = [], []
+    lines = fixtures.splitlines()
+    for number, line in enumerate(lines, start=1):
+        marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
+        if marker and rule_id in [part.strip() for part in marker.group(2).split(",")]:
+            (expect if marker.group(1) == "ruleid" else avoid).append(number + 1)
+    return expect, avoid
+
+
+def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, line: int | None, fixtures: str = "",
+                        token: str | None = None) -> dict:
+    """Prove the tuned rule is safe to deploy, without human approval:
+
+    1. `semgrep --validate` accepts it;
+    2. its fixtures pass `semgrep --test` (rule and fixture side by side with the same name, the layout Semgrep
+       requires; other layouts crash Semgrep 1.107), so every `ruleid` (true positive) still fires and every
+       `ok` (the false-positive shape) is quiet;
+    3. the ORIGINAL rule fires on the `ok` lines, so the fixtures really model the false positive, and still
+       fires on the `ruleid` lines, so the tuning only removed what it claims to;
+    4. when the local engine can reproduce the finding in the flagged file, the tuned rule no longer reports it.
+       Interfile Pro taint often cannot be reproduced locally; that alone does not block deployment, because
+       steps 2–3 already prove the behaviour on the same code shape.
+    """
     work = Path(tempfile.mkdtemp(prefix="threatlint-rule-"))
-    rule_path = work / "tuned.yaml"
-    rule_path.write_text(rule_yaml, encoding="utf-8")
     ids = re.findall(r"(?m)^\s*-\s*id:\s*([\w.-]+)", rule_yaml)
     if len(ids) != 1:
         raise SemgrepError("The tuned rule must contain exactly one rule")
+    rule_id = ids[0]
+    rule_path = work / f"{rule_id}.yaml"
+    rule_path.write_text(rule_yaml, encoding="utf-8")
     check = _semgrep(["--validate", "--config", str(rule_path), "--metrics", "off"])
     if check.returncode != 0:
         raise SemgrepError(f"Tuned rule is not valid: {(check.stderr or check.stdout).strip()[-300:]}")
-    if fixtures:
-        suffix = Path(target_file).suffix or ".txt"
-        (work / f"tuned{suffix}").write_text(fixtures, encoding="utf-8")
-        test = _semgrep(["--test", "--config", str(rule_path), str(work)])
-        if test.returncode != 0:
-            raise SemgrepError(f"Tuned rule fixtures failed: {(test.stdout or test.stderr).strip()[-400:]}")
-    original_hits = _matches(f"r/{original_rule}", target_file, line)
-    # Fail closed: a tuning is only proven when the original rule reproduces the finding here and the tuned one does not.
-    if not original_hits:
-        raise SemgrepError(f"{original_rule} does not reproduce the finding locally (Pro/interfile rules may need the full "
-                           "platform scan), so the tuning cannot be proven; the policy was not changed")
-    tuned_hits = _matches(str(rule_path), target_file, line)
-    if tuned_hits:
-        raise SemgrepError("The tuned rule still matches the false-positive location; not publishing it")
-    return {"id": ids[0], "path": str(rule_path), "original_matched": bool(original_hits), "fixtures": bool(fixtures)}
+    if not fixtures:
+        raise SemgrepError("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
+    suffix = Path(target_file).suffix or ".txt"
+    fixture_path = work / f"{rule_id}{suffix}"
+    fixture_path.write_text(fixtures, encoding="utf-8")
+    test = _semgrep(["--test", "--metrics", "off", str(work)])
+    if test.returncode != 0 or "All tests passed" not in test.stdout:
+        raise SemgrepError(f"Tuned rule fixtures did not pass: {(test.stdout or test.stderr).strip()[-400:]}")
+    expect, avoid = _fixture_lines(fixtures, rule_id)
+    if not expect or not avoid:
+        raise SemgrepError("Fixtures need at least one `ruleid` (true positive kept) and one `ok` (the false positive) line")
+    original_text = original_rule_yaml(original_rule, token) if token else ""
+    if original_text:
+        original_path = work / "original" / "original.yaml"
+        original_path.parent.mkdir()
+        original_path.write_text(original_text, encoding="utf-8")
+        hits = set(_matches(str(original_path), str(fixture_path), None))
+        if not set(avoid) <= hits:
+            raise SemgrepError("The original rule does not fire on the `ok` fixture lines, so they do not model this false positive")
+        if not set(expect) <= hits:
+            raise SemgrepError("The original rule misses a `ruleid` fixture line; the fixtures do not reflect the original rule")
+    local = {"reproduced": False, "dropped": None}
+    if target_file and Path(target_file).exists():
+        source = work / "original" / "original.yaml" if original_text else None
+        if source and line and _matches(str(source), target_file, line, exact=True):
+            local["reproduced"] = True
+            local["dropped"] = not _matches(str(rule_path), target_file, line, exact=True)
+            if not local["dropped"]:
+                raise SemgrepError("The tuned rule still reports the false-positive location; not deploying it")
+    return {"id": rule_id, "path": str(rule_path), "fixtures": True, "original_checked": bool(original_text), **local}
 
 
 def publish(rule_path: str, token: str) -> str:
@@ -301,8 +355,9 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     fixture = re.search(r"\*\*Tuned rule fixtures\*\*:\s*\n+```\w*\n(.*?)\n```", report, re.S)
     if fixture:
         fixtures = fixture.group(1) + "\n"
-    checked = validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures)
-    print(f"  ✓ Tuned rule {checked['id']} is valid{', passes its fixtures,' if checked['fixtures'] else ''} and drops the false positive the original rule reports", file=out)
+    checked = validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures, token)
+    where = "and no longer reports the flagged line" if checked["dropped"] else "(the flagged line needs interfile analysis, so the fixtures are the proof)"
+    print(f"  ✓ Tuned rule {checked['id']} is valid, keeps every true-positive fixture, drops the false-positive shape{', matches the original rule,' if checked['original_checked'] else ''} {where}", file=out)
     tuned_path = publish(checked["path"], token)
     print(f"  ✓ Published org-private rule {tuned_path}", file=out)
     changes = replace_in_policies(token, dep, kind, original_rule, tuned_path)

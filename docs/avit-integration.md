@@ -62,7 +62,7 @@ flowchart TD
     R -- yes --> Q{"A policy already runs rule.tuned?"}
     Q -- yes --> Z2["Done: triage only, no re-tuning"]
     Q -- no --> V["Validate the tuned rule locally"]
-    V -- proven --> W["Publish org-private rule. Enable it in each policy in the original's mode. Disable the original."]
+    V -- proven --> W["Publish org-private rule. Enable it in each policy in the original's mode. Disable the original. No human approval."]
     V -- "not proven" --> Y["Leave the policy unchanged and report why"]
 ```
 
@@ -111,9 +111,15 @@ agent triages and which Semgrep product is tuned.
 - **Once per rule:** if any policy of the product already runs an enabled `<rule-name>.tuned`, Threatlint
   stops here. That covers a similar false positive that was already tuned.
 - **Otherwise:** the public API cannot edit a rule in place, so Threatlint replaces the rule:
-1. Validate the tuned rule with `semgrep --validate` and run its fixtures with `semgrep --test`. Using
-   the Pro engine when installed, require that the **original rule reproduces the finding** and the
-   tuned rule does not. Otherwise stop (fail closed).
+1. Prove the tuned rule. There is no human approval step, so these gates are the approval; any failure
+   stops here (fail closed) and the policy is left unchanged:
+   - `semgrep --validate` passes.
+   - The report includes `**Tuned rule fixtures**:` with at least one `ruleid:` (true-positive shape)
+     and one `ok:` (false-positive shape) line, and `semgrep --test` passes on them.
+   - The **original** rule, downloaded with the Semgrep token from `/c/r/<rule>`, fires on every
+     `ruleid:` and `ok:` line. This proves the fixtures model the real false positive.
+   - When the original rule reproduces the flagged line in the checkout (Pro engine when installed),
+     the tuned rule must no longer report that exact line.
 2. Publish the rule with `semgrep publish --visibility=org_private`.
 3. For every policy of the matching product that runs the original rule: set the tuned rule to the
    original's mode, then set the original to `MODE_DISABLED`
@@ -208,7 +214,8 @@ threatlint avit semgrep <AVIT> [--line N]
 
 - **Substate:** ServiceNow may not store substate 3 for Closed, if a business rule or the choice list
   disallows it. The resolver reports the stored value.
-- **Pro and interfile rules:** these may not reproduce locally. Tuning then fails closed and the
+- **Pro and interfile rules:** these may not reproduce on a single checked-out file. The fixtures, checked
+  against the downloaded original rule, are then the proof. Without fixtures, tuning fails closed and the
   finding is only triaged.
 - **Deployment:** PepsiCo has one Semgrep deployment, ID **26306** (`https://semgrep.dev/api/agent/deployments/26306`).
   Threatlint selects it by ID; `THREATLINT_SEMGREP_DEPLOYMENT` or `--semgrep-deployment` override it.
