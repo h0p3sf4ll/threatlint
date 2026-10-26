@@ -405,6 +405,185 @@ threatlint install --copilot --local -y
 threatlint install --lmstudio -y
 ```
 
+#### Triage ServiceNow application vulnerable items (AVITs)
+
+> **Full process and data flows:** [docs/avit-integration.md](docs/avit-integration.md)
+
+**Workbench:** *Test → False positive review* takes one AVIT or a list (up to 50) and runs this whole
+flow for each AVIT in turn. Each AVIT gets its own Word report and its own ServiceNow and Semgrep
+updates, shown on its own result card.
+
+**Required setup (once per machine).** AVIT review does not start until all three credentials below
+are configured. `threatlint setup` walks through every step; each command can also be run on its own.
+
+| # | Prerequisite | Command | Workbench alternative | Check |
+| --- | --- | --- | --- | --- |
+| 1 | Semgrep CE (plus Pro engine, recommended) | `python3 -m pip install semgrep` or `brew install semgrep`; then `semgrep login` and `semgrep install-semgrep-pro` | — | `semgrep --version` |
+| 2 | AWS sign-in (reads the ServiceNow client and Semgrep token from Parameter Store) | `threatlint aws login` (private browser window) | — | `aws sts get-caller-identity --profile appsec` |
+| 3 | **ServiceNow** instance + OAuth client (required) | `threatlint setup` | *Settings → ServiceNow* | `threatlint setup --check` |
+| 4 | **Azure DevOps PAT**, scope *Code: Read* (required) | `threatlint ado login --organization <your-ado-org>` | *Settings → Azure DevOps* | `threatlint ado status` |
+| 5 | **Semgrep API token**, Web API scope (required; used for triage, downloading the original rule, publishing the tuned rule and changing policies) | `threatlint semgrep login` (reads `/<your-prefix>/semgrep-token` from Parameter Store, or prompts with hidden input) | *Settings → Semgrep* | `threatlint semgrep status` |
+| 6 | GitHub (only for GitHub-hosted AVITs) | `gh auth login`, or set `GH_TOKEN` | — | `gh auth status` |
+
+`threatlint setup --check` lists each required credential and where it comes from, without printing any
+value, and exits non-zero when one is missing. `threatlint setup` ends with the same check and reports
+setup as incomplete until all three are present. The Workbench's *False positive review* page shows the
+same checklist, links each missing item to its Settings section, and refuses to start a batch until it
+is complete. Never paste a secret into a chat; type it into the hidden prompt or the masked field.
+
+The Workbench's *Settings → ServiceNow / Semgrep / Azure DevOps* sections write the same configuration as the CLI.
+
+Organization-specific values (SSO portal, Parameter Store names, Semgrep deployment) are not built in. Set
+them in `~/.threatlint/org.json` or environment variables, as listed under *Organization settings* in
+[docs/avit-integration.md](docs/avit-integration.md).
+
+**Results:**
+- **False positive:** closed automatically. The Word report is attached, the state is set to 3 /
+  substate 3, and the work note reads *"Closed by Threatlint as a false positive, see attached report."*
+  The matching Semgrep finding is ignored. For SAST and Secrets, the rule is replaced with a tuned
+  version automatically, with no human approval. The proof is the gate: the reviewer's
+  `ruleid:`/`ok:` fixtures must pass `semgrep --test`, the original rule (downloaded with the Semgrep
+  token) must fire on every fixture line, and the tuned rule must no longer report the flagged line.
+  Any failed gate leaves the policy unchanged and says why.
+- **True positive:** stays open, with the report attached and the work note *"True positive, see attached
+  report."*
+
+**One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by 7 to 15 digits. Long numbers such as `AVIT000000095938462` are AVR **CodeSecurity** findings; shorter ones such as `AVIT0042599` come from other tools and views. **Every AVIT is reviewed.** CodeSecurity AVITs are checked against their repository and branch and tuned in Semgrep. Other AVITs are validated from their own evidence (scan details, affected asset or URL, proof, vulnerability definition, and the code when a repository is named), and closed or annotated in the same way, with no Semgrep step.
+Threatlint reads the AVIT and takes the review target from its fields:
+
+| AVIT field | Used for |
+| --- | --- |
+| SCM Tool, Organization Name, Project Name, Repository | ADO: `https://dev.azure.com/{Organization}/{Project}/_git/{Repository}`; GitHub: `https://github.com/{Organization}/{Repository}` |
+| Project Branch | the branch that is cloned and reviewed |
+| File Path, Line, Rule | where the agent starts and what it checks |
+| Security Finding Source | how to triage, and which Semgrep product to tune: SAST → Code, SCA → Supply Chain, Secrets → Secrets |
+
+**The AVR CodeSecurity view decides whether Semgrep is involved, not whether an AVIT is reviewed.** An AVIT is
+CodeSecurity when the CodeSecurity form view's rule (`sysrule_view`, evaluated by ServiceNow) selects it, whatever
+its Security Finding Source (SAST, SCA, or Secrets). If the OAuth client cannot read view rules, AVITs that carry the view's SCM
+fields (SCM Tool and Repository) qualify. To use a view with a different name, set `THREATLINT_SNOW_VIEW`.
+
+Field labels are resolved through `sys_documentation`, so custom `u_` columns are found by their form
+label. The flow is:
+
+1. `threatlint avit checkout <AVIT> --dir <dir>` clones that branch shallowly. Credentials are passed to
+   git as environment config, never on the command line or in `.git/config`.
+   - **Azure DevOps:** run `threatlint ado login --organization <your-ado-org>` once.
+     - It asks for a PAT with **Code: Read**, input hidden, created at
+       `https://dev.azure.com/<org>/_usersSettings/tokens`.
+     - It checks the PAT against the organization, then saves it in the OS credential store when the
+       optional `keyring` package is installed (macOS Keychain or Windows Credential Manager).
+     - Without `keyring`, it saves to `~/.threatlint/ado.json` (`%USERPROFILE%\.threatlint\ado.json`
+       on Windows), readable only by you.
+     - `threatlint ado status` shows where the PAT comes from, and `threatlint ado logout` removes it.
+     - `THREATLINT_ADO_PAT`, `AZURE_DEVOPS_EXT_PAT`, or `az login` also work.
+     - If none is configured, `avit checkout` offers the PAT setup interactively. The Workbench's
+       *Settings → Azure DevOps* section saves it the same way.
+   - **GitHub:** `gh auth login` or `GH_TOKEN`.
+2. The FP reviewer triages the finding on that branch and saves the report.
+3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks
+   for confirmation (`--yes` skips the prompts).
+   - **TRUE POSITIVE:** the Word report is attached as `<AVIT>-threatlint-fp-review.docx` with the work
+     note "True positive, see attached report.", and the AVIT stays open.
+   - **FALSE POSITIVE:**
+     - The report is attached first.
+     - The AVIT is set to state 3 / substate 3 with the work note *"Closed by Threatlint as a false
+       positive, see attached report."* Override the values with `THREATLINT_SNOW_FP_STATE` / `_SUBSTATE`.
+     - The matching open Semgrep finding is ignored as `false_positive`: same project and file, within
+       ±3 lines, and the same rule for Code. SAST AVITs are ignored in Semgrep Code, SCA AVITs in Supply
+       Chain, and Secrets AVITs in Semgrep Secrets. The token comes from `/<your-prefix>/semgrep-token`, or
+       `SEMGREP_APP_TOKEN`.
+   - **AMBIGUOUS:** nothing changes.
+
+The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
+access to `sys_documentation` and `sysrule_view`.
+
+**Re-run Semgrep only:** `threatlint avit semgrep <AVIT> --line N` ignores the matching Semgrep finding
+for an AVIT Threatlint has already closed as a false positive. It checks ServiceNow first.
+
+**Rule tuning runs once per rule.** If a policy already runs a `<rule>.tuned` version of the rule,
+later false positives of that rule are only triaged in Semgrep; the rule is not tuned again.
+
+**Reports are not saved locally for AVITs.** `/fp-review` and the Workbench write the Word report
+to a temporary folder, attach it to the AVIT, and delete it. ServiceNow holds the only copy.
+
+**Clean-up.** `threatlint avit resolve --checkout <dir>` deletes the AVIT checkout once validation
+finishes, whether or not it succeeds, because the checkout is a copy of another team's source and may
+contain live secrets. Pass `--keep-checkout` to keep it.
+
+**macOS and Windows.** Every command runs on both:
+- Tools (`git`, `aws`, `az`, `gh`) are resolved from `PATH`, so Windows `.exe`/`.cmd` installs work.
+- The private sign-in window uses the browser's own command-line flag. On Windows the browser is found
+  through the App Paths registration.
+- The `/fp-review` workflow uses an OS temporary directory instead of `/tmp`.
+
+The FP reviewer can pull AVITs straight from ServiceNow (`sn_vul_app_vulnerable_item`) and triage
+a list of them in one report. Only AVITs in AVR's **CodeSecurity** view are triaged or closed (their finding source may be SAST, SCA, or Secrets); AVITs from other views are skipped and listed as excluded
+(see *Scope* below). The OAuth client is stored in AWS Parameter Store (us-west-2) as
+`/<your-prefix>/servicenow/client-id` and `/<your-prefix>/servicenow/client-secret`.
+To read it, sign in through your organization's AWS SSO portal (`<your-aws-sso-url>`)
+and request access to the ServiceNow keys if you don't have it yet. Semgrep Community Edition must
+be installed (`python3 -m pip install semgrep`); the FP review will not start without it.
+
+- **Workbench:** in *Settings → ServiceNow*, enter the instance URL and either paste the client ID
+  and secret from the [Parameter Store console](https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table)
+  or choose *Read with AWS CLI*. Then select *Find signal in the noise* and list the AVITs.
+- **Saved once:** *Settings → ServiceNow* saves the instance URL, client ID, and secret to
+  `~/.threatlint/servicenow.json` (`%USERPROFILE%\.threatlint\servicenow.json` on Windows;
+  `THREATLINT_HOME` overrides). The file is readable only by you. The Workbench and the CLI both read it,
+  so you don't re-enter them. The secret is never sent back to the page: it shows masked, leaving it as is
+  keeps it, and typing a new one replaces it.
+- **CLI:** uses `THREATLINT_SNOW_CLIENT_ID` / `_SECRET`, then the saved config, then your signed-in AWS CLI
+  credentials, and prompts for the values if none of those work. `--snow-instance` defaults to the saved
+  instance.
+- **Sign in to AWS once:** `threatlint aws login` creates an SSO profile (default `appsec`) in
+  `~/.aws/config` the first time. It asks for the access portal URL, Identity Center region, account ID,
+  and role, or takes them as `--start-url` / `--sso-region` / `--account-id` / `--role` (or
+  `THREATLINT_AWS_SSO_START_URL` / `THREATLINT_AWS_SSO_REGION`). It then runs `aws sso login` and opens
+  the sign-in page in a **private window**: Chrome, Brave, Chromium, or Vivaldi use `--incognito`, Edge
+  uses `--inprivate`, and Firefox uses `-private-window`. If the default browser has no private mode
+  that can be opened from the command line (e.g. Safari, Arc, or Dia), the first installed browser
+  that has one is used. A normal window shares your Okta session and fails with *Conflicting User IDs
+  specified on state token*. Afterwards, use `--aws-profile appsec` with `threatlint avit fetch` /
+  `run fp-review`, or enter `appsec` in the Workbench's *AWS CLI profile* field. Re-run the command
+  when the session expires. It needs the AWS CLI v2. On networks that inspect TLS, Threatlint exports the OS trusted roots (macOS keychains / Windows
+  certificate store) to `~/.threatlint/ca-bundle.pem` and passes it to the AWS CLI (`AWS_CA_BUNDLE`), git
+  (`GIT_SSL_CAINFO`), and its own HTTPS calls; a bundle you set yourself always wins.
+
+```bash
+threatlint aws login                       # first run prompts for portal URL, region, account, role
+threatlint avit fetch AVIT000000095938462 --aws-profile appsec -o avits.md
+```
+
+```bash
+export THREATLINT_SNOW_INSTANCE=https://<instance>.service-now.com
+threatlint run fp-review --avit AVIT000000095938462,AVIT000000095938463 --aws-profile <profile> --model YOUR_LOCAL_MODEL
+threatlint avit fetch AVIT000000095938462 AVIT000000095938463 -o avits.md    # findings file for /fp-review or --findings
+```
+
+Only `*.service-now.com` and `*.servicenowservices.com` instances are accepted, because the client
+secret is sent there; add custom domains to `THREATLINT_SNOW_ALLOWED_HOSTS`.
+
+#### Close false positives and tune Semgrep
+
+In the Workbench report reader, every **FALSE POSITIVE** finding in a Findings triage report has a
+*Close FP & tune Semgrep…* action. (The `/fp-review` CLI flow closes false positives without
+prompting; see [docs/avit-integration.md](docs/avit-integration.md).)
+
+1. **Close in ServiceNow.** The AVIT named in the finding's *Original finding* line gets the Word
+   report attached as `AVIT000000095938462-threatlint-fp-review.docx`, the only attachment. It is then
+   set to state 3 / substate 3 with the work note "Closed by Threatlint as a false positive, see
+   attached report." Override the values with `THREATLINT_SNOW_FP_STATE` /
+   `THREATLINT_SNOW_FP_SUBSTATE`. If a business rule changes the stored state, the dialog shows what
+   ServiceNow actually kept.
+2. **Tune Semgrep.** The token comes from *Settings → Semgrep*, `threatlint semgrep login`,
+   `SEMGREP_APP_TOKEN`, or Parameter Store `/<your-prefix>/semgrep-token`.
+   - *Find matches* lists open findings for exactly that rule, project and file (±3 lines).
+   - The findings you confirm are triaged as *ignored / false_positive*. Semgrep keeps that triage
+     for the same fingerprint on later scans and branches.
+   - Rule replacement for SAST and Secrets is done by `threatlint avit resolve`, as described above.
+     It runs once per rule, and only when it can be validated.
+
 Uninstall removes only bundled skill files and leaves third-party skills and custom additions
 untouched. Report-format warnings in the UI are structural checks, not verification that a finding,
 patch, or scanner rule is correct. Human review and real regression testing remain required.

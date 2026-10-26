@@ -1,0 +1,79 @@
+'use strict';
+
+/**
+ * Acting on FP-review verdicts: close a ServiceNow AVIT as a false positive with the report attached,
+ * then tune Semgrep so the same finding stays quiet. Both act only on findings the FP reviewer marked
+ * FALSE POSITIVE, and only after the user confirms in the UI. Credentials and tokens are used per
+ * request and never stored.
+ */
+
+const fs = require('node:fs');
+const { field } = require('../reports.cjs');
+const { handle, HttpError } = require('../http.cjs');
+const servicenow = require('../servicenow.cjs');
+const semgrep = require('../semgrep-cloud.cjs');
+
+const FP_REVIEWER = 'appsec-fp-reviewer';
+const AVIT_TOKEN = /\bAVIT\d{7,15}\b/g;
+
+/** The AVIT a finding refers to, from its Original finding field, title, or body; exactly one is required. */
+function avitFor(finding) {
+  for (const text of [field(finding.body, 'Original finding|Original ID|Original finding ID'), finding.title, finding.body]) {
+    const found = [...new Set(String(text || '').toUpperCase().match(AVIT_TOKEN) || [])];
+    if (found.length === 1) return found[0];
+    if (found.length > 1) throw new HttpError(`${finding.id} references several AVITs (${found.join(', ')}); close them from a report with one AVIT per finding`);
+  }
+  throw new HttpError(`${finding.id} does not reference an AVIT number`);
+}
+
+function closingNote() { return 'Closed by Threatlint as a false positive, see attached report.'; }
+
+function registerTriageRoutes(app, { reports, integrations = {} }) {
+  const fetchImpl = integrations.fetchImpl;
+  const tokenFor = integrations.semgrepToken || semgrep.semgrepToken;
+
+  function falsePositive(reportId, findingId) {
+    const located = typeof reportId === 'string' ? reports.find(reportId) : null;
+    if (!located) throw new HttpError('Report not found', 404);
+    const { report } = located;
+    if (report.agentId !== FP_REVIEWER) throw new HttpError('Only Findings triage reports can close AVITs or tune Semgrep');
+    const finding = reports.read(report).findings.find(item => item.id === findingId);
+    if (!finding) throw new HttpError('Finding not found in this report', 404);
+    if (finding.disposition !== 'FALSE POSITIVE') throw new HttpError(`${finding.id} is ${finding.disposition || 'not triaged'}, not FALSE POSITIVE`);
+    return { report, finding };
+  }
+
+  app.post('/api/servicenow/close-false-positive', handle(async req => {
+    const { report, finding } = falsePositive(req.body?.reportId, req.body?.findingId);
+    const avit = avitFor(finding);
+    const credentials = servicenow.validateCredentials(req.body?.servicenow);
+    // The Word report is the one attachment.
+    if (!report.docxPath || !fs.existsSync(report.docxPath)) throw new HttpError('The Word report is unavailable; install python-docx so the report can be attached', 409);
+    const files = [{ name: `${avit}-threatlint-fp-review.docx`, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }];
+    return servicenow.closeAvitAsFalsePositive(credentials, avit, { note: closingNote(), files }, { fetchImpl });
+  }));
+
+  // Preview: the open Semgrep findings this tuning would ignore. Nothing changes until /ignore.
+  app.post('/api/semgrep/false-positive/matches', handle(async req => {
+    falsePositive(req.body?.reportId, req.body?.findingId);
+    const target = semgrep.validateTarget(req.body?.target);
+    return semgrep.matchFindings(await tokenFor({ profile: req.body?.profile || undefined }), target, { fetchImpl });
+  }));
+
+  app.post('/api/semgrep/false-positive/ignore', handle(async req => {
+    const { report, finding } = falsePositive(req.body?.reportId, req.body?.findingId);
+    let avit = null;
+    try { avit = avitFor(finding); } catch { /* Semgrep tuning does not require an AVIT */ }
+    const note = `False positive per Threatlint ${report.label}, ${finding.id}${avit ? ` (ServiceNow ${avit})` : ''}: ${finding.title}`;
+    const target = semgrep.validateTarget(req.body?.target);
+    const token = await tokenFor({ profile: req.body?.profile || undefined });
+    // Re-match server-side so only findings inside the narrow rule/repo/file scope can be ignored.
+    const { deployment, matches } = await semgrep.matchFindings(token, target, { fetchImpl });
+    const allowed = new Set(matches.map(match => match.id));
+    const ids = (Array.isArray(req.body?.issueIds) ? req.body.issueIds.map(Number) : []).filter(id => allowed.has(id));
+    if (!ids.length) throw new HttpError('None of the selected findings are still open for this rule, repository, and file', 409);
+    return { deployment, ...await semgrep.ignoreAsFalsePositive(token, deployment.slug, ids, note, { fetchImpl }) };
+  }));
+}
+
+module.exports = { registerTriageRoutes, avitFor, closingNote };

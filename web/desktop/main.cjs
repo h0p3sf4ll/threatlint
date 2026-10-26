@@ -3,12 +3,18 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { watch, readFileSync } = require('node:fs');
+const { watch, readFileSync, appendFileSync } = require('node:fs');
+const { createSplash, updateOnLaunch } = require('./updater.cjs');
 
 let mainWindow;
 let workbench;
 let origin;
 let quitting = false;
+let splash;
+
+function log(line) {
+  try { appendFileSync(path.join(app.getPath('userData'), 'updater.log'), `${new Date().toISOString()} ${line}\n`); } catch { /* logging is best effort */ }
+}
 
 // Packaged builds carry the stamp written by scripts/desktop-sync.cjs; dev runs use live source.
 function buildInfo() {
@@ -49,7 +55,7 @@ async function createWindow() {
     if (!url.startsWith(`${origin}/`)) event.preventDefault();
   });
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => { mainWindow.show(); splash?.close(); splash = null; });
   mainWindow.on('closed', () => { mainWindow = null; });
   await mainWindow.loadURL(origin);
 }
@@ -62,6 +68,16 @@ else {
     mainWindow.focus();
   });
   app.whenReady().then(async () => {
+    splash = createSplash();
+    if (app.isPackaged) {
+      await updateOnLaunch(buildInfo(), splash, log).catch(error => {
+        log(`Update failed: ${error.stack || error.message}`);
+        dialog.showErrorBox('Threatlint could not update', `${error.message}\n\nStarting the installed build. Details: ${path.join(app.getPath('userData'), 'updater.log')}`);
+      });
+    }
+    splash.status('Starting workbench…', buildInfo().commit);
+    // A fresh build must never render assets the previous build left in the HTTP cache.
+    await session.defaultSession.clearCache();
     if (app.isPackaged) process.env.THREATLINT_DATA_DIR = path.join(process.resourcesPath, 'data');
     // The factory below owns the desktop store; the default exported server stays unbound.
     process.env.THREATLINT_STATE_DIR = path.join(app.getPath('userData'), 'workbench');

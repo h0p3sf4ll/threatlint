@@ -11,6 +11,9 @@ const { AGENTS, SKILLS, publicAgent } = require('../agents.cjs');
 const { parseReport } = require('../reports.cjs');
 const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
+const servicenow = require('../servicenow.cjs');
+const catalog = require('../model-catalog.cjs');
+const threatlintConfig = require('../threatlint-config.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -18,17 +21,87 @@ const MODEL_LIST_TIMEOUT_MS = 5000;
 const EXAMPLES = path.join(__dirname, '../../examples');
 const expandHome = value => value.replace(/^~(?=\/|$)/, os.homedir());
 
-function registerWorkspaceRoutes(app, { store, reports, build }) {
+function registerWorkspaceRoutes(app, { store, reports, build, integrations = {} }) {
+  const credentialSources = integrations.credentialSources || catalog.credentialSources;
   const { sessions } = store;
   const sessionFor = id => sessions.get(id) || (() => { throw new HttpError('Session not found', 404); })();
 
-  app.get('/api/config', (_req, res) => res.json({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
-    providers: { anthropic: !!process.env.ANTHROPIC_API_KEY, openai: !!process.env.OPENAI_API_KEY } }));
+  app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
+    providers: await credentialSources(),
+    semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
+    servicenow: { ...servicenow.access(), instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
+  // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
+  app.post('/api/servicenow/parameter-store', handle(req => (integrations.readParameterStore || servicenow.readParameterStore)({ profile: req.body?.profile || undefined })));
+  // Saved ServiceNow connection (shared with the CLI). GET never returns the secret.
+  app.get('/api/servicenow/settings', handle(() => threatlintConfig.publicServiceNow()));
+  app.post('/api/servicenow/settings', handle(req => {
+    const body = req.body || {};
+    const saved = threatlintConfig.readServiceNow();
+    const instance = body.instance ? servicenow.validateInstanceUrl(body.instance) : '';
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+    // An omitted secret keeps the saved one, so the masked field can be left untouched.
+    const clientSecret = typeof body.clientSecret === 'string' && body.clientSecret.trim() ? body.clientSecret.trim() : saved.clientSecret;
+    if (clientId.length > 500 || clientSecret.length > 2000) throw new HttpError('ServiceNow client ID or secret is too long');
+    if ((clientId || clientSecret) && !(instance && clientId && clientSecret)) throw new HttpError('ServiceNow needs the instance URL, client ID, and client secret together');
+    if (!instance && !clientId) { threatlintConfig.clearServiceNow(); return threatlintConfig.publicServiceNow(); }
+    threatlintConfig.writeServiceNow({ instance, clientId, clientSecret });
+    return threatlintConfig.publicServiceNow();
+  }));
+  // Semgrep API token for rule tuning and triage. GET never returns the token.
+  // Also reports a token the CLI saved in the OS credential store (`threatlint semgrep login`), by source only.
+  app.get('/api/semgrep/settings', handle(async () => {
+    const saved = threatlintConfig.publicSemgrep();
+    if (saved.hasToken && !saved.inKeyring) return saved;
+    try {
+      const result = await (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(['semgrep', 'status']);
+      const source = /^Semgrep token: (.+)$/m.exec(result.stdout)?.[1] || null;
+      return { ...saved, cliSource: source };
+    } catch { return saved; }
+  }));
+  app.post('/api/semgrep/settings', handle(async req => {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const current = threatlintConfig.readSemgrep();
+    if (!token) return threatlintConfig.publicSemgrep();
+    if (!/^[A-Za-z0-9._~+/=-]{20,200}$/.test(token)) throw new HttpError('That does not look like a Semgrep API token');
+    const api = `${(process.env.THREATLINT_SEMGREP_API || 'https://semgrep.dev').replace(/\/$/, '')}/api/v1/deployments`;
+    let response;
+    try { response = await (integrations.fetchImpl || fetch)(api, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(15_000) }); }
+    catch (error) { throw new HttpError(`Semgrep could not be reached: ${error.cause?.message || error.message}`, 502); }
+    if (!response.ok) throw new HttpError(`Semgrep rejected the token (HTTP ${response.status})`, 400);
+    const deployments = (await response.json()).deployments || [];
+    threatlintConfig.writeSemgrep({ token, deployment: deployments.length === 1 ? deployments[0].slug : current.deployment });
+    return threatlintConfig.publicSemgrep();
+  }));
+  // Azure DevOps PAT, shared with `threatlint ado login` (OS credential store when available). Never returned.
+  const cli = (...args) => (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(...args);
+  const adoStatus = async () => {
+    const result = await cli(['ado', 'status']);
+    return { hasPat: /^Azure DevOps PAT: /m.test(result.stdout), source: /^Azure DevOps PAT: (.+)$/m.exec(result.stdout)?.[1] || null };
+  };
+  app.get('/api/ado/settings', handle(adoStatus));
+  app.post('/api/ado/settings', handle(async req => {
+    const organization = typeof req.body?.organization === 'string' ? req.body.organization.trim() : '';
+    const pat = typeof req.body?.pat === 'string' ? req.body.pat.trim() : '';
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(organization)) throw new HttpError('Enter the Azure DevOps organization name (e.g. contoso), not a URL');
+    if (!/^[A-Za-z0-9._~+/=-]{20,200}$/.test(pat)) throw new HttpError('That does not look like an Azure DevOps PAT');
+    const result = await cli(['ado', 'login', '--organization', organization, '--pat-stdin'], { input: pat });
+    if (result.code !== 0) throw new HttpError((result.stderr.trim().split(/\r?\n/).pop() || 'Azure DevOps rejected the PAT').replace(/^ERROR:\s*/, ''), 400);
+    return adoStatus();
+  }));
+  // Required credentials for AVIT review, by source only (`threatlint setup --check`).
+  app.get('/api/setup/status', handle(async () => ({ items: await require('../avit-batch.cjs').setupStatus(integrations.threatlintCli) })));
   app.get('/api/agents', (_req, res) => res.json(Object.values(AGENTS).map(publicAgent)));
   app.get('/api/skills', (_req, res) => res.json(Object.values(SKILLS)));
   app.get('/api/examples/fp-review', (_req, res) => res.json({ ...parseReport(fs.readFileSync(path.join(EXAMPLES, 'fp-review.md'), 'utf8'), 'appsec-fp-reviewer'), example: true }));
   app.get('/api/examples/runtime', (_req, res) => res.json(JSON.parse(fs.readFileSync(path.join(EXAMPLES, 'runtime-scan.json'), 'utf8'))));
 
+  // Models the configured (or session) credential can use, for the settings dropdown. POST keeps a typed key out of URLs and logs.
+  app.post('/api/models', handle(async req => {
+    const provider = String(req.body?.provider || '');
+    if (!['claude', 'openai', 'copilot'].includes(provider)) throw new HttpError('Unknown model provider');
+    const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key);
+    return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }) };
+  }));
   app.get('/api/lmstudio/models', handle(async req => {
     const baseUrl = validateBaseUrl(typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined);
     let data;

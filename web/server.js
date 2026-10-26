@@ -22,6 +22,9 @@ const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
 const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/runtime.cjs');
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
+const { prepareProcess } = require('./lib/system-env.cjs');
+const { createAvitBatch } = require('./lib/avit-batch.cjs');
+const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -41,9 +44,12 @@ function buildInfo() {
 
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
- * runProvider (replaces model calls for reviews and conversations in tests/recordings).
+ * runProvider (replaces model calls for reviews and conversations in tests/recordings),
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli } for Semgrep, ServiceNow, and the AVIT batch).
  */
 function createWorkbench(options = {}) {
+  // OS certificate store and the user's PATH, so gateways behind TLS inspection and CLIs like `gh` work from the Dock.
+  prepareProcess();
   const app = express();
   app.disable('x-powered-by');
   const server = http.createServer(app);
@@ -53,7 +59,7 @@ function createWorkbench(options = {}) {
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
-  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider });
+  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
 
   app.use(securityHeaders(server));
@@ -62,16 +68,18 @@ function createWorkbench(options = {}) {
   app.get('/vendor/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.min.js')));
   app.use(express.static(path.join(__dirname, 'public')));
 
-  registerWorkspaceRoutes(app, { store, reports, build: buildInfo() });
+  registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
   registerSourceRoutes(app, { store, scm });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations });
+  registerTriageRoutes(app, { reports, integrations: options.integrations });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
   app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413 ? 'Request exceeds the 7 MB limit' : 'Request could not be processed' }));
 
-  const wss = attachSocket(server, { pipeline, conversations });
+  const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const wss = attachSocket(server, { pipeline, conversations, avitBatch });
 
   async function close() {
     pipeline.abortAll();

@@ -33,9 +33,31 @@ account/server. No hard-coded cloud model catalogue is assumed.
   <http://localhost:1234/v1>, and click **Load models**. The model must support OpenAI-compatible
   streamed tool calls for repository inspection. HTTP is restricted to loopback hosts; remote
   compatible servers require HTTPS.
-- **Anthropic / OpenAI:** enter a session-only API key or set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
-  in the backend environment. The UI only reports key availability, never the environment value.
-- **Remote data consent:** cloud and remote compatible-model reviews require explicit UI consent.
+- **False positive review:** *Test → False positive review* reviews one AVIT or a list, one at a time.
+  Each AVIT gets its own report, and its own closure or work note. See [avit-integration.md](avit-integration.md).
+- **Settings page:** *Settings* in the sidebar is a normal page with **Model provider**, **ServiceNow**
+  (instance, OAuth client, AWS CLI read), **Semgrep** (API token) and **Azure DevOps** (PAT) sections,
+  each saved separately. ServiceNow, Semgrep and Azure DevOps are required for *False positive review*,
+  which shows a setup checklist and does not start until all three are configured.
+- **Desktop app:** it trusts the OS certificate store (macOS Keychain / Windows certificate store), so model
+  gateways behind corporate TLS inspection work, and it adds your login-shell PATH so `gh`, `git`, `az`, and
+  `aws` are found when launched from the Dock or Start menu.
+- **Anthropic / OpenAI / Copilot:** choose the provider, and the **Model** dropdown fills with the
+  models your credential can use (click **Load models** to refresh). *Enter a model ID manually*
+  still accepts any ID. A session-only key typed in the dialog takes priority; otherwise the
+  Workbench uses the credential where each tool normally keeps it:
+
+  | Provider | Looked up in order |
+  | --- | --- |
+  | Anthropic | `ANTHROPIC_API_KEY` → `env` block of `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json` on Windows: `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` (environment or settings.json) routes model listing and reviews through your gateway. |
+  | OpenAI | `OPENAI_API_KEY` → an API key saved by Codex (`codex login --with-api-key`, in `~/.codex/auth.json`). A Codex *ChatGPT-account* sign-in only works inside Codex and is not used. |
+  | GitHub Copilot | `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → the GitHub CLI sign-in (`gh auth token`; run `gh auth login` once) |
+
+  Copilot lists only models your plan enables that support `/chat/completions` with tool calls,
+  because reviews need streamed tool use. Copilot plan quotas apply: an exhausted quota shows
+  HTTP 429. Claude Code's subscription login (macOS Keychain / `~/.claude/.credentials.json`) is
+  never read. The UI shows which source is in use, never the value.
+- **Remote data consent:** cloud (including Copilot) and remote compatible-model reviews require explicit UI consent.
   Prompts, attached findings, and inspected source/tool results are transmitted to that provider.
 - Credentials are never put into browser storage, session history, report metadata, or URLs.
   Non-secret model/provider/URL preferences may be saved. Consent is not persisted across restarts.

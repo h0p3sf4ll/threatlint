@@ -26,7 +26,8 @@ function securityHeaders(server) {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Content-Security-Policy', CSP);
-    if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+    // UI assets revalidate on every load so a rebuilt app never renders yesterday's scripts.
+    res.setHeader('Cache-Control', req.path.startsWith('/api/') ? 'no-store' : 'no-cache');
     return next();
   };
 }

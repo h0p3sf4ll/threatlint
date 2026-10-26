@@ -21,12 +21,13 @@ function validateBaseUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
-async function openAiTurn({ baseUrl, model, messages, key, signal, onEvent }) {
+async function openAiTurn({ baseUrl, model, messages, key, signal, onEvent, headers = {} }) {
   checkAbort(signal);
   const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+    method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', ...headers, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
     body: JSON.stringify({ model, messages, tools: TOOL_SCHEMAS.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })), stream: true, max_tokens: MAX_OUTPUT_TOKENS }),
   });
+  if (response.status === 429) throw new Error('The model provider rate-limited this request or the plan quota is used up (HTTP 429). Wait, or choose another model or provider.');
   if (!response.ok) throw new Error(`Model request failed (HTTP ${response.status}). Check the model, credentials, and provider availability.`);
   const decoder = new TextDecoder();
   let buffer = '', text = '', finishReason = '', done = false;
@@ -64,12 +65,12 @@ async function openAiTurn({ baseUrl, model, messages, key, signal, onEvent }) {
 }
 
 // `history` holds prior plain-text turns ({ role, content }) for multi-turn conversations.
-async function runOpenAi({ systemPrompt, userMessage, history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
+async function runOpenAi({ systemPrompt, userMessage, history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, headers }) {
   const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: userMessage }];
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const turn = await openAiTurn({ baseUrl, model, messages, key, signal, onEvent });
+    const turn = await openAiTurn({ baseUrl, model, messages, key, signal, onEvent, headers });
     messages.push({ role: 'assistant', content: turn.text || null, ...(turn.calls.length ? { tool_calls: turn.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) } : {}) });
     if (!turn.calls.length) return turn.text; // Save only the final report, never investigation chatter.
     for (const call of turn.calls) {
@@ -85,8 +86,9 @@ async function runOpenAi({ systemPrompt, userMessage, history = [], baseUrl, mod
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
 
-async function runClaude({ systemPrompt, userMessage, history = [], model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
-  const client = new Anthropic({ apiKey: key });
+async function runClaude({ systemPrompt, userMessage, history = [], model, key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
+  // ANTHROPIC_AUTH_TOKEN-style credentials are bearer tokens; baseUrl is ANTHROPIC_BASE_URL when a gateway is configured.
+  const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key }), ...(baseUrl ? { baseURL: baseUrl } : {}) });
   const messages = [...history, { role: 'user', content: userMessage }];
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);

@@ -18,7 +18,15 @@ from pathlib import Path
 
 from threatlint import __version__
 from threatlint.skills import SKILLS as _SKILLS_SRC
-from threatlint.skills import agent_prompt, findings_context, skill_map
+from threatlint.servicenow import (
+    ServiceNowError,
+    add_avit_arguments,
+    add_avit_parser,
+    cmd_avit,
+    collect_avits,
+    requested_avits,
+)
+from threatlint.skills import agent_prompt, findings_context, findings_text, skill_map
 
 # ── Package data roots ────────────────────────────────────────────────────────
 
@@ -688,12 +696,37 @@ def _git_output(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True, check=False).stdout.strip()
 
 
-def _build_run_message(args: argparse.Namespace, repo_root: str) -> str:
+# Agents whose proposals are validated with Semgrep Community Edition.
+_SEMGREP_AGENTS = frozenset({"appsec-fp-reviewer"})
+_SEMGREP_INSTALL = ("Install Semgrep Community Edition before running this review, then retry:\n"
+                    "  python3 -m pip install semgrep     (or: brew install semgrep)\n"
+                    "  semgrep --version")
+
+
+def _semgrep_version() -> str | None:
+    """Installed Semgrep version, or None when the CLI is unavailable."""
+    executable = shutil.which("semgrep")
+    if not executable:
+        return None
+    try:
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=_TOOL_TIMEOUT_S, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip().splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
+
+
+def _build_run_message(args: argparse.Namespace, repo_root: str, avits: tuple[str, str] | None = None) -> str:
     """Assemble the user message; raises OSError/ValueError when a findings file is unusable."""
     mode = args.mode
     message = f"The repository to analyze is located at: {repo_root}\n"
     if getattr(args, "findings", None):
         message += findings_context(args.findings)
+    if avits:
+        message += findings_text(*avits)
+        message += ("\nTriage every AVIT above as one finding in a single cohesive report, keeping each AVIT number"
+                    " as the original finding ID. Locate the flagged code in this repository from the AVIT fields.\n")
+    if getattr(args, "semgrep_version", None):
+        message += f"\nSemgrep Community Edition is installed for the user ({args.semgrep_version}); write validation commands for it.\n"
     if getattr(args, "target", ""):
         message += f"\nFocus area / target: {args.target}\n"
     if getattr(args, "deep", False) or mode == "threat-model-deep":
@@ -756,6 +789,16 @@ def _print_run_header(mode: str, provider: str, base_url: str, model: str, targe
     print()
 
 
+def _load_requested_avits(args: argparse.Namespace, mode: str) -> tuple[str, str] | None:
+    """ServiceNow AVITs requested for an FP review, as (label, content); None when none were requested."""
+    numbers = requested_avits(args)
+    if not numbers:
+        return None
+    if mode != "fp-review":
+        raise ServiceNowError("--avit and --avit-file are only supported with `threatlint run fp-review`")
+    return collect_avits(args, numbers)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run an AppSec analysis via a local or cloud LLM."""
     mode = args.mode
@@ -772,9 +815,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     agent_name, agent_file = resolved
     system_prompt = agent_prompt(agent_name, agent_file)
 
+    if agent_name in _SEMGREP_AGENTS:
+        args.semgrep_version = _semgrep_version()
+        if not args.semgrep_version:
+            print(_red("ERROR: Semgrep Community Edition is not installed."))
+            print(_SEMGREP_INSTALL)
+            return 1
+
     repo_root = _git_output("rev-parse", "--show-toplevel") or str(Path.cwd())
     try:
-        user_msg = _build_run_message(args, repo_root)
+        avits = _load_requested_avits(args, mode)
+        user_msg = _build_run_message(args, repo_root, avits)
+    except ServiceNowError as exc:
+        print(_red(f"ERROR: {exc}"))
+        return 1
     except (OSError, ValueError) as exc:
         print(_red(f"ERROR: Cannot load findings: {exc}"))
         return 1
@@ -847,6 +901,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="LM Studio API base URL (default: http://localhost:1234/v1)")
     p_run.add_argument("--output-dir", metavar="DIR",
         help="Directory for the output report (default: repository root)")
+    add_avit_arguments(p_run)
 
     # list
     sub.add_parser("list", help="List bundled agents and commands")
@@ -864,18 +919,52 @@ def build_parser() -> argparse.ArgumentParser:
     from threatlint.ide import add_ide_parser
     add_guard_parser(sub)
     add_ide_parser(sub)
+    add_avit_parser(sub)
+    from threatlint.aws_login import add_aws_parser
+    add_aws_parser(sub)
+    from threatlint.ado_login import add_ado_parser
+    add_ado_parser(sub)
+    from threatlint.semgrep_platform import add_semgrep_parser
+    add_semgrep_parser(sub)
+    from threatlint.setup_wizard import add_setup_parser
+    add_setup_parser(sub)
 
     return parser
+
+
+def _cmd_semgrep(args: argparse.Namespace) -> int:
+    from threatlint.semgrep_platform import cmd_semgrep
+    return cmd_semgrep(args)
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    from threatlint.setup_wizard import cmd_setup
+    return cmd_setup(args)
+
+
+def _cmd_ado(args: argparse.Namespace) -> int:
+    from threatlint.ado_login import cmd_ado
+    return cmd_ado(args)
+
+
+def _cmd_aws(args: argparse.Namespace) -> int:
+    from threatlint.aws_login import cmd_aws
+    return cmd_aws(args)
 
 
 def main() -> None:
     from threatlint.guard import cmd_guard
     from threatlint.ide import cmd_ide
 
+    # Windows consoles on legacy code pages cannot encode ✓ / →; substitute rather than crash.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "semgrep": _cmd_semgrep, "setup": _cmd_setup}
     handler = commands.get(args.command)
     if handler is None:
         parser.print_help()

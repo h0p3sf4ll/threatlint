@@ -53,6 +53,7 @@
     "appId": "io.threatlint.workbench",
     "productName": "Threatlint",
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },
@@ -82,6 +83,15 @@
       {
         "from": "build-assets/build-info.json",
         "to": "build-info.json"
+      },
+      {
+        "from": "../src/threatlint",
+        "to": "python/threatlint",
+        "filter": [
+          "**/*.py",
+          "data/**/*",
+          "!**/__pycache__/**"
+        ]
       }
     ],
     "mac": {

@@ -1,4 +1,6 @@
 'use strict';
+// Never read the developer's saved ~/.threatlint config.
+process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,7 +12,16 @@ const { AGENTS, SKILLS, SKILL_MAP } = require('../lib/agents.cjs');
 const { createStore } = require('../lib/store.cjs');
 
 let instance, base, root, storage;
-const observed = [];
+let semgrep = '1.99.0';
+const observed = [], snowRequests = [];
+// Minimal ServiceNow: OAuth token, then one AVIT row for the Table API.
+async function fakeServiceNow(url, options) {
+  snowRequests.push({ url, options });
+  const json = body => ({ ok: true, status: 200, json: async () => body });
+  if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
+  return json({ result: [{ number: { display_value: 'AVIT000000000010001', value: 'AVIT000000000010001' }, short_description: { display_value: 'Tainted SSRF in ReplayService' },
+    rule: { display_value: 'java.spring.security.tainted-ssrf-spring-add.tainted-ssrf-spring-add' }, source_file: { display_value: 'src/example.js' }, u_scm_tool: { display_value: 'ADO' }, u_repository: { display_value: 'example' } }] });
+}
 const finalReport = '# Findings Report\n\n## Executive Summary\nOne hypothetical test finding.\n\n#### [FP-001] — Test query binding\n**Severity**: HIGH\n**Confidence**: CONFIRMED\n**Disposition**: TRUE POSITIVE\n**Evidence**: src/example.js:1 — observed fixture\n### Proposed Fix\nBind the value; PROPOSED — NOT APPLIED.\n### Regression Tests\nNOT RUN. Reject unsafe input.\n**Acceptance Criteria**: constant statement text.\n';
 
 before(async () => {
@@ -24,7 +35,7 @@ before(async () => {
     }
     args.onEvent({ type: 'text_chunk', text: finalReport });
     return finalReport;
-  } });
+  }, integrations: { semgrepVersion: async () => semgrep, fetchImpl: (...args) => fakeServiceNow(...args) } });
   await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${instance.server.address().port}`;
 });
@@ -132,5 +143,50 @@ describe('Pipeline integration without paid provider calls', () => {
     const { body: session } = await api('/api/session/local', { repoPath: root });
     const invalid = await run(socket, { action: 'run_pipeline', sessionId: session.sessionId, agentIds: ['__proto__'], provider: 'lmstudio', model: 'fixture' });
     assert.equal(invalid[0].type, 'error'); socket.close();
+  });
+});
+
+describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
+  const servicenow = { instance: 'https://example.service-now.com', clientId: 'client', clientSecret: 'secret' };
+  it('fetches AVITs into one FP review without persisting ServiceNow credentials', async () => {
+    const { body: session } = await api('/api/session/local', { repoPath: root });
+    const socket = await connect();
+    const before = observed.length;
+    const events = await run(socket, { action: 'run_pipeline', sessionId: session.sessionId, agentIds: ['appsec-fp-reviewer'], provider: 'lmstudio', model: 'fixture',
+      avits: ['AVIT000000000010001', 'avit000000000010002'], servicenow });
+    socket.close();
+    assert.equal(events.at(-1).status, 'complete');
+    assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT000000000010002'], excluded: [] });
+    const message = observed[before].userMessage;
+    assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT000000000010001/); assert.match(message, /single cohesive report/);
+    assert.match(message, /Semgrep Community Edition is installed/);
+    assert.ok(snowRequests.every(request => request.options.redirect === 'error'));
+    assert.ok(snowRequests.some(request => /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT000000000010001%2CAVIT000000000010002)&/.test(request.url)));
+    assert.doesNotMatch(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8'), /secret|snow-token/);
+  });
+  it('rejects AVITs without the FP reviewer, non-ServiceNow hosts, or missing credentials', async () => {
+    const { body: session } = await api('/api/session/local', { repoPath: root });
+    const socket = await connect();
+    const base = { action: 'run_pipeline', sessionId: session.sessionId, provider: 'lmstudio', model: 'fixture', avits: 'AVIT000000000010001' };
+    assert.match((await run(socket, { ...base, agentIds: ['appsec-threat-modeler'], servicenow }))[0].message, /Findings triage/);
+    assert.match((await run(socket, { ...base, agentIds: ['appsec-fp-reviewer'], servicenow: { ...servicenow, instance: 'https://attacker.example' } }))[0].message, /not a ServiceNow host/);
+    assert.match((await run(socket, { ...base, agentIds: ['appsec-fp-reviewer'], servicenow: { instance: servicenow.instance } }))[0].message, /Parameter Store/);
+    assert.match((await run(socket, { ...base, agentIds: ['appsec-fp-reviewer'], avits: 'CVE-2024-1', servicenow }))[0].message, /Not an AVIT number/);
+    socket.close();
+  });
+  it('requires Semgrep for the FP reviewer before any model request', async () => {
+    semgrep = null;
+    try {
+      const { body: session } = await api('/api/session/local', { repoPath: root });
+      const before = observed.length;
+      const socket = await connect();
+      const events = await run(socket, { action: 'run_pipeline', sessionId: session.sessionId, agentIds: ['appsec-fp-reviewer'], provider: 'lmstudio', model: 'fixture', attachment: { name: 'scan.sarif', content: '{"runs":[]}' } });
+      socket.close();
+      assert.equal(events[0].type, 'error'); assert.match(events[0].message, /pip install semgrep/);
+      assert.equal(observed.length, before);
+      const config = (await api('/api/config')).body;
+      assert.equal(config.semgrep, null); assert.deepEqual(config.semgrepAgents, ['appsec-fp-reviewer']);
+      assert.equal(config.servicenow.clientSecretParameter, '', 'no organization default is built in');
+    } finally { semgrep = '1.99.0'; }
   });
 });
