@@ -171,10 +171,46 @@ def test_true_positive_attaches_the_report_and_leaves_the_avit_open(monkeypatch,
     assert any("attachment/file" in u for _m, u, _d in fake.calls)
 
 
-def test_ambiguous_changes_nothing(monkeypatch, tmp_path):
-    monkeypatch.setattr(sn, "_request_json", lambda *a, **k: pytest.fail("no ServiceNow call for AMBIGUOUS"))
+def test_ambiguous_attaches_the_report_with_a_note_and_leaves_the_avit_open(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "_semgrep", lambda *a, **k: pytest.fail("Semgrep must not change for an ambiguous finding"))
     monkeypatch.setattr("sys.stdout", io.StringIO())
     assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "AMBIGUOUS"))) == 0
+    body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
+    assert "state" not in body and body["work_notes"] == ar.AMBIGUOUS_COMMENT
+    assert any("attachment/file" in u for _m, u, _d in fake.calls)
+
+
+def test_note_adds_a_work_note_without_changing_state(monkeypatch):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    args = types.SimpleNamespace(number=AVIT, message="Not reviewed: repository not found.", snow_instance=INSTANCE, aws_profile=None, yes=True)
+    assert ar.cmd_note(args) == 0
+    patches = [json.loads(d) for m, _u, d in fake.calls if m == "PATCH"]
+    assert patches == [{"work_notes": "Not reviewed: repository not found."}]
+    assert not any("attachment" in u for _m, u, _d in fake.calls)
+
+
+def test_a_clone_that_times_out_retries_as_a_sparse_checkout(monkeypatch, tmp_path):
+    import subprocess
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        if "--depth" in command and "50" in command:
+            raise subprocess.TimeoutExpired(command, 600)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(sn.subprocess, "run", run)
+    monkeypatch.setattr(sn.shutil, "which", lambda name: "/usr/bin/git")
+    monkeypatch.setattr(sn, "_git_auth_env", lambda *a: {})
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    target = {"scm": "github", "clone_url": "https://github.com/o/r.git", "web_url": "u", "branch": "b", "organization": "o"}
+    sn.checkout_repository(target, str(tmp_path / "co"), "force-app/classes/A.cls")
+    assert "--filter=blob:none" in calls[1] and calls[2][-2:] == ["--no-cone", "/force-app/classes/"]
+    assert calls[3][-3:] == ["read-tree", "-mu", "HEAD"], "a --no-checkout clone needs read-tree to populate the sparse tree"
 
 
 def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_path):
@@ -253,7 +289,7 @@ def test_a_renamed_ado_repository_is_followed_through_its_guid(monkeypatch):
         seen["path"] = path
         return {"project": {"url": "https://dev.azure.com/contoso/698f/_apis/git/repositories/b13a53cc-86f7-4d90-a055-b754186e580f"}}
     monkeypatch.setattr(sp, "call", call)
-    monkeypatch.setattr("threatlint.ado_login.load", lambda: ("pat", "x"))
+    monkeypatch.setattr("threatlint.ado_login.load", lambda organization="": ("pat", "x"))
     class Response(io.BytesIO):
         def __enter__(self): return self
         def __exit__(self, *a): return False
@@ -292,3 +328,26 @@ def test_a_non_codesecurity_false_positive_closes_without_semgrep(monkeypatch, t
     body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
     assert (body["state"], body["substate"]) == ("3", "3")
     assert "Semgrep not applicable" in out.getvalue()
+
+
+def test_a_huge_ado_repository_falls_back_to_downloading_the_flagged_folder(monkeypatch, tmp_path):
+    import subprocess
+    monkeypatch.setattr(sn.subprocess, "run", lambda command, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(command, 600)))
+    monkeypatch.setattr(sn.shutil, "which", lambda name: "/usr/bin/git")
+    monkeypatch.setattr(sn, "_git_auth_env", lambda *a: {})
+    monkeypatch.setattr(sn, "git_credential", lambda *a: ("Basic x", "store"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    seen = []
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def urlopen(request, timeout, context):
+        seen.append(request.full_url)
+        if "scopePath" in request.full_url:
+            return Response(json.dumps({"value": [{"path": "/force-app/classes", "isFolder": True}, {"path": "/force-app/classes/A.cls"}, {"path": "/force-app/classes/B.cls"}]}).encode())
+        return Response(b"public class A {}")
+    monkeypatch.setattr(sn.urllib.request, "urlopen", urlopen)
+    target = {"scm": "azure-devops", "clone_url": "https://dev.azure.com/o/p/_git/r", "web_url": "u", "branch": "feat/x", "organization": "o"}
+    out = sn.checkout_repository(target, str(tmp_path / "co"), "force-app/classes/A.cls")
+    assert (tmp_path / "co/force-app/classes/A.cls").read_text() == "public class A {}" and (tmp_path / "co/force-app/classes/B.cls").exists()
+    assert out == str(tmp_path / "co") and all("versionDescriptor.version=feat%2Fx" in url for url in seen)

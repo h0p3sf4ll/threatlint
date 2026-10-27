@@ -54,7 +54,7 @@ When a Parameter Store name is unset, that credential is not read from Parameter
 | Semgrep CE and the Pro engine | `python3 -m pip install semgrep` (or `brew install semgrep`), `semgrep login`, `semgrep install-semgrep-pro` | `semgrep --version` |
 | AWS IAM Identity Center | `threatlint aws login` | `aws sts get-caller-identity --profile appsec` |
 | ServiceNow OAuth client (**required**) | `threatlint setup` | `threatlint setup --check` |
-| Azure DevOps PAT, Code: Read (**required**) | `threatlint ado login --organization <your-ado-org>` | `threatlint ado status` |
+| Azure DevOps PAT, Code: Read (**required**; one per organization) | `threatlint ado login --organization <your-ado-org>` (repeat for each organization) | `threatlint ado status` |
 | Semgrep API token (**required**) | `threatlint semgrep login` | `threatlint semgrep status` |
 | GitHub, for GitHub-hosted AVITs only | `gh auth login` | `gh auth status` |
 
@@ -94,7 +94,7 @@ flowchart TD
     F --> G["threatlint avit resolve"]
     G --> H{"Disposition"}
     H -- "TRUE POSITIVE" --> T["Attach Word report. Work note: 'True positive, see attached report.' AVIT stays open."]
-    H -- AMBIGUOUS --> N["Nothing changes"]
+    H -- AMBIGUOUS --> N["Attach Word report. Work note: 'Ambiguous, see attached report.' AVIT stays open."]
     H -- "FALSE POSITIVE" --> P["Attach Word report. Close (state 3 / substate 3). Work note: 'Closed by Threatlint as a false positive, see attached report.'"]
     P --> S["Semgrep: ignore the matching open finding as false_positive"]
     S --> R{"SAST or Secrets?"}
@@ -128,6 +128,16 @@ agent triages and which Semgrep product is tuned.
   (`{Project}/{Repository}`), asks Azure DevOps for that GUID's current name, and clones that instead.
   For example, `pepgpt-workflow-api` was renamed to `pepgpt-pro-api`. Semgrep matching keeps using
   the original project name, which is what Semgrep still calls it.
+- **Very large repositories:** if the clone takes longer than `THREATLINT_CLONE_TIMEOUT` (default 600 s),
+  Azure DevOps AVITs fall back to downloading only the flagged file's folder through the Items API, from
+  the same branch. GitHub falls back to a blobless sparse checkout. The reviewer is told only that folder
+  is available.
+- **Several Azure DevOps organizations:** one PAT is saved per organization
+  (`threatlint ado login --organization <org>`, repeated). Each clone uses its own organization's PAT, then
+  `az login`.
+- **Ambiguous verdicts** attach the report with the work note "Ambiguous, see attached report. Left open
+  pending the evidence the report names." The state is unchanged. `threatlint avit note <AVIT> --message …`
+  adds a work note only, for example when an AVIT cannot be reviewed because its repository no longer exists.
 - The clone is shallow and single-branch. Credentials go to git through `GIT_CONFIG_*` environment
   variables, never on the command line or in `.git/config`.
 

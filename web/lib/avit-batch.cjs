@@ -6,7 +6,7 @@
  *   2. `threatlint avit checkout` – its repository and branch, from the AVIT fields
  *   3. the Findings triage agent, with the selected model, against that checkout
  *   4. the report, written as Markdown and Word (secrets found in the flagged files are redacted first)
- *   5. `threatlint avit resolve`  – attach the Word report; close a false positive and tune Semgrep;
+ *   5. `threatlint avit resolve`  – attach the Word report; close a false positive and tune Semgrep; note an ambiguous one;
  *                                   leave a true positive open with a work note; deletes the checkout
  * ServiceNow, Git, and Semgrep work goes through the Python CLI so the Workbench and `/fp-review` behave
  * identically. Each AVIT gets its own report and its own closure; one AVIT failing does not stop the rest.
@@ -176,7 +176,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       step('reported', count ? `Report written (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report written', { disposition });
       if (!report.docxPath) return step('error', 'The Word report could not be generated (install python-docx for THREATLINT_PYTHON); nothing was attached or closed', { disposition, done: true });
 
-      step('resolving', disposition === 'FALSE POSITIVE' ? 'Attaching the report, closing the AVIT, and tuning Semgrep' : disposition === 'TRUE POSITIVE' ? 'Attaching the report and adding the true-positive work note' : 'No change for this disposition');
+      step('resolving', disposition === 'FALSE POSITIVE' ? 'Attaching the report, closing the AVIT, and tuning Semgrep' : disposition === 'TRUE POSITIVE' ? 'Attaching the report and adding the true-positive work note' : disposition === 'AMBIGUOUS' ? 'Attaching the report and adding the ambiguous work note (it stays open)' : 'No change for this disposition');
       // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
       const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath, '--checkout', repo, '--yes', ...profile], { env });
       const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);

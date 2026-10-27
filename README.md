@@ -475,7 +475,8 @@ label. The flow is:
        optional `keyring` package is installed (macOS Keychain or Windows Credential Manager).
      - Without `keyring`, it saves to `~/.threatlint/ado.json` (`%USERPROFILE%\.threatlint\ado.json`
        on Windows), readable only by you.
-     - `threatlint ado status` shows where the PAT comes from, and `threatlint ado logout` removes it.
+     - One PAT is kept per organization; run `threatlint ado login --organization <org>` once for each. Each clone uses its own organization's PAT, then `az login`.
+     - `threatlint ado status` lists the organizations and where each PAT comes from; `threatlint ado logout [--organization <org>]` removes one or all.
      - `THREATLINT_ADO_PAT`, `AZURE_DEVOPS_EXT_PAT`, or `az login` also work.
      - If none is configured, `avit checkout` offers the PAT setup interactively. The Workbench's
        *Settings → Azure DevOps* section saves it the same way.
@@ -493,7 +494,7 @@ label. The flow is:
        ±3 lines, and the same rule for Code. SAST AVITs are ignored in Semgrep Code, SCA AVITs in Supply
        Chain, and Secrets AVITs in Semgrep Secrets. The token comes from `/<your-prefix>/semgrep-token`, or
        `SEMGREP_APP_TOKEN`.
-   - **AMBIGUOUS:** nothing changes.
+   - **AMBIGUOUS:** the Word report is attached with the work note "Ambiguous, see attached report. Left open pending the evidence the report names." The state is unchanged.
 
 The OAuth client needs write access to `sn_vul_app_vulnerable_item` and `sys_attachment`, and read
 access to `sys_documentation` and `sysrule_view`.

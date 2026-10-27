@@ -1,8 +1,11 @@
 """Azure DevOps personal access token setup so `threatlint avit checkout` can clone ADO repositories.
 
-  threatlint ado login [--organization ORG] [--pat-stdin]   validate and save a PAT (Code: Read)
-  threatlint ado status                                     show where the PAT comes from
-  threatlint ado logout                                     remove the saved PAT
+  threatlint ado login --organization ORG [--pat-stdin]     validate and save a PAT (Code: Read) for ORG
+  threatlint ado status                                     list organizations with a PAT and their source
+  threatlint ado logout [--organization ORG]                remove one organization's PAT, or all
+
+One PAT is kept per organization, so several organizations can be cloned from; each clone uses the PAT
+saved for its own organization, falling back to an `az login` token for an organization with none.
 
 The PAT is validated against the organization before it is saved. It is kept in the OS credential
 store when the optional `keyring` package is installed (macOS Keychain, Windows Credential Manager,
@@ -75,53 +78,95 @@ def validate(organization: str, pat: str, opener=_urlopen) -> None:
         raise AdoLoginError(f"Could not reach Azure DevOps: {exc.reason}") from exc
 
 
-def save(organization: str, pat: str) -> str:
-    """Store the PAT; returns where it was stored."""
-    keyring = _keyring()
-    if keyring:
-        keyring.set_password(KEYRING_SERVICE, "pat", pat)
-        record = {"organization": organization, "storage": "keyring"}
-    else:
-        record = {"organization": organization, "storage": "file", "pat": pat}
+def _read_store() -> dict[str, dict]:
+    """Saved PAT records keyed by lower-case organization. Reads the older single-PAT file as one entry."""
+    try:
+        data = json.loads(store_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if isinstance(data.get("organizations"), dict):
+        return {key: value for key, value in data["organizations"].items() if isinstance(value, dict)}
+    if data.get("storage"):  # single-PAT format; its keyring entry is under the username "pat"
+        return {str(data.get("organization") or "").lower(): {**data, "keyring_user": "pat"}}
+    return {}
+
+
+def _write_store(records: dict[str, dict]) -> None:
     path = store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # Create with owner-only permissions; on Windows the user profile ACL already limits access.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    # Also keep the single-PAT keys at the top level, so older Threatlint copies (e.g. a desktop app not yet
+    # updated) still find their PAT and do not rewrite the file in the old format.
+    legacy = next((record for record in records.values() if record.get("keyring_user") in ("pat", None)), next(iter(records.values()), {}))
+    top = {key: legacy[key] for key in ("organization", "storage", "pat") if key in legacy}
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(record, handle)
+        json.dump({**top, "organizations": records}, handle)
     if os.name != "nt":
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    return "the OS credential store" if keyring else str(path)
 
 
-def load() -> tuple[str, str]:
-    """(PAT, source label); ('', '') when none is configured."""
-    for name in ENV_NAMES:
-        if os.environ.get(name):
-            return os.environ[name], name
-    try:
-        record = json.loads(store_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "", ""
+def save(organization: str, pat: str) -> str:
+    """Store the PAT for this organization, alongside PATs for other organizations; returns where it was stored."""
+    records, keyring, key = _read_store(), _keyring(), organization.lower()
+    if keyring:
+        keyring.set_password(KEYRING_SERVICE, f"pat:{key}", pat)
+        records[key] = {"organization": organization, "storage": "keyring", "keyring_user": f"pat:{key}"}
+    else:
+        records[key] = {"organization": organization, "storage": "file", "pat": pat}
+    _write_store(records)
+    return "the OS credential store" if keyring else str(store_path())
+
+
+def _secret(record: dict) -> tuple[str, str]:
     if record.get("storage") == "keyring":
         keyring = _keyring()
-        pat = keyring.get_password(KEYRING_SERVICE, "pat") if keyring else None
+        pat = keyring.get_password(KEYRING_SERVICE, record.get("keyring_user") or "pat") if keyring else None
         return (pat, "OS credential store") if pat else ("", "")
     return (record.get("pat", ""), str(store_path())) if record.get("pat") else ("", "")
 
 
-def logout() -> bool:
-    keyring = _keyring()
-    if keyring:
-        try:
-            keyring.delete_password(KEYRING_SERVICE, "pat")
-        except Exception:  # noqa: BLE001 - nothing stored
-            pass
-    try:
-        store_path().unlink()
-        return True
-    except FileNotFoundError:
+def organizations() -> list[str]:
+    """Organizations with a saved PAT (never the PATs themselves)."""
+    return [record.get("organization") or key for key, record in _read_store().items()]
+
+
+def load(organization: str = "") -> tuple[str, str]:
+    """(PAT, source label); ('', '') when none is configured.
+
+    An environment PAT wins. Otherwise the PAT saved for `organization`; with no organization given, the
+    only (or first) saved PAT. A PAT saved for one organization is never returned for another."""
+    for name in ENV_NAMES:
+        if os.environ.get(name):
+            return os.environ[name], name
+    records = _read_store()
+    if organization:
+        record = records.get(organization.lower())
+        return _secret(record) if record else ("", "")
+    return next((found for found in map(_secret, records.values()) if found[0]), ("", ""))
+
+
+def logout(organization: str = "") -> bool:
+    """Remove the PAT for one organization, or every saved PAT."""
+    records, keyring = _read_store(), _keyring()
+    key = organization.lower()
+    targets = ({key: records[key]} if key in records else {}) if organization else records
+    if not targets:
         return False
+    for record in targets.values():
+        if keyring and record.get("storage") == "keyring":
+            try:
+                keyring.delete_password(KEYRING_SERVICE, record.get("keyring_user") or "pat")
+            except Exception:  # noqa: BLE001 - nothing stored
+                pass
+    remaining = {name: value for name, value in records.items() if name not in targets}
+    if remaining:
+        _write_store(remaining)
+    else:
+        store_path().unlink(missing_ok=True)
+    return True
 
 
 def prompt_and_save(organization: str = "", pat_from_stdin: bool = False) -> str:
@@ -149,20 +194,25 @@ def add_ado_parser(sub) -> None:
     login = actions.add_parser("login", help="Validate and save a PAT (Code: Read)")
     login.add_argument("--organization", default="", help="Azure DevOps organization, e.g. contoso")
     login.add_argument("--pat-stdin", action="store_true", help="Read the PAT from standard input instead of prompting")
-    actions.add_parser("status", help="Show where the PAT comes from (never prints it)")
-    actions.add_parser("logout", help="Remove the saved PAT")
+    actions.add_parser("status", help="Show which organizations have a PAT and where each comes from (never prints them)")
+    logout_parser = actions.add_parser("logout", help="Remove a saved PAT (one organization, or all)")
+    logout_parser.add_argument("--organization", default="", help="Remove only this organization's PAT")
 
 
 def cmd_ado(args) -> int:
     try:
         if args.ado_command == "login":
-            where = prompt_and_save(args.organization.strip(), args.pat_stdin)
-            print(f"✓ PAT validated and saved to {where}")
+            organization = args.organization.strip()
+            where = prompt_and_save(organization, args.pat_stdin)
+            print(f"✓ PAT validated and saved to {where}{' for ' + organization if organization else ''}")
         elif args.ado_command == "status":
-            _pat, source = load()
-            print(f"Azure DevOps PAT: {source}" if source else "No Azure DevOps PAT configured. Run `threatlint ado login`.")
+            env = next((name for name in ENV_NAMES if os.environ.get(name)), "")
+            saved = [(org, load(org)[1]) for org in organizations()]
+            lines = ([f"Azure DevOps PAT: {env} (all organizations)"] if env else []) + [f"Azure DevOps PAT: {source} · {org}" for org, source in saved if source]
+            print("\n".join(lines) if lines else "No Azure DevOps PAT configured. Run `threatlint ado login --organization <org>`.")
         else:
-            print("✓ Saved PAT removed" if logout() else "No saved PAT")
+            organization = args.organization.strip()
+            print(("✓ Saved PAT removed" + (f" for {organization}" if organization else "")) if logout(organization) else "No saved PAT")
         return 0
     except (AdoLoginError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

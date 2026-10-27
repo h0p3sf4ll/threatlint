@@ -76,7 +76,9 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   const cli = (...args) => (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(...args);
   const adoStatus = async () => {
     const result = await cli(['ado', 'status']);
-    return { hasPat: /^Azure DevOps PAT: /m.test(result.stdout), source: /^Azure DevOps PAT: (.+)$/m.exec(result.stdout)?.[1] || null };
+    // One line per organization with a saved PAT (sources only, never the PAT).
+    const sources = [...result.stdout.matchAll(/^Azure DevOps PAT: (.+)$/gm)].map(match => match[1]);
+    return { hasPat: sources.length > 0, source: sources.join('; ') || null };
   };
   app.get('/api/ado/settings', handle(adoStatus));
   app.post('/api/ado/settings', handle(async req => {

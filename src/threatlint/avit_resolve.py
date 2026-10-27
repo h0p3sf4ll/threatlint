@@ -7,7 +7,9 @@ from the report the FP reviewer wrote and then:
   FALSE POSITIVE -> attaches the Word report, closes the AVIT (state 3, substate 3) with the work note
                     "Closed by Threatlint as a false positive, see attached report.", and ignores the matching
                     open Semgrep finding(s) as false_positive (Code for SAST, Supply Chain for SCA, Secrets for Secrets).
-  AMBIGUOUS      -> changes nothing.
+  AMBIGUOUS      -> attaches the Word report and adds the work note "Ambiguous, see attached report.
+                    Left open pending the evidence the report names."; stays open, Semgrep untouched.
+`threatlint avit note <AVIT> --message TEXT` adds a work note only (e.g. why an AVIT could not be reviewed).
 Every write needs confirmation (--yes for non-interactive use). Tokens are used per run and never stored.
 """
 
@@ -28,6 +30,7 @@ from threatlint import servicenow as sn
 # Work notes, exactly as AppSec asked for them.
 CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
 TRUE_POSITIVE_COMMENT = "True positive, see attached report."
+AMBIGUOUS_COMMENT = "Ambiguous, see attached report. Left open pending the evidence the report names."
 # AVR Closed state / substate for a false positive (override with THREATLINT_SNOW_FP_STATE / _SUBSTATE).
 CLOSED_STATE, CLOSED_SUBSTATE = "3", "3"
 # semgrep.dev serves the same API as semgrep.app and resolves on networks that block semgrep.app.
@@ -217,6 +220,11 @@ def add_resolve_parsers(actions) -> None:
     semgrep.add_argument("--line", type=int, help="Flagged line, when the AVIT does not record one (narrows the match to ±3 lines)")
     semgrep.add_argument("--semgrep-deployment", help="Semgrep deployment ID or slug (default: THREATLINT_SEMGREP_DEPLOYMENT, org.json, or the token's only deployment)")
     sn.add_avit_arguments(semgrep)
+    note = actions.add_parser("note", help="Add a work note to an AVIT without changing its state (e.g. why it could not be reviewed)")
+    note.add_argument("number", metavar="AVIT")
+    note.add_argument("--message", required=True, help="Work note text")
+    note.add_argument("--yes", action="store_true", help="Apply without prompting")
+    sn.add_avit_arguments(note)
     resolve = actions.add_parser("resolve", help="Upload the FP report to the AVIT; close it and tune Semgrep when it is a false positive")
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
@@ -259,13 +267,13 @@ def cmd_checkout(args) -> int:
             raise
         # Other tools (DAST, pen test, …) often name no repository; the review uses the AVIT's own evidence.
         raise ResolveError(f"{avit} names no repository ({exc}); triage it from the AVIT evidence without a checkout") from exc
-    if target["scm"] == "azure-devops" and not sn.git_credential("azure-devops")[0] and sys.stdin.isatty():
+    if target["scm"] == "azure-devops" and not sn.git_credential("azure-devops", target["organization"])[0] and sys.stdin.isatty():
         from threatlint.ado_login import prompt_and_save  # noqa: PLC0415
         print("  No Azure DevOps credential found; set up a PAT now (Code: Read).")
         print(f"  ✓ Saved to {prompt_and_save(target['organization'])}")
     print(f"  {avit} : {target['web_url']} · branch {target['branch'] or '(default)'} · {record['context'].get('file_path', 'no file path')}")
     try:
-        sn.checkout_repository(target, args.dir)
+        sn.checkout_repository(target, args.dir, record["context"].get("file_path", ""))
     except sn.ServiceNowError as exc:
         renamed = renamed_ado_repository(target, args) if target["scm"] == "azure-devops" and "not found" in str(exc) else None
         if not renamed:
@@ -274,7 +282,7 @@ def cmd_checkout(args) -> int:
         quote = lambda value: urllib.parse.quote(value, safe="")
         url = f"https://dev.azure.com/{quote(target['organization'])}/{quote(target['project'])}/_git/{quote(renamed)}"
         target = {**target, "clone_url": url, "web_url": url, "renamed_to": renamed}
-        sn.checkout_repository(target, args.dir)
+        sn.checkout_repository(target, args.dir, record["context"].get("file_path", ""))
     print(f"✓ Checked out to {args.dir}")
     print(json.dumps({"avit": avit, "kind": kind, "checkout": os.path.abspath(args.dir), **target, **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
     return 0
@@ -298,7 +306,7 @@ def renamed_ado_repository(target: dict[str, str], args) -> str | None:
         return None
     url = str((project.get("project") or project).get("url", ""))
     match = re.search(r"/_apis/git/repositories/([0-9a-f-]{36})", url)
-    pat, _source = load()
+    pat, _source = load(target["organization"])
     if not match or not pat:
         return None
     request = urllib.request.Request(f"https://dev.azure.com/{urllib.parse.quote(target['organization'])}/_apis/git/repositories/{match.group(1)}?api-version=7.1",
@@ -311,15 +319,26 @@ def renamed_ado_repository(target: dict[str, str], args) -> str | None:
     return name if isinstance(name, str) and name and name != target["name"] else None
 
 
+def cmd_note(args) -> int:
+    [avit] = sn.parse_avit_numbers(args.number)
+    message = args.message.strip()
+    if not message or len(message) > 4000:
+        raise ResolveError("The work note must be 1 to 4000 characters")
+    instance, token = _session(args)
+    record = _record(instance, token, avit)
+    _confirm(f"{avit}: add the work note?", args.yes)
+    update(instance, token, record["sys_id"], {"work_notes": message})
+    print(f"  ✓ Work note added to {avit}; state unchanged")
+    return 0
+
+
 def cmd_resolve(args) -> int:
     [avit] = sn.parse_avit_numbers(args.number)
     with open(os.path.expanduser(args.report), encoding="utf-8") as handle:
         markdown = handle.read()
     verdict = verdict_for(markdown, avit)
     print(f"  {avit} : {verdict['id']} · {verdict['disposition']} ({verdict['confidence'] or 'confidence not stated'}) · {verdict['title']}")
-    if verdict["disposition"] == "AMBIGUOUS":
-        print("  AMBIGUOUS: nothing changed; resolve the blocking evidence in the report first.")
-        return 0
+    ambiguous = verdict["disposition"] == "AMBIGUOUS"
     instance, token = _session(args)
     record = _record(instance, token, avit)
     code_security = sn.in_code_security_view(record)
@@ -328,7 +347,9 @@ def cmd_resolve(args) -> int:
     # One attachment: the Word report. The Markdown is only read here for the verdict.
     with open(os.path.expanduser(args.docx), "rb") as handle:
         files = [(f"{avit}-threatlint-fp-review.docx", handle.read(), _DOCX)]
-    action = "attach the report and close it as Closed / False Positive" if false_positive else "attach the report and add a TRUE POSITIVE work note (it stays open)"
+    action = ("attach the report and close it as Closed / False Positive" if false_positive
+              else "attach the report and add an AMBIGUOUS work note (it stays open)" if ambiguous
+              else "attach the report and add a TRUE POSITIVE work note (it stays open)")
     _confirm(f"{avit}: {action}?", args.yes)
     # Attach first so the AVIT is never closed without its evidence.
     existing = attachment_names(instance, token, record["sys_id"])
@@ -338,7 +359,7 @@ def cmd_resolve(args) -> int:
             continue
         attach(instance, token, record["sys_id"], name, content, content_type)
         print(f"  ✓ Attached {name}")
-    note = CLOSING_COMMENT if false_positive else TRUE_POSITIVE_COMMENT
+    note = CLOSING_COMMENT if false_positive else AMBIGUOUS_COMMENT if ambiguous else TRUE_POSITIVE_COMMENT
     values = {"work_notes": note}
     if false_positive:
         state, substate = _false_positive_choices()

@@ -73,7 +73,7 @@ For each AVIT number:
      - The AVIT is closed (state 3 / substate 3) with the work note "Closed by Threatlint as a false positive, see attached report."
      - For SAST and Secrets, the rule is replaced in Semgrep by the validated tuned rule.
      - Matching open Semgrep findings are ignored as `false_positive`: Semgrep Code for SAST, Supply Chain for SCA, and Secrets for Secrets.
-   - **AMBIGUOUS:** nothing changes.
+   - **AMBIGUOUS:** the Word report is attached with the work note "Ambiguous, see attached report. Left open pending the evidence the report names." The AVIT stays open and Semgrep is unchanged.
 6. **Clean up.** `threatlint avit resolve --checkout $WORK/repo` deletes the checkout itself once validation finishes. Then delete `$WORK`, including both report files. Never leave a copy of the AVIT repository on the local drive, because it may contain live secrets.
 
 Rule tuning runs once per rule. If a Semgrep policy already runs `<rule>.tuned`, later false positives of that rule are only triaged, not tuned again.

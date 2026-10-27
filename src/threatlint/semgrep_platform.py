@@ -186,9 +186,14 @@ def _semgrep(args: list[str], cwd: str | None = None, token: str | None = None) 
     return subprocess.run([semgrep, *args], cwd=cwd, capture_output=True, text=True, timeout=600, check=False, env=env)
 
 
+def _pro_flags() -> list[str]:
+    """Pro engine flags when it is installed (--pro also enables the Pro-only languages: Apex, Elixir, ...)."""
+    return ["--pro"] if _semgrep(["scan", "--pro", "--version"]).returncode == 0 else []
+
+
 def _matches(config: str, target: str, line: int | None, exact: bool = False) -> list[int]:
     """Lines the config reports in target: all of them, or those within 3 lines of `line` (exactly `line` when exact)."""
-    pro = ["--pro"] if _semgrep(["scan", "--pro", "--version"]).returncode == 0 else []
+    pro = _pro_flags()
     result = _semgrep(["scan", *pro, "--config", config, "--json", "--quiet", "--metrics", "off", target])
     try:
         found = [item["start"]["line"] for item in json.loads(result.stdout).get("results", [])]
@@ -250,7 +255,7 @@ def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, li
     suffix = Path(target_file).suffix or ".txt"
     fixture_path = work / f"{rule_id}{suffix}"
     fixture_path.write_text(fixtures, encoding="utf-8")
-    test = _semgrep(["--test", "--metrics", "off", str(work)])
+    test = _semgrep(["--test", *_pro_flags(), "--metrics", "off", str(work)])
     if test.returncode != 0 or "All tests passed" not in test.stdout:
         raise SemgrepError(f"Tuned rule fixtures did not pass: {(test.stdout or test.stderr).strip()[-400:]}")
     expect, avoid = _fixture_lines(fixtures, rule_id)

@@ -32,7 +32,7 @@ MAX_AVITS = 50
 # AVIT numbers are "AVIT" plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
 _AVIT_PATTERN = re.compile(r"AVIT\d{7,15}")
 AVIT_EXAMPLE = "AVIT000000095938462"
-_HTTP_TIMEOUT_S = 30
+_HTTP_TIMEOUT_S = 120
 _AWS_TIMEOUT_S = 60
 _MAX_FIELD_CHARS = 4000
 _INLINE_LIMIT = 160
@@ -398,7 +398,9 @@ def _context_lines(item: dict) -> list[str]:
 _ADO_ORG = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,49}")
 _ADO_NAME = re.compile(r"[^/\\:*?\"<>|#%&\x00-\x1f]{1,64}")
 _GH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
-_BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9_./+@-]{1,250}(?<![./])")
+# git check-ref-format rules: no leading "-", "..", "//", "@{", control/space characters or ~^:?*[\\, and no
+# trailing "/", "." or ".lock". git runs without a shell, so "#", ";" and non-ASCII letters are safe.
+_BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)(?!.*\.lock$)[^\x00-\x20\x7f~^:?*\[\\]{1,250}(?<![./])")
 
 
 def repository_target(context: dict[str, str]) -> dict[str, str]:
@@ -436,31 +438,101 @@ def _run_tool(name: str, args: list[str], timeout: int = 60) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def git_credential(scm: str) -> tuple[str, str]:
-    """(Authorization header value, source) for one clone; ('', '') means fall back to git's own credential helper."""
+def git_credential(scm: str, organization: str = "") -> tuple[str, str]:
+    """(Authorization header value, source) for one clone; ('', '') means fall back to git's own credential helper.
+
+    Azure DevOps uses the PAT saved for the clone's organization; an organization with none uses the `az login`
+    token (which spans every organization the user can reach) when one is available."""
     if scm == "azure-devops":
         from threatlint.ado_login import load  # noqa: PLC0415
-        pat, source = load()
+        pat, source = load(organization) if organization else load()
         if pat:
             return "Basic " + base64.b64encode(f":{pat}".encode()).decode(), source
         # Microsoft Entra token for Azure DevOps from the user's `az login` session.
         token = _run_tool("az", ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798", "--query", "accessToken", "-o", "tsv"])
-        return (f"Bearer {token}", "az login") if token else ("", "")
+        if token:
+            return f"Bearer {token}", "az login"
+        pat, source = load()  # last resort: another organization's PAT (works when the PAT spans organizations)
+        return ("Basic " + base64.b64encode(f":{pat}".encode()).decode(), source) if pat else ("", "")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or _run_tool("gh", ["auth", "token"], 30)
     return ("Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode(), "GitHub") if token else ("", "")
 
 
-def _git_auth_env(scm: str) -> dict[str, str]:
+def _git_auth_env(scm: str, organization: str = "") -> dict[str, str]:
     """Credentials as GIT_CONFIG_* variables, kept out of argv and .git/config."""
-    header, _source = git_credential(scm)
+    header, _source = git_credential(scm, organization)
     if not header:
         return {}
     host = "https://dev.azure.com/" if scm == "azure-devops" else "https://github.com/"
     return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"http.{host}.extraHeader", "GIT_CONFIG_VALUE_0": f"Authorization: {header}", "GIT_TERMINAL_PROMPT": "0"}
 
 
-def checkout_repository(target: dict[str, str], directory: str) -> str:
-    """Shallow, single-branch clone of the AVIT's repository and branch; returns the checkout path."""
+_CLONE_TIMEOUT_S = int(os.environ.get("THREATLINT_CLONE_TIMEOUT", "600"))
+
+
+def _sparse_clone(git: str, target: dict[str, str], directory: str, file_path: str, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """Blobless, depth-1 clone that checks out only the flagged file's directory (for very large repositories)."""
+    branch = ["--branch", target["branch"]] if target["branch"] else []
+    steps = [[git, "clone", "--filter=blob:none", "--depth", "1", "--single-branch", "--no-tags", "--no-checkout", *branch, "--", target["clone_url"], directory],
+             [git, "-C", directory, "sparse-checkout", "set", "--no-cone", f"/{os.path.dirname(file_path.lstrip('/'))}/" if os.path.dirname(file_path) else f"/{file_path.lstrip('/')}"],
+             [git, "-C", directory, "read-tree", "-mu", "HEAD"]]
+    for step in steps:
+        try:
+            result = subprocess.run(step, capture_output=True, text=True, timeout=1800, check=False, env=env)
+        except subprocess.TimeoutExpired:
+            shutil.rmtree(directory, ignore_errors=True)
+            raise ServiceNowError(f"Even a sparse checkout of {target['web_url']} exceeded 30 minutes; the repository is too large to clone from here") from None
+        if result.returncode != 0:
+            return result
+    return result
+
+
+def _ado_folder_download(target: dict[str, str], directory: str, file_path: str) -> None:
+    """Fetch only the flagged file's folder (one level) through the Azure DevOps Items API, for repositories too
+    large to clone. The result is a plain directory with no .git; only the files the review needs are present."""
+    import json as _json  # noqa: PLC0415
+    header, _source = git_credential("azure-devops", target.get("organization", ""))
+    if not header:
+        raise ServiceNowError("No Azure DevOps credential for the folder download")
+    match = re.match(r"https://dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/?#]+)", target["clone_url"])
+    if not match:
+        raise ServiceNowError("Folder download needs an Azure DevOps repository URL")
+    org, project, repo = match.groups()
+    folder = "/" + os.path.dirname(file_path.lstrip("/"))
+    base = f"https://dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}/items"
+    version = {"versionDescriptor.version": target["branch"], "versionDescriptor.versionType": "branch"} if target["branch"] else {}
+    from threatlint.tls import ssl_context  # noqa: PLC0415
+
+    def get(params: dict, accept: str) -> bytes:
+        query = urllib.parse.urlencode({**params, **version, "api-version": "7.1"})
+        request = urllib.request.Request(f"{base}?{query}", headers={"Authorization": header, "Accept": accept})
+        with urllib.request.urlopen(request, timeout=120, context=ssl_context()) as response:  # noqa: S310 - fixed HTTPS host
+            return response.read()
+
+    try:
+        listing = _json.loads(get({"scopePath": folder, "recursionLevel": "OneLevel"}, "application/json")).get("value", [])
+        files = [item["path"] for item in listing if not item.get("isFolder") and item.get("path")]
+        if len(files) > 400:
+            files = [path for path in files if path.lstrip("/") == file_path.lstrip("/")] + files[:399]
+        for path in dict.fromkeys(files):
+            destination = os.path.join(directory, path.lstrip("/"))
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            with open(destination, "wb") as handle:
+                handle.write(get({"path": path, "download": "true"}, "application/octet-stream"))
+    except (urllib.error.URLError, ValueError, OSError) as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise ServiceNowError(f"Folder download from {target['web_url']} failed: {exc}") from exc
+    if not os.path.exists(os.path.join(directory, file_path.lstrip("/"))):
+        shutil.rmtree(directory, ignore_errors=True)
+        raise ServiceNowError(f"The flagged file {file_path} is not on branch {target['branch'] or '(default)'}")
+
+
+def checkout_repository(target: dict[str, str], directory: str, file_path: str = "") -> str:
+    """Shallow, single-branch clone of the AVIT's repository and branch; returns the checkout path.
+
+    When the clone exceeds THREATLINT_CLONE_TIMEOUT (default 600 s) and the AVIT names a file, Azure DevOps
+    repositories fall back to downloading only that file's folder through the Items API (GitHub: a blobless
+    sparse checkout), so very large repositories can still be reviewed."""
     if os.path.exists(directory) and os.listdir(directory):
         raise ServiceNowError(f"Checkout directory is not empty: {directory}")
     git = shutil.which("git")
@@ -469,8 +541,19 @@ def checkout_repository(target: dict[str, str], directory: str) -> str:
     command = [git, "clone", "--depth", "50", "--single-branch", "--no-tags", *(["--branch", target["branch"]] if target["branch"] else []),
                "--", target["clone_url"], directory]
     from threatlint.tls import tool_env  # noqa: PLC0415
-    env = {**tool_env(), "GIT_LFS_SKIP_SMUDGE": "1", **_git_auth_env(target["scm"])}
-    result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False, env=env)
+    env = {**tool_env(), "GIT_LFS_SKIP_SMUDGE": "1", **_git_auth_env(target["scm"], target.get("organization", ""))}
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=_CLONE_TIMEOUT_S, check=False, env=env)
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(directory, ignore_errors=True)
+        if not file_path:
+            raise ServiceNowError(f"Cloning {target['web_url']} exceeded {_CLONE_TIMEOUT_S} s and the AVIT names no file for a sparse checkout") from None
+        if target["scm"] == "azure-devops":
+            print(f"  ! Full clone exceeded {_CLONE_TIMEOUT_S} s; downloading only {os.path.dirname(file_path) or file_path} through the Azure DevOps API")
+            _ado_folder_download(target, directory, file_path)
+            return directory
+        print(f"  ! Full clone exceeded {_CLONE_TIMEOUT_S} s; retrying as a sparse checkout of {os.path.dirname(file_path) or file_path}")
+        result = _sparse_clone(git, target, directory, file_path, env)
     if result.returncode != 0:
         reason = (result.stderr.strip().splitlines() or ["git clone failed"])[-1][:300]
         hint = (" Run `threatlint ado login` to save a PAT with Code: Read (or set THREATLINT_ADO_PAT / run `az login`)." if target["scm"] == "azure-devops" else " Run `gh auth login` or set GH_TOKEN.")
@@ -579,9 +662,9 @@ def add_avit_parser(sub) -> None:
 
 def cmd_avit(args) -> int:
     import sys
-    if args.avit_command in ("checkout", "resolve", "semgrep"):
+    if args.avit_command in ("checkout", "resolve", "semgrep", "note"):
         from threatlint import avit_resolve
-        handler = {"checkout": avit_resolve.cmd_checkout, "resolve": avit_resolve.cmd_resolve, "semgrep": avit_resolve.cmd_semgrep}[args.avit_command]
+        handler = {"checkout": avit_resolve.cmd_checkout, "resolve": avit_resolve.cmd_resolve, "semgrep": avit_resolve.cmd_semgrep, "note": avit_resolve.cmd_note}[args.avit_command]
         return avit_resolve.run(handler, args)
     try:
         args.avit = [*args.numbers, *args.avit]

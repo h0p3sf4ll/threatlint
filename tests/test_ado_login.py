@@ -76,3 +76,52 @@ def test_pat_stdin_for_non_interactive_setup(monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO(PAT + "\n"))
     monkeypatch.setattr(ado_login, "validate", lambda org, pat: None)
     assert ado_login.prompt_and_save("contoso", pat_from_stdin=True) == str(ado_login.store_path())
+
+
+def test_a_pat_for_one_organization_is_not_sent_to_another(monkeypatch, tmp_path):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    for name in ado_login.ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(ado_login, "_keyring", lambda: None)
+    ado_login.save("contoso", PAT)
+    monkeypatch.setattr(servicenow, "_run_tool", lambda name, args, timeout=60: "entra-token")
+    assert servicenow.git_credential("azure-devops", "contoso")[1] == str(ado_login.store_path())
+    assert servicenow.git_credential("azure-devops", "fabrikam") == ("Bearer entra-token", "az login")
+    monkeypatch.setattr(servicenow, "_run_tool", lambda name, args, timeout=60: "")
+    assert servicenow.git_credential("azure-devops", "fabrikam")[1] == str(ado_login.store_path())
+
+
+def test_pats_for_several_organizations_are_kept_side_by_side(monkeypatch):
+    store = {}
+    keyring = type("K", (), {"set_password": staticmethod(lambda s, u, p: store.update({(s, u): p})),
+                             "get_password": staticmethod(lambda s, u: store.get((s, u))),
+                             "delete_password": staticmethod(lambda s, u: store.pop((s, u)))})
+    monkeypatch.setattr(ado_login, "_keyring", lambda: keyring)
+    ado_login.save("contoso", PAT)
+    ado_login.save("Fabrikam", "f" * 52)
+    assert sorted(ado_login.organizations()) == ["Fabrikam", "contoso"]
+    assert ado_login.load("contoso")[0] == PAT and ado_login.load("fabrikam")[0] == "f" * 52
+    assert ado_login.load("other") == ("", "")
+    monkeypatch.setattr(servicenow, "_run_tool", lambda *a, **k: "")
+    assert servicenow.git_credential("azure-devops", "Fabrikam")[0].endswith(__import__("base64").b64encode(b":" + b"f" * 52).decode())
+    assert ado_login.logout("contoso") and ado_login.organizations() == ["Fabrikam"]
+
+
+def test_the_single_pat_file_from_earlier_versions_still_loads(monkeypatch):
+    store = {(ado_login.KEYRING_SERVICE, "pat"): PAT}
+    keyring = type("K", (), {"set_password": staticmethod(lambda s, u, p: store.update({(s, u): p})),
+                             "get_password": staticmethod(lambda s, u: store.get((s, u))), "delete_password": staticmethod(lambda s, u: store.pop((s, u)))})
+    monkeypatch.setattr(ado_login, "_keyring", lambda: keyring)
+    ado_login.store_path().parent.mkdir(parents=True, exist_ok=True)
+    ado_login.store_path().write_text('{"organization": "contoso", "storage": "keyring"}')
+    assert ado_login.load("contoso") == (PAT, "OS credential store")
+    ado_login.save("fabrikam", "f" * 52)
+    assert ado_login.load("contoso")[0] == PAT and ado_login.load("fabrikam")[0] == "f" * 52
+
+
+def test_the_store_stays_readable_by_older_single_pat_versions(monkeypatch):
+    ado_login.save("contoso", PAT)
+    ado_login.save("fabrikam", "f" * 52)
+    data = __import__("json").loads(ado_login.store_path().read_text())
+    assert data["organization"] == "contoso" and data["pat"] == PAT, "old readers still find a PAT at the top level"
+    assert set(data["organizations"]) == {"contoso", "fabrikam"}
