@@ -241,7 +241,9 @@ def _fixture_lines(fixtures: str, rule_id: str) -> tuple[list[int], list[int]]:
     for number, line in enumerate(lines, start=1):
         marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
         if marker and rule_id in [part.strip() for part in marker.group(2).split(",")]:
-            (expect if marker.group(1) == "ruleid" else avoid).append(number + 1)
+            # As in `semgrep --test`: a marker alone on its line annotates the next line; a trailing marker, its own line.
+            own_line = bool(line[:marker.start()].strip(" \t/#*-<!"))
+            (expect if marker.group(1) == "ruleid" else avoid).append(number if own_line else number + 1)
     return expect, avoid
 
 
@@ -373,6 +375,32 @@ def _exclusions(rule_yaml: str) -> list[str]:
     return [line.strip() for line in rule_yaml.splitlines() if _EXCLUSION.match(line)]
 
 
+def merge_exclusions(proposed: str, live: str) -> str | None:
+    """The proposed rule plus any one-line exclusions the live tuned rule has and the proposal lacks.
+
+    Two reviewers may extend the same live rule at once; the second proposal then lacks the first one's new
+    exclusion. Each missing line is inserted after the line that precedes it in the live rule. Only one-line
+    exclusions are merged; anything else returns None so the proposal is rejected rather than guessed at.
+    The merged rule still goes through the full proof gate."""
+    proposed_lines, live_lines = proposed.splitlines(), live.splitlines()
+    present = {line.strip() for line in proposed_lines}
+    merged = list(proposed_lines)
+    for index, line in enumerate(live_lines):
+        if not _EXCLUSION.match(line) or line.strip() in present:
+            continue
+        following = live_lines[index + 1] if index + 1 < len(live_lines) else ""
+        indent = len(line) - len(line.lstrip())
+        if following.strip() and len(following) - len(following.lstrip()) > indent and not following.lstrip().startswith("- "):
+            return None   # a multi-line exclusion block
+        anchor = next((live_lines[j].strip() for j in range(index - 1, -1, -1) if live_lines[j].strip() in present), None)
+        if anchor is None:
+            return None
+        position = next(i for i, text in enumerate(merged) if text.strip() == anchor)
+        merged.insert(position + 1, line)
+        present.add(line.strip())
+    return "\n".join(merged) + "\n"
+
+
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
               out=sys.stdout) -> list[dict]:
     """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
@@ -402,6 +430,11 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
                            "a false positive on a SAST or Secrets rule must come with a proven tuned rule")
     if live_yaml:
         missing = [item for item in _exclusions(live_yaml) if item not in _exclusions(rule_yaml)]
+        if missing:
+            merged = merge_exclusions(rule_yaml, live_yaml)
+            if merged and not [item for item in _exclusions(live_yaml) if item not in _exclusions(merged)]:
+                print(f"  ! The live tuned rule gained {len(missing)} exclusion(s) since this proposal was written; merged them in (the proof gate still runs)", file=out)
+                rule_yaml, missing = merged, []
         if missing:
             raise SemgrepError(f"The proposed rule drops {len(missing)} exclusion(s) the live tuned rule has (e.g. `{missing[0][:80]}`); "
                                "it must extend the live tuned rule, not replace it")

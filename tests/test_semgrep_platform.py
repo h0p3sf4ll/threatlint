@@ -116,8 +116,16 @@ def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipp
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: live)
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [10])
     monkeypatch.setattr(sp, "replace_in_policies", lambda *a: pytest.fail("an extended rule keeps its policy entries"))
-    with pytest.raises(sp.SemgrepError, match="drops 1 exclusion"):
+    seen = {}
+    class Stop(Exception):
+        pass
+    def validate(rule, *a, **k):
+        seen["rule"] = rule
+        raise Stop
+    monkeypatch.setattr(sp, "validate_tuned_rule", validate)
+    with pytest.raises(Stop):
         sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w"))
+    assert "pattern-not: eval('1')" in seen["rule"], "the live rule's exclusion is merged into the proposal before the proof gate"
 
 
 def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(monkeypatch, tmp_path):
@@ -127,3 +135,18 @@ def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(m
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("nothing to publish"))
     assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []
+
+
+def test_concurrent_extensions_of_one_live_rule_are_merged():
+    base = "rules:\n- id: r.tuned\n  patterns:\n  - pattern-regex: class\n  - pattern-not-regex: A\n  message: m\n"
+    live = base.replace("  - pattern-not-regex: A\n", "  - pattern-not-regex: A\n  - pattern-not-regex: FROM_LIVE\n")
+    proposed = base.replace("  - pattern-not-regex: A\n", "  - pattern-not-regex: A\n  - pattern-not-regex: MINE\n")
+    merged = sp.merge_exclusions(proposed, live)
+    assert "FROM_LIVE" in merged and "MINE" in merged and merged.index("- pattern-not-regex: A") < merged.index("FROM_LIVE")
+    multi = live.replace("  - pattern-not-regex: FROM_LIVE\n", "  - pattern-not-inside: |\n      class X {}\n")
+    assert sp.merge_exclusions(proposed, multi) is None
+
+
+def test_fixture_markers_on_the_line_before_or_at_the_end_of_the_line():
+    fixtures = "// ruleid: r.tuned\nclass A {\nclass B { // ok: r.tuned\n# ok: r.tuned\nclass C {\n"
+    assert sp._fixture_lines(fixtures, "r.tuned") == ([2], [3, 5])

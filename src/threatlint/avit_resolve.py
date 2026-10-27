@@ -282,6 +282,18 @@ def cmd_checkout(args) -> int:
     try:
         sn.checkout_repository(target, args.dir, record["context"].get("file_path", ""))
     except sn.ServiceNowError as exc:
+        if target["branch"] and re.search(r"Remote branch .* not found", str(exc)):
+            # The AVIT's branch was deleted; the flagged file may still be on the default branch.
+            print(f"  ! Branch {target['branch']} no longer exists; checking out the default branch instead")
+            shutil.rmtree(args.dir, ignore_errors=True)
+            target = {**target, "branch_deleted": target["branch"], "branch": ""}
+            sn.checkout_repository(target, args.dir, record["context"].get("file_path", ""))
+            path = record["context"].get("file_path", "")
+            if path and not os.path.exists(os.path.join(args.dir, path)):
+                raise ResolveError(f"Branch {target['branch_deleted']} was deleted and {path} is not on the default branch") from exc
+            print(f"✓ Checked out to {args.dir}")
+            print(json.dumps({"avit": avit, "kind": kind, "checkout": os.path.abspath(args.dir), **target, **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
+            return 0
         renamed = renamed_ado_repository(target, args) if target["scm"] == "azure-devops" and "not found" in str(exc) else None
         if not renamed:
             raise
