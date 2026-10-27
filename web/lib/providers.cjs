@@ -11,6 +11,9 @@ const TOOL_SCHEMAS = [
 
 const DEFAULT_ITERATIONS = 80;
 const MAX_OUTPUT_TOKENS = 16000;
+// Claude responses are streamed, so they can use a larger cap; on current models thinking counts toward it.
+const CLAUDE_MAX_OUTPUT_TOKENS = 64000;
+const MAX_CONTINUATIONS = 3;
 
 function checkAbort(signal) { if (signal?.aborted) throw new Error('Cancelled'); }
 
@@ -90,18 +93,29 @@ async function runClaude({ systemPrompt, userMessage, history = [], model, key, 
   // ANTHROPIC_AUTH_TOKEN-style credentials are bearer tokens; baseUrl is ANTHROPIC_BASE_URL when a gateway is configured.
   const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key }), ...(baseUrl ? { baseURL: baseUrl } : {}) });
   const messages = [...history, { role: 'user', content: userMessage }];
+  const partial = [];   // report text from turns cut off at the output limit, joined with the final turn
+  let continuations = 0;
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const stream = client.messages.stream({ model, max_tokens: MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
+    const stream = client.messages.stream({ model, max_tokens: CLAUDE_MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
     for await (const event of stream) {
       checkAbort(signal);
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') onEvent({ type: 'text_chunk', text: event.delta.text });
     }
     const final = await stream.finalMessage();
-    if (final.stop_reason === 'max_tokens') throw new Error('Model output limit reached; the report is incomplete');
+    const text = final.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
+    if (final.stop_reason === 'max_tokens') {
+      // A long report ran past the cap: keep what was written and ask for the rest, rather than discarding it.
+      if (++continuations > MAX_CONTINUATIONS) throw new Error('Model output limit reached; the report is incomplete');
+      const content = final.content.filter(block => block.type !== 'tool_use');
+      if (content.length) messages.push({ role: 'assistant', content });
+      partial.push(text);
+      messages.push({ role: 'user', content: 'Your response was cut off at the output limit. Continue exactly where it stopped, without repeating anything already written.' });
+      continue;
+    }
     messages.push({ role: 'assistant', content: final.content });
-    if (final.stop_reason !== 'tool_use') return final.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
+    if (final.stop_reason !== 'tool_use') return [...partial, text].join('');
     const results = [];
     for (const block of final.content.filter(block => block.type === 'tool_use')) {
       checkAbort(signal);

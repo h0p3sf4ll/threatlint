@@ -701,6 +701,7 @@
       const o = event.outcome;
       if (o.attached) list.append(el('li', '', 'Word report attached to the AVIT'));
       if (o.closed === true) list.append(el('li', '', 'Closed as false positive with the Threatlint work note'));
+      if (event.disposition === 'FALSE POSITIVE' && o.closed && !o.tuned && (o.semgrep || []).some(line => /Rule not tuned/.test(line))) list.append(el('li', 'fp-status-warn', 'The rule was not tuned, so this false positive can recur. Re-run this AVIT, or run `threatlint avit semgrep <AVIT> --report <report> --checkout <dir>`.'));
       if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
       if (o.leftOpen) list.append(el('li', '', 'Left open with “True positive, see attached report.”'));
       for (const line of o.semgrep || []) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));

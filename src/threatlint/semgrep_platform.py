@@ -136,22 +136,41 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ssl_context()))
 
 
+_HTTP_TIMEOUT_S = int(os.environ.get("THREATLINT_SEMGREP_TIMEOUT", "120"))
+_RETRIES = 3
+
+
 def call(path: str, token: str, *, method: str = "GET", body: dict | None = None) -> dict:
-    request = urllib.request.Request(f"{API}{path}", method=method, data=json.dumps(body).encode() if body is not None else None,
-                                     headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
-                                              **({"Content-Type": "application/json"} if body is not None else {})})
-    try:
-        with _OPENER.open(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS host
-            raw = response.read()
-            return json.loads(raw) if raw.strip() else {}
-    except urllib.error.HTTPError as exc:
-        hint = {401: " Check the Semgrep token.", 403: " The token needs the Web API scope.", 404: " Not found.",
-                410: " This deployment uses the newer policies model."}.get(exc.code, "")
-        raise SemgrepError(f"Semgrep returned HTTP {exc.code} for {path.split('?')[0]}.{hint}") from exc
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        raise SemgrepError(f"Semgrep request failed: {exc}") from exc
+    """One Semgrep API call. Timeouts and 5xx/429 answers are retried with backoff: policy and publish calls on a
+    large deployment are slow, and a transient failure must not leave a proven tuning undeployed."""
+    import time  # noqa: PLC0415
+    for attempt in range(1, _RETRIES + 1):
+        request = urllib.request.Request(f"{API}{path}", method=method, data=json.dumps(body).encode() if body is not None else None,
+                                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
+                                                  **({"Content-Type": "application/json"} if body is not None else {})})
+        try:
+            with _OPENER.open(request, timeout=_HTTP_TIMEOUT_S) as response:  # noqa: S310 - fixed HTTPS host
+                raw = response.read()
+                return json.loads(raw) if raw.strip() else {}
+        except urllib.error.HTTPError as exc:
+            if exc.code in (429, 500, 502, 503, 504) and attempt < _RETRIES:
+                time.sleep(2 ** attempt)
+                continue
+            raise _http_error(exc, path) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt < _RETRIES:
+                time.sleep(2 ** attempt)
+                continue
+            raise SemgrepError(f"Semgrep request failed after {_RETRIES} attempts: {exc}") from exc
+        except ValueError as exc:
+            raise SemgrepError(f"Semgrep request failed: {exc}") from exc
+    raise SemgrepError("Semgrep request failed")
 
 
+def _http_error(exc, path: str) -> SemgrepError:
+    hint = {401: " Check the Semgrep token.", 403: " The token needs the Web API scope.", 404: " Not found.",
+            410: " This deployment uses the newer policies model."}.get(exc.code, "")
+    return SemgrepError(f"Semgrep returned HTTP {exc.code} for {path.split('?')[0]}.{hint}")
 
 
 def deployment(token: str, wanted: str = "") -> dict:
@@ -206,7 +225,7 @@ def original_rule_yaml(rule: str, token: str) -> str:
     """The original rule's YAML, including Pro rules, fetched with the org token (`r/<rule>` needs a login)."""
     request = urllib.request.Request(f"{API}/c/r/{urllib.parse.quote(rule, safe='.')}", headers={"Authorization": f"Bearer {token}"})
     try:
-        with _OPENER.open(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS host
+        with _OPENER.open(request, timeout=_HTTP_TIMEOUT_S) as response:  # noqa: S310 - fixed HTTPS host
             text = response.read().decode("utf-8")
     except (urllib.error.URLError, TimeoutError) as exc:
         raise SemgrepError(f"Could not download {rule}: {exc}") from exc
@@ -346,17 +365,46 @@ def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> lis
     return found
 
 
+_EXCLUSION = re.compile(r"^\s*-?\s*(pattern-not(?:-inside|-regex)?|metavariable-regex|pattern-sanitizers|regex):")
+
+
+def _exclusions(rule_yaml: str) -> list[str]:
+    """Exclusion and sanitizer lines of a rule, compared without indentation."""
+    return [line.strip() for line in rule_yaml.splitlines() if _EXCLUSION.match(line)]
+
+
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
               out=sys.stdout) -> list[dict]:
-    # One tuning per rule: a later false positive of the same rule is triaged, not tuned again.
+    """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
+
+    - Not yet tuned: the reviewer's tuned rule (a clone of the original plus the narrowest exclusion) is proven,
+      published org-private as `<deployment>.<rule>.tuned`, enabled where the original ran, and the original disabled.
+    - Already tuned: if the live tuned rule no longer reports the flagged line, nothing changes. Otherwise the
+      reviewer's rule must extend the live tuned rule (keep every exclusion it has), is proven the same way, and is
+      republished under the same id, so the policies pick up the new version."""
     already = existing_tuning(token, dep, kind, original_rule)
+    live_yaml = ""
     if already:
-        for item in already:
-            print(f"  ✓ {item['policy']} already runs the tuned rule {item['tuned']} ({item['mode']}); not tuning again", file=out)
-        return []
+        live_path = already[0]["tuned"]
+        live_yaml = original_rule_yaml(live_path, token)
+        work = Path(tempfile.mkdtemp(prefix="threatlint-live-"))
+        (work / "live.yaml").write_text(live_yaml, encoding="utf-8")
+        still = target_file and os.path.exists(target_file) and line and _matches(str(work / "live.yaml"), target_file, line, exact=True)
+        shutil.rmtree(work, ignore_errors=True)
+        if not still:
+            for item in already:
+                print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)
+            return []
+        print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)
     rule_yaml = tuned_rule_from_report(report)
     if not rule_yaml:
-        raise SemgrepError("The report has no `**Tuned rule**:` block, so the rule was not changed")
+        raise SemgrepError("The report has no `**Tuned rule**:` block, so the rule was not changed. Re-run the review: "
+                           "a false positive on a SAST or Secrets rule must come with a proven tuned rule")
+    if live_yaml:
+        missing = [item for item in _exclusions(live_yaml) if item not in _exclusions(rule_yaml)]
+        if missing:
+            raise SemgrepError(f"The proposed rule drops {len(missing)} exclusion(s) the live tuned rule has (e.g. `{missing[0][:80]}`); "
+                               "it must extend the live tuned rule, not replace it")
     fixtures = ""
     fixture = re.search(r"\*\*Tuned rule fixtures\*\*:\s*\n+```\w*\n(.*?)\n```", report, re.S)
     if fixture:
@@ -365,12 +413,22 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     where = "and no longer reports the flagged line" if checked["dropped"] else "(the flagged line needs interfile analysis, so the fixtures are the proof)"
     print(f"  ✓ Tuned rule {checked['id']} is valid, keeps every true-positive fixture, drops the false-positive shape{', matches the original rule,' if checked['original_checked'] else ''} {where}", file=out)
     tuned_path = publish(checked["path"], token)
-    print(f"  ✓ Published org-private rule {tuned_path}", file=out)
+    print(f"  ✓ Published org-private rule {tuned_path}{' (new version of the live tuned rule)' if live_yaml else ''}", file=out)
+    if live_yaml:
+        return [{"policy": item["policy"], "tuned": tuned_path, "mode": item["mode"], "original": original_rule} for item in already]
     changes = replace_in_policies(token, dep, kind, original_rule, tuned_path)
     for change in changes:
         print(f"  ✓ {change['policy']}: {change['tuned']} enabled ({change['mode']}); {change['original']} disabled", file=out)
     print("    Rollback: set the original rule back to its mode and disable the tuned rule in the same policy.", file=out)
     return changes
+
+
+def rule_base(rule: str, kind: str, token: str, dep: dict) -> tuple[str, str]:
+    """(YAML, label) the reviewer should tune: the live tuned rule when one is deployed, else the original."""
+    live = existing_tuning(token, dep, kind, rule) if kind in PRODUCT_POLICY else []
+    if live:
+        return original_rule_yaml(live[0]["tuned"], token), f"live tuned rule {live[0]['tuned']} (extend it; keep every exclusion it has)"
+    return original_rule_yaml(rule, token), f"original rule {rule}"
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -402,6 +460,11 @@ def add_semgrep_parser(sub) -> None:
     login_parser.add_argument("--deployment", default="", help="Deployment slug when the token can access several")
     login_parser.add_argument("--aws-profile", help="Read the token from Parameter Store with this AWS profile first")
     actions.add_parser("status", help="Show where the token comes from (never prints it)")
+    base = actions.add_parser("rule-base", help="Write the rule a false-positive tuning should start from (live tuned rule, else the original)")
+    base.add_argument("rule", help="Semgrep rule ID from the AVIT")
+    base.add_argument("--kind", choices=sorted(PRODUCT_POLICY), required=True)
+    base.add_argument("-o", "--output", required=True, help="File to write the rule YAML to")
+    base.add_argument("--aws-profile")
     actions.add_parser("logout", help="Remove the saved token")
 
 
@@ -409,6 +472,11 @@ def cmd_semgrep(args) -> int:
     try:
         if args.semgrep_command == "login":
             print(f"✓ Semgrep token validated and saved to {login('', args.deployment, args.token_stdin, args.aws_profile)}")
+        elif args.semgrep_command == "rule-base":
+            token = resolve_token(args.aws_profile)[0]
+            yaml_text, label = rule_base(args.rule, args.kind, token, deployment(token))
+            Path(args.output).write_text(f"# Tuning base: {label}\n{yaml_text}", encoding="utf-8")
+            print(f"✓ Wrote the {label} to {args.output}")
         elif args.semgrep_command == "status":
             try:
                 _token, source = resolve_token()

@@ -67,7 +67,7 @@ For each AVIT number:
    ```
    threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx $WORK/<AVIT>-threatlint-fp-review.docx --checkout $WORK/repo --yes
    ```
-   For a SAST or Secrets false positive, the agent's report must contain a `**Tuned rule**:` YAML block, with the original rule plus the narrowest `pattern-not` or sanitizer, and a `**Tuned rule fixtures**:` block with at least one `// ruleid: <id>.tuned` (true-positive shape) and one `// ok: <id>.tuned` (false-positive shape) line. Write the full YAML and fixtures, never a placeholder. With a token, `curl -H "Authorization: Bearer $SEMGREP_APP_TOKEN" https://semgrep.dev/c/r/<rule-id>` returns the original Pro rule. Threatlint publishes and swaps the rule without human approval, but only when the fixtures pass `semgrep --test`, the original rule fires on every fixture line, and the tuned rule no longer reports the flagged line.
+   For a SAST or Secrets false positive, the agent's report **must** contain a `**Tuned rule**:` YAML block and a `**Tuned rule fixtures**:` block, so the false positive does not come back. First run `threatlint semgrep rule-base <rule> --kind <sast|secrets> -o $WORK/rule-base.yaml`: it writes the live tuned rule when one is already deployed, otherwise the original rule. Give that file to the agent. The tuned rule is that complete rule, keeping every exclusion it already has, plus the narrowest `pattern-not`, `pattern-not-inside`, `pattern-not-regex` or sanitizer, with id `<rule>.tuned`. The fixtures need at least one `ruleid: <rule>.tuned` line (a true-positive shape) and one `ok: <rule>.tuned` line (this false-positive shape). Write the full YAML and fixtures, never a placeholder. Threatlint publishes the rule without human approval, but only when the fixtures pass `semgrep --test`, the original rule fires on every fixture line, and the tuned rule no longer reports the flagged line. When the rule was already tuned and the live tuned rule still reports this line, the new version must keep all its exclusions and is republished under the same id.
    - **TRUE POSITIVE:** only the Word report is attached, as `<AVIT>-threatlint-fp-review.docx`, with the work note "True positive, see attached report." The AVIT stays open.
    - **FALSE POSITIVE:**
      - The report is attached first.
@@ -77,7 +77,7 @@ For each AVIT number:
    - **AMBIGUOUS:** the Word report is attached with the work note "Ambiguous, see attached report. Left open pending the evidence the report names." The AVIT stays open and Semgrep is unchanged.
 6. **Clean up.** `threatlint avit resolve --checkout $WORK/repo` deletes the checkout itself once validation finishes. Then delete `$WORK`, including both report files. Never leave a copy of the AVIT repository on the local drive, because it may contain live secrets.
 
-Rule tuning runs once per rule. If a Semgrep policy already runs `<rule>.tuned`, later false positives of that rule are only triaged, not tuned again.
+Every SAST or Secrets false positive ends with the rule no longer reporting it. Either the live tuned rule already drops that shape, or the tuned rule is created, or extended and republished.
 
 ## SCTASK workflow
 

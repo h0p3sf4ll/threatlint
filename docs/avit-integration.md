@@ -157,6 +157,16 @@ agent triages and which Semgrep product is tuned.
   substate.
 
 **Semgrep tuning.** This runs only for a SAST or Secrets false positive, and needs both the reviewer's
+- **Every SAST or Secrets false positive ends with the rule no longer reporting it.** Rule tuning is never
+  silently skipped. When a rule is already tuned, Threatlint checks the live tuned rule against the flagged
+  line. If it no longer reports the line, nothing changes. Otherwise the reviewer's rule must extend the live
+  tuned rule, keeping every exclusion it has, and passes the same proof gate. It is then republished under the
+  same id, so every policy picks up the new version. `threatlint semgrep rule-base <rule> --kind <sast|secrets>
+  -o FILE` writes the rule to start from (the live tuned rule, else the original). The reviewer always tunes
+  real rule source.
+- `threatlint avit semgrep <AVIT> --report <md> --checkout <dir>` tunes the rule for an AVIT that is already
+  closed, for example when an earlier tuning failed.
+- Semgrep API calls wait up to 120 s (`THREATLINT_SEMGREP_TIMEOUT`) and retry timeouts and 5xx answers.
 `**Tuned rule**:` block and the AVIT checkout.
 - **Once per rule:** if any policy of the product already runs an enabled `<rule-name>.tuned`, Threatlint
   stops here. That covers a similar false positive that was already tuned.

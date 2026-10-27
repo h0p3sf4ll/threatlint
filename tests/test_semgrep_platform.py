@@ -94,7 +94,7 @@ def test_tuning_requires_fixtures(monkeypatch, tmp_path):
     with pytest.raises(sp.SemgrepError, match="fixtures"):
         sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1})
 
-def test_a_rule_already_tuned_is_not_tuned_again(monkeypatch, tmp_path):
+def test_a_rule_whose_live_tuning_covers_the_line_is_not_tuned_again(monkeypatch, tmp_path):
     monkeypatch.undo()
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
     def call(path, token, *, method="GET", body=None):
@@ -103,5 +103,27 @@ def test_a_rule_already_tuned_is_not_tuned_again(monkeypatch, tmp_path):
             return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SAST"}]}
         return {"rules": [{"path": "example_org.js.rule.tuned", "policyMode": "MODE_COMMENT"}, {"path": "js.rule", "policyMode": "MODE_DISABLED"}]}
     monkeypatch.setattr(sp, "call", call)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: example_org.js.rule.tuned\n")
+    monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "validate_tuned_rule", lambda *a: pytest.fail("must not re-validate or publish"))
     assert sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []
+
+
+def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipped(monkeypatch, tmp_path):
+    (tmp_path / "a.js").write_text("x")
+    live = "rules:\n  - id: example_org.js.rule.tuned\n    patterns:\n      - pattern: eval(...)\n      - pattern-not: eval('1')\n"
+    monkeypatch.setattr(sp, "existing_tuning", lambda *a: [{"policy": "Global", "tuned": "example_org.js.rule.tuned", "mode": "MODE_COMMENT"}])
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: live)
+    monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [10])
+    monkeypatch.setattr(sp, "replace_in_policies", lambda *a: pytest.fail("an extended rule keeps its policy entries"))
+    with pytest.raises(sp.SemgrepError, match="drops 1 exclusion"):
+        sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w"))
+
+
+def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(monkeypatch, tmp_path):
+    (tmp_path / "a.js").write_text("x")
+    monkeypatch.setattr(sp, "existing_tuning", lambda *a: [{"policy": "Global", "tuned": "example_org.js.rule.tuned", "mode": "MODE_COMMENT"}])
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: x\n")
+    monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
+    monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("nothing to publish"))
+    assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []
