@@ -239,7 +239,7 @@ def _fixture_lines(fixtures: str, rule_id: str) -> tuple[list[int], list[int]]:
     expect, avoid = [], []
     lines = fixtures.splitlines()
     for number, line in enumerate(lines, start=1):
-        marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
+        marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+?)\s*(?:-->|\*/)?\s*$", line) or re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
         if marker and rule_id in [part.strip() for part in marker.group(2).split(",")]:
             # As in `semgrep --test`: a marker alone on its line annotates the next line; a trailing marker, its own line.
             own_line = bool(line[:marker.start()].strip(" \t/#*-<!"))
@@ -276,6 +276,13 @@ def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, li
     suffix = Path(target_file).suffix or ".txt"
     fixture_path = work / f"{rule_id}{suffix}"
     fixture_path.write_text(fixtures, encoding="utf-8")
+    # A rule whose `paths.include` names a file (e.g. Info.plist) only scans files with that name, so the
+    # original-rule check scans a copy of the fixture under the flagged file's own name.
+    scan_path = fixture_path
+    if re.search(r"(?m)^\s+include:\s*\n\s+-\s*['\"]?[^*\n]+['\"]?\s*$", rule_yaml) and target_file:
+        scan_path = work / "as-named" / Path(target_file).name
+        scan_path.parent.mkdir()
+        scan_path.write_text(fixtures, encoding="utf-8")
     test = _semgrep(["--test", *_pro_flags(), "--metrics", "off", str(work)])
     if test.returncode != 0 or "All tests passed" not in test.stdout:
         raise SemgrepError(f"Tuned rule fixtures did not pass: {(test.stdout or test.stderr).strip()[-400:]}")
@@ -287,7 +294,7 @@ def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, li
         original_path = work / "original" / "original.yaml"
         original_path.parent.mkdir()
         original_path.write_text(original_text, encoding="utf-8")
-        hits = set(_matches(str(original_path), str(fixture_path), None))
+        hits = set(_matches(str(original_path), str(scan_path), None))
         if not set(avoid) <= hits:
             raise SemgrepError("The original rule does not fire on the `ok` fixture lines, so they do not model this false positive")
         if not set(expect) <= hits:

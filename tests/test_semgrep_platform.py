@@ -150,3 +150,8 @@ def test_concurrent_extensions_of_one_live_rule_are_merged():
 def test_fixture_markers_on_the_line_before_or_at_the_end_of_the_line():
     fixtures = "// ruleid: r.tuned\nclass A {\nclass B { // ok: r.tuned\n# ok: r.tuned\nclass C {\n"
     assert sp._fixture_lines(fixtures, "r.tuned") == ([2], [3, 5])
+
+
+def test_fixture_markers_inside_xml_and_block_comments():
+    fixtures = "<!-- ruleid: r.tuned -->\n<key>A</key>\n<!-- ok: r.tuned -->\n<key>B</key>\n/* ok: r.tuned */\nx\n"
+    assert sp._fixture_lines(fixtures, "r.tuned") == ([2], [4, 6])
