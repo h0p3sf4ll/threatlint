@@ -273,13 +273,15 @@ def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, li
         raise SemgrepError(f"Tuned rule is not valid: {(check.stderr or check.stdout).strip()[-300:]}")
     if not fixtures:
         raise SemgrepError("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
-    suffix = Path(target_file).suffix or ".txt"
+    suffix = Path(target_file).suffix or (".dockerfile" if Path(target_file).name.lower().startswith("dockerfile") else ".txt")
     fixture_path = work / f"{rule_id}{suffix}"
     fixture_path.write_text(fixtures, encoding="utf-8")
     # A rule whose `paths.include` names a file (e.g. Info.plist) only scans files with that name, so the
     # original-rule check scans a copy of the fixture under the flagged file's own name.
     scan_path = fixture_path
-    if re.search(r"(?m)^\s+include:\s*\n\s+-\s*['\"]?[^*\n]+['\"]?\s*$", rule_yaml) and target_file:
+    # Files such as Dockerfile have no extension; Semgrep recognises them by name, so scan a copy named like the target.
+    named_only = bool(target_file) and not Path(target_file).suffix
+    if (named_only or re.search(r"(?m)^\s+include:\s*\n\s+-\s*['\"]?[^*\n]+['\"]?\s*$", rule_yaml)) and target_file:
         scan_path = work / "as-named" / Path(target_file).name
         scan_path.parent.mkdir()
         scan_path.write_text(fixtures, encoding="utf-8")
