@@ -199,6 +199,7 @@ review* page and the CLI all accept it:
 threatlint sctask avits SCTASK14120565          # the AVIT numbers in the description, in order
 # … review and resolve each AVIT as usual …
 threatlint sctask close SCTASK14120565 --yes    # attach each report, comment, close
+threatlint sctask close SCTASK14120565 --yes --leave-open   # same, but comment that it can be closed and leave it open
 ```
 
 - Each AVIT is reviewed and resolved on its own, exactly as when entered directly. Any verdict the

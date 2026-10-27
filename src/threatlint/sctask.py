@@ -81,9 +81,12 @@ def _download(instance: str, token: str, attachment_id: str) -> bytes:
         return response.read()
 
 
-def closing_comment(outcomes: list[dict]) -> str:
+def closing_comment(outcomes: list[dict], leave_open: bool = False) -> str:
     """The comment developers see on the task: one line per AVIT, then where to go next."""
-    lines = ["Closed by Threatlint. Each AVIT below was reviewed against its repository and branch, and its report is attached to this task.", ""]
+    decided = all(item["disposition"] in ("TRUE POSITIVE", "FALSE POSITIVE") for item in outcomes)
+    opening = ("Reviewed by Threatlint. Every AVIT below has a decision, so this task can be closed." if leave_open and decided
+               else "Reviewed by Threatlint." if leave_open else "Closed by Threatlint.")
+    lines = [f"{opening} Each AVIT below was reviewed against its repository and branch, and its report is attached to this task.", ""]
     for item in outcomes:
         lines.append({
             "FALSE POSITIVE": f"- {item['avit']}: false positive, closed by Threatlint.",
@@ -99,17 +102,18 @@ def closing_comment(outcomes: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout) -> dict:
+def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, leave_open: bool = False) -> dict:
     task = fetch(instance, token, number)
     avits = avits_in(task.get("description", "") + "\n" + task.get("short_description", ""))
     if not avits:
         raise ResolveError(f"{number} names no AVIT numbers in its description")
     outcomes = [avit_outcome(instance, token, avit) for avit in avits]
     decided = all(item["disposition"] in ("TRUE POSITIVE", "FALSE POSITIVE") for item in outcomes)
+    closing = decided and not leave_open
     for item in outcomes:
         print(f"  {item['avit']} : {item['disposition']}{' · report attached' if item['report'] else ' · no Threatlint report'}", file=out)
     _confirm(f"{number}: attach {sum(bool(item['report']) for item in outcomes)} report(s), add the comment"
-             f"{' and close the task' if decided else ' (left open: not every AVIT is decided)'}?", yes)
+             f"{' and close the task' if closing else ' (the task stays open)'}?", yes)
     from threatlint.avit_resolve import _DOCX  # noqa: PLC0415
     query = urllib.parse.urlencode({"sysparm_query": f"table_name={TABLE}^table_sys_id={task['sys_id']}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
     existing = {row.get("file_name") for row in sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result", [])}
@@ -121,18 +125,18 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout) -> 
         sn._request_json(f"{instance}/api/now/attachment/file?{upload}", data=_download(instance, token, item["report"]),
                          headers={**_auth(token), "Content-Type": _DOCX})
         print(f"  ✓ Attached {name}", file=out)
-    comment = closing_comment(outcomes)
+    comment = closing_comment(outcomes, leave_open)
     values = {"comments": comment, "work_notes": comment}
-    if decided:
+    if closing:
         values.update({"state": CLOSED_STATE, "close_notes": comment})
     stored = sn._request_json(f"{instance}/api/now/table/{TABLE}/{task['sys_id']}?sysparm_fields=number,state", method="PATCH",
                               data=json.dumps(values).encode(), headers={**_auth(token), "Content-Type": "application/json"}).get("result", {}) or {}
-    if decided:
+    if closing:
         closed = str(stored.get("state")) == CLOSED_STATE
         print(f"  {'✓ Closed ' + number if closed else '! ServiceNow kept ' + number + ' in state ' + str(stored.get('state'))}", file=out)
     else:
-        print(f"  ✓ Comment added; {number} left open until the remaining AVITs are decided", file=out)
-    return {"sctask": number, "closed": decided, "avits": outcomes}
+        print(f"  ✓ Comment added; {number} left open{' (it can be closed)' if decided else ' until the remaining AVITs are decided'}", file=out)
+    return {"sctask": number, "closed": closing, "avits": outcomes}
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -146,6 +150,7 @@ def add_sctask_parser(sub) -> None:
         sn.add_avit_arguments(action)
         if name == "close":
             action.add_argument("--yes", action="store_true", help="Apply without prompting")
+            action.add_argument("--leave-open", action="store_true", help="Attach the reports and comment that the task can be closed, but do not close it")
 
 
 def cmd_sctask(args) -> int:
@@ -161,7 +166,7 @@ def cmd_sctask(args) -> int:
                 print(avit)
             print(json.dumps({"sctask": numbers[0], "state": task.get("state", ""), "avits": avits}))
             return 0 if avits else 1
-        close(instance, token, numbers[0], args.yes)
+        close(instance, token, numbers[0], args.yes, leave_open=args.leave_open)
         return 0
     except (ResolveError, sn.ServiceNowError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

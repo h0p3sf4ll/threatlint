@@ -38,11 +38,11 @@ class FakeServiceNow:
         raise AssertionError(url)
 
 
-def _run(monkeypatch, notes):
+def _run(monkeypatch, notes, leave_open=False):
     fake = FakeServiceNow(notes)
     monkeypatch.setattr(sn, "_request_json", fake)
     monkeypatch.setattr(sctask, "_download", lambda *a: b"PK-docx")
-    result = sctask.close(INSTANCE, "t", "SCTASK14120565", yes=True, out=io.StringIO())
+    result = sctask.close(INSTANCE, "t", "SCTASK14120565", yes=True, out=io.StringIO(), leave_open=leave_open)
     patch = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
     uploads = [u for m, u, _d in fake.calls if "/attachment/file" in u]
     return result, patch, uploads
@@ -60,3 +60,9 @@ def test_task_closes_with_each_report_and_points_developers_at_true_positives(mo
 def test_task_stays_open_while_an_avit_is_undecided(monkeypatch):
     result, patch, _uploads = _run(monkeypatch, {"AVIT000000095891574": ar.CLOSING_COMMENT, "AVIT000000097930184": ar.AMBIGUOUS_COMMENT})
     assert not result["closed"] and "state" not in patch and "could not be decided" in patch["comments"]
+
+
+def test_leave_open_comments_that_the_task_can_be_closed(monkeypatch):
+    result, patch, uploads = _run(monkeypatch, {"AVIT000000095891574": ar.CLOSING_COMMENT, "AVIT000000097930184": ar.CLOSING_COMMENT}, leave_open=True)
+    assert not result["closed"] and "state" not in patch and len(uploads) == 2
+    assert patch["comments"].startswith("Reviewed by Threatlint. Every AVIT below has a decision, so this task can be closed.")
