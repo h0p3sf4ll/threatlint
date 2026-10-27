@@ -153,6 +153,12 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       const checkout = await cli(['avit', 'checkout', avit, ...profile, '--dir', repo], { env, signal });
       // AVITs from other tools often name no repository; review them from the AVIT evidence alone.
       const noRepository = checkout.code !== 0 && /names no repository/.test(`${checkout.stdout}${checkout.stderr}`);
+      if (checkout.code !== 0 && !noRepository && /repository .* not found|not found/i.test(errorOf(checkout))) {
+        // A deleted repository: verified with Azure DevOps by the CLI, then closed with no report.
+        step('resolving', 'Repository not found; confirming it was deleted');
+        const removed = await cli(['avit', 'close-removed', avit, '--yes', ...profile], { env });
+        return step(removed.code === 0 ? 'done' : 'error', removed.code === 0 ? 'Closed: repository removed (no report)' : `${errorOf(checkout)} (${errorOf(removed)})`, { disposition: removed.code === 0 ? 'REPO REMOVED' : undefined, done: true });
+      }
       if (checkout.code !== 0 && !noRepository) return step('error', errorOf(checkout), { done: true });
       if (noRepository) fs.mkdirSync(repo, { recursive: true });
       let target = {};

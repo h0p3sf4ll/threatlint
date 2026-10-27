@@ -54,6 +54,7 @@ For each AVIT number:
    threatlint avit checkout <AVIT> --dir $WORK/repo
    ```
    - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with `gh auth login` or `GH_TOKEN`.
+   - If the clone fails because the repository is **not found**, run `threatlint avit close-removed <AVIT> --yes`. It confirms with Azure DevOps that the repository was deleted (not renamed or inaccessible), then closes the AVIT with "Closed by Threatlint, repo removed." and no report. If the repository exists but the AVIT's branch was deleted, review the flagged file on the default branch and say so in the report.
    - If `threatlint ado status` shows no PAT and the clone fails, stop. Tell the user to run `threatlint ado login --organization <Organization Name>` in their terminal, then retry.
    - Do not triage against a different branch or a local copy.
    - If `avit checkout` reports that the AVIT names no repository (common for non-CodeSecurity tools), skip the checkout and triage from `$WORK/avit.md` alone.

@@ -135,6 +135,11 @@ agent triages and which Semgrep product is tuned.
 - **Several Azure DevOps organizations:** one PAT is saved per organization
   (`threatlint ado login --organization <org>`, repeated). Each clone uses its own organization's PAT, then
   `az login`.
+- **Deleted repositories:** `threatlint avit close-removed <AVIT>` closes an AVIT whose repository was
+  deleted, with the work note "Closed by Threatlint, repo removed." and no report. It first asks Azure
+  DevOps, using that organization's credential, whether the repository exists under its name or a rename.
+  A failed credential or network error never counts as removal. The Workbench batch does this
+  automatically when a clone fails because the repository is not found.
 - **Ambiguous verdicts** attach the report with the work note "Ambiguous, see attached report. Left open
   pending the evidence the report names." The state is unchanged. `threatlint avit note <AVIT> --message …`
   adds a work note only, for example when an AVIT cannot be reviewed because its repository no longer exists.

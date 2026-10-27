@@ -31,6 +31,7 @@ from threatlint import servicenow as sn
 CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
 TRUE_POSITIVE_COMMENT = "True positive, see attached report."
 AMBIGUOUS_COMMENT = "Ambiguous, see attached report. Left open pending the evidence the report names."
+REPO_REMOVED_COMMENT = "Closed by Threatlint, repo removed."
 # AVR Closed state / substate for a false positive (override with THREATLINT_SNOW_FP_STATE / _SUBSTATE).
 CLOSED_STATE, CLOSED_SUBSTATE = "3", "3"
 # semgrep.dev serves the same API as semgrep.app and resolves on networks that block semgrep.app.
@@ -227,6 +228,10 @@ def add_resolve_parsers(actions) -> None:
     note.add_argument("--message", required=True, help="Work note text")
     note.add_argument("--yes", action="store_true", help="Apply without prompting")
     sn.add_avit_arguments(note)
+    removed = actions.add_parser("close-removed", help="Close an AVIT whose repository was deleted (verified first; no report is attached)")
+    removed.add_argument("number", metavar="AVIT")
+    removed.add_argument("--yes", action="store_true", help="Apply without prompting")
+    sn.add_avit_arguments(removed)
     resolve = actions.add_parser("resolve", help="Upload the FP report to the AVIT; close it and tune Semgrep when it is a false positive")
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
@@ -332,6 +337,50 @@ def cmd_note(args) -> int:
     update(instance, token, record["sys_id"], {"work_notes": message})
     print(f"  ✓ Work note added to {avit}; state unchanged")
     return 0
+
+
+def repository_removed(target: dict[str, str]) -> bool:
+    """True only when Azure DevOps, asked with a working credential for the organization, says the repository
+    does not exist under that name or any rename. A credential or network failure is never taken as removal."""
+    import base64  # noqa: PLC0415
+    from threatlint.tls import ssl_context  # noqa: PLC0415
+    if target.get("scm") != "azure-devops":
+        raise ResolveError("Only Azure DevOps repositories can be checked for removal")
+    header, _source = sn.git_credential("azure-devops", target["organization"])
+    if not header:
+        raise ResolveError(f"No Azure DevOps credential for {target['organization']}; cannot confirm the repository was removed")
+    quote = lambda value: urllib.parse.quote(value, safe="")
+    def get(url: str):
+        request = urllib.request.Request(url, headers={"Authorization": header, "Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=120, context=ssl_context()) as response:  # noqa: S310 - fixed HTTPS host
+            body = response.read()
+        if not body.lstrip().startswith(b"{"):
+            raise ResolveError(f"Azure DevOps did not accept the credential for {target['organization']}; cannot confirm removal")
+        return json.loads(body)
+    try:
+        repos = get(f"https://dev.azure.com/{quote(target['organization'])}/_apis/git/repositories?api-version=7.1").get("value", [])
+    except urllib.error.URLError as exc:
+        raise ResolveError(f"Could not list {target['organization']} repositories: {exc}") from exc
+    if len(repos) == 0:
+        raise ResolveError(f"The credential sees no repositories in {target['organization']}; cannot confirm removal")
+    return not any(repo.get("name", "").lower() == target["name"].lower() for repo in repos)
+
+
+def cmd_close_removed(args) -> int:
+    [avit] = sn.parse_avit_numbers(args.number)
+    instance, token = _session(args)
+    record = _record(instance, token, avit)
+    target = sn.repository_target(record["context"])
+    if not repository_removed(target):
+        raise ResolveError(f"{target['name']} still exists in {target['organization']}; review the AVIT instead of closing it")
+    if renamed_ado_repository(target, args):
+        raise ResolveError(f"{target['name']} was renamed, not removed; review the AVIT on the renamed repository")
+    _confirm(f"{avit}: {target['name']} no longer exists in {target['organization']}. Close the AVIT?", args.yes)
+    state, substate = _false_positive_choices()
+    stored = update(instance, token, record["sys_id"], {"state": state, "work_notes": REPO_REMOVED_COMMENT, "close_notes": REPO_REMOVED_COMMENT})
+    closed = str(stored.get("state")) == str(state)
+    print(f"  {'✓ Closed ' + avit + ': repository ' + target['name'] + ' removed' if closed else '! ServiceNow kept state ' + str(stored.get('state'))}")
+    return 0 if closed else 1
 
 
 def cmd_resolve(args) -> int:

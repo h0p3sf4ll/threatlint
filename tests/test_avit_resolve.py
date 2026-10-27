@@ -351,3 +351,25 @@ def test_a_huge_ado_repository_falls_back_to_downloading_the_flagged_folder(monk
     out = sn.checkout_repository(target, str(tmp_path / "co"), "force-app/classes/A.cls")
     assert (tmp_path / "co/force-app/classes/A.cls").read_text() == "public class A {}" and (tmp_path / "co/force-app/classes/B.cls").exists()
     assert out == str(tmp_path / "co") and all("versionDescriptor.version=feat%2Fx" in url for url in seen)
+
+
+def test_close_removed_closes_only_after_azure_devops_confirms_the_repository_is_gone(monkeypatch):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(sn, "git_credential", lambda *a: ("Basic x", "store"))
+    monkeypatch.setattr(ar, "renamed_ado_repository", lambda *a: None)
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    listing = {"value": [{"name": "other-repo"}]}
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(ar.urllib.request, "urlopen", lambda *a, **k: Response(json.dumps(listing).encode()))
+    args = types.SimpleNamespace(number=AVIT, snow_instance=INSTANCE, aws_profile=None, yes=True)
+    assert ar.cmd_close_removed(args) == 0
+    body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
+    assert body["state"] == "3" and body["work_notes"] == "Closed by Threatlint, repo removed."
+    assert not any("attachment/file" in u for _m, u, _d in fake.calls), "no report is attached"
+    listing["value"].append({"name": "infra-terraform"})
+    with pytest.raises(ar.ResolveError, match="still exists"):
+        ar.cmd_close_removed(args)

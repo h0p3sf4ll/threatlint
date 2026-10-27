@@ -662,9 +662,9 @@ def add_avit_parser(sub) -> None:
 
 def cmd_avit(args) -> int:
     import sys
-    if args.avit_command in ("checkout", "resolve", "semgrep", "note"):
+    if args.avit_command in ("checkout", "resolve", "semgrep", "note", "close-removed"):
         from threatlint import avit_resolve
-        handler = {"checkout": avit_resolve.cmd_checkout, "resolve": avit_resolve.cmd_resolve, "semgrep": avit_resolve.cmd_semgrep, "note": avit_resolve.cmd_note}[args.avit_command]
+        handler = {"checkout": avit_resolve.cmd_checkout, "resolve": avit_resolve.cmd_resolve, "semgrep": avit_resolve.cmd_semgrep, "note": avit_resolve.cmd_note, "close-removed": avit_resolve.cmd_close_removed}[args.avit_command]
         return avit_resolve.run(handler, args)
     try:
         args.avit = [*args.numbers, *args.avit]
