@@ -441,8 +441,12 @@ def cmd_semgrep(args) -> int:
     context = dict(record["context"])
     if args.line:
         context["line"] = str(args.line)
+    markdown = ""
+    if getattr(args, "report", None):
+        with open(os.path.expanduser(args.report), encoding="utf-8") as handle:
+            markdown = handle.read()
     sg_token = semgrep_token(args.aws_profile)
-    dep, matches = semgrep_matches(sg_token, kind, sn.repository_target(context), context, args.semgrep_deployment)
+    dep, matches = semgrep_matches(sg_token, kind, sn.repository_target(context), {**context, "avit": avit}, args.semgrep_deployment, markdown)
     if not matches:
         print(f"  ! No open Semgrep finding matches {context.get('file_path')}{':' + context['line'] if context.get('line') else ''}; Semgrep triage unchanged")
     else:
@@ -450,10 +454,8 @@ def cmd_semgrep(args) -> int:
             print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
         count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT")
         print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive (kept for this fingerprint on later scans and branches)")
-    if getattr(args, "report", None) and kind in ("sast", "secrets"):
+    if markdown and kind in ("sast", "secrets"):
         from threatlint import semgrep_platform as sp  # noqa: PLC0415
-        with open(os.path.expanduser(args.report), encoding="utf-8") as handle:
-            markdown = handle.read()
         path = context.get("file_path", "")
         target_file = os.path.join(args.checkout, path) if getattr(args, "checkout", None) and path else ""
         line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
