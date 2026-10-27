@@ -78,8 +78,15 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     const result = await cli(['ado', 'status']);
     // One line per organization with a saved PAT (sources only, never the PAT).
     const sources = [...result.stdout.matchAll(/^Azure DevOps PAT: (.+)$/gm)].map(match => match[1]);
-    return { hasPat: sources.length > 0, source: sources.join('; ') || null };
+    const organizations = sources.map(line => /^(.*) · ([A-Za-z0-9-]+)$/.exec(line)).filter(Boolean).map(([, source, name]) => ({ name, source }));
+    return { hasPat: sources.length > 0, source: sources.join('; ') || null, organizations };
   };
+  app.delete('/api/ado/settings/:organization', handle(async req => {
+    const organization = String(req.params.organization || '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(organization)) throw new HttpError('Invalid Azure DevOps organization');
+    await cli(['ado', 'logout', '--organization', organization]);
+    return adoStatus();
+  }));
   app.get('/api/ado/settings', handle(adoStatus));
   app.post('/api/ado/settings', handle(async req => {
     const organization = typeof req.body?.organization === 'string' ? req.body.organization.trim() : '';

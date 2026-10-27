@@ -505,18 +505,33 @@
     catch (error) { $('semgrep-error').textContent = error.message; return; }
     await loadSemgrepSettings(); toast('Semgrep token validated and saved. It is never shown again.');
   }
+  // One PAT per Azure DevOps organization: list them (sources only), add or replace one, remove one.
   async function loadAdoSettings() {
     try { state.adoSaved = await request('/api/ado/settings'); } catch { state.adoSaved = null; }
-    $('ado-pat').value = state.adoSaved?.hasPat ? MASK : '';
-    $('ado-status').textContent = state.adoSaved?.hasPat ? `Saved in ${state.adoSaved.source}. The PAT is never shown.` : 'Not configured. Required to review AVITs.';
+    const orgs = state.adoSaved?.organizations || [];
+    const list = $('ado-organizations'); list.replaceChildren();
+    for (const org of orgs) {
+      const row = el('div', 'ado-org-row');
+      row.append(el('strong', '', org.name), el('span', 'small subtle', ` · ${org.source} · PAT ••••••••`),
+        button('Remove', 'button secondary small-button', async () => {
+          if (!confirm(`Remove the saved PAT for ${org.name}?`)) return;
+          try { state.adoSaved = await request(`/api/ado/settings/${encodeURIComponent(org.name)}`, { method: 'DELETE' }); } catch (error) { $('ado-error').textContent = error.message; return; }
+          await loadAdoSettings(); toast(`Removed the PAT for ${org.name}.`);
+        }));
+      list.append(row);
+    }
+    $('ado-pat').value = '';
+    $('ado-status').textContent = orgs.length ? `${orgs.length} organization${orgs.length > 1 ? 's' : ''} configured. Each clone uses its own organization's PAT. PATs are never shown.`
+      : state.adoSaved?.hasPat ? `Saved in ${state.adoSaved.source}. The PAT is never shown.` : 'Not configured. Required to review AVITs.';
   }
   async function saveAdo(event) {
     event.preventDefault(); $('ado-error').textContent = '';
-    const pat = $('ado-pat').value.trim();
-    if (!pat || pat === MASK) { toast('The saved Azure DevOps PAT is unchanged.'); return; }
-    try { await request('/api/ado/settings', { method: 'POST', body: JSON.stringify({ organization: $('ado-organization').value.trim(), pat }) }); }
+    const pat = $('ado-pat').value.trim(), organization = $('ado-organization').value.trim();
+    if (!organization) { $('ado-error').textContent = 'Enter the organization this PAT is for.'; return; }
+    if (!pat) { $('ado-error').textContent = 'Enter the PAT for this organization.'; return; }
+    try { await request('/api/ado/settings', { method: 'POST', body: JSON.stringify({ organization, pat }) }); }
     catch (error) { $('ado-error').textContent = error.message; return; }
-    await loadAdoSettings(); toast('Azure DevOps PAT validated and saved. It is never shown again.');
+    $('ado-organization').value = ''; await loadAdoSettings(); toast(`PAT for ${organization} validated and saved. It is never shown again.`);
   }
   async function loadSavedServiceNow() {
     try { state.snowSaved = await request('/api/servicenow/settings'); } catch { state.snowSaved = null; }
@@ -695,6 +710,18 @@
       if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; card.querySelector('.avit-actions').append(word); }
     }
   }
+  function renderSctaskItem(event) {
+    let card = document.getElementById(`sctask-${event.sctask}`);
+    if (!card) {
+      card = el('article', 'avit-card sctask-card'); card.id = `sctask-${event.sctask}`;
+      const header = el('header'); header.append(el('span', 'avit-id', event.sctask), el('span', 'avit-stage stage-queued', 'Catalog task'));
+      card.append(header, el('div', 'avit-detail')); $('fpreview-results').prepend(card);
+    }
+    const stage = card.querySelector('.avit-stage');
+    const label = { reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error' }[event.stage];
+    if (label) { stage.textContent = label; stage.className = `avit-stage stage-${event.stage === 'reviewing' ? 'triage' : event.stage}`; }
+    card.querySelector('.avit-detail').textContent = event.avits ? `${event.detail}: ${event.avits.join(', ')}` : event.detail || '';
+  }
   function fpreviewRunning(running) {
     state.fpreviewRunning = running;
     $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
@@ -721,8 +748,9 @@
   async function startAvitBatch(event) {
     event.preventDefault(); $('fpreview-error').textContent = '';
     let avits;
-    try { avits = parseAvits($('fpreview-avits').value); } catch (error) { $('fpreview-error').textContent = error.message; return; }
-    if (!avits.length) { $('fpreview-error').textContent = 'Enter at least one AVIT number.'; return; }
+    const sctasks = [...new Set(($('fpreview-avits').value.toUpperCase().match(/\bSCTASK\d{7,10}\b/g) || []))];
+    try { avits = parseAvits($('fpreview-avits').value.replace(/\bSCTASK\d{7,10}\b/gi, ' ')); } catch (error) { $('fpreview-error').textContent = error.message; return; }
+    if (!avits.length && !sctasks.length) { $('fpreview-error').textContent = 'Enter at least one AVIT or SCTASK number.'; return; }
     if (avits.length > 50) { $('fpreview-error').textContent = 'Review at most 50 AVITs at a time.'; return; }
     if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
@@ -734,7 +762,7 @@
     state.avitTools = {}; $('fpreview-results').replaceChildren(); for (const avit of avits) avitCard(avit);
     fpreviewRunning(true);
     const provider = state.preferences.provider;
-    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits, provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: [...avits, ...sctasks].join(' '), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
       servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
   }
@@ -742,6 +770,7 @@
   function handleEvent(event) {
     switch (event.type) {
       case 'avit_batch_start': for (const avit of event.avits) avitCard(avit); break;
+      case 'sctask_item': renderSctaskItem(event); break;
       case 'avit_item': renderAvitItem(event); break;
       case 'avit_batch_complete': fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
       case 'avit_batch_error': fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;

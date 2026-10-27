@@ -448,7 +448,7 @@ them in `~/.threatlint/org.json` or environment variables, as listed under *Orga
 - **True positive:** stays open, with the report attached and the work note *"True positive, see attached
   report."*
 
-**One command:** `/fp-review AVIT000000095938462`. AVIT numbers are `AVIT` followed by 7 to 15 digits. Long numbers such as `AVIT000000095938462` are AVR **CodeSecurity** findings; shorter ones such as `AVIT0042599` come from other tools and views. **Every AVIT is reviewed.** CodeSecurity AVITs are checked against their repository and branch and tuned in Semgrep. Other AVITs are validated from their own evidence (scan details, affected asset or URL, proof, vulnerability definition, and the code when a repository is named), and closed or annotated in the same way, with no Semgrep step.
+**One command:** `/fp-review AVIT000000095938462`, or `/fp-review SCTASK14120565` for a catalog task whose description names AVITs (each is reviewed, then the task is closed with a "Closed by Threatlint" comment and every report attached; see [Catalog tasks](docs/avit-integration.md#catalog-tasks-sctask)). AVIT numbers are `AVIT` followed by 7 to 15 digits. Long numbers such as `AVIT000000095938462` are AVR **CodeSecurity** findings; shorter ones such as `AVIT0042599` come from other tools and views. **Every AVIT is reviewed.** CodeSecurity AVITs are checked against their repository and branch and tuned in Semgrep. Other AVITs are validated from their own evidence (scan details, affected asset or URL, proof, vulnerability definition, and the code when a repository is named), and closed or annotated in the same way, with no Semgrep step.
 Threatlint reads the AVIT and takes the review target from its fields:
 
 | AVIT field | Used for |

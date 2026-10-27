@@ -28,6 +28,8 @@ describe('False positive review batch', () => {
     const threatlintCli = async args => {
       calls.push(args);
       if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true }, { name: 'Azure DevOps PAT', configured: !adoMissing, fix: 'threatlint ado login --organization <org>' }, { name: 'Semgrep API token', configured: true }]), stderr: '' };
+      if (args[0] === 'sctask' && args[1] === 'avits') return { code: 0, stdout: `${FP}\n${JSON.stringify({ sctask: args[2], avits: [FP, TP] })}\n`, stderr: '' };
+      if (args[0] === 'sctask' && args[1] === 'close') return { code: 0, stdout: '  ✓ Attached x\n  ✓ Closed SCTASK14120565\n', stderr: '' };
       const [, command, avit] = args;
       if (command === 'fetch') {
         if (avit === OUT) return { code: 1, stdout: '', stderr: `ERROR: None of the requested AVITs are in the AVR CodeSecurity view (${OUT}).` };
@@ -76,6 +78,22 @@ describe('False positive review batch', () => {
     assert.deepEqual(calls.filter(args => args[1] === 'resolve').map(args => args[2]), [FP, TP], 'one closure per AVIT, in order');
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8')), [], 'no report history kept');
     for (const args of calls.filter(item => item[1] === 'checkout')) assert.ok(!fs.existsSync(args[args.indexOf('--dir') + 1]), 'checkouts are deleted');
+  });
+  it('expands an SCTASK into its AVITs, reviews each, then closes the task', async () => {
+    calls.length = 0;
+    const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const events = await new Promise(resolve => {
+      const seen = [];
+      socket.on('message', raw => { const event = JSON.parse(raw); seen.push(event); if (event.type === 'avit_batch_complete' || event.type === 'avit_batch_error') resolve(seen); });
+      socket.send(JSON.stringify({ action: 'run_avit_batch', avits: 'SCTASK14120565', provider: 'lmstudio', model: 'fixture' }));
+    });
+    socket.close();
+    assert.deepEqual(calls.filter(args => args[1] === 'resolve').map(args => args[2]), [FP, TP], 'each AVIT in the task is resolved');
+    const order = calls.map(args => args.slice(0, 2).join(' '));
+    assert.ok(order.lastIndexOf('avit resolve') < order.indexOf('sctask close'), 'the task is closed after its AVITs');
+    const done = events.filter(event => event.type === 'sctask_item' && event.done).pop();
+    assert.equal(done.stage, 'done'); assert.match(done.detail, /Closed/);
   });
   it('refuses to start until every required credential is configured', async () => {
     adoMissing = true;

@@ -118,7 +118,11 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
 
   function validate(message) {
-    const numbers = servicenow.parseAvitNumbers(message.avits);
+    // SCTASK numbers are expanded server-side (from the task description) before the run starts.
+    const text = String(message.avits || '');
+    const avitText = text.replace(/\bSCTASK\d{7,10}\b/gi, ' ').trim();
+    if (!avitText && !/\bSCTASK\d{7,10}\b/i.test(text)) servicenow.parseAvitNumbers(text);
+    const numbers = avitText ? servicenow.parseAvitNumbers(avitText) : [];
     if (numbers.length > MAX_BATCH) throw new HttpError(`Review at most ${MAX_BATCH} AVITs at a time`);
     return { numbers, settings: providerRequest(message) };
   }
@@ -199,10 +203,30 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     const missing = await missingSetup(env);
     if (missing.length) throw Object.assign(new HttpError(`Finish setup first: ${missing.map(item => `${item.name} (${item.fix})`).join('; ')}`, 412), { code: 'setup_incomplete' });
     const profile = typeof message.awsProfile === 'string' && /^[\w.@+-]{1,128}$/.test(message.awsProfile) ? ['--aws-profile', message.awsProfile] : [];
-    send({ type: 'avit_batch_start', avits: numbers });
-    for (const avit of numbers) {
+    const sctasks = [...new Set((String(message.avits || '').toUpperCase().match(/\bSCTASK\d{7,10}\b/g) || []))];
+    // AVITs named in each SCTASK description join the batch; each task is closed once its AVITs are reviewed.
+    const fromTasks = {};
+    for (const task of sctasks) {
+      const listed = await cli(['sctask', 'avits', task, ...profile], { env });
+      if (listed.code !== 0) { send({ type: 'sctask_item', sctask: task, stage: 'error', detail: errorOf(listed) || 'The task names no AVITs', done: true }); continue; }
+      try { fromTasks[task] = JSON.parse(lastLine(listed.stdout)).avits || []; } catch { fromTasks[task] = []; }
+      send({ type: 'sctask_item', sctask: task, stage: 'reviewing', avits: fromTasks[task], detail: `${fromTasks[task].length} AVIT(s) in the description` });
+    }
+    const all = [...new Set([...numbers, ...Object.values(fromTasks).flat()])];
+    if (!all.length) throw new HttpError('Enter at least one AVIT or SCTASK number');
+    if (all.length > MAX_BATCH) throw new HttpError(`Review at most ${MAX_BATCH} AVITs at a time`);
+    send({ type: 'avit_batch_start', avits: all, sctasks: Object.keys(fromTasks) });
+    for (const avit of all) {
       if (controller.signal.aborted) { send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled', done: true }); continue; }
       await reviewOne(avit, { settings, message, semgrep, env, profile, signal: controller.signal, send });
+    }
+    for (const task of Object.keys(fromTasks)) {
+      if (controller.signal.aborted) break;
+      send({ type: 'sctask_item', sctask: task, stage: 'resolving', detail: 'Attaching each AVIT report and commenting on the task' });
+      const closed = await cli(['sctask', 'close', task, '--yes', ...profile], { env });
+      const out = `${closed.stdout}\n${closed.stderr}`;
+      send({ type: 'sctask_item', sctask: task, done: true, stage: closed.code === 0 ? 'done' : 'error',
+        detail: closed.code !== 0 ? errorOf(closed) : /✓ Closed /.test(out) ? 'Closed with the Threatlint comment and every AVIT report attached' : 'Comment added; left open until every AVIT is decided' });
     }
     send({ type: 'avit_batch_complete', cancelled: controller.signal.aborted });
   }

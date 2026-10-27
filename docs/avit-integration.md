@@ -179,6 +179,28 @@ agent triages and which Semgrep product is tuned.
 The finding triage (step S) always happens before rule tuning. If tuning is not proven, the false
 positive stays ignored for its fingerprint on later scans and branches.
 
+## Catalog tasks (SCTASK)
+
+Developers often ask AppSec to review findings through a catalog task, such as `SCTASK14120565`, that
+names one or more AVITs in its description. `/fp-review SCTASK14120565`, the Workbench's *False positive
+review* page and the CLI all accept it:
+
+```bash
+threatlint sctask avits SCTASK14120565          # the AVIT numbers in the description, in order
+# … review and resolve each AVIT as usual …
+threatlint sctask close SCTASK14120565 --yes    # attach each report, comment, close
+```
+
+- Each AVIT is reviewed and resolved on its own, exactly as when entered directly. Any verdict the
+  requester wrote in the description is treated as a claim to test, not as evidence.
+- `sctask close` reads each AVIT's outcome back from ServiceNow, using its Threatlint work note and its
+  attached Word report. It then copies every report onto the task and adds one comment starting "Closed by
+  Threatlint", with one line per AVIT. True positives are named, and developers are sent back to those AVITs
+  to fix them. Everyone is told to review the attached report if they have questions.
+- The task is closed (state 3, Closed Complete; `THREATLINT_SNOW_SCTASK_CLOSED_STATE` overrides it) only
+  when every AVIT is TRUE POSITIVE or FALSE POSITIVE. Otherwise the comment is added and the task stays open.
+- The OAuth client needs read and write access to `sc_task` and its attachments.
+
 ## Data flows
 
 ```mermaid

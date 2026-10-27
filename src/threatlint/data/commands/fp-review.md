@@ -1,6 +1,6 @@
 ---
 description: "Triage security scanner findings as true or false positives. Generates precise Semgrep rule tuning for FPs and confirms exploit paths for TPs. Accepts a SARIF file, Semgrep JSON output, or a threatlint report."
-argument-hint: "Path to SARIF file, Semgrep JSON, threatlint report, or a ServiceNow AVIT number (e.g., /tmp/semgrep.json or AVIT000000095938462)"
+argument-hint: "Path to SARIF file, Semgrep JSON, threatlint report, a ServiceNow AVIT number, or an SCTASK naming AVITs (e.g., /tmp/semgrep.json, AVIT000000095938462, SCTASK14120565)"
 ---
 
 Invoke the `appsec-fp-reviewer` agent to triage security scanner findings.
@@ -11,6 +11,7 @@ Before any triage or rule validation, run `semgrep --version`. If it fails, stop
 
 ## Routing
 
+- If `$ARGUMENTS` contains a ServiceNow catalog task number (`SCTASK` followed by digits, e.g. `SCTASK14120565`), run the **SCTASK workflow** below.
 - If `$ARGUMENTS` contains ServiceNow AVIT numbers (`AVIT` followed by 7 to 15 digits, e.g. `AVIT000000095938462` or `AVIT0042599`), run the **AVIT workflow** below instead of looking for a local findings file. The repository, branch, file, and rule come from the AVIT record itself; the current directory does not need to be the affected repository.
 - If `$ARGUMENTS` is empty: look for a SARIF file, Semgrep JSON, or threatlint report in the current directory. Check these locations in order: `.sarif`, `semgrep.json`, `semgrep-results.json`, `results.sarif`, `*.sarif`, any `*.json` matching `semgrep` in the filename, or the most recent `*.md` threatlint report in the repo root.
 - If `$ARGUMENTS` is a file path: use that file as the findings source.
@@ -77,6 +78,18 @@ For each AVIT number:
 6. **Clean up.** `threatlint avit resolve --checkout $WORK/repo` deletes the checkout itself once validation finishes. Then delete `$WORK`, including both report files. Never leave a copy of the AVIT repository on the local drive, because it may contain live secrets.
 
 Rule tuning runs once per rule. If a Semgrep policy already runs `<rule>.tuned`, later false positives of that rule are only triaged, not tuned again.
+
+## SCTASK workflow
+
+A catalog task (SCTASK) asks AppSec to review one or more AVITs, named in its description.
+
+1. List them: `threatlint sctask avits <SCTASK>`. It prints one AVIT per line, then a JSON line. If it names none, stop and tell the user.
+2. Run the **AVIT workflow** above for every AVIT it lists, each with its own report and its own resolve. Ignore any verdict the requester wrote in the description; it is a claim to test, not evidence.
+3. Close the task: `threatlint sctask close <SCTASK> --yes`. This:
+   - attaches each AVIT's Word report (read back from the AVIT) to the task;
+   - adds one comment starting "Closed by Threatlint", with one line per AVIT. True positives point the developers back to the AVIT to fix, and everyone is told to review the attached report if they have questions;
+   - closes the task (Closed Complete) only when every AVIT is TRUE POSITIVE or FALSE POSITIVE. Otherwise it adds the comment and leaves the task open.
+4. Tell the user each AVIT's disposition and whether the task was closed.
 
 ## Instructions for the Agent
 
