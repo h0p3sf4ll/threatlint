@@ -343,10 +343,22 @@ def _same_rule(path: str, rule: str) -> bool:
     return path == rule or path.endswith("." + rule) or rule.endswith("." + path)
 
 
+def _products(kind: str) -> list[str]:
+    """The AVIT's own product first, then the other: a Semgrep Code rule (e.g. secrets-in-config-file) can raise a Secrets AVIT."""
+    return [PRODUCT_POLICY[kind], *(p for k, p in PRODUCT_POLICY.items() if k != kind)]
+
+
 def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str) -> list[dict]:
     """Add the tuned rule in the original's mode and disable the original, in every policy that runs it."""
-    product = PRODUCT_POLICY[kind]
-    policies = [p for p in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []) if p.get("productType") == product]
+    all_policies = call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", [])
+    for product in _products(kind):
+        changes = _replace_in(token, dep, [p for p in all_policies if p.get("productType") == product], original_rule, tuned_path)
+        if changes:
+            return changes
+    raise SemgrepError(f"No policy runs {original_rule}; nothing to replace (the tuned rule is published but not enabled)")
+
+
+def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str, tuned_path: str) -> list[dict]:
     changes = []
     for policy in policies:
         rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
@@ -357,18 +369,15 @@ def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tu
             call(f"{base}/{urllib.parse.quote(tuned_path, safe='.')}", token, method="PUT", body={"policyMode": mode})
             call(f"{base}/{urllib.parse.quote(rule['path'], safe='.')}", token, method="PUT", body={"policyMode": "MODE_DISABLED"})
             changes.append({"policy": policy.get("name"), "policy_id": policy["id"], "original": rule["path"], "tuned": tuned_path, "mode": mode})
-    if not changes:
-        raise SemgrepError(f"No {product} policy runs {original_rule}; nothing to replace (the tuned rule is published but not enabled)")
     return changes
 
 
 def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
     """Policies already running a Threatlint-tuned version of this rule (rule path ends with `<rule-name>.tuned`)."""
-    product = PRODUCT_POLICY[kind]
     leaf = original_rule.rsplit(".", 1)[-1]
     found = []
     for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
-        if policy.get("productType") != product:
+        if policy.get("productType") not in _products(kind):
             continue
         for rule in _policy_rules(str(dep["id"]), str(policy["id"]), token):
             path = str(rule.get("path", ""))

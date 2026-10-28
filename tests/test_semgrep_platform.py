@@ -176,3 +176,18 @@ def test_a_yaml_fixture_does_not_overwrite_the_rule_file(monkeypatch, tmp_path):
     with contextlib.suppress(sp.SemgrepError):
         sp.validate_tuned_rule(rule, "", str(tmp_path / "values.yaml"), 2, fixtures)
     assert seen == {"yaml.rule.tuned.yaml": rule, "yaml.rule.tuned.test.yaml": fixtures}
+
+
+def test_a_code_rule_behind_a_secrets_avit_is_replaced_in_the_code_policy(monkeypatch):
+    puts = []
+    def call(path, token, *, method="GET", body=None):
+        if method == "PUT":
+            puts.append(path.rsplit("/", 2)[-2:])
+            return {}
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SAST"},
+                                 {"id": "6", "name": "Secrets", "productType": "PRODUCT_TYPE_SECRETS"}]}
+        return {"rules": [{"path": "yaml.rule", "policyMode": "MODE_MONITOR"}] if "/5/" in path else []}
+    monkeypatch.setattr(sp, "call", call)
+    changes = sp.replace_in_policies("t", {"id": 1}, "secrets", "yaml.rule", "org.yaml.rule.tuned")
+    assert [c["policy"] for c in changes] == ["Global Policy"] and puts == [["rules", "org.yaml.rule.tuned"], ["rules", "yaml.rule"]]
