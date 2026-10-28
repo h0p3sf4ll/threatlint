@@ -34,8 +34,12 @@ def data_dir() -> Path:
 
 
 def organizations() -> list[str]:
-    """Azure DevOps organizations Sidekick spans; the first is the default."""
-    return org_config.values("adoOrganizations")
+    """Azure DevOps organizations Sidekick spans (configured ones, then any with a saved PAT); the first is the default."""
+    from threatlint import ado_login  # noqa: PLC0415
+    names = list(org_config.values("adoOrganizations"))
+    with contextlib.suppress(Exception):  # an unreadable credential store must not hide the configured list
+        names += ado_login.organizations()
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def default_organization() -> str:

@@ -138,3 +138,11 @@ def test_purge_keeps_unreversed_closures(monkeypatch):
 
 def test_csv_field_defuses_formulas():
     assert ops.csv_field("=cmd") == "'=cmd" and ops.csv_field('a,"b"') == '"a,""b"""' and ops.csv_field("plain") == "plain"
+
+
+def test_organizations_include_those_with_a_saved_pat(monkeypatch):
+    from threatlint import ado_login
+    monkeypatch.setattr(ado_login, "organizations", lambda: ["fabrikam", "northwind"])
+    assert store.organizations() == ["contoso", "fabrikam", "northwind"]
+    monkeypatch.delenv("THREATLINT_ADO_ORGANIZATIONS")
+    assert store.default_organization() == "fabrikam"
