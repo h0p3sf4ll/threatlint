@@ -373,3 +373,29 @@ def test_close_removed_closes_only_after_azure_devops_confirms_the_repository_is
     listing["value"].append({"name": "infra-terraform"})
     with pytest.raises(ar.ResolveError, match="still exists"):
         ar.cmd_close_removed(args)
+
+
+def test_a_renamed_repository_whose_branch_was_deleted_falls_back_to_the_default_branch(tmp_path, monkeypatch):
+    clones = []
+    def checkout(target, directory, path):
+        clones.append((target["clone_url"].rsplit("/", 1)[-1], target["branch"]))
+        if not target["clone_url"].endswith("new-name"):
+            raise sn.ServiceNowError(f"Could not clone: repository '{target['name']}' not found")
+        if target["branch"]:
+            raise sn.ServiceNowError("fatal: Remote branch feat/x not found in upstream origin")
+        os.makedirs(os.path.join(directory, "src"), exist_ok=True)
+        open(os.path.join(directory, path), "w", encoding="utf-8").close()
+    monkeypatch.setattr(sn, "checkout_repository", checkout)
+    monkeypatch.setattr(ar, "renamed_ado_repository", lambda *a: "new-name")
+    target = {"scm": "azure-devops", "clone_url": "https://dev.azure.com/o/p/_git/old", "web_url": "u", "branch": "feat/x", "organization": "o", "project": "p", "name": "old"}
+    monkeypatch.setattr(ar, "_session", lambda args: (INSTANCE, "t"))
+    monkeypatch.setattr(ar, "_record", lambda *a: {"context": {"file_path": "src/a.js"}})
+    monkeypatch.setattr(sn, "finding_kind", lambda record: "sca")
+    monkeypatch.setattr(sn, "repository_target", lambda context: dict(target))
+    monkeypatch.setattr(sn, "git_credential", lambda *a: ("Basic x", "store"))
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    assert ar.cmd_checkout(types.SimpleNamespace(number=AVIT, dir=str(tmp_path / "co"), aws_profile=None)) == 0
+    assert clones == [("old", "feat/x"), ("new-name", "feat/x"), ("new-name", "")]
+    result = json.loads(out.getvalue().strip().splitlines()[-1])
+    assert result["renamed_to"] == "new-name" and result["branch_deleted"] == "feat/x"
