@@ -274,7 +274,8 @@ def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, li
     if not fixtures:
         raise SemgrepError("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
     suffix = Path(target_file).suffix or (".dockerfile" if Path(target_file).name.lower().startswith("dockerfile") else ".txt")
-    fixture_path = work / f"{rule_id}{suffix}"
+    # A YAML fixture would overwrite the rule file itself; Semgrep pairs `<rule>.yaml` with `<rule>.test.yaml`.
+    fixture_path = work / f"{rule_id}{'.test' if suffix.lower() in ('.yaml', '.yml') else ''}{suffix}"
     fixture_path.write_text(fixtures, encoding="utf-8")
     # A rule whose `paths.include` names a file (e.g. Info.plist) only scans files with that name, so the
     # original-rule check scans a copy of the fixture under the flagged file's own name.

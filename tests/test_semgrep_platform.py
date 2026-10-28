@@ -1,6 +1,8 @@
 """Semgrep token setup and rule tuning: nothing is published unless the tuned rule is proven."""
 
+import contextlib
 import os
+from pathlib import Path
 import types
 
 import pytest
@@ -159,3 +161,18 @@ def test_fixture_markers_on_the_line_before_or_at_the_end_of_the_line():
 def test_fixture_markers_inside_xml_and_block_comments():
     fixtures = "<!-- ruleid: r.tuned -->\n<key>A</key>\n<!-- ok: r.tuned -->\n<key>B</key>\n/* ok: r.tuned */\nx\n"
     assert sp._fixture_lines(fixtures, "r.tuned") == ([2], [4, 6])
+
+
+def test_a_yaml_fixture_does_not_overwrite_the_rule_file(monkeypatch, tmp_path):
+    seen = {}
+    def semgrep(args, **kw):
+        if "--test" in args:
+            seen.update({p.name: p.read_text(encoding="utf-8") for p in Path(args[-1]).iterdir() if p.is_file()})
+        return types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr="")
+    monkeypatch.setattr(sp, "_semgrep", semgrep)
+    monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [])
+    rule = "rules:\n  - id: yaml.rule.tuned\n    languages: [yaml]\n"
+    fixtures = "# ruleid: yaml.rule.tuned\nkey: x\n"
+    with contextlib.suppress(sp.SemgrepError):
+        sp.validate_tuned_rule(rule, "", str(tmp_path / "values.yaml"), 2, fixtures)
+    assert seen == {"yaml.rule.tuned.yaml": rule, "yaml.rule.tuned.test.yaml": fixtures}
