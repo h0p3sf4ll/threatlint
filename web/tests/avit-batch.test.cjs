@@ -13,7 +13,8 @@ const { redactSecrets, resolveOutcome } = require('../lib/avit-batch.cjs');
 const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-docx-'));
 const stub = path.join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
 fs.writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-process.env.THREATLINT_PYTHON = stub;
+// Node will not execFile a .cmd (CVE-2024-27980), so Windows converts with the real python-docx instead.
+if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
 let storage;

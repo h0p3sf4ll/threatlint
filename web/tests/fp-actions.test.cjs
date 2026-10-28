@@ -5,7 +5,8 @@ process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path'
 const stubDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-docx-'));
 const stub = require('node:path').join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
 require('node:fs').writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-process.env.THREATLINT_PYTHON = stub;
+// Node will not execFile a .cmd (CVE-2024-27980), so Windows converts with the real python-docx instead.
+if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
