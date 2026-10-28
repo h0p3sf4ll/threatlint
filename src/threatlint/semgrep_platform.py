@@ -384,30 +384,40 @@ def _exclusions(rule_yaml: str) -> list[str]:
     return [line.strip() for line in rule_yaml.splitlines() if _EXCLUSION.match(line)]
 
 
-def merge_exclusions(proposed: str, live: str) -> str | None:
-    """The proposed rule plus any one-line exclusions the live tuned rule has and the proposal lacks.
+def merge_exclusions(proposed: str, live: str, base: str = "") -> str | None:
+    """Combine a reviewer's tuned rule with a live tuned rule that changed since the reviewer read it.
 
-    Two reviewers may extend the same live rule at once; the second proposal then lacks the first one's new
-    exclusion. Each missing line is inserted after the line that precedes it in the live rule. Only one-line
-    exclusions are merged; anything else returns None so the proposal is rejected rather than guessed at.
-    The merged rule still goes through the full proof gate."""
-    proposed_lines, live_lines = proposed.splitlines(), live.splitlines()
-    present = {line.strip() for line in proposed_lines}
-    merged = list(proposed_lines)
-    for index, line in enumerate(live_lines):
-        if not _EXCLUSION.match(line) or line.strip() in present:
-            continue
-        following = live_lines[index + 1] if index + 1 < len(live_lines) else ""
-        indent = len(line) - len(line.lstrip())
-        if following.strip() and len(following) - len(following.lstrip()) > indent and not following.lstrip().startswith("- "):
-            return None   # a multi-line exclusion block
-        anchor = next((live_lines[j].strip() for j in range(index - 1, -1, -1) if live_lines[j].strip() in present), None)
-        if anchor is None:
-            return None
-        position = next(i for i, text in enumerate(merged) if text.strip() == anchor)
-        merged.insert(position + 1, line)
-        present.add(line.strip())
-    return "\n".join(merged) + "\n"
+    A three-way merge (`git merge-file`) of proposal and live rule against their common ancestor, the
+    original rule, keeps both sets of changes. Without an ancestor, or when the two edit the same lines, it
+    returns None so the proposal is rejected rather than guessed at. The merged rule still runs the proof gate."""
+    if not base:
+        return None
+    rule_id = re.search(r"(?m)^\s*-\s*id:\s*(\S+)", proposed)
+    def normal(text: str) -> str:
+        # Compare rule bodies only: the id and the registry metadata differ between the three by design.
+        text = re.sub(r"(?m)^(\s*-\s*id:\s*)\S+", lambda m: m.group(1) + "RULE_ID", text, count=1)
+        lines, out, skipping, indent = text.splitlines(), [], False, 0
+        for line in lines:
+            if re.match(r"^\s+semgrep\.dev:\s*$", line) or re.match(r"^\s+(source|shortlink|rule-origin-note):", line):
+                skipping, indent = True, len(line) - len(line.lstrip())
+                continue
+            if skipping and (not line.strip() or len(line) - len(line.lstrip()) > indent):
+                continue
+            skipping = False
+            out.append(line)
+        return "\n".join(out) + "\n"
+    work = Path(tempfile.mkdtemp(prefix="threatlint-merge-"))
+    try:
+        for name, text in (("proposed", proposed), ("base", base), ("live", live)):
+            (work / name).write_text(normal(text), encoding="utf-8")
+        result = subprocess.run(["git", "merge-file", "-p", str(work / "proposed"), str(work / "base"), str(work / "live")],
+                                capture_output=True, text=True, timeout=60, check=False)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if result.returncode != 0 or "<<<<<<<" in result.stdout:
+        return None
+    merged = result.stdout
+    return merged.replace("RULE_ID", rule_id.group(1), 1) if rule_id else merged
 
 
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
@@ -440,7 +450,7 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     if live_yaml:
         missing = [item for item in _exclusions(live_yaml) if item not in _exclusions(rule_yaml)]
         if missing:
-            merged = merge_exclusions(rule_yaml, live_yaml)
+            merged = merge_exclusions(rule_yaml, live_yaml, original_rule_yaml(original_rule, token))
             if merged and not [item for item in _exclusions(live_yaml) if item not in _exclusions(merged)]:
                 print(f"  ! The live tuned rule gained {len(missing)} exclusion(s) since this proposal was written; merged them in (the proof gate still runs)", file=out)
                 rule_yaml, missing = merged, []

@@ -111,9 +111,12 @@ def test_a_rule_whose_live_tuning_covers_the_line_is_not_tuned_again(monkeypatch
 
 def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipped(monkeypatch, tmp_path):
     (tmp_path / "a.js").write_text("x")
-    live = "rules:\n  - id: example_org.js.rule.tuned\n    patterns:\n      - pattern: eval(...)\n      - pattern-not: eval('1')\n"
+    proposal = sp.tuned_rule_from_report(REPORT)
+    original = proposal.replace("js.rule.tuned", "js.rule")
+    # The live tuned rule gained an exclusion the proposal lacks: appended as its own top-level key.
+    live = original.replace("js.rule", "example_org.js.rule.tuned") + "    pattern-sanitizers:\n      - pattern: clean(...)\n"
     monkeypatch.setattr(sp, "existing_tuning", lambda *a: [{"policy": "Global", "tuned": "example_org.js.rule.tuned", "mode": "MODE_COMMENT"}])
-    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: live)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: original if rule == "js.rule" else live)
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [10])
     monkeypatch.setattr(sp, "replace_in_policies", lambda *a: pytest.fail("an extended rule keeps its policy entries"))
     seen = {}
@@ -125,7 +128,7 @@ def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipp
     monkeypatch.setattr(sp, "validate_tuned_rule", validate)
     with pytest.raises(Stop):
         sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w"))
-    assert "pattern-not: eval('1')" in seen["rule"], "the live rule's exclusion is merged into the proposal before the proof gate"
+    assert "pattern: clean(...)" in seen["rule"] and seen["rule"].startswith("rules:\n  - id: js.rule.tuned"), "the live rule's change is merged in before the proof gate"
 
 
 def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(monkeypatch, tmp_path):
@@ -138,13 +141,14 @@ def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(m
 
 
 def test_concurrent_extensions_of_one_live_rule_are_merged():
-    base = "rules:\n- id: r.tuned\n  patterns:\n  - pattern-regex: class\n  - pattern-not-regex: A\n  message: m\n"
-    live = base.replace("  - pattern-not-regex: A\n", "  - pattern-not-regex: A\n  - pattern-not-regex: FROM_LIVE\n")
-    proposed = base.replace("  - pattern-not-regex: A\n", "  - pattern-not-regex: A\n  - pattern-not-regex: MINE\n")
-    merged = sp.merge_exclusions(proposed, live)
-    assert "FROM_LIVE" in merged and "MINE" in merged and merged.index("- pattern-not-regex: A") < merged.index("FROM_LIVE")
-    multi = live.replace("  - pattern-not-regex: FROM_LIVE\n", "  - pattern-not-inside: |\n      class X {}\n")
-    assert sp.merge_exclusions(proposed, multi) is None
+    base = "rules:\n- id: r\n  pattern-sinks:\n  - patterns:\n    - pattern: q($X)\n  pattern-sanitizers:\n  - pattern: clean(...)\n  message: m\n"
+    live = base.replace("- id: r", "- id: org.r.tuned").replace("    - pattern: q($X)\n", "    - pattern: q($X)\n    - metavariable-regex:\n        metavariable: $X\n        regex: ^LIVE$\n")
+    proposed = base.replace("- id: r", "- id: r.tuned").replace("  - pattern: clean(...)\n", "  - pattern: clean(...)\n  - patterns:\n    - pattern: mine(...)\n")
+    merged = sp.merge_exclusions(proposed, live, base)
+    assert merged.startswith("rules:\n- id: r.tuned\n") and "regex: ^LIVE$" in merged and "mine(...)" in merged, merged
+    clash = live.replace("^LIVE$", "^MINE$")
+    assert sp.merge_exclusions(clash.replace("org.r.tuned", "r.tuned"), live.replace("^LIVE$", "^OTHER$"), live.replace("org.r.tuned", "r")) is None
+    assert sp.merge_exclusions(proposed, live) is None, "no common ancestor, no merge"
 
 
 def test_fixture_markers_on_the_line_before_or_at_the_end_of_the_line():
