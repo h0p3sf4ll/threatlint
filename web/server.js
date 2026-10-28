@@ -25,6 +25,7 @@ const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
 const { prepareProcess } = require('./lib/system-env.cjs');
 const { createAvitBatch } = require('./lib/avit-batch.cjs');
 const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
+const { registerSidekickRoutes } = require('./lib/routes/sidekick.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -73,6 +74,7 @@ function createWorkbench(options = {}) {
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations });
   registerTriageRoutes(app, { reports, integrations: options.integrations });
+  registerSidekickRoutes(app, { integrations: options.integrations });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));

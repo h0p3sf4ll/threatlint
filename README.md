@@ -405,6 +405,26 @@ threatlint install --copilot --local -y
 threatlint install --lmstudio -y
 ```
 
+#### Sidekick: portfolio reporting and bulk operations
+
+The **Sidekick** section of the Workbench (and `threatlint sidekick …` on the command line) covers:
+- **Generate vReports:** for each repository in a loadout, branch and stale-branch counts from Azure DevOps,
+  open critical, high, over-60-day and secret counts from ServiceNow, and the owner and director. Written
+  to an `.xlsx` workbook.
+- **Loadouts:** named sets of repositories, one Azure DevOps organization per entry. Powered loadouts rank the
+  top 20 repositories by open secrets or critical/high findings.
+- **Find projects, View vReports, Branch report and Trends:** trends restate both runs over shared
+  repositories when the loadout's membership changed, so progress is not confused with scope.
+- **Ownership hub:** a 14-day cache.
+- **AVIT closure:** bulk close through the ServiceNow Batch API. Every closure is journalled and reversible.
+- **Bulk triage:** ignore a Semgrep rule's or secret type's open findings as false positives.
+- **Actions history:** with retention.
+
+Data lives in `~/.threatlint/sidekick/` (`%USERPROFILE%\.threatlint\sidekick` on Windows). Set the
+organizations once: `"adoOrganizations": ["org-a", "org-b"]` in `~/.threatlint/org.json`, or
+`THREATLINT_ADO_ORGANIZATIONS`. Save a PAT for each one with `threatlint ado login --organization <org>`.
+ServiceNow and Semgrep use the same configuration as AVIT triage.
+
 #### Triage ServiceNow application vulnerable items (AVITs)
 
 > **Full process and data flows:** [docs/avit-integration.md](docs/avit-integration.md)

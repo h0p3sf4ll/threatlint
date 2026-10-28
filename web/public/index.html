@@ -15,6 +15,7 @@
   <script src="/charts.js" defer></script>
   <script src="/insights.js" defer></script>
   <script src="/chat.js" defer></script>
+  <script src="/sidekick.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to workspace</a>
@@ -31,6 +32,17 @@
       <button class="nav-item" data-view="chat" aria-controls="view-chat"><span class="nav-icon" aria-hidden="true">✦</span>Ask Threatlint</button>
       <div class="sidebar-label">3 · TRACK</div>
       <button class="nav-item" data-view="metrics" aria-controls="view-metrics"><span class="nav-icon" aria-hidden="true">▦</span>Metrics</button>
+      <div class="sidebar-label">SIDEKICK</div>
+      <button class="nav-item" data-view="sk-vreports" aria-controls="view-sk-vreports"><span class="nav-icon" aria-hidden="true">▣</span>Generate vReports</button>
+      <button class="nav-item" data-view="sk-loadouts" aria-controls="view-sk-loadouts"><span class="nav-icon" aria-hidden="true">☰</span>Loadouts</button>
+      <button class="nav-item" data-view="sk-find" aria-controls="view-sk-find"><span class="nav-icon" aria-hidden="true">⌕</span>Find projects</button>
+      <button class="nav-item" data-view="sk-reports" aria-controls="view-sk-reports"><span class="nav-icon" aria-hidden="true">▤</span>View vReports</button>
+      <button class="nav-item" data-view="sk-branch" aria-controls="view-sk-branch"><span class="nav-icon" aria-hidden="true">⑂</span>Branch report</button>
+      <button class="nav-item" data-view="sk-trends" aria-controls="view-sk-trends"><span class="nav-icon" aria-hidden="true">↗</span>Trends</button>
+      <button class="nav-item" data-view="sk-ownership" aria-controls="view-sk-ownership"><span class="nav-icon" aria-hidden="true">☺</span>Ownership hub</button>
+      <button class="nav-item" data-view="sk-avit" aria-controls="view-sk-avit"><span class="nav-icon" aria-hidden="true">✕</span>AVIT closure</button>
+      <button class="nav-item" data-view="sk-triage" aria-controls="view-sk-triage"><span class="nav-icon" aria-hidden="true">⇊</span>Bulk triage</button>
+      <button class="nav-item" data-view="sk-actions" aria-controls="view-sk-actions"><span class="nav-icon" aria-hidden="true">⟲</span>Actions history</button>
       <div class="sidebar-label">REFERENCE</div>
       <button class="nav-item" data-view="agents"><span class="nav-icon" aria-hidden="true">⌘</span>Agents<span class="nav-count" id="agent-nav-count">—</span></button>
       <button class="nav-item" data-view="skills"><span class="nav-icon" aria-hidden="true">◇</span>Skills<span class="nav-count" id="skill-nav-count">—</span></button>
@@ -243,6 +255,46 @@
         <div id="chart-tooltip" class="chart-tooltip" role="tooltip" hidden></div>
       </section>
 
+      <section class="view sk-view" id="view-sk-vreports" aria-labelledby="sk-vreports-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-vreports-title">Generate vReports</h1><p class="page-description">Run a vulnerability report for a loadout: branch and stale-branch counts, open critical/high/secret counts from ServiceNow, and the owner and director of each repository.</p></div></div>
+        <div class="sk-body" id="sk-vreports-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-loadouts" aria-labelledby="sk-loadouts-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-loadouts-title">Loadouts</h1><p class="page-description">Named sets of repositories, each with its own Azure DevOps organization. Powered loadouts rank the top repositories by open findings.</p></div></div>
+        <div class="sk-body" id="sk-loadouts-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-find" aria-labelledby="sk-find-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-find-title">Find projects</h1><p class="page-description">Find which project and organization each repository lives in, then save the matches as a loadout.</p></div></div>
+        <div class="sk-body" id="sk-find-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-reports" aria-labelledby="sk-reports-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-reports-title">View vReports</h1><p class="page-description">Browse past runs, open or download a workbook, and file a report someone else produced under a loadout and date.</p></div></div>
+        <div class="sk-body" id="sk-reports-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-branch" aria-labelledby="sk-branch-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-branch-title">Branch report</h1><p class="page-description">Stale branches of one repository, oldest first, with the last commit date and committer.</p></div></div>
+        <div class="sk-body" id="sk-branch-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-trends" aria-labelledby="sk-trends-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-trends-title">Trends</h1><p class="page-description">How one loadout changed over time, with like-for-like comparison when repositories join or leave it.</p></div></div>
+        <div class="sk-body" id="sk-trends-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-ownership" aria-labelledby="sk-ownership-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-ownership-title">Ownership hub</h1><p class="page-description">Who owns a repository: its main-branch committer and their manager and director.</p></div></div>
+        <div class="sk-body" id="sk-ownership-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-avit" aria-labelledby="sk-avit-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-avit-title">AVIT closure</h1><p class="page-description">Find AVITs by condition and close them in bulk through the ServiceNow Batch API. Every closure is journalled and can be reversed.</p></div></div>
+        <div class="sk-body" id="sk-avit-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-triage" aria-labelledby="sk-triage-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-triage-title">Bulk triage</h1><p class="page-description">Ignore every open Semgrep finding of one rule or secret type in a project as a false positive.</p></div></div>
+        <div class="sk-body" id="sk-triage-body"></div>
+      </section>
+      <section class="view sk-view" id="view-sk-actions" aria-labelledby="sk-actions-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-actions-title">Actions history</h1><p class="page-description">Everything Sidekick changed, with retention controls. Closures can be reversed here.</p></div></div>
+        <div class="sk-body" id="sk-actions-body"></div>
+      </section>
       <section class="view" id="view-fpreview" aria-labelledby="fpreview-title" hidden>
         <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SERVICENOW AVR · CODESECURITY</div><h1 id="fpreview-title">False positive review</h1><p class="page-description">Submit one AVIT or a list. Each AVIT is reviewed on its own repository and branch, gets its own Word report, and is closed or annotated on its own.</p></div></div>
         <form id="fpreview-form" class="settings-card fpreview-form">

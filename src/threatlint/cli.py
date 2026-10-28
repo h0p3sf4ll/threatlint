@@ -930,6 +930,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_setup_parser(sub)
     from threatlint.sctask import add_sctask_parser
     add_sctask_parser(sub)
+    from threatlint.sidekick.cli import add_sidekick_parser
+    add_sidekick_parser(sub)
 
     return parser
 
@@ -942,6 +944,11 @@ def _cmd_semgrep(args: argparse.Namespace) -> int:
 def _cmd_setup(args: argparse.Namespace) -> int:
     from threatlint.setup_wizard import cmd_setup
     return cmd_setup(args)
+
+
+def _cmd_sidekick(args: argparse.Namespace) -> int:
+    from threatlint.sidekick.cli import cmd_sidekick
+    return cmd_sidekick(args)
 
 
 def _cmd_sctask(args: argparse.Namespace) -> int:
@@ -971,7 +978,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick}
     handler = commands.get(args.command)
     if handler is None:
         parser.print_help()

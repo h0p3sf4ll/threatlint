@@ -129,7 +129,7 @@
     const max = Math.max(1, ...rows.map(row => row.value));
     const x = index => (rows.length === 1 ? (left + width - right) / 2 : left + (width - left - right) * index / (rows.length - 1));
     const y = value => bottom - (bottom - top) * value / max;
-    const root = svg('svg', { viewBox: `0 0 ${width} ${height}`, class: 'chart-svg', role: 'img', 'aria-label': `${LABELS[options.metric]} over time` });
+    const root = svg('svg', { viewBox: `0 0 ${width} ${height}`, class: 'chart-svg', role: 'img', 'aria-label': `${LABELS[options.metric] || options.label || options.metric} over time` });
     for (const tick of [0, 0.5, 1]) {
       svg('line', { x1: left, x2: width - right, y1: y(max * tick), y2: y(max * tick), class: tick ? 'chart-grid' : 'chart-axis' }, root);
       const label = svg('text', { x: left - 6, y: y(max * tick) + 4, 'text-anchor': 'end', class: 'chart-tick' }, root); label.textContent = format(Math.round(max * tick));
