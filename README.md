@@ -1475,7 +1475,7 @@ Keep each customization focused. Add instructions that improve scope or analysis
 ├── .github/actions/threatlint/                       ← Composite action
 ├── azure-pipelines/templates/                        ← Reusable Azure DevOps job/steps templates
 ├── docs/media/                                       ← Logo, light/dark banners, GIF previews, screenshots
-├── .githooks/                                        ← Optional hooks that rebuild the desktop package after pulls
+├── .githooks/                                        ← Hooks: rebuild the desktop package after pulls; block organization references in commits
 ├── .github/workflows/desktop-build.yml               ← Builds desktop app on every web/ change
 ├── LICENSE
 ├── .claude
@@ -1685,3 +1685,7 @@ Key points:
 - `github-models` requires no extra secret — the built-in `GITHUB_TOKEN` is sufficient.
 - If no issues are created after a run, open the workflow log and check the **Create GitHub issues for findings** step — it reports the count of parsed findings, each skip reason, and any API errors.
 - Issues are deduplicated by finding ID. A finding that already has an open issue will not create a second one.
+
+## Organization references
+
+Organization-specific names and values must never appear in code, diffs or commit messages. Put them in environment variables or `~/.threatlint/org.json`. Enable the guard once per clone with `git config core.hooksPath .githooks`: its `pre-commit` and `commit-msg` hooks run `scripts/check-org-references.sh`, and the *Organization reference check* workflow runs it again on every push and pull request.

@@ -1,0 +1,3 @@
+# Base64-encoded extended regexes (one per line) that must not appear in code, diffs or commit messages.
+# Encoded so this file does not itself contain the terms. Add one with: printf TERM | base64 >> .org-blocklist
+cGVwc2k=
