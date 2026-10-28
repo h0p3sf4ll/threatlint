@@ -21,7 +21,7 @@ def test_check_lists_every_missing_credential_with_its_fix(monkeypatch, tmp_path
 
 def test_check_passes_and_never_prints_values(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
-    (tmp_path / "servicenow.json").write_text(json.dumps({"instance": "https://x.service-now.com", "clientId": "id", "clientSecret": "s3cret-value"}))
+    (tmp_path / "servicenow.json").write_text(json.dumps({"instance": "https://x.service-now.com", "clientId": "id", "clientSecret": "s3cret-value"}), encoding="utf-8")
     monkeypatch.setenv("THREATLINT_ADO_PAT", "p" * 52)
     monkeypatch.setenv("SEMGREP_APP_TOKEN", "t" * 64)
     assert setup_wizard.cmd_setup(types.SimpleNamespace(aws_profile="appsec", check=True, json=True)) == 0

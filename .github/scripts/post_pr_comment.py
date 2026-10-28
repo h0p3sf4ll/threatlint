@@ -181,7 +181,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        with open(args.report) as f:
+        with open(args.report, encoding='utf-8') as f:
             report_text = f.read()
     except OSError as e:
         print(f'ERROR: Cannot read report: {e}', file=sys.stderr)

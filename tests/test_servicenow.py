@@ -63,7 +63,7 @@ def test_parameter_store_is_not_read_without_configured_names(monkeypatch, tmp_p
     monkeypatch.setattr(servicenow.subprocess, "run", lambda *a, **k: pytest.fail("must not call the AWS CLI"))
     with pytest.raises(ServiceNowError, match="THREATLINT_SNOW_CLIENT_ID_PARAMETER"):
         servicenow.read_parameter_store()
-    (tmp_path / "org.json").write_text('{"snowClientIdParameter": "/a", "snowClientSecretParameter": "/b"}')
+    (tmp_path / "org.json").write_text('{"snowClientIdParameter": "/a", "snowClientSecretParameter": "/b"}', encoding="utf-8")
     assert servicenow.client_parameters() == ("/a", "/b")
 
 
@@ -151,7 +151,7 @@ def test_avit_fetch_writes_a_findings_file(monkeypatch, tmp_path):
     output = tmp_path / "avits.md"
     args = cli.build_parser().parse_args(["avit", "fetch", "AVIT000000000000001", "--snow-instance", INSTANCE, "-o", str(output)])
     assert servicenow.cmd_avit(args) == 0
-    assert output.read_text() == "# AVITs\n"
+    assert output.read_text(encoding="utf-8") == "# AVITs\n"
 
 
 def test_every_avit_is_reviewed_and_the_view_decides_semgrep(monkeypatch):

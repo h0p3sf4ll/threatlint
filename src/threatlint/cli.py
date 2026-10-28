@@ -193,7 +193,7 @@ def _tool_read(repo_root: str, file_path: str, offset: int = 0, limit: int = _MA
         source = _repository_path(repo_root, file_path)
         if source.stat().st_size > _MAX_READ_BYTES:
             return "Error: file exceeds the 2 MB inspection limit"
-        with source.open("r", errors="replace") as fh:
+        with source.open("r", encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
     except (OSError, ValueError) as exc:
         return f"Error: {exc}"
@@ -971,9 +971,13 @@ def main() -> None:
     from threatlint.ide import cmd_ide
 
     # Windows consoles on legacy code pages cannot encode ✓ / →; substitute rather than crash.
+    # Pipes (the Workbench, CI) read UTF-8, so write UTF-8 to them rather than the ANSI code page.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(errors="replace")
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
 
     parser = build_parser()
     args = parser.parse_args()

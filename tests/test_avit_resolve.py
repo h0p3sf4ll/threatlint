@@ -117,7 +117,7 @@ class FakeServiceNow:
 
 def _args(tmp_path, report, **extra):
     path, docx = tmp_path / "report.md", tmp_path / "report.docx"
-    path.write_text(report)
+    path.write_text(report, encoding="utf-8")
     docx.write_bytes(b"PK-docx")
     return types.SimpleNamespace(number=AVIT, report=str(path), docx=str(docx), snow_instance=INSTANCE, aws_profile=None,
                                  semgrep_deployment=None, skip_semgrep=False, skip_rule_tuning=True, checkout=None, yes=True, **extra)
@@ -258,7 +258,7 @@ def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path)
 def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypatch):
     checkout = tmp_path / "repo"
     (checkout / ".git" / "objects").mkdir(parents=True)
-    (checkout / ".git" / "objects" / "pack").write_text("x")
+    (checkout / ".git" / "objects" / "pack").write_text("x", encoding="utf-8")
     os.chmod(checkout / ".git" / "objects" / "pack", 0o444)
     args = types.SimpleNamespace(avit_command="resolve", checkout=str(checkout), keep_checkout=False)
     monkeypatch.setattr("sys.stdout", io.StringIO())
@@ -349,7 +349,7 @@ def test_a_huge_ado_repository_falls_back_to_downloading_the_flagged_folder(monk
     monkeypatch.setattr(sn.urllib.request, "urlopen", urlopen)
     target = {"scm": "azure-devops", "clone_url": "https://dev.azure.com/o/p/_git/r", "web_url": "u", "branch": "feat/x", "organization": "o"}
     out = sn.checkout_repository(target, str(tmp_path / "co"), "force-app/classes/A.cls")
-    assert (tmp_path / "co/force-app/classes/A.cls").read_text() == "public class A {}" and (tmp_path / "co/force-app/classes/B.cls").exists()
+    assert (tmp_path / "co/force-app/classes/A.cls").read_text(encoding="utf-8") == "public class A {}" and (tmp_path / "co/force-app/classes/B.cls").exists()
     assert out == str(tmp_path / "co") and all("versionDescriptor.version=feat%2Fx" in url for url in seen)
 
 

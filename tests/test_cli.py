@@ -89,20 +89,20 @@ def agent_file(request):
 
 class TestAgentFrontmatter:
     def test_has_frontmatter(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         assert re.match(r"^---\n", raw), f"{agent_file.name}: missing opening ---"
         assert "\n---\n" in raw, f"{agent_file.name}: missing closing ---"
 
     def test_has_name_field(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         assert "name:" in raw, f"{agent_file.name}: missing 'name:'"
 
     def test_has_description_field(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         assert "description:" in raw, f"{agent_file.name}: missing 'description:'"
 
     def test_disallows_write_and_edit(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         assert "disallowedTools:" in raw, f"{agent_file.name}: missing 'disallowedTools:'"
         m = re.search(r"disallowedTools:\s*(.+)", raw)
         assert m, f"{agent_file.name}: could not parse disallowedTools"
@@ -111,14 +111,14 @@ class TestAgentFrontmatter:
         assert "Edit" in disallowed, f"{agent_file.name}: Edit not in disallowedTools"
 
     def test_declares_only_inspection_tools(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         match = re.search(r"^tools:\s*(.+)$", raw, re.MULTILINE)
         assert match, f"{agent_file.name}: missing tools"
         tools = {tool.strip() for tool in match.group(1).split(",")}
         assert tools <= {"Read", "Grep", "Glob", "Bash"}
 
     def test_system_prompt_substantial(self, agent_file):
-        raw = agent_file.read_text()
+        raw = agent_file.read_text(encoding="utf-8")
         m = re.match(r"^---\n[\s\S]*?\n---\n([\s\S]*)", raw)
         assert m, f"{agent_file.name}: could not extract system prompt"
         body = m.group(1).strip()
@@ -128,7 +128,7 @@ class TestAgentFrontmatter:
 # ── New agent content ─────────────────────────────────────────────────────────
 
 def _load_prompt(stem):
-    raw = (AGENTS_SRC / f"{stem}.md").read_text()
+    raw = (AGENTS_SRC / f"{stem}.md").read_text(encoding="utf-8")
     m = re.match(r"^---\n[\s\S]*?\n---\n([\s\S]*)", raw)
     return m.group(1).strip() if m else ""
 
@@ -235,7 +235,7 @@ class TestBashAllowed:
 class TestToolRead:
     def test_reads_file(self, tmp_path):
         f = tmp_path / "test.txt"
-        f.write_text("line one\nline two\nline three\n")
+        f.write_text("line one\nline two\nline three\n", encoding="utf-8")
         result = _tool_read(str(tmp_path), str(f))
         assert "line one" in result
         assert "line two" in result
@@ -246,7 +246,7 @@ class TestToolRead:
 
     def test_offset_and_limit(self, tmp_path):
         f = tmp_path / "big.txt"
-        f.write_text("\n".join(f"line {i}" for i in range(100)))
+        f.write_text("\n".join(f"line {i}" for i in range(100)), encoding="utf-8")
         result = _tool_read(str(tmp_path), str(f), offset=10, limit=5)
         assert "line 10" in result
         assert "line 14" in result
@@ -254,7 +254,7 @@ class TestToolRead:
 
     def test_relative_path_resolved_from_repo_root(self, tmp_path):
         (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "app.py").write_text("SECRET = 'abc'\n")
+        (tmp_path / "src" / "app.py").write_text("SECRET = 'abc'\n", encoding="utf-8")
         result = _tool_read(str(tmp_path), "src/app.py")
         assert "SECRET" in result
 
@@ -275,21 +275,21 @@ class TestToolBash:
 
 class TestToolGrep:
     def test_finds_pattern(self, tmp_path):
-        (tmp_path / "foo.py").write_text("def secret_key():\n    return 'abc123'\n")
+        (tmp_path / "foo.py").write_text("def secret_key():\n    return 'abc123'\n", encoding="utf-8")
         result = _tool_grep(str(tmp_path), "secret_key", str(tmp_path))
         assert "secret_key" in result
 
     def test_no_match_returns_empty(self, tmp_path):
-        (tmp_path / "foo.py").write_text("nothing here\n")
+        (tmp_path / "foo.py").write_text("nothing here\n", encoding="utf-8")
         result = _tool_grep(str(tmp_path), "zzznomatch", str(tmp_path))
         assert result.strip() == ""
 
 
 class TestToolGlob:
     def test_finds_matching_files(self, tmp_path):
-        (tmp_path / "a.py").write_text("x")
-        (tmp_path / "b.py").write_text("x")
-        (tmp_path / "c.txt").write_text("x")
+        (tmp_path / "a.py").write_text("x", encoding="utf-8")
+        (tmp_path / "b.py").write_text("x", encoding="utf-8")
+        (tmp_path / "c.txt").write_text("x", encoding="utf-8")
         result = _tool_glob(str(tmp_path), "*.py")
         assert "a.py" in result
         assert "b.py" in result

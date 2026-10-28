@@ -32,7 +32,7 @@ SEVERITY_COLORS = {
 
 
 def extract_findings(report_path):
-    with open(report_path) as f:
+    with open(report_path, encoding='utf-8') as f:
         content = f.read()
 
     findings = []

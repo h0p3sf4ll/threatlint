@@ -183,7 +183,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        with open(args.report) as f:
+        with open(args.report, encoding='utf-8') as f:
             report_text = f.read()
     except OSError as e:
         print(f'ERROR: Cannot read report: {e}', file=sys.stderr)
@@ -195,7 +195,7 @@ def main():
 
     sarif = findings_to_sarif(findings, args.tool, args.commit_sha, args.report)
 
-    with open(args.output, 'w') as f:
+    with open(args.output, 'w', encoding='utf-8') as f:
         json.dump(sarif, f, indent=2)
 
     print(f'SARIF written to {args.output} ({len(findings)} findings, {len(sarif["runs"][0]["tool"]["driver"]["rules"])} rules).', flush=True)

@@ -68,7 +68,7 @@ def test_keyring_is_used_when_available(monkeypatch):
                              "delete_password": staticmethod(lambda s, u: store.pop((s, u)))})
     monkeypatch.setattr(ado_login, "_keyring", lambda: keyring)
     assert ado_login.save("contoso", PAT) == "the OS credential store"
-    assert PAT not in ado_login.store_path().read_text()
+    assert PAT not in ado_login.store_path().read_text(encoding="utf-8")
     assert ado_login.load() == (PAT, "OS credential store")
 
 
@@ -113,7 +113,7 @@ def test_the_single_pat_file_from_earlier_versions_still_loads(monkeypatch):
                              "get_password": staticmethod(lambda s, u: store.get((s, u))), "delete_password": staticmethod(lambda s, u: store.pop((s, u)))})
     monkeypatch.setattr(ado_login, "_keyring", lambda: keyring)
     ado_login.store_path().parent.mkdir(parents=True, exist_ok=True)
-    ado_login.store_path().write_text('{"organization": "contoso", "storage": "keyring"}')
+    ado_login.store_path().write_text('{"organization": "contoso", "storage": "keyring"}', encoding="utf-8")
     assert ado_login.load("contoso") == (PAT, "OS credential store")
     ado_login.save("fabrikam", "f" * 52)
     assert ado_login.load("contoso")[0] == PAT and ado_login.load("fabrikam")[0] == "f" * 52
@@ -122,6 +122,6 @@ def test_the_single_pat_file_from_earlier_versions_still_loads(monkeypatch):
 def test_the_store_stays_readable_by_older_single_pat_versions(monkeypatch):
     ado_login.save("contoso", PAT)
     ado_login.save("fabrikam", "f" * 52)
-    data = __import__("json").loads(ado_login.store_path().read_text())
+    data = __import__("json").loads(ado_login.store_path().read_text(encoding="utf-8"))
     assert data["organization"] == "contoso" and data["pat"] == PAT, "old readers still find a PAT at the top level"
     assert set(data["organizations"]) == {"contoso", "fabrikam"}

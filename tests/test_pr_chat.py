@@ -135,7 +135,7 @@ def test_ado_reply_builder():
 
 def _github_env(tmp_path, event, name='issue_comment'):
     path = tmp_path / 'event.json'
-    path.write_text(json.dumps(event))
+    path.write_text(json.dumps(event), encoding="utf-8")
     return {'GITHUB_EVENT_PATH': str(path), 'GITHUB_EVENT_NAME': name, 'GITHUB_REPOSITORY': 'acme/shop', 'GH_TOKEN': 'gh-test', 'ANTHROPIC_API_KEY': 'ak-test'}
 
 
@@ -256,7 +256,7 @@ def _gate(args, env=None):
 
 def test_gate_warns_by_default_and_fails_on_request(tmp_path):
     report = tmp_path / 'r.md'
-    report.write_text(REPORT)
+    report.write_text(REPORT, encoding="utf-8")
     warn = _gate(['--report', str(report)], {'GITHUB_ACTIONS': 'true'})
     assert warn.returncode == 0 and '::warning::[SG-001]' in warn.stdout
     fail = _gate(['--report', str(report), '--mode', 'fail'])
@@ -267,7 +267,7 @@ def test_gate_warns_by_default_and_fails_on_request(tmp_path):
 
 def test_gate_azure_warn_marks_succeeded_with_issues(tmp_path):
     report = tmp_path / 'r.md'
-    report.write_text(REPORT)
+    report.write_text(REPORT, encoding="utf-8")
     result = _gate(['--report', str(report)], {'TF_BUILD': 'True'})
     assert result.returncode == 0
     assert '##vso[task.logissue type=warning]' in result.stdout and 'result=SucceededWithIssues' in result.stdout
@@ -281,7 +281,7 @@ def test_gate_missing_report_warns_or_fails(tmp_path):
 
 def test_gate_passes_below_threshold(tmp_path):
     report = tmp_path / 'r.md'
-    report.write_text(REPORT)
+    report.write_text(REPORT, encoding="utf-8")
     result = _gate(['--report', str(report), '--severity', 'CRITICAL', '--mode', 'fail'])
     assert result.returncode == 0 and 'PASS' in result.stdout
 
@@ -290,5 +290,5 @@ def test_report_comments_carry_the_marker():
     comment = _load('post_pr_comment', ROOT / '.github/scripts/post_pr_comment.py')
     body = comment.build_comment(comment.extract_summary(REPORT), 'https://example.test/run')
     assert body.startswith(chat.REPORT_MARKER) and '/threatlint' in body
-    template = (ROOT / 'azure-pipelines/templates/threatlint-steps.yml').read_text()
+    template = (ROOT / 'azure-pipelines/templates/threatlint-steps.yml').read_text(encoding="utf-8")
     assert '<!-- threatlint:report agent=' in template

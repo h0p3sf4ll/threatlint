@@ -50,7 +50,7 @@ FIXTURES = "**Tuned rule fixtures**:\n\n```javascript\n// ruleid: js.rule.tuned\
 def test_nothing_is_published_when_the_tuned_rule_still_matches(monkeypatch, tmp_path):
     monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
-    (tmp_path / "a.js").write_text("x")
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [2, 4] if target.endswith("tuned.js") else [10])
     published = []
     monkeypatch.setattr(sp, "publish", lambda *a: published.append(a))
@@ -62,7 +62,7 @@ def test_nothing_is_published_when_the_tuned_rule_still_matches(monkeypatch, tmp
 def test_tuned_rule_replaces_the_original_in_its_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
-    (tmp_path / "a.js").write_text("x")
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [2, 4] if target.endswith("tuned.js") else ([] if config.endswith("tuned.yaml") else [10]))
     monkeypatch.setattr(sp, "publish", lambda path, token: "org.js.rule.tuned")
     puts = []
@@ -75,7 +75,7 @@ def test_tuned_rule_replaces_the_original_in_its_mode(monkeypatch, tmp_path):
                                  {"id": "6", "name": "Secrets", "productType": "PRODUCT_TYPE_SECRETS"}]}
         return {"rules": [{"path": "js.rule", "policyMode": "MODE_BLOCK"}, {"path": "other", "policyMode": "MODE_BLOCK"}]}
     monkeypatch.setattr(sp, "call", call)
-    changes = sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w"))
+    changes = sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8"))
     assert puts == [("org.js.rule.tuned", "MODE_BLOCK"), ("js.rule", "MODE_DISABLED")]
     assert changes[0]["policy"] == "Global Policy"
 
@@ -106,11 +106,11 @@ def test_a_rule_whose_live_tuning_covers_the_line_is_not_tuned_again(monkeypatch
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: example_org.js.rule.tuned\n")
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "validate_tuned_rule", lambda *a: pytest.fail("must not re-validate or publish"))
-    assert sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []
+    assert sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
 
 
 def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipped(monkeypatch, tmp_path):
-    (tmp_path / "a.js").write_text("x")
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
     proposal = sp.tuned_rule_from_report(REPORT)
     original = proposal.replace("js.rule.tuned", "js.rule")
     # The live tuned rule gained an exclusion the proposal lacks: appended as its own top-level key.
@@ -127,17 +127,17 @@ def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipp
         raise Stop
     monkeypatch.setattr(sp, "validate_tuned_rule", validate)
     with pytest.raises(Stop):
-        sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w"))
+        sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8"))
     assert "pattern: clean(...)" in seen["rule"] and seen["rule"].startswith("rules:\n  - id: js.rule.tuned"), "the live rule's change is merged in before the proof gate"
 
 
 def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(monkeypatch, tmp_path):
-    (tmp_path / "a.js").write_text("x")
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
     monkeypatch.setattr(sp, "existing_tuning", lambda *a: [{"policy": "Global", "tuned": "example_org.js.rule.tuned", "mode": "MODE_COMMENT"}])
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: x\n")
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("nothing to publish"))
-    assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w")) == []
+    assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
 
 
 def test_concurrent_extensions_of_one_live_rule_are_merged():

@@ -99,7 +99,7 @@ def get_changed_files(base, head):
 def read_file_safe(path, max_bytes=MAX_FILE_BYTES):
     try:
         size = os.path.getsize(path)
-        with open(path, errors='replace') as f:
+        with open(path, encoding="utf-8", errors='replace') as f:
             content = f.read(max_bytes)
         if size > max_bytes:
             content += f'\n[...truncated at {max_bytes} bytes...]'

@@ -82,7 +82,7 @@ def test_suppression_requires_rule_and_reason():
 
 
 def test_sarif_shape(tmp_path):
-    (tmp_path / "app.py").write_text("obj = pickle.loads(blob)\n")
+    (tmp_path / "app.py").write_text("obj = pickle.loads(blob)\n", encoding="utf-8")
     sarif = json.loads(guard.to_sarif(guard.scan_paths([str(tmp_path)])))
     assert sarif["version"] == "2.1.0"
     run = sarif["runs"][0]
@@ -95,7 +95,7 @@ def test_sarif_shape(tmp_path):
 
 def test_scan_skips_dependency_directories(tmp_path):
     (tmp_path / "node_modules").mkdir()
-    (tmp_path / "node_modules" / "lib.js").write_text("eval(x)\n")
+    (tmp_path / "node_modules" / "lib.js").write_text("eval(x)\n", encoding="utf-8")
     assert not guard.scan_paths([str(tmp_path)])
 
 
@@ -114,29 +114,29 @@ def _guard_args(**overrides):
 
 def test_cmd_guard_exit_codes(tmp_path, capsys):
     bad = tmp_path / "bad.py"
-    bad.write_text("subprocess.run(cmd, shell=True, check=False)\n")
+    bad.write_text("subprocess.run(cmd, shell=True, check=False)\n", encoding="utf-8")
     assert guard.cmd_guard(_guard_args(paths=[str(bad)])) == 1
     assert json.loads(capsys.readouterr().out)["findings"][0]["rule_id"] == "TL-PY-SHELL"
     good = tmp_path / "good.py"
-    good.write_text("subprocess.run(['ls'], shell=False, check=False)\n")
+    good.write_text("subprocess.run(['ls'], shell=False, check=False)\n", encoding="utf-8")
     assert guard.cmd_guard(_guard_args(paths=[str(good)])) == 0
 
 
 def test_hook_mode_exit_codes(tmp_path, capsys):
     bad = tmp_path / "bad.py"
-    bad.write_text("cfg = yaml.load(stream)\n")
+    bad.write_text("cfg = yaml.load(stream)\n", encoding="utf-8")
     payload = json.dumps({"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": {"file_path": str(bad)}})
     assert guard.run_hook(payload) == 2
     assert "TL-PY-YAML" in capsys.readouterr().err
     good = tmp_path / "good.py"
-    good.write_text("cfg = yaml.safe_load(stream)\n")
+    good.write_text("cfg = yaml.safe_load(stream)\n", encoding="utf-8")
     assert guard.run_hook(json.dumps({"tool_input": {"file_path": str(good)}})) == 0
     assert guard.run_hook("not json") == 0
 
 
 def test_cli_hook_subprocess(tmp_path):
     bad = tmp_path / "bad.js"
-    bad.write_text("el.innerHTML = userHtml;\n")
+    bad.write_text("el.innerHTML = userHtml;\n", encoding="utf-8")
     result = subprocess.run([sys.executable, "-m", "threatlint", "guard", "--hook"],
                             input=json.dumps({"tool_input": {"file_path": str(bad)}}),
                             capture_output=True, text=True, check=False)
@@ -144,38 +144,38 @@ def test_cli_hook_subprocess(tmp_path):
 
 
 def test_ide_install_is_idempotent_and_non_destructive(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("# Project\n\nKeep this.\n")
+    (tmp_path / "CLAUDE.md").write_text("# Project\n\nKeep this.\n", encoding="utf-8")
     (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"]}}))
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"]}}), encoding="utf-8")
     (tmp_path / ".vscode").mkdir()
-    (tmp_path / ".vscode" / "tasks.json").write_text(json.dumps({"version": "2.0.0", "tasks": [{"label": "build"}]}))
+    (tmp_path / ".vscode" / "tasks.json").write_text(json.dumps({"version": "2.0.0", "tasks": [{"label": "build"}]}), encoding="utf-8")
 
     first = ide.install(tmp_path, list(ide.EDITORS))
     assert "added" in first.values()
-    snapshot = {p: p.read_text() for p in tmp_path.rglob("*") if p.is_file()}
+    snapshot = {p: p.read_text(encoding="utf-8") for p in tmp_path.rglob("*") if p.is_file()}
     second = ide.install(tmp_path, list(ide.EDITORS))
     assert set(second.values()) == {"unchanged"}
-    assert snapshot == {p: p.read_text() for p in tmp_path.rglob("*") if p.is_file()}
+    assert snapshot == {p: p.read_text(encoding="utf-8") for p in tmp_path.rglob("*") if p.is_file()}
 
-    claude_md = (tmp_path / "CLAUDE.md").read_text()
+    claude_md = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "Keep this." in claude_md and claude_md.count(ide.BEGIN) == 1
-    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"] == {"allow": ["Bash(ls)"]}
     hook = settings["hooks"]["PostToolUse"][0]
     assert hook["matcher"] == "Edit|Write|MultiEdit" and hook["hooks"][0]["command"] == "threatlint guard --hook"
-    tasks = json.loads((tmp_path / ".vscode" / "tasks.json").read_text())["tasks"]
+    tasks = json.loads((tmp_path / ".vscode" / "tasks.json").read_text(encoding="utf-8"))["tasks"]
     assert tasks[0] == {"label": "build"} and len(tasks) == 1 + len(ide.VSCODE_TASKS)
-    assert (tmp_path / ".github" / "instructions" / "threatlint-secure-code.instructions.md").read_text().startswith('---\napplyTo: "**"')
-    assert "alwaysApply: true" in (tmp_path / ".cursor" / "rules" / "threatlint-secure-code.mdc").read_text()
-    assert ide.BEGIN in (tmp_path / ".windsurfrules").read_text()
-    assert "threatlint-guard" in (tmp_path / ".pre-commit-config.yaml").read_text()
+    assert (tmp_path / ".github" / "instructions" / "threatlint-secure-code.instructions.md").read_text(encoding="utf-8").startswith('---\napplyTo: "**"')
+    assert "alwaysApply: true" in (tmp_path / ".cursor" / "rules" / "threatlint-secure-code.mdc").read_text(encoding="utf-8")
+    assert ide.BEGIN in (tmp_path / ".windsurfrules").read_text(encoding="utf-8")
+    assert "threatlint-guard" in (tmp_path / ".pre-commit-config.yaml").read_text(encoding="utf-8")
 
 
 def test_ide_install_updates_stale_section(tmp_path):
     target = tmp_path / ".windsurfrules"
-    target.write_text(f"before\n{ide.BEGIN}\nold rules\n{ide.END}\nafter\n")
+    target.write_text(f"before\n{ide.BEGIN}\nold rules\n{ide.END}\nafter\n", encoding="utf-8")
     assert ide.upsert_section(target) == "updated"
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     assert "old rules" not in text and text.startswith("before\n") and text.endswith("after\n")
 
 
