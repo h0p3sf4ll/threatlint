@@ -235,7 +235,7 @@
       row.append(select, button('×', 'icon-button', () => disconnect(item.id), `Disconnect ${item.label || item.account || 'source connection'}`));
       list.append(row);
     }
-    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above.'));
+    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above, or save an Azure DevOps PAT in Settings → Azure DevOps.'));
     syncSourceControls();
   }
   async function refreshConnections() {
@@ -252,7 +252,7 @@
       renderConnections();
       if (!selected) selectConnection(scm.connections[0]?.id || '');
       else status('scm-status', 'Session connections refreshed. Select a repository to continue.');
-      if (!scm.connections.length) status('scm-status', 'No source connections in this runner session. Connect an account above.');
+      if (!scm.connections.length) status('scm-status', 'No source connections yet. Connect an account above, or save an Azure DevOps PAT in Settings to connect it automatically.');
     } catch {
       status('scm-status', 'Source connections could not be loaded. The local runner may not support source connections yet; use Refresh to retry.', 'error');
     } finally { scm.refreshing = false; syncSourceControls(); }

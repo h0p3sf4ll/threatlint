@@ -195,6 +195,9 @@ def add_ado_parser(sub) -> None:
     login.add_argument("--organization", default="", help="Azure DevOps organization, e.g. contoso")
     login.add_argument("--pat-stdin", action="store_true", help="Read the PAT from standard input instead of prompting")
     actions.add_parser("status", help="Show which organizations have a PAT and where each comes from (never prints them)")
+    # The Workbench reads a saved PAT over a pipe to open its source connection; not for interactive use.
+    token = actions.add_parser("token", help="Print a saved PAT to a pipe (for the Workbench; refuses a terminal)")
+    token.add_argument("--organization", required=True)
     logout_parser = actions.add_parser("logout", help="Remove a saved PAT (one organization, or all)")
     logout_parser.add_argument("--organization", default="", help="Remove only this organization's PAT")
 
@@ -205,6 +208,13 @@ def cmd_ado(args) -> int:
             organization = args.organization.strip()
             where = prompt_and_save(organization, args.pat_stdin)
             print(f"✓ PAT validated and saved to {where}{' for ' + organization if organization else ''}")
+        elif args.ado_command == "token":
+            if sys.stdout.isatty():
+                raise AdoLoginError("Refusing to print a PAT to a terminal")
+            pat = load(args.organization.strip())[0]
+            if not pat:
+                raise AdoLoginError(f"No PAT saved for {args.organization}")
+            sys.stdout.write(pat)
         elif args.ado_command == "status":
             env = next((name for name in ENV_NAMES if os.environ.get(name)), "")
             saved = [(org, load(org)[1]) for org in organizations()]

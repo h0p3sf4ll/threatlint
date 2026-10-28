@@ -70,7 +70,7 @@ function createWorkbench(options = {}) {
   app.use(express.static(path.join(__dirname, 'public')));
 
   registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
-  registerSourceRoutes(app, { store, scm });
+  registerSourceRoutes(app, { store, scm, integrations: options.integrations });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations });
   registerTriageRoutes(app, { reports, integrations: options.integrations });

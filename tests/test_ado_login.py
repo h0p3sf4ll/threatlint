@@ -125,3 +125,16 @@ def test_the_store_stays_readable_by_older_single_pat_versions(monkeypatch):
     data = __import__("json").loads(ado_login.store_path().read_text(encoding="utf-8"))
     assert data["organization"] == "contoso" and data["pat"] == PAT, "old readers still find a PAT at the top level"
     assert set(data["organizations"]) == {"contoso", "fabrikam"}
+
+
+def test_token_prints_a_saved_pat_only_to_a_pipe(monkeypatch, capsys):
+    import types
+    from threatlint import ado_login
+    monkeypatch.setattr(ado_login, "load", lambda org="": ("p" * 52, "store") if org == "contoso" else ("", ""))
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="token", organization="contoso")) == 0
+    assert capsys.readouterr().out == "p" * 52
+    assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="token", organization="other")) == 1
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="token", organization="contoso")) == 1
+    assert "p" * 20 not in capsys.readouterr().out
