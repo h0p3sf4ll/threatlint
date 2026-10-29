@@ -1,0 +1,36 @@
+{
+  "Generated": "2026-10-21T08:00:00Z",
+  "Target": { "Url": "https://api.example.test/", "Initiated": "2026-10-21T07:45:00Z", "Duration": "00:15:00" },
+  "Vulnerabilities": [
+    {
+      "LookupId": "22222222-aaaa-bbbb-cccc-000000000001",
+      "Url": "https://api.example.test/orders?id=1",
+      "Type": "SqlInjection",
+      "Name": "SQL Injection",
+      "Severity": "Critical",
+      "Certainty": 95,
+      "Confirmed": false,
+      "Classification": { "Owasp2021": "A3", "Cwe": "89", "Capec": "66" },
+      "HttpRequest": {
+        "Method": "GET",
+        "Content": "GET /orders?id=1%27 HTTP/1.1\r\nHost: api.example.test\r\nX-Api-Key: synthetickey0123456789\r\nAuthorization: Basic c3ludGhldGljOnVzZXI=\r\n\r\n",
+        "Parameters": [{ "Name": "id", "Type": "Querystring", "Value": "1'", "Vulnerable": true }]
+      },
+      "HttpResponse": { "StatusCode": 500, "Content": "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nsyntax error near \"'\" password=hunter2example" },
+      "RemedialProcedure": "Use parameterized queries.",
+      "Description": "The id parameter appears to be injectable."
+    },
+    {
+      "LookupId": "22222222-aaaa-bbbb-cccc-000000000002",
+      "Url": "https://api.example.test/",
+      "Type": "VersionDisclosure",
+      "Name": "Version Disclosure (nginx)",
+      "Severity": "Information",
+      "Certainty": 100,
+      "Confirmed": true,
+      "Classification": { "Cwe": "205" },
+      "HttpRequest": { "Method": "GET", "Content": "GET / HTTP/1.1\r\nHost: api.example.test\r\n\r\n" },
+      "HttpResponse": { "Content": "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0\r\nContent-Type: application/json\r\n\r\n{}" }
+    }
+  ]
+}

@@ -29,7 +29,8 @@ function createReportWriter(store) {
     } catch { return false; }
   }
 
-  async function save(agentId, markdown, sessionId) {
+  /** options.title: a descriptive report title (e.g. for an imported scan); options.source: where the findings came from. */
+  async function save(agentId, markdown, sessionId, { title = null, source = null } = {}) {
     if (!markdown.trim()) throw new Error('The model returned no final report');
     const session = store.sessions.get(sessionId);
     const directory = directoryFor(sessionId);
@@ -41,7 +42,8 @@ function createReportWriter(store) {
     const hasDocx = await convertToWord(mdPath, docxPath);
     const parsed = parseReport(markdown, agentId);
     const report = { id: crypto.randomUUID(), agentId, label: AGENTS[agentId].label, timestamp, mdPath, docxPath: hasDocx ? docxPath : null,
-      sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE };
+      sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE,
+      ...(title ? { title: String(title).slice(0, 300) } : {}), ...(source ? { source } : {}) };
     session.reports.push(report);
     session.updatedAt = Date.now();
     store.save();
@@ -50,7 +52,7 @@ function createReportWriter(store) {
 
   function metadata(report) {
     const base = `/api/report/${report.sessionId}/${report.agentId}/${report.timestamp}`;
-    return { id: report.id, agentId: report.agentId, label: report.label, timestamp: report.timestamp,
+    return { id: report.id, agentId: report.agentId, label: report.label, title: report.title || null, source: report.source || null, sessionId: report.sessionId, timestamp: report.timestamp,
       hasDocx: !!report.docxPath, mdUrl: `${base}/md`, docxUrl: report.docxPath ? `${base}/docx` : null,
       previewUrl: `${base}/json`, summary: report.summary, findings: report.findings, quality: report.quality,
       conversionNote: report.conversionNote || null };
