@@ -9,7 +9,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   // The file travels base64-encoded in JSON, and the runner caps a JSON body at 7 MB.
-  const MAX_BYTES = 5 * 1024 * 1024;
+  const MAX_BYTES = 25 * 1024 * 1024;
   const POLL_MS = 1000;
   const STEPS = ['queued', 'parsing', 'triaging', 'done'];
   const STATUS_LABELS = { queued: 'Queued', parsing: 'Parsing', triaging: 'Triaging', done: 'Done', error: 'Error' };
@@ -82,7 +82,7 @@
     if (!file) return;
     if (!/\.(xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose an Invicti XML or JSON export, or a MobSF JSON report.`); return; }
     if (!file.size) { setError(`${file.name} is empty. Export the scan report again.`); return; }
-    if (file.size > MAX_BYTES) { setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 5 MB; export a filtered report (for example, without request/response bodies) or split it.`); return; }
+    if (file.size > MAX_BYTES) { setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB; export a filtered report (for example, without request/response bodies) or split it.`); return; }
     state.file = file;
     $('scanimport-file-name').textContent = `${file.name} · ${file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}`;
     $('scanimport-file-name').title = file.name;
@@ -123,7 +123,8 @@
     state.submitting = true; updateControls();
     try {
       const content = await readBase64(state.file);
-      const body = { filename: state.file.name, content, source: $('scanimport-source').value };
+      // The model settings the run uses (keys stay in memory; the server never saves them).
+      const body = { ...(state.context?.settings || {}), filename: state.file.name, content, source: $('scanimport-source').value };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
       if (avit) body.avit = avit;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });

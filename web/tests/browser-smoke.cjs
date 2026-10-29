@@ -46,8 +46,8 @@ async function scanImport(page) {
 
   await page.locator('#scanimport-file').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF') });
   assert.match(await page.locator('#scanimport-error').innerText(), /Unsupported file: scan\.pdf/);
-  await page.locator('#scanimport-file').setInputFiles({ name: 'big.xml', mimeType: 'text/xml', buffer: Buffer.alloc(5 * 1024 * 1024 + 1, 60) });
-  assert.match(await page.locator('#scanimport-error').innerText(), /limit is 5 MB/);
+  await page.locator('#scanimport-file').setInputFiles({ name: 'big.xml', mimeType: 'text/xml', buffer: Buffer.alloc(25 * 1024 * 1024 + 1, 60) });
+  assert.match(await page.locator('#scanimport-error').innerText(), /limit is 25 MB/);
   const report = '<?xml version="1.0"?><invicti-enterprise><target><url>https://staging.example.test</url></target></invicti-enterprise>';
   await page.locator('#scanimport-file').setInputFiles({ name: 'invicti.xml', mimeType: 'text/xml', buffer: Buffer.from(report) });
   assert.equal(await page.locator('#scanimport-error').innerText(), '');
@@ -61,7 +61,9 @@ async function scanImport(page) {
   await page.locator('#scanimport-start').click();
 
   await page.locator('#scanimport-job-status', { hasText: 'DONE' }).waitFor();
-  assert.deepEqual({ ...calls.upload, content: Buffer.from(calls.upload.content, 'base64').toString() }, { filename: 'invicti.xml', content: report, source: 'invicti', workspaceId: session.id, avit: 'AVIT0042599' });
+  const { filename, content, source, workspaceId, avit, provider } = calls.upload;
+  assert.deepEqual({ filename, content: Buffer.from(content, 'base64').toString(), source, workspaceId, avit }, { filename: 'invicti.xml', content: report, source: 'invicti', workspaceId: session.id, avit: 'AVIT0042599' });
+  assert.ok(provider, 'The upload carries the model settings, so the import is triaged with the chosen model');
   assert.ok(polls >= 4, 'Progress polled through queued, parsing, and triaging');
   assert.equal(await page.locator('#scanimport-steps li.complete').count(), 4);
   assert.equal(await page.locator('#scanimport-job-title').innerText(), done.title);
