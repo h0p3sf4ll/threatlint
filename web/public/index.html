@@ -12,6 +12,7 @@
   <script src="/vendor/purify.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
+  <script src="/scan-import.js" defer></script>
   <script src="/charts.js" defer></script>
   <script src="/insights.js" defer></script>
   <script src="/chat.js" defer></script>
@@ -27,6 +28,7 @@
       <button class="nav-item" data-view="sources" aria-controls="view-sources"><span class="nav-icon" aria-hidden="true">⑂</span>Connect source</button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span>Scan running app</button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>False positive review</button>
+      <button class="nav-item" data-view="scanimport" aria-controls="view-scanimport"><span class="nav-icon" aria-hidden="true">↥</span>Import scan report</button>
       <div class="sidebar-label">2 · FIX</div>
       <button class="nav-item" data-view="reports"><span class="nav-icon" aria-hidden="true">▤</span>Findings<span class="nav-count" id="report-nav-count">0</span></button>
       <button class="nav-item" data-view="chat" aria-controls="view-chat"><span class="nav-icon" aria-hidden="true">✦</span>Ask Threatlint</button>
@@ -308,6 +310,48 @@
         </form>
         <div id="fpreview-results" class="fpreview-results" aria-live="polite"></div>
       </section>
+      <section class="view" id="view-scanimport" aria-labelledby="scanimport-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>INVICTI DAST · MOBSF MOBILE</div><h1 id="scanimport-title">Import scan report</h1><p class="page-description">Upload an Invicti or MobSF report. Threatlint parses every finding, triages it as a true positive, false positive, or ambiguous, and saves a findings report you can read, download, and post to ServiceNow.</p></div><div class="heading-actions"><button class="button secondary" type="button" data-help-topic="scan-import">How import works ▷</button><span class="small subtle">The file stays on this machine</span></div></div>
+        <form id="scanimport-form" class="settings-card scanimport-form" autocomplete="off" novalidate>
+          <div class="scanimport-drop" id="scanimport-drop" aria-describedby="scanimport-file-note">
+            <span class="scanimport-drop-symbol" aria-hidden="true">↥</span>
+            <strong id="scanimport-drop-title">Drop an Invicti or MobSF report here</strong>
+            <span class="small subtle" id="scanimport-file-note">Invicti XML or JSON export · MobSF JSON report · up to 5 MB</span>
+            <div class="scanimport-file-row"><button class="button secondary small-button" type="button" id="scanimport-choose">Choose file…</button><span class="small scanimport-file-name" id="scanimport-file-name" aria-live="polite">No file selected</span><button class="icon-button hidden" type="button" id="scanimport-remove" aria-label="Remove selected scan report">×</button></div>
+          </div>
+          <input type="file" id="scanimport-file" accept=".xml,.json,application/json,text/xml,application/xml" aria-label="Scan report file" hidden>
+          <div class="scanimport-fields">
+            <div><label for="scanimport-source">Scanner<span data-tip="scanimport-source"></span></label><select id="scanimport-source"><option value="auto">Auto-detect</option><option value="invicti">Invicti (DAST)</option><option value="mobsf">MobSF (mobile)</option></select></div>
+            <div><label for="scanimport-workspace">Workspace <span class="subtle">optional</span><span data-tip="scanimport-workspace"></span></label><select id="scanimport-workspace"><option value="">No source context</option></select><button class="text-button scanimport-open-repo" type="button" id="scanimport-open-repo">Open another repository</button></div>
+            <div><label for="scanimport-avit">AVIT number <span class="subtle">optional</span><span data-tip="scanimport-avit"></span></label><input id="scanimport-avit" spellcheck="false" autocapitalize="characters" maxlength="19" placeholder="AVIT000000095938462" aria-describedby="scanimport-avit-note"><p class="field-note small subtle" id="scanimport-avit-note">AVIT plus 7 to 15 digits. Used later for Post to ServiceNow; you can also enter it then.</p></div>
+          </div>
+          <div class="fpreview-outcomes small subtle"><div><strong>Parse</strong> · every issue in the report becomes a finding with its severity and location.</div><div><strong>Triage</strong> · the model chosen in Settings decides true positive, false positive, or ambiguous, using the workspace source when you pick one.</div><div><strong>Report</strong> · a findings report is saved in Findings with a descriptive title, as Markdown and Word.</div></div>
+          <div class="privacy-notice"><span aria-hidden="true">◇</span><p id="scanimport-privacy">The file is parsed on this machine and is not uploaded anywhere. Findings go only to the model provider chosen in Settings (fully local with LM Studio), and to ServiceNow only when you press Post to ServiceNow.</p></div>
+          <p class="form-error" id="scanimport-error" role="alert"></p>
+          <div class="settings-actions"><span class="small subtle" id="scanimport-model">Uses the model chosen in Settings.</span><button class="button primary" id="scanimport-start" type="submit" disabled>Import and triage</button></div>
+        </form>
+
+        <section class="panel scanimport-panel" id="scanimport-job" aria-labelledby="scanimport-job-title" hidden>
+          <div class="panel-header"><div><span class="eyebrow" id="scanimport-job-eyebrow">IMPORT</span><h2 id="scanimport-job-title">Importing scan report</h2><p class="small subtle operations-break" id="scanimport-job-target"></p></div><span class="operations-pill" id="scanimport-job-status">QUEUED</span></div>
+          <ol class="scanimport-steps" id="scanimport-steps" aria-label="Import progress"><li data-step="queued"><span class="scanimport-step-mark" aria-hidden="true"></span>Queued</li><li data-step="parsing"><span class="scanimport-step-mark" aria-hidden="true"></span>Parsing</li><li data-step="triaging"><span class="scanimport-step-mark" aria-hidden="true"></span>Triaging</li><li data-step="done"><span class="scanimport-step-mark" aria-hidden="true"></span>Done</li></ol>
+          <output class="operations-status scanimport-status" id="scanimport-status" aria-live="polite" aria-atomic="true">Waiting for the runner…</output>
+          <div id="scanimport-result" class="scanimport-result" hidden>
+            <div class="stat-grid scanimport-stats" aria-label="Triage counts">
+              <div class="stat-card"><span class="stat-icon blue" aria-hidden="true">▤</span><div><span class="stat-value" id="scanimport-count-total">0</span><span class="stat-label">Findings parsed</span></div></div>
+              <div class="stat-card"><span class="stat-icon amber" aria-hidden="true">!</span><div><span class="stat-value" id="scanimport-count-tp">0</span><span class="stat-label">True positives</span></div></div>
+              <div class="stat-card"><span class="stat-icon mint" aria-hidden="true">✓</span><div><span class="stat-value" id="scanimport-count-fp">0</span><span class="stat-label">False positives</span></div></div>
+              <div class="stat-card"><span class="stat-icon lavender" aria-hidden="true">?</span><div><span class="stat-value" id="scanimport-count-ambiguous">0</span><span class="stat-label">Ambiguous</span></div></div>
+            </div>
+            <div class="scanimport-actions"><button class="button primary small-button" type="button" id="scanimport-open-report">Open report ↗</button><a class="button secondary small-button" id="scanimport-download-md" aria-disabled="true" download>↓ Markdown</a><a class="button secondary small-button" id="scanimport-download-docx" aria-disabled="true" download>↓ Word</a><button class="button secondary small-button" type="button" id="scanimport-post">Post to ServiceNow…</button><span data-tip="scanimport-servicenow"></span></div>
+            <div class="sk-table-wrap scanimport-table-wrap"><table class="sk-table scanimport-table"><caption class="operations-sr-only">Triaged findings</caption><thead><tr><th scope="col">ID</th><th scope="col">Finding</th><th scope="col">Severity</th><th scope="col">Disposition<span data-tip="scanimport-disposition"></span></th><th scope="col">Confidence</th><th scope="col">Location</th></tr></thead><tbody id="scanimport-findings"></tbody></table></div>
+          </div>
+        </section>
+
+        <section class="panel scanimport-panel" aria-labelledby="scanimport-history-title">
+          <div class="panel-header"><div><span class="eyebrow">HISTORY</span><h2 id="scanimport-history-title">Previous imports</h2></div><button class="text-button" type="button" id="scanimport-refresh">↻ Refresh</button></div>
+          <ul class="scanimport-history" id="scanimport-history" aria-label="Previous scan imports"><li class="operations-empty-note">No imports yet.</li></ul>
+        </section>
+      </section>
       <section class="view settings-view" id="view-settings" aria-labelledby="settings-title" hidden>
         <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>YOUR MODELS, YOUR CHOICE</div><h1 id="settings-title">Settings</h1><p class="page-description">Choose the model that runs reviews. AVIT review requires ServiceNow, Semgrep, and Azure DevOps credentials; they are saved in the Threatlint config shared with the CLI and never shown again.</p></div></div>
         <div class="settings-layout">
@@ -367,6 +411,14 @@
 <div id="fp-semgrep-matches" class="fp-matches"></div><p id="fp-semgrep-status" class="field-note small" aria-live="polite"></p></section>
 <p id="fp-action-error" class="form-error" aria-live="polite"></p>
 <div class="dialog-footer"><span class="small subtle">Nothing changes until you confirm each step.</span><div class="input-row"><button class="button secondary" id="fp-close-avit" type="button">Close AVIT as false positive</button><button class="button primary" id="fp-ignore-semgrep" type="button" disabled>Ignore in Semgrep</button></div></div></form></dialog>
+  <dialog id="scanimport-snow-dialog" class="dialog scanimport-snow-dialog" aria-labelledby="scanimport-snow-title"><form id="scanimport-snow-form" novalidate><div class="dialog-heading"><div><span class="eyebrow">SERVICENOW · CONFIRM</span><h2 id="scanimport-snow-title">Post to ServiceNow</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close ServiceNow dialog">×</button></div>
+<p class="subtle" id="scanimport-snow-summary"></p>
+<h3 class="fp-step">What will happen</h3>
+<ol class="scanimport-snow-steps" id="scanimport-snow-steps"><li>Attach the Word report to the AVIT.</li><li id="scanimport-snow-fp">Close false positives as Closed / False Positive with the Threatlint comment.</li><li id="scanimport-snow-open">Add work notes to true positives and ambiguous findings; they stay open.</li></ol>
+<label for="scanimport-snow-avit">AVIT number</label><input id="scanimport-snow-avit" spellcheck="false" autocapitalize="characters" maxlength="19" required placeholder="AVIT000000095938462" aria-describedby="scanimport-snow-avit-note"><p class="field-note small subtle" id="scanimport-snow-avit-note">AVIT plus 7 to 15 digits. Uses the ServiceNow connection saved in Settings.</p>
+<div id="scanimport-snow-result" class="scanimport-snow-result" aria-live="polite"></div>
+<p class="form-error" id="scanimport-snow-error" role="alert"></p>
+<div class="dialog-footer"><span class="small subtle">Nothing changes in ServiceNow until you confirm.</span><div class="input-row"><button class="button secondary" type="button" id="scanimport-snow-cancel">Cancel</button><button class="button primary" type="submit" id="scanimport-snow-confirm">Confirm and post</button></div></div></form></dialog>
   <dialog id="video-dialog" class="dialog video-dialog"><div class="dialog-heading"><div><span class="eyebrow">WALKTHROUGH · VOICEOVER</span><h2 id="video-title">Video</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close video">×</button></div><video id="video-player" controls preload="metadata" playsinline></video><p class="small subtle" id="video-missing" hidden>This video has not been rendered on this machine yet. Run <code>npm --prefix web run videos</code> to build the narrated library.</p></dialog>
   <div id="tip-popover" class="tip-popover" role="tooltip" hidden></div>
   <output id="toast" class="toast hidden" aria-live="polite"></output>
