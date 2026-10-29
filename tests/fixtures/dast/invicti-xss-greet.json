@@ -1,0 +1,17 @@
+{
+  "sys_id": "1a2b3c4d5e6f708192a3b4c5d6e7f809",
+  "number": "AVIT0000000900002",
+  "state": "Open",
+  "source": "Invicti",
+  "scan_type": "Dynamic",
+  "severity": "3 - Medium",
+  "short_description": "Possible Cross-site Scripting",
+  "vulnerability": "Possible Cross-site Scripting",
+  "u_vulnerable_url": "https://shop.example.test/greet?name=guest",
+  "u_vulnerable_parameter": "name",
+  "u_http_method": "GET",
+  "u_cwe": "CWE-79",
+  "u_invicti_issue_id": "synthetic-issue-0002",
+  "u_proof": "Invicti flagged the response as possibly vulnerable; the payload was not confirmed to execute.",
+  "application_release": "Sample Shop"
+}

@@ -1,0 +1,21 @@
+{
+  "result": [
+    {
+      "sys_id": {"value": "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "display_value": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"},
+      "number": {"value": "AVIT0000000900001", "display_value": "AVIT0000000900001"},
+      "state": {"value": "1", "display_value": "Open"},
+      "source": {"value": "Invicti", "display_value": "Invicti"},
+      "scan_type": {"value": "dynamic", "display_value": "Dynamic"},
+      "severity": {"value": "2", "display_value": "2 - High"},
+      "short_description": {"value": "Cross-site Scripting", "display_value": "Cross-site Scripting"},
+      "vulnerability": {"value": "", "display_value": "Cross-site Scripting (Reflected)"},
+      "u_vulnerable_url": {"value": "https://shop.example.test/search?q=kettle", "display_value": "https://shop.example.test/search?q=kettle"},
+      "u_vulnerable_parameter": {"value": "q", "display_value": "q"},
+      "u_http_method": {"value": "GET", "display_value": "GET"},
+      "u_cwe": {"value": "CWE-79", "display_value": "CWE-79"},
+      "u_invicti_issue_id": {"value": "synthetic-issue-0001", "display_value": "synthetic-issue-0001"},
+      "u_proof": {"value": "GET /search?q=%27%22--%3E%3C%2Fstyle%3E%3C%2FscRipt%3E%3CscRipt%3Enetsparker(0x000001)%3C%2FscRipt%3E HTTP/1.1", "display_value": "GET /search?q=%27%22--%3E%3C%2Fstyle%3E%3C%2FscRipt%3E%3CscRipt%3Enetsparker(0x000001)%3C%2FscRipt%3E HTTP/1.1"},
+      "application_release": {"value": "", "display_value": "Sample Shop"}
+    }
+  ]
+}
