@@ -221,6 +221,10 @@
     });
     try {
       state.help = await api('/api/help');
+      // View modules may contribute help for their own pages; server-provided entries win on a shared key or id.
+      const extras = window.ThreatlintHelpExtras || {};
+      state.help = { ...state.help, tooltips: { ...extras.tooltips, ...state.help.tooltips },
+        topics: [...state.help.topics, ...(extras.topics || []).filter(topic => !state.help.topics.some(item => item.id === topic.id))] };
       installTips(state.help.tooltips); renderLearn();
     } catch { /* Help is optional; the workbench remains usable. */ }
     if (!$('view-metrics').hidden) loadMetrics();
