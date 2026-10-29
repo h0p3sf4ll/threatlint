@@ -372,6 +372,24 @@ def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str,
     return changes
 
 
+def disable_originals(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
+    """Disable the original wherever its tuned rule is enabled in the same policy (it can be re-enabled after tuning)."""
+    leaf, changes = original_rule.rsplit(".", 1)[-1], []
+    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
+        if policy.get("productType") not in _products(kind):
+            continue
+        rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
+        if not any(str(rule.get("path", "")).endswith(f"{leaf}.tuned") and rule.get("policyMode") != "MODE_DISABLED" for rule in rules):
+            continue
+        for rule in rules:
+            path = str(rule.get("path", ""))
+            if not path.endswith(".tuned") and _same_rule(path, original_rule) and rule.get("policyMode") != "MODE_DISABLED":
+                call(f"/api/policies/v1/deployments/{dep['id']}/{policy['id']}/rules/{urllib.parse.quote(path, safe='.')}", token,
+                     method="PUT", body={"policyMode": "MODE_DISABLED"})
+                changes.append({"policy": policy.get("name"), "original": path, "mode": rule.get("policyMode")})
+    return changes
+
+
 def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
     """Policies already running a Threatlint-tuned version of this rule (rule path ends with `<rule-name>.tuned`)."""
     leaf = original_rule.rsplit(".", 1)[-1]
@@ -451,6 +469,7 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
         if not still:
             for item in already:
                 print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)
+            _report_disabled(disable_originals(token, dep, kind, original_rule), out)
             return []
         print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)
     rule_yaml = tuned_rule_from_report(report)
@@ -477,12 +496,18 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     tuned_path = publish(checked["path"], token)
     print(f"  ✓ Published org-private rule {tuned_path}{' (new version of the live tuned rule)' if live_yaml else ''}", file=out)
     if live_yaml:
+        _report_disabled(disable_originals(token, dep, kind, original_rule), out)
         return [{"policy": item["policy"], "tuned": tuned_path, "mode": item["mode"], "original": original_rule} for item in already]
     changes = replace_in_policies(token, dep, kind, original_rule, tuned_path)
     for change in changes:
         print(f"  ✓ {change['policy']}: {change['tuned']} enabled ({change['mode']}); {change['original']} disabled", file=out)
     print("    Rollback: set the original rule back to its mode and disable the tuned rule in the same policy.", file=out)
     return changes
+
+
+def _report_disabled(changes: list[dict], out) -> None:
+    for change in changes:
+        print(f"  ✓ {change['policy']}: {change['original']} was still enabled ({change['mode']}) beside its tuned rule; disabled", file=out)
 
 
 def rule_base(rule: str, kind: str, token: str, dep: dict) -> tuple[str, str]:

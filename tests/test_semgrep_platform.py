@@ -139,7 +139,28 @@ def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(m
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: x\n")
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("nothing to publish"))
+    monkeypatch.setattr(sp, "disable_originals", lambda *a: [])
     assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
+
+
+def test_an_original_left_enabled_beside_its_tuned_rule_is_disabled(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
+    puts = []
+    def call(path, token, *, method="GET", body=None):
+        if method == "PUT":
+            puts.append((path, body))
+            return {}
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SAST"}]}
+        return {"rules": [{"path": "example_org.js.rule.tuned", "policyMode": "MODE_MONITOR"}, {"path": "js.rule", "policyMode": "MODE_MONITOR"},
+                          {"path": "other.js.rule2", "policyMode": "MODE_MONITOR"}]}
+    monkeypatch.setattr(sp, "call", call)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: example_org.js.rule.tuned\n")
+    monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
+    assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
+    assert puts == [("/api/policies/v1/deployments/1/5/rules/js.rule", {"policyMode": "MODE_DISABLED"})], "only the original is disabled, the tuned rule and others are untouched"
 
 
 def test_concurrent_extensions_of_one_live_rule_are_merged():
