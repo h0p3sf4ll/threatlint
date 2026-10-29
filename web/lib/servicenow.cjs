@@ -283,6 +283,70 @@ async function closeAvitAsFalsePositive(credentials, number, { note, files }, { 
     state: updated.state ?? null, substate: updated.substate ?? null };
 }
 
+// Work notes, exactly as src/threatlint/avit_resolve.py writes them.
+const CLOSING_COMMENT = 'Closed by Threatlint as a false positive, see attached report.';
+const TRUE_POSITIVE_COMMENT = 'True positive, see attached report.';
+const AMBIGUOUS_COMMENT = 'Ambiguous, see attached report. Left open pending the evidence the report names.';
+const UNREADABLE = 'AVIT not readable by the integration account';
+
+/** The AVIT's sys_id; an empty result (e.g. source=Invicti rows hidden from the OAuth client) is a clear error, not a crash. */
+async function avitRecord(instance, headers, avit, fetchImpl, signal) {
+  const lookup = new URLSearchParams({ sysparm_query: `number=${avit}`, sysparm_display_value: 'all', sysparm_limit: '1' });
+  const rows = (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${lookup}`, { headers }, signal))?.result;
+  const row = Array.isArray(rows) ? rows[0] : null;
+  const sysId = row ? fieldValue(row.sys_id?.value ?? row.sys_id) : '';
+  if (!/^[0-9a-f]{32}$/.test(sysId)) {
+    throw Object.assign(new HttpError(`${UNREADABLE}: ServiceNow returned no readable row for ${avit}. Check the number, or ask for read access to this AVIT's source (Invicti AVITs are often hidden from the OAuth client).`, 404), { code: 'avit_unreadable' });
+  }
+  return { sysId, fields: flatten(row) };
+}
+
+async function attachmentNames(instance, headers, sysId, fetchImpl, signal) {
+  const query = new URLSearchParams({ sysparm_query: `table_name=${AVIT_TABLE}^table_sys_id=${sysId}`, sysparm_fields: 'file_name', sysparm_limit: '200' });
+  try { return new Set(((await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result || []).map(row => String(row?.file_name || ''))); }
+  catch (error) { if (signal?.aborted) throw error; return new Set(); }
+}
+
+async function attachFile(instance, headers, sysId, file, fetchImpl, signal) {
+  const query = new URLSearchParams({ table_name: AVIT_TABLE, table_sys_id: sysId, file_name: file.name });
+  return (await requestJson(fetchImpl, `${instance}/api/now/attachment/file?${query}`, { method: 'POST', headers: { ...headers, 'Content-Type': file.type }, body: file.content }, signal)).result || {};
+}
+
+async function updateAvit(instance, headers, sysId, values, fetchImpl, signal) {
+  return (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}/${sysId}?sysparm_fields=number,state,substate`,
+    { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(values) }, signal)).result || {};
+}
+
+/**
+ * `threatlint avit resolve` for a report the Workbench wrote: attach the files (skipping ones already attached), then
+ * FALSE POSITIVE -> close (state/substate 3/3) with CLOSING_COMMENT; TRUE POSITIVE / AMBIGUOUS -> work note, left open.
+ */
+async function resolveAvit(credentials, number, { disposition, files = [] }, { fetchImpl = fetch, signal } = {}) {
+  const [avit] = parseAvitNumbers(number);
+  if (!['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'].includes(disposition)) throw new HttpError(`${avit} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition`);
+  const { instance } = credentials;
+  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  const { sysId } = await avitRecord(instance, headers, avit, fetchImpl, signal);
+  const existing = await attachmentNames(instance, headers, sysId, fetchImpl, signal);
+  const attachments = [];
+  // Attach first so an AVIT is never closed without its evidence.
+  for (const file of files) {
+    if (existing.has(file.name)) { attachments.push({ name: file.name, alreadyAttached: true }); continue; }
+    attachments.push({ name: file.name, sysId: (await attachFile(instance, headers, sysId, file, fetchImpl, signal)).sys_id || null });
+  }
+  const falsePositive = disposition === 'FALSE POSITIVE';
+  const note = falsePositive ? CLOSING_COMMENT : disposition === 'AMBIGUOUS' ? AMBIGUOUS_COMMENT : TRUE_POSITIVE_COMMENT;
+  const values = { work_notes: note };
+  const choices = falsePositive ? await falsePositiveChoices() : null;
+  if (choices) Object.assign(values, { state: choices.state, substate: choices.substate, close_notes: note });
+  const stored = await updateAvit(instance, headers, sysId, values, fetchImpl, signal);
+  // As in avit_resolve.py: the state decides whether it closed; a cleared substate is reported, not failed.
+  const closed = choices ? String(stored.state) === String(choices.state) : false;
+  return { avit, disposition, action: falsePositive ? (closed ? 'closed' : 'close not applied') : 'noted', note, closed, leftOpen: !falsePositive,
+    sysId, url: `${instance}/nav_to.do?uri=${AVIT_TABLE}.do?sys_id=${sysId}`, attachments, state: stored.state ?? null, substate: stored.substate ?? null,
+    ...(choices && closed && String(stored.substate) !== String(choices.substate) ? { substateNote: `ServiceNow stored substate ${stored.substate || 'blank'}, not ${choices.substate}` } : {}) };
+}
+
 /** Installed Semgrep version, or null. Checked per call so a fresh install is picked up without restart. */
 async function semgrepVersion() {
   try {
@@ -293,4 +357,5 @@ async function semgrepVersion() {
 }
 
 module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
-  readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, avitsMarkdown, loadAvitAttachment, semgrepVersion };
+  readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
+  CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };
