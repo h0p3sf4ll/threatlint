@@ -243,6 +243,8 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
+    from threatlint.dast import add_dast_parser  # noqa: PLC0415
+    add_dast_parser(actions)
 
 
 def _session(args):

@@ -26,7 +26,7 @@ function avitFor(finding) {
   throw new HttpError(`${finding.id} does not reference an AVIT number`);
 }
 
-function closingNote() { return 'Closed by Threatlint as a false positive, see attached report.'; }
+function closingNote() { return servicenow.CLOSING_COMMENT; }
 
 function registerTriageRoutes(app, { reports, integrations = {} }) {
   const fetchImpl = integrations.fetchImpl;

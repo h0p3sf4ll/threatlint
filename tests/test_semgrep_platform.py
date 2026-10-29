@@ -139,7 +139,28 @@ def test_an_already_tuned_rule_that_no_longer_reports_the_line_needs_no_change(m
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: x\n")
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("nothing to publish"))
+    monkeypatch.setattr(sp, "disable_originals", lambda *a: [])
     assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
+
+
+def test_an_original_left_enabled_beside_its_tuned_rule_is_disabled(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    (tmp_path / "a.js").write_text("x", encoding="utf-8")
+    puts = []
+    def call(path, token, *, method="GET", body=None):
+        if method == "PUT":
+            puts.append((path, body))
+            return {}
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SAST"}]}
+        return {"rules": [{"path": "example_org.js.rule.tuned", "policyMode": "MODE_MONITOR"}, {"path": "js.rule", "policyMode": "MODE_MONITOR"},
+                          {"path": "other.js.rule2", "policyMode": "MODE_MONITOR"}]}
+    monkeypatch.setattr(sp, "call", call)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: example_org.js.rule.tuned\n")
+    monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
+    assert sp.tune_rule("no block", "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
+    assert puts == [("/api/policies/v1/deployments/1/5/rules/js.rule", {"policyMode": "MODE_DISABLED"})], "only the original is disabled, the tuned rule and others are untouched"
 
 
 def test_concurrent_extensions_of_one_live_rule_are_merged():
@@ -191,3 +212,17 @@ def test_a_code_rule_behind_a_secrets_avit_is_replaced_in_the_code_policy(monkey
     monkeypatch.setattr(sp, "call", call)
     changes = sp.replace_in_policies("t", {"id": 1}, "secrets", "yaml.rule", "org.yaml.rule.tuned")
     assert [c["policy"] for c in changes] == ["Global Policy"] and puts == [["rules", "org.yaml.rule.tuned"], ["rules", "yaml.rule"]]
+
+
+def test_a_tuned_rule_is_matched_by_its_whole_rule_id_not_its_last_segment(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    def call(path, token, *, method="GET", body=None):
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SECRETS"}]}
+        return {"rules": [{"path": "example_org.java.lang.security.audit.formatted-sql-string.formatted-sql-string.tuned", "policyMode": "MODE_MONITOR"},
+                          {"path": "example_org.swift.ats.ats-consider-pinning.tuned", "policyMode": "MODE_MONITOR"}]}
+    monkeypatch.setattr(sp, "call", call)
+    assert sp.existing_tuning("t", {"id": 1}, "secrets", "secrets.generic.api-key.string.string") == [], "a shared last segment is not the same rule"
+    assert [f["tuned"] for f in sp.existing_tuning("t", {"id": 1}, "secrets", "swift.ats.ATS-consider-pinning")] == ["example_org.swift.ats.ats-consider-pinning.tuned"], "publishing lowercases ids"
+    assert sp._tunes("org.a.b.tuned", "a.b") and sp._tunes("a.b.tuned", "a.b.tuned") and not sp._tunes("org.xa.b.tuned", "a.b") and not sp._tunes("org.a.b", "a.b")

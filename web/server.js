@@ -26,6 +26,8 @@ const { prepareProcess } = require('./lib/system-env.cjs');
 const { createAvitBatch } = require('./lib/avit-batch.cjs');
 const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 const { registerSidekickRoutes } = require('./lib/routes/sidekick.cjs');
+const { registerScanImportRoutes, scanImportBodyParsers } = require('./lib/routes/scan-import.cjs');
+const { createScanImports } = require('./lib/scan-import.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -62,8 +64,11 @@ function createWorkbench(options = {}) {
   const dashboards = createDashboardStore(store.directory);
   const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
+  const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
 
   app.use(securityHeaders(server));
+  // Scan reports upload up to 25 MB; every other route keeps the 7 MB JSON limit.
+  scanImportBodyParsers(app);
   app.use(express.json({ limit: BODY_LIMIT }));
   app.get('/vendor/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
   app.get('/vendor/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.min.js')));
@@ -75,6 +80,7 @@ function createWorkbench(options = {}) {
   registerInsightRoutes(app, { store, history, dashboards, conversations });
   registerTriageRoutes(app, { reports, integrations: options.integrations });
   registerSidekickRoutes(app, { integrations: options.integrations });
+  registerScanImportRoutes(app, { scanImports });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
@@ -82,15 +88,18 @@ function createWorkbench(options = {}) {
 
   const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
   const wss = attachSocket(server, { pipeline, conversations, avitBatch });
+  // Scan-import progress goes to every open Workbench connection; polling GET /api/scan-import/:id works too.
+  const unsubscribe = scanImports.subscribe(event => { for (const socket of wss.clients) if (socket.readyState === 1) socket.send(JSON.stringify(event)); });
 
   async function close() {
     pipeline.abortAll();
+    unsubscribe();
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));
     if (server.listening) await new Promise(resolve => server.close(resolve));
   }
-  return { app, server, wss, store, close, generateReport: reports.save };
+  return { app, server, wss, store, close, scanImports, generateReport: reports.save };
 }
 
 const workbench = createWorkbench();

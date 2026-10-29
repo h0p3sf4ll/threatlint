@@ -18,6 +18,12 @@ describe('Production report parser', () => {
     assert.doesNotMatch(parsed.findings[1].body, /TIER 3/);
     assert.deepEqual(parsed.quality.issues, []);
   });
+  it('accepts a URL or file Location as evidence for runtime and mobile findings, but still flags none', () => {
+    const report = (location) => `#### [FP-001] — Header\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**:\n\n${location}\n`;
+    assert.deepEqual(parseReport(report('- Location: `https://shop.example.test/`')).quality.issues, []);
+    assert.deepEqual(parseReport(report('- Location: `AndroidManifest.xml`')).quality.issues, []);
+    assert.deepEqual(parseReport(report('No location.')).quality.issues, ['FP-001: no path:line evidence was detected.']);
+  });
   it('does not interpret code-fenced finding headers as actual findings', () => {
     const report = '## Executive Summary\nNo material findings.\n```md\n#### [FP-999] — example\n```';
     assert.equal(parseReport(report).findings.length, 0);

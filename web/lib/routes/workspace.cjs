@@ -179,7 +179,8 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     }
     const filePath = { md: report.mdPath, docx: report.docxPath }[fmt];
     if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'Report format unavailable' });
-    return res.download(filePath, `threatlint-${agentId}-${ts}.${fmt}`);
+    const name = report.title ? report.title.normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 120) : '';
+    return res.download(filePath, `${name || `threatlint-${agentId}-${ts}`}.${fmt}`);
   });
 }
 

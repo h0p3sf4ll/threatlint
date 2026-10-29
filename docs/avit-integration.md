@@ -298,6 +298,68 @@ threatlint avit semgrep <AVIT> [--line N]
 - Without a line, every open finding of that rule in the file is ignored. Pass `--line` so that
   unrelated lines in the same file stay open.
 
+## Dynamic-scan (Invicti DAST) AVITs
+
+AVITs whose `source` is Invicti and whose `scan_type` is Dynamic name a URL, not a repository, and
+there is no Semgrep finding behind them. `threatlint avit dast` validates one of them by deploying
+the application to an ephemeral, isolated local Docker environment and sending the finding's check
+to that sandbox only:
+
+```bash
+threatlint avit dast AVIT0000000900001 --repo https://dev.azure.com/<org>/<project>/_git/<repo> --branch <branch>
+threatlint avit dast --avit-file tests/fixtures/dast/invicti-xss-search.json --repo <url-or-local-path> --branch <branch>
+```
+
+| Step | What happens |
+|---|---|
+| provision | Load the AVIT (ServiceNow, or `--avit-file` with a Table API JSON row or a Markdown field list), clone `--repo`/`--branch`, detect the stack (compose file, Dockerfile, or a generated non-root Dockerfile for Node, Python, Maven or Go), add backing services the dependencies name (PostgreSQL, MySQL, Redis, MongoDB), and build the images. |
+| deploy | Start the services on an `--internal` Docker network, with synthetic values for every sensitive-looking variable (from `.env.example` and compose). Wait for `/health`, `/healthz` or `/`. |
+| test | Run the repository's own test suite in the app image, against `APP_URL`, on the same network. |
+| probe | Send at most 8 requests for the finding's vulnerability class (XSS marker, SQL error and boolean pairs, open redirect, traversal, directory listing, CORS, cookie and header checks) to the sandbox app. The Workbench's passive runtime checks (`RT-*`) run on every response. Requests and responses are redacted and written to `evidence.md`. |
+| teardown | Remove every container, network, volume and image labelled `threatlint.dast.run=<run id>`. On failure the checkout is deleted too. |
+| review | Write `review-request.md`: the evidence, the checkout path, and the exact report lines. Pass `/fp-review <work>/review-request.md` to Claude Code, or use `--review-provider lmstudio\|openai` to run the reviewer directly. The report is `<work>/fp_review.md`. |
+| resolve | `--step resolve --work <work>` (or `--resolve` on the full run) converts the report to Word and runs the same path as `avit resolve`: attach, then close a false positive or add a work note to a true positive or ambiguous finding. Semgrep is skipped. The checkout is deleted. |
+
+Each step can be run alone with `--step <step> --work <dir>`. State is kept in `<dir>/dast-state.json`.
+`--keep-env` leaves the environment running after the probe; remove it with `--step teardown`.
+
+The report uses the same lines as SAST, so `verdict_for` reads it unchanged:
+
+```text
+**Original finding**: <AVIT>; <vulnerability>; Invicti DAST; <METHOD> <path> (<parameter>)
+**Disposition**: <TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS>
+**Severity**: <CRITICAL|HIGH|MEDIUM|LOW|INFO>
+**Confidence**: <CONFIRMED|LIKELY|POSSIBLE>
+```
+
+The FP reviewer judges this evidence with the `threatlint-runtime-validation` skill. A scanner label,
+a missing header, a banner or a status code on its own is not a verified vulnerability. HSTS, Secure
+cookies and other settings applied at the edge cannot be judged from the sandbox, because it serves
+plain HTTP without the production TLS edge, WAF or proxy.
+
+**Isolation.** Egress is available only to `docker build` and `docker pull`. Containers run on an
+internal network with no default route; the probe refuses to send anything if it finds one. Each
+container has CPU, memory and PID limits (`THREATLINT_DAST_CPUS`, `THREATLINT_DAST_MEMORY`) and
+`no-new-privileges`. The app, test and probe containers drop all capabilities. No ports are
+published and no host paths are mounted: the checkout is the build context, never a volume. Compose
+`ports`, `volumes`, `privileged`, `cap_add`, `network_mode`, `env_file` and similar settings are
+dropped and listed in the evidence. Requests carry only the finding's path and query and go to the
+app's service name, so the scanned origin is never contacted. No credentials are tested.
+Build, start and test timeouts are set with `THREATLINT_DAST_BUILD_TIMEOUT`,
+`THREATLINT_DAST_START_TIMEOUT` and `THREATLINT_DAST_TEST_TIMEOUT`, and base images with
+`THREATLINT_DAST_*_IMAGE`.
+
+**Providers.** `runtime_env.EnvironmentProvider` is the interface: `provision`, `deploy`, `run_tests`,
+`probe` and `teardown`. Only `docker` is implemented; register another (e.g. AWS) in `PROVIDERS`.
+
+**Invicti.** Nothing calls the Invicti API. After a false-positive close, `dast.invicti_mark_false_positive`
+calls a hook registered with `dast.set_invicti_hook(fn)`; with none registered it only reports the
+issue ID.
+
+**ServiceNow access.** The OAuth client must be able to read Invicti AVITs in
+`sn_vul_app_vulnerable_item`. Until it can, load the record with `--avit-file`. Synthetic examples are
+in `tests/fixtures/dast/`.
+
 ## Known limits
 
 - **Substate:** ServiceNow may not store substate 3 for Closed, if a business rule or the choice list

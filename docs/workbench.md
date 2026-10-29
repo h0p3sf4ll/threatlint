@@ -272,6 +272,26 @@ lead to impact hypotheses, which are never validated by the scanner. Select a no
 chain from target to impact in the inspector, and tick **Finding chains only** to hide requests that
 produced no finding. A `401/403` node is an access control that held.
 
+## Importing a scan report
+
+*Test → Import scan report* takes an **Invicti** (DAST, XML or JSON export) or **MobSF** (mobile,
+JSON report) file, up to 5 MB. Drop it on the page or press **Choose file**, leave **Scanner** on
+*Auto-detect* (or pick one), and optionally choose a **workspace** so triage can read the matching
+source, and enter the **AVIT number** (AVIT plus 7 to 15 digits).
+
+**Import and triage** shows progress as *Queued → Parsing → Triaging → Done*. The result shows
+the scan title and target, true-positive / false-positive / ambiguous counts, and a findings table
+(severity, disposition, confidence, location). The saved report appears in *Findings* with a
+descriptive title: **Open report** opens it there, and **Markdown** / **Word** download it.
+
+The file is parsed on this machine. Findings go only to the model provider chosen in Settings, and
+to ServiceNow only when you press **Post to ServiceNow**. That asks for the AVIT and confirmation
+first, then attaches the Word report, closes false positives as *Closed / False Positive* with the
+Threatlint comment, and adds work notes to true positives and ambiguous findings. It lists the
+actions ServiceNow applied, or the error (for example, an AVIT the integration account cannot read).
+*Previous imports* lists earlier imports, newest first. Endpoints: `POST /api/scan-import`,
+`GET /api/scan-import[/:id]`, `POST /api/scan-import/:id/servicenow`.
+
 ## In-app help
 
 Every key control has a **?** tooltip. **Learn & videos** (or `?` on the keyboard) has the narrated
@@ -289,7 +309,8 @@ See [dashboards.md](dashboards.md).
 The sidebar follows the order you work in:
 
 1. **Test**: *Review code* (playbooks and pipeline), *Connect source* (GitHub / Azure DevOps
-   checkout), *Scan running app* (authenticated runtime scan).
+   checkout), *Scan running app* (authenticated runtime scan), *False positive review* (AVITs),
+   and *Import scan report* (Invicti / MobSF files).
 2. **Fix**: *Findings* (reports with file:line, fix, and test) and *Ask Threatlint*.
 3. **Track**: *Metrics* and dashboards.
 4. **Reference**: *Agents*, *Skills*, and *Learn & videos*.

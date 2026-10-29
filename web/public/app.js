@@ -72,7 +72,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { fpreview: 'False positive review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { fpreview: 'False positive review', scanimport: 'Import scan report', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -924,6 +924,15 @@
       if (!state.session) toast('Runtime evidence attached. Open the repository that serves this app so the agent can correlate it with source.');
     });
     document.addEventListener('threatlint:navigate', event => showView(event.detail.view));
+    // Other views (e.g. Import scan report) open a saved report in Findings, switching to its workspace when idle.
+    document.addEventListener('threatlint:open-report', event => {
+      const { sessionId, previewUrl } = event.detail || {};
+      if (typeof previewUrl !== 'string' || !previewUrl.startsWith('/api/report/')) return;
+      const switching = sessionId && sessionId !== state.session?.id && !state.running;
+      (switching ? openSession({ id: sessionId }) : Promise.resolve())
+        .then(() => { showView('reports'); return openReportUrl(previewUrl); })
+        .catch(error => toast(error.message, true));
+    });
     document.addEventListener('threatlint:asked', () => { state.asked = true; try { localStorage.setItem('threatlint.asked', '1'); } catch { /* optional */ } publishContext(); });
     document.addEventListener('threatlint:request-context', publishContext);
     window.addEventListener('beforeunload', () => { state.intentionalClose = true; if (state.running && state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });

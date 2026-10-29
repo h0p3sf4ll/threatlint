@@ -60,16 +60,18 @@ function findingFromHeading(heading, text, headings, agentId) {
   const confidence = /\b(CONFIRMED|PLAUSIBLE|THEORETICAL)\b/i.exec(field(body, 'Confidence'))?.[1]?.toUpperCase() || 'UNSPECIFIED';
   const disposition = /TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS|PARTIALLY FIXED|STILL PRESENT|REMEDIATED|REGRESSED|RESOLVED|NEW|CANT ASSESS/i.exec(field(body, 'Disposition|Verdict'))?.[0]?.toUpperCase() || '';
   const evidence = evidenceLocations(body);
+  // Runtime and mobile scanner findings locate by URL or manifest/config file rather than path:line.
+  const located = evidence.length > 0 || /^- Location: `[^`\n]+`/m.test(body);
   const title = plain(heading.title.slice(match[0].length).trim().replace(/^[—–:-][ \t]*/, ''));
   const id = match[1];
-  return { id, title, severity, confidence, disposition, evidence, body,
+  return { id, title, severity, confidence, disposition, evidence, located, body,
     fingerprint: crypto.createHash('sha256').update(`${agentId}|${id}|${title}|${evidence.join('|')}`).digest('hex').slice(0, 20) };
 }
 
 function findingIssues(finding, agentId) {
   const issues = [];
   const add = message => issues.push(`${finding.id}: ${message}`);
-  if (!finding.evidence.length) add('no path:line evidence was detected.');
+  if (!finding.evidence.length && !finding.located) add('no path:line evidence was detected.');
   if (finding.severity === 'UNSPECIFIED') add('severity was not explicitly reported.');
   if (finding.confidence === 'UNSPECIFIED') add('confidence was not explicitly reported.');
   const actionable = finding.disposition === 'TRUE POSITIVE' || (!finding.disposition && !['INFO', 'UNSPECIFIED'].includes(finding.severity));
