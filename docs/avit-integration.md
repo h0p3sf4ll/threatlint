@@ -102,7 +102,7 @@ flowchart TD
     R -- yes --> Q{"A policy already runs rule.tuned?"}
     Q -- yes --> Z2["Done: triage only, no re-tuning"]
     Q -- no --> V["Validate the tuned rule locally"]
-    V -- proven --> W["Publish org-private rule. Enable it in each policy in the original's mode. Disable the original. No human approval."]
+    V -- proven --> W["Publish org-private rule. Enable it in each policy in monitor mode. Disable the original. No human approval."]
     V -- "not proven" --> Y["Leave the policy unchanged and report why"]
 ```
 
@@ -186,8 +186,8 @@ agent triages and which Semgrep product is tuned.
    - When the original rule reproduces the flagged line in the checkout (Pro engine when installed),
      the tuned rule must no longer report that exact line.
 2. Publish the rule with `semgrep publish --visibility=org_private`.
-3. For every policy of the matching product that runs the original rule: set the tuned rule to the
-   original's mode, then set the original to `MODE_DISABLED`
+3. For every policy of the matching product that runs the original rule: enable the tuned rule in
+   `MODE_MONITOR` (never comment or block, whatever the original ran in), then set the original to `MODE_DISABLED`
    (`PUT /api/policies/v1/deployments/{id}/{policy}/rules/{path}`).
 4. Print the rollback: re-enable the original and disable the tuned rule.
 

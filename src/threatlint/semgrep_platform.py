@@ -44,6 +44,7 @@ API = os.environ.get("THREATLINT_SEMGREP_API", "https://semgrep.dev").rstrip("/"
 KEYRING_SERVICE = "threatlint-semgrep"
 _TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,200}")
 PRODUCT_POLICY = {"sast": "PRODUCT_TYPE_SAST", "secrets": "PRODUCT_TYPE_SECRETS"}
+TUNED_MODE = "MODE_MONITOR"
 
 
 class SemgrepError(RuntimeError):
@@ -349,7 +350,7 @@ def _products(kind: str) -> list[str]:
 
 
 def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str) -> list[dict]:
-    """Add the tuned rule in the original's mode and disable the original, in every policy that runs it."""
+    """Add the tuned rule in monitor mode and disable the original, in every policy that runs it."""
     all_policies = call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", [])
     for product in _products(kind):
         changes = _replace_in(token, dep, [p for p in all_policies if p.get("productType") == product], original_rule, tuned_path)
@@ -364,11 +365,12 @@ def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str,
         rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
         original = [rule for rule in rules if _same_rule(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED"]
         for rule in original:
-            mode = rule.get("policyMode", "MODE_MONITOR")
+            # A tuned rule is only ever enabled in monitor mode, whatever mode the original ran in.
             base = f"/api/policies/v1/deployments/{dep['id']}/{policy['id']}/rules"
-            call(f"{base}/{urllib.parse.quote(tuned_path, safe='.')}", token, method="PUT", body={"policyMode": mode})
+            call(f"{base}/{urllib.parse.quote(tuned_path, safe='.')}", token, method="PUT", body={"policyMode": TUNED_MODE})
             call(f"{base}/{urllib.parse.quote(rule['path'], safe='.')}", token, method="PUT", body={"policyMode": "MODE_DISABLED"})
-            changes.append({"policy": policy.get("name"), "policy_id": policy["id"], "original": rule["path"], "tuned": tuned_path, "mode": mode})
+            changes.append({"policy": policy.get("name"), "policy_id": policy["id"], "original": rule["path"], "tuned": tuned_path, "mode": TUNED_MODE,
+                            "original_mode": rule.get("policyMode", "MODE_MONITOR")})
     return changes
 
 
@@ -512,7 +514,8 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     changes = replace_in_policies(token, dep, kind, original_rule, tuned_path)
     for change in changes:
         print(f"  ✓ {change['policy']}: {change['tuned']} enabled ({change['mode']}); {change['original']} disabled", file=out)
-    print("    Rollback: set the original rule back to its mode and disable the tuned rule in the same policy.", file=out)
+    for change in changes:
+        print(f"    Rollback: set {change['original']} back to {change['original_mode']} and disable the tuned rule in {change['policy']}.", file=out)
     return changes
 
 

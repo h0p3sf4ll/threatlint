@@ -61,7 +61,7 @@ def test_nothing_is_published_when_the_tuned_rule_still_matches(monkeypatch, tmp
     assert published == []
 
 
-def test_tuned_rule_replaces_the_original_in_its_mode(monkeypatch, tmp_path):
+def test_tuned_rule_replaces_the_original_in_monitor_mode_only(monkeypatch, tmp_path):
     monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
     (tmp_path / "a.js").write_text("x", encoding="utf-8")
@@ -78,7 +78,8 @@ def test_tuned_rule_replaces_the_original_in_its_mode(monkeypatch, tmp_path):
         return {"rules": [{"path": "js.rule", "policyMode": "MODE_BLOCK"}, {"path": "other", "policyMode": "MODE_BLOCK"}]}
     monkeypatch.setattr(sp, "call", call)
     changes = sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8"))
-    assert puts == [("org.js.rule.tuned", "MODE_BLOCK"), ("js.rule", "MODE_DISABLED")]
+    assert puts == [("org.js.rule.tuned", "MODE_MONITOR"), ("js.rule", "MODE_DISABLED")], "a blocking original never makes the tuned rule block"
+    assert changes[0]["original_mode"] == "MODE_BLOCK"
     assert changes[0]["policy"] == "Global Policy"
 
 
