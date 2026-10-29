@@ -8,6 +8,103 @@ const path = require('node:path');
 const { createWorkbench } = require('../server.js');
 const { SKILL_MAP } = require('../lib/agents.cjs');
 
+/**
+ * Import scan report against stubbed /api/scan-import endpoints. The finished import points at the report the
+ * smoke run already saved, so Open report and the downloads use the real Findings routes.
+ */
+async function scanImport(page) {
+  const [session] = await page.evaluate(() => fetch('/api/sessions').then(response => response.json()));
+  const [saved] = await page.evaluate(id => fetch(`/api/session/${id}/reports`).then(response => response.json()), session.id);
+  const hostile = '<img src=x onerror="window.__scanImportXss=1">Reflected XSS in search';
+  const done = { id: 'imp-1', status: 'done', source: 'invicti', title: 'Invicti DAST · staging.example.test · 3 findings', target: 'https://staging.example.test', reportId: saved.id,
+    counts: { total: 3, tp: 1, fp: 1, ambiguous: 1 }, findings: [
+      { id: 'IN-001', title: hostile, severity: 'HIGH', disposition: 'TRUE POSITIVE', confidence: 'CONFIRMED', location: 'https://staging.example.test/search?q=' },
+      { id: 'IN-002', title: 'Missing X-Frame-Options header', severity: 'LOW', disposition: 'FALSE POSITIVE', confidence: 'CONFIRMED', location: 'https://staging.example.test/' },
+      { id: 'IN-003', title: 'Possible SQL injection', severity: 'CRITICAL', disposition: 'AMBIGUOUS', confidence: 'PLAUSIBLE', location: 'https://staging.example.test/api/items' },
+    ] };
+  const progress = ['queued', 'parsing', 'triaging'];
+  const calls = { upload: null, snow: [] };
+  let polls = 0;
+  await page.route(/\/api\/scan-import(\/.*)?$/, async route => {
+    const request = route.request(), url = new URL(request.url()), json = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.pathname === '/api/scan-import' && request.method() === 'POST') { calls.upload = request.postDataJSON(); return json(201, { id: 'imp-1', status: 'queued' }); }
+    if (url.pathname === '/api/scan-import') return json(200, calls.upload ? [{ ...done, findings: undefined, createdAt: Date.now() }, { id: 'imp-0', status: 'error', source: 'mobsf', title: 'app-release.apk', error: 'Not a MobSF report', counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 } }] : []);
+    if (url.pathname === '/api/scan-import/imp-1') { const status = progress[polls++]; return json(200, status ? { ...done, status, counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 }, reportId: undefined, findings: [] } : done); }
+    if (url.pathname === '/api/scan-import/imp-1/servicenow') {
+      calls.snow.push(request.postDataJSON());
+      return calls.snow.length === 1 ? json(403, { error: 'AVIT not readable by the integration account' })
+        : json(200, { ok: true, actions: ['Attached threatlint-invicti.docx to AVIT0042599', 'IN-002 closed as Closed / False Positive', 'IN-001 work note added', 'IN-003 work note added'] });
+    }
+    return json(404, { error: 'Not found' });
+  });
+  await page.locator('[data-view="scanimport"]').click();
+  await page.locator('#view-scanimport:not([hidden])').waitFor();
+  assert.equal(await page.locator('#scanimport-start').isDisabled(), true, 'Import needs a file');
+  await page.locator('#scanimport-history', { hasText: 'No imports yet' }).waitFor();
+  await page.locator(`#scanimport-workspace option[value="${session.id}"]`).waitFor({ state: 'attached' });
+  assert.equal(await page.locator('#scanimport-workspace option').count(), 2, 'Workspace picker lists the open workspace');
+
+  await page.locator('#scanimport-file').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF') });
+  assert.match(await page.locator('#scanimport-error').innerText(), /Unsupported file: scan\.pdf/);
+  await page.locator('#scanimport-file').setInputFiles({ name: 'big.xml', mimeType: 'text/xml', buffer: Buffer.alloc(5 * 1024 * 1024 + 1, 60) });
+  assert.match(await page.locator('#scanimport-error').innerText(), /limit is 5 MB/);
+  const report = '<?xml version="1.0"?><invicti-enterprise><target><url>https://staging.example.test</url></target></invicti-enterprise>';
+  await page.locator('#scanimport-file').setInputFiles({ name: 'invicti.xml', mimeType: 'text/xml', buffer: Buffer.from(report) });
+  assert.equal(await page.locator('#scanimport-error').innerText(), '');
+  await page.locator('#scanimport-source').selectOption('invicti');
+  await page.locator('#scanimport-workspace').selectOption(session.id);
+  await page.locator('#scanimport-avit').fill('AVIT12');
+  await page.locator('#scanimport-start').click();
+  assert.match(await page.locator('#scanimport-error').innerText(), /Not an AVIT number: AVIT12/);
+  assert.equal(calls.upload, null, 'An invalid AVIT blocks the upload');
+  await page.locator('#scanimport-avit').fill('avit0042599');
+  await page.locator('#scanimport-start').click();
+
+  await page.locator('#scanimport-job-status', { hasText: 'DONE' }).waitFor();
+  assert.deepEqual({ ...calls.upload, content: Buffer.from(calls.upload.content, 'base64').toString() }, { filename: 'invicti.xml', content: report, source: 'invicti', workspaceId: session.id, avit: 'AVIT0042599' });
+  assert.ok(polls >= 4, 'Progress polled through queued, parsing, and triaging');
+  assert.equal(await page.locator('#scanimport-steps li.complete').count(), 4);
+  assert.equal(await page.locator('#scanimport-job-title').innerText(), done.title);
+  assert.deepEqual(await page.locator('.scanimport-stats .stat-value').allInnerTexts(), ['3', '1', '1', '1']);
+  assert.equal(await page.locator('#scanimport-findings tr').count(), 3);
+  assert.equal(await page.locator('#scanimport-findings tr').first().locator('td').nth(1).innerText(), hostile, 'Report values render as text');
+  assert.equal(await page.locator('#scanimport-findings img').count(), 0);
+  assert.equal(await page.evaluate(() => window.__scanImportXss), undefined);
+  await page.waitForFunction(() => document.getElementById('scanimport-download-md').getAttribute('href'));
+  assert.equal(await page.locator('#scanimport-download-md').getAttribute('href'), saved.mdUrl);
+  assert.equal((await page.request.get(base(page) + saved.mdUrl)).status(), 200);
+  await page.locator('#scanimport-history .report-card').first().waitFor();
+  assert.equal(await page.locator('#scanimport-history .report-card').count(), 2);
+  assert.match(await page.locator('#scanimport-history').innerText(), /Not a MobSF report/);
+
+  await page.locator('#scanimport-open-report').click();
+  await page.locator('#report-dialog[open]').waitFor();
+  assert.equal(await page.locator('#view-reports').isVisible(), true, 'Open report shows it in Findings');
+  assert.equal(await page.locator('#download-md').getAttribute('href'), saved.mdUrl);
+  await page.locator('#report-dialog .close-dialog').click();
+
+  await page.locator('[data-view="scanimport"]').click();
+  await page.locator('#scanimport-post').click();
+  await page.locator('#scanimport-snow-dialog[open]').waitFor();
+  const steps = await page.locator('#scanimport-snow-steps').innerText();
+  assert.match(steps, /Attach the Word report/); assert.match(steps, /Close 1 false positive as Closed \/ False Positive with the Threatlint comment/); assert.match(steps, /Add work notes to 2 true positive and ambiguous findings/);
+  assert.equal(await page.locator('#scanimport-snow-avit').inputValue(), 'AVIT0042599');
+  await page.locator('#scanimport-snow-avit').fill('');
+  await page.locator('#scanimport-snow-confirm').click();
+  assert.match(await page.locator('#scanimport-snow-error').innerText(), /Enter the AVIT number/);
+  assert.equal(calls.snow.length, 0, 'Posting requires an AVIT');
+  await page.locator('#scanimport-snow-avit').fill('AVIT0042599');
+  await page.locator('#scanimport-snow-confirm').click();
+  await page.locator('#scanimport-snow-error', { hasText: 'AVIT not readable by the integration account' }).waitFor();
+  await page.locator('#scanimport-snow-confirm').click();
+  await page.locator('#scanimport-snow-result', { hasText: 'Posted to AVIT0042599' }).waitFor();
+  assert.deepEqual(calls.snow, [{ avit: 'AVIT0042599', confirm: true }, { avit: 'AVIT0042599', confirm: true }]);
+  assert.equal(await page.locator('#scanimport-snow-result li').count(), 4);
+  await page.locator('#scanimport-snow-cancel').click();
+  await page.unroute(/\/api\/scan-import(\/.*)?$/);
+}
+function base(page) { return new URL(page.url()).origin; }
+
 (async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-browser-'));
   const repo = path.join(temporary, 'repo'); fs.mkdirSync(repo);
@@ -56,10 +153,11 @@ const { SKILL_MAP } = require('../lib/agents.cjs');
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click(); await page.locator('#view-settings:not([hidden])').waitFor();
     assert.equal(await page.locator('#cloud-consent').isChecked(), false);
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
+    await scanImport(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, and mobile layout.');
+    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), and mobile layout.');
   } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });
