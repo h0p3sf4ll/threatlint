@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic Invicti vulnerabilities export for tests. Hosts and values are made up. -->
+<invicti-enterprise generated="10/20/2026 09:30:00 AM">
+  <target>
+    <scan-id>00000000-0000-0000-0000-000000000001</scan-id>
+    <url>https://shop.example.test/</url>
+    <initiated>10/20/2026 09:00:00 AM</initiated>
+  </target>
+  <vulnerabilities>
+    <vulnerability>
+      <LookupId>11111111-aaaa-bbbb-cccc-000000000001</LookupId>
+      <url>https://shop.example.test/search?q=%3Cscript%3E</url>
+      <type>CrossSiteScripting</type>
+      <name>Cross-site Scripting</name>
+      <severity>High</severity>
+      <certainty>100</certainty>
+      <confirmed>True</confirmed>
+      <classification>
+        <owasp2017>A7</owasp2017>
+        <owasp2021>A3</owasp2021>
+        <cwe>79</cwe>
+      </classification>
+      <http-request>
+        <method>GET</method>
+        <content><![CDATA[GET /search?q=%3Cscript%3Enetsparker(0x000001)%3C/script%3E HTTP/1.1
+Host: shop.example.test
+Cookie: session=abc123SESSIONVALUE456; theme=dark
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.synthetic.payload
+User-Agent: Mozilla/5.0]]></content>
+        <parameters>
+          <parameter name="q" type="Querystring" value="&lt;script&gt;" vulnerable="true" />
+        </parameters>
+      </http-request>
+      <http-response>
+        <content><![CDATA[HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Set-Cookie: session=NEWSESSIONVALUE789xyz; Path=/; HttpOnly
+Server: nginx/1.18.0
+
+<html><body>Results for <script>netsparker(0x000001)</script></body></html>]]></content>
+      </http-response>
+      <remedial-procedure>&lt;p&gt;Encode user input before writing it to HTML.&lt;/p&gt;</remedial-procedure>
+      <description>The q parameter is reflected without encoding.</description>
+    </vulnerability>
+    <vulnerability>
+      <LookupId>11111111-aaaa-bbbb-cccc-000000000002</LookupId>
+      <url>https://shop.example.test/</url>
+      <type>MissingXFrameOptionsHeader</type>
+      <name>Missing X-Frame-Options Header</name>
+      <severity>Low</severity>
+      <certainty>90</certainty>
+      <confirmed>False</confirmed>
+      <classification>
+        <cwe>1021</cwe>
+      </classification>
+      <http-request>
+        <method>GET</method>
+        <content><![CDATA[GET / HTTP/1.1
+Host: shop.example.test]]></content>
+      </http-request>
+      <http-response>
+        <content><![CDATA[HTTP/1.1 200 OK
+Content-Type: text/html
+
+<html></html>]]></content>
+      </http-response>
+      <remedial-procedure>Send X-Frame-Options: DENY.</remedial-procedure>
+    </vulnerability>
+  </vulnerabilities>
+</invicti-enterprise>
