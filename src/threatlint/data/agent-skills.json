@@ -7,7 +7,7 @@
   "appsec-cicd-auditor": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-pipeline-review"],
   "appsec-api-security-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-api-security"],
   "appsec-auth-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-auth-security"],
-  "appsec-fp-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-finding-triage", "threatlint-semgrep-tuning"],
+  "appsec-fp-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-finding-triage", "threatlint-semgrep-tuning", "threatlint-runtime-validation"],
   "appsec-compliance-checker": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-compliance-mapping"],
   "appsec-attack-tree": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-attack-tree"],
   "appsec-red-team": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-purple-team"],
