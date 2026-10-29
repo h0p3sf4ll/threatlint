@@ -372,14 +372,26 @@ def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str,
     return changes
 
 
+def _tunes(path: str, original_rule: str) -> bool:
+    """True when `path` is a Threatlint-tuned version (`[<deployment>.]<rule id>.tuned`) of exactly this rule.
+
+    The whole rule id is compared, case-insensitively (publishing may lowercase it): a rule's last segment alone
+    (e.g. `string`) would also match unrelated rules such as `...formatted-sql-string.tuned`."""
+    path, rule = path.lower(), original_rule.lower().removesuffix(".tuned")
+    if not path.endswith(".tuned"):
+        return False
+    stem = path[:-len(".tuned")]
+    return stem == rule or stem.endswith("." + rule)
+
+
 def disable_originals(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
     """Disable the original wherever its tuned rule is enabled in the same policy (it can be re-enabled after tuning)."""
-    leaf, changes = original_rule.rsplit(".", 1)[-1], []
+    changes = []
     for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
         if policy.get("productType") not in _products(kind):
             continue
         rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
-        if not any(str(rule.get("path", "")).endswith(f"{leaf}.tuned") and rule.get("policyMode") != "MODE_DISABLED" for rule in rules):
+        if not any(_tunes(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED" for rule in rules):
             continue
         for rule in rules:
             path = str(rule.get("path", ""))
@@ -391,15 +403,14 @@ def disable_originals(token: str, dep: dict, kind: str, original_rule: str) -> l
 
 
 def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
-    """Policies already running a Threatlint-tuned version of this rule (rule path ends with `<rule-name>.tuned`)."""
-    leaf = original_rule.rsplit(".", 1)[-1]
+    """Policies already running a Threatlint-tuned version of this rule (`[<deployment>.]<rule id>.tuned`)."""
     found = []
     for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
         if policy.get("productType") not in _products(kind):
             continue
         for rule in _policy_rules(str(dep["id"]), str(policy["id"]), token):
             path = str(rule.get("path", ""))
-            if path.endswith(f"{leaf}.tuned") and rule.get("policyMode") != "MODE_DISABLED":
+            if _tunes(path, original_rule) and rule.get("policyMode") != "MODE_DISABLED":
                 found.append({"policy": policy.get("name"), "tuned": path, "mode": rule.get("policyMode")})
     return found
 

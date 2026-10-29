@@ -212,3 +212,17 @@ def test_a_code_rule_behind_a_secrets_avit_is_replaced_in_the_code_policy(monkey
     monkeypatch.setattr(sp, "call", call)
     changes = sp.replace_in_policies("t", {"id": 1}, "secrets", "yaml.rule", "org.yaml.rule.tuned")
     assert [c["policy"] for c in changes] == ["Global Policy"] and puts == [["rules", "org.yaml.rule.tuned"], ["rules", "yaml.rule"]]
+
+
+def test_a_tuned_rule_is_matched_by_its_whole_rule_id_not_its_last_segment(monkeypatch, tmp_path):
+    monkeypatch.undo()
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    def call(path, token, *, method="GET", body=None):
+        if path.endswith("/1"):
+            return {"policies": [{"id": "5", "name": "Global Policy", "productType": "PRODUCT_TYPE_SECRETS"}]}
+        return {"rules": [{"path": "example_org.java.lang.security.audit.formatted-sql-string.formatted-sql-string.tuned", "policyMode": "MODE_MONITOR"},
+                          {"path": "example_org.swift.ats.ats-consider-pinning.tuned", "policyMode": "MODE_MONITOR"}]}
+    monkeypatch.setattr(sp, "call", call)
+    assert sp.existing_tuning("t", {"id": 1}, "secrets", "secrets.generic.api-key.string.string") == [], "a shared last segment is not the same rule"
+    assert [f["tuned"] for f in sp.existing_tuning("t", {"id": 1}, "secrets", "swift.ats.ATS-consider-pinning")] == ["example_org.swift.ats.ats-consider-pinning.tuned"], "publishing lowercases ids"
+    assert sp._tunes("org.a.b.tuned", "a.b") and sp._tunes("a.b.tuned", "a.b.tuned") and not sp._tunes("org.xa.b.tuned", "a.b") and not sp._tunes("org.a.b", "a.b")
