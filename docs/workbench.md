@@ -243,6 +243,10 @@ the `desktop-build.yml` CI workflow. See the README section *Keeping the desktop
 | GitHub | Fine-grained PAT, or a GitHub App installation token | Contents: read, Metadata: read |
 | Azure DevOps | PAT plus organization name (not a URL) | Code: Read (`vso.code`) |
 
+With a GitHub App saved in **Settings → GitHub** (or by `threatlint github login`), Sources connects to GitHub
+on its own as *GitHub App · \<owner\>*. The runner mints the installation token server-side and replaces it
+before it expires. See [GitHub App authentication](github-app.md).
+
 Tokens are held in runner memory only and cleared on disconnect or restart. Discovery is GET-only
 with pinned, validated DNS, bounded pages, and response-size limits. **Check out & open workspace**
 creates a shallow clone with hooks, submodules, and LFS disabled, then opens it as a workspace that
