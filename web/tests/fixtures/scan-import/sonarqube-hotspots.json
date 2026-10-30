@@ -1,0 +1,8 @@
+{
+  "paging": {"pageIndex": 1, "pageSize": 100, "total": 1},
+  "hotspots": [
+    {"key": "AYxExampleKey02", "component": "web:src/app/config.py", "project": "web", "securityCategory": "auth", "vulnerabilityProbability": "HIGH",
+     "status": "TO_REVIEW", "line": 9, "message": "Review this hard-coded password.", "ruleKey": "python:S2068"}
+  ],
+  "components": [{"key": "web:src/app/config.py", "path": "src/app/config.py", "qualifier": "FIL"}]
+}

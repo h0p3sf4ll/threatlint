@@ -1,9 +1,10 @@
 'use strict';
 
 /**
- * Manual scan-report import: an uploaded Invicti (DAST, XML or JSON export) or MobSF (mobile, report JSON) report is
- * parsed, redacted, triaged by the Findings triage agent (or left AMBIGUOUS when no model is configured), written as an
- * FP-review report in the report store, and on an explicit, confirmed second call posted to ServiceNow.
+ * Manual scan-report import: an uploaded Invicti (DAST, XML or JSON export), MobSF (mobile, report JSON), DefectDojo
+ * (API v2 findings JSON), or SonarQube (issues or hotspots search JSON) report is parsed, redacted, triaged by the
+ * Findings triage agent (or left AMBIGUOUS when no model is configured), written as an FP-review report in the report
+ * store, and on an explicit, confirmed second call posted to ServiceNow, DefectDojo, or SonarQube.
  * Report content is untrusted data: it is parsed without DTDs or entities, never executed, and fenced as evidence in
  * prompts. The upload itself is not kept; only redacted, bounded evidence reaches the report.
  */
@@ -17,6 +18,7 @@ const { runModel, providerRequest, redact } = require('./pipeline.cjs');
 const { analyzeResponse } = require('./runtime.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
+const scanners = require('./scanners.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const MAX_UPLOAD = 25 * 1024 * 1024;
@@ -28,7 +30,10 @@ const REQUEST_LIMIT = 3000;
 const RESPONSE_LIMIT = 4000;
 const TEXT_LIMIT = 4000;
 const MAX_JOBS = 200;
-const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF' };
+const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube' };
+// Code-level sources: findings carry a file and line, and post back to the tool they came from.
+const CODE_SOURCES = new Set(['defectdojo', 'sonarqube']);
+const SOURCE_TOOL = { defectdojo: 'dojo', sonarqube: 'sonar' };
 const DISPOSITIONS = ['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'];
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const CONFIDENCES = ['CONFIRMED', 'PLAUSIBLE', 'THEORETICAL'];
@@ -248,6 +253,26 @@ function get(object, ...names) {
 
 const isMobsf = value => value && typeof value === 'object' && !Array.isArray(value) && (value.app_name !== undefined || value.package_name !== undefined || value.bundle_id !== undefined)
   && ['code_analysis', 'manifest_analysis', 'binary_analysis', 'permissions', 'network_security', 'certificate_analysis', 'secrets', 'ats_analysis'].some(key => value[key] !== undefined);
+const sample = rows => (Array.isArray(rows) ? rows.find(item => item && typeof item === 'object' && !Array.isArray(item)) : null);
+/** DefectDojo API v2 findings: {count, results: [...]} from /api/v2/findings/, or the results list itself. */
+function dojoList(value) {
+  const rows = Array.isArray(value) ? value : value && typeof value === 'object' && Array.isArray(value.results) ? value.results : null;
+  const first = sample(rows);
+  if (!first) return Array.isArray(value?.results) && 'count' in value && !rows.length ? rows : null;
+  return typeof first.id === 'number' && typeof first.title === 'string' && first.severity !== undefined
+    && ['false_p', 'vuln_id_from_tool', 'numerical_severity', 'found_by', 'is_mitigated'].some(key => first[key] !== undefined) ? rows : null;
+}
+/** SonarQube /api/issues/search or /api/hotspots/search JSON. */
+function sonarLists(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const issues = Array.isArray(value.issues) ? value.issues : null, hotspots = Array.isArray(value.hotspots) ? value.hotspots : null;
+  if (!issues && !hotspots) return null;
+  const issue = sample(issues), hotspot = sample(hotspots);
+  const issueShape = issue && typeof issue.key === 'string' && issue.rule !== undefined && issue.component !== undefined;
+  const hotspotShape = hotspot && typeof hotspot.key === 'string' && hotspot.component !== undefined && (hotspot.vulnerabilityProbability !== undefined || hotspot.securityCategory !== undefined || hotspot.ruleKey !== undefined);
+  if (issueShape || hotspotShape) return { issues: issueShape ? issues : [], hotspots: hotspotShape ? hotspots : [] };
+  return !issue && !hotspot && (value.paging || value.total !== undefined) ? { issues: [], hotspots: [] } : null;
+}
 function invictiList(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const list = get(value, 'Vulnerabilities', 'List', 'Issues');
@@ -263,15 +288,15 @@ function decodeUpload(buffer) {
   if (buffer.length > MAX_UPLOAD) fail(`The upload exceeds the ${MAX_UPLOAD / 1024 / 1024} MB limit`, 413);
   if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') fail('PDF reports cannot be imported. Export the Invicti report as XML or JSON, or download the MobSF report JSON (/api/v1/report_json).');
   if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself (Invicti XML/JSON or MobSF report JSON), not the application or an archive.');
-  if (buffer.includes(0)) fail('The upload is a binary file, not an Invicti or MobSF report');
+  if (buffer.includes(0)) fail('The upload is a binary file, not a supported scan report');
   return buffer.toString('utf8').replace(/^﻿/, '');
 }
 
-const UNSUPPORTED = 'This file is not an Invicti or MobSF report. Upload the Invicti vulnerabilities export (XML or JSON) or the MobSF report JSON (/api/v1/report_json). SARIF and Semgrep files go to Findings triage.';
+const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload the Invicti vulnerabilities export (XML or JSON), the MobSF report JSON (/api/v1/report_json), a DefectDojo findings JSON (/api/v2/findings/), or a SonarQube issues or hotspots JSON (/api/issues/search, /api/hotspots/search). SARIF and Semgrep files go to Findings triage.';
 
 /** Detects the report by content (never by extension) and returns its parsed document. */
 function detect(text, hint = 'auto') {
-  if (!['auto', 'invicti', 'mobsf'].includes(hint)) fail('source must be "auto", "invicti", or "mobsf"');
+  if (!['auto', ...Object.keys(SOURCES)].includes(hint)) fail('source must be "auto", "invicti", "mobsf", "defectdojo", or "sonarqube"');
   const trimmed = text.trimStart();
   let detected;
   if (trimmed.startsWith('<')) {
@@ -283,6 +308,8 @@ function detect(text, hint = 'auto') {
     let value;
     try { value = JSON.parse(text); } catch { fail('The JSON report could not be parsed'); }
     if (isMobsf(value)) detected = { source: 'mobsf', format: 'json', document: value };
+    else if (sonarLists(value)) detected = { source: 'sonarqube', format: 'json', document: value };
+    else if (dojoList(value)) detected = { source: 'defectdojo', format: 'json', document: value };
     else if (invictiList(value)) detected = { source: 'invicti', format: 'json', document: value };
     else fail(UNSUPPORTED);
   } else fail(UNSUPPORTED);
@@ -446,11 +473,66 @@ function parseMobsf(report) {
     version: String(version).slice(0, 40), identifier: String(identifier).slice(0, 200), platform }, scanDate: dateOf(report.timestamp || report.scan_date), findings };
 }
 
+// ── DefectDojo and SonarQube (code-level findings) ──────────────────────────
+
+const DOJO_SEVERITY = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', low: 'LOW', info: 'INFO', informational: 'INFO' };
+const SONAR_SEVERITY = { blocker: 'CRITICAL', critical: 'HIGH', high: 'HIGH', major: 'MEDIUM', medium: 'MEDIUM', minor: 'LOW', low: 'LOW', info: 'INFO' };
+const lineOf = value => (/^\d{1,9}$/.test(String(value ?? '')) ? String(Number(value)) : '');
+
+function codeFinding({ originalId, rule, title, severity, scannerSeverity, description, remediation, cwe, file, line, classification = {} }) {
+  const filePath = redactText(String(file || '')).replace(/[\n;]/g, ' ').slice(0, 600);
+  const lineText = lineOf(line);
+  return { originalId: String(originalId).slice(0, 160), rule: redactText(String(rule || 'finding')).slice(0, 200), title: redactText(stripTags(title || rule || originalId)).slice(0, 200),
+    severity, scannerSeverity: String(scannerSeverity || 'not stated').slice(0, 40), certainty: '', confirmed: false, url: '', method: '', parameter: '', request: '', response: '', passive: [],
+    cwe: cweOf(cwe), owasp: '', masvs: '', classification: Object.fromEntries(Object.entries(classification).filter(([, value]) => value != null && String(value).trim()).slice(0, 20).map(([key, value]) => [key.slice(0, 40), redactText(String(value)).slice(0, 200)])),
+    remediation: clip(redactText(stripTags(remediation)), 3000), description: clip(redactText(stripTags(description)), 3000),
+    files: filePath ? [{ path: filePath, lines: lineText ? [lineText] : [] }] : [], location: filePath ? `${filePath}${lineText ? `:${lineText}` : ''}` : 'not recorded' };
+}
+
+function parseDojo(document) {
+  const rows = dojoList(document) || [];
+  const findings = rows.filter(item => item && typeof item === 'object' && Number.isInteger(item.id)).map(item => codeFinding({ originalId: `DOJO-${item.id}`,
+    rule: item.vuln_id_from_tool || (Array.isArray(item.vulnerability_ids) && item.vulnerability_ids[0]?.vulnerability_id) || (item.cwe ? `CWE-${item.cwe}` : item.title),
+    title: item.title, severity: DOJO_SEVERITY[norm(item.severity)] || 'INFO', scannerSeverity: item.severity, description: item.description, remediation: item.mitigation,
+    cwe: item.cwe ? String(item.cwe) : '', file: item.file_path || item.sast_source_file_path, line: item.line || item.sast_source_line,
+    classification: { component: [item.component_name, item.component_version].filter(Boolean).join(' '), active: item.active, verified: item.verified, false_p: item.false_p, test: item.test } }));
+  const products = [...new Set(rows.map(item => item?.product_name || item?.test?.engagement?.product?.name).filter(Boolean))];
+  const target = products.length === 1 ? String(products[0]).slice(0, 200) : `${findings.length} DefectDojo finding${findings.length === 1 ? '' : 's'}`;
+  const dates = rows.map(item => dateOf(item?.date)).filter(Boolean).sort();
+  return { target, host: '', scanDate: dates.at(-1) || '', findings };
+}
+
+function parseSonar(document) {
+  const { issues, hotspots } = sonarLists(document) || { issues: [], hotspots: [] };
+  const paths = new Map((Array.isArray(document.components) ? document.components : []).filter(item => item?.key).map(item => [String(item.key), String(item.path || '')]));
+  const pathOf = component => (component && typeof component === 'object' ? String(component.path || '') : paths.get(String(component || '')) || String(component || '').split(':').slice(1).join(':'));
+  const projects = new Set();
+  const findings = [];
+  for (const issue of issues) {
+    if (!issue || typeof issue.key !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(issue.key)) continue;
+    projects.add(String(issue.project || String(issue.component || '').split(':')[0]));
+    const severity = issue.severity || (Array.isArray(issue.impacts) ? issue.impacts[0]?.severity : '');
+    findings.push(codeFinding({ originalId: `SONAR-${issue.key}`, rule: issue.rule, title: issue.message, severity: SONAR_SEVERITY[norm(severity)] || 'INFO', scannerSeverity: [severity, issue.type].filter(Boolean).join(' '),
+      description: issue.message, file: pathOf(issue.component), line: issue.line || issue.textRange?.startLine, classification: { type: issue.type, status: issue.status, branch: issue.branch, tags: Array.isArray(issue.tags) ? issue.tags.join(', ') : '' } }));
+  }
+  for (const hotspot of hotspots) {
+    if (!hotspot || typeof hotspot.key !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(hotspot.key)) continue;
+    projects.add(String(hotspot.project?.key || hotspot.project || String(hotspot.component?.key || hotspot.component || '').split(':')[0]));
+    const rule = typeof hotspot.rule === 'object' && hotspot.rule ? hotspot.rule.key : hotspot.ruleKey || hotspot.rule;
+    findings.push(codeFinding({ originalId: `SONAR-HOTSPOT-${hotspot.key}`, rule: rule || hotspot.securityCategory, title: hotspot.message, severity: SONAR_SEVERITY[norm(hotspot.vulnerabilityProbability)] || 'MEDIUM',
+      scannerSeverity: `${hotspot.vulnerabilityProbability || 'not stated'} probability security hotspot`, description: hotspot.message, file: pathOf(hotspot.component), line: hotspot.line || hotspot.textRange?.startLine,
+      classification: { securityCategory: hotspot.securityCategory, status: hotspot.status, branch: hotspot.branch } }));
+  }
+  const named = [...projects].filter(Boolean);
+  return { target: named.length === 1 ? named[0].slice(0, 200) : `${findings.length} SonarQube finding${findings.length === 1 ? '' : 's'}`, host: '', scanDate: '', findings };
+}
+
 const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((severity, index) => [severity, index]));
 
 /** Full parse of a detected report into bounded, redacted findings with stable FP-NNN ids (highest severity first). */
 function extract(detected) {
-  const parsed = detected.source === 'mobsf' ? parseMobsf(detected.document) : detected.format === 'xml' ? parseInvictiXml(detected.document) : parseInvictiJson(detected.document);
+  const parsed = detected.source === 'mobsf' ? parseMobsf(detected.document) : detected.source === 'defectdojo' ? parseDojo(detected.document) : detected.source === 'sonarqube' ? parseSonar(detected.document)
+    : detected.format === 'xml' ? parseInvictiXml(detected.document) : parseInvictiJson(detected.document);
   const ordered = parsed.findings.map((finding, index) => ({ ...finding, order: index })).sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.order - b.order);
   const kept = ordered.slice(0, MAX_FINDINGS).map((finding, index) => {
     const { order, ...rest } = finding;
@@ -469,8 +551,9 @@ const evidenceFor = finding => ({ id: finding.id, originalId: finding.originalId
   description: clip(finding.description, 1500) || undefined, scannerRemediation: clip(finding.remediation, 800) || undefined,
   request: clip(finding.request, 1500) || undefined, response: clip(finding.response, 2000) || undefined, passiveObservations: finding.passive.length ? finding.passive : undefined });
 
+const SCANNER_DESCRIPTION = { mobsf: 'MobSF mobile static analysis', invicti: 'Invicti DAST', defectdojo: 'DefectDojo findings export', sonarqube: 'SonarQube issues/hotspots export' };
 function triagePrompt(parsed, batch, { workspace, filename }) {
-  const scanner = parsed.source === 'mobsf' ? 'MobSF mobile static analysis' : 'Invicti DAST';
+  const scanner = SCANNER_DESCRIPTION[parsed.source];
   return [`Triage ${batch.length} finding(s) from a ${scanner} report the user uploaded manually (${JSON.stringify(filename)}; target ${JSON.stringify(parsed.target || 'not recorded')}).`,
     workspace ? `Source context: the repository ${JSON.stringify(workspace.repoPath)} is open with read-only tools. Trace each finding to the code (route, parameter, sink, manifest or file:line) before deciding.`
       : 'No source repository was supplied: decide from the scan evidence alone, and say when source would be needed to decide.',
@@ -584,6 +667,7 @@ function reportTitle(parsed, summary, uploadedAt = new Date()) {
   const date = parsed.scanDate || uploadedAt.toISOString().slice(0, 10);
   const tally = summary ? `(${summary.total} finding${summary.total === 1 ? '' : 's'}: ${summary.tp} TP / ${summary.fp} FP / ${summary.ambiguous} ambiguous)` : `(${parsed.findings.length} finding${parsed.findings.length === 1 ? '' : 's'})`;
   if (parsed.source === 'mobsf') return `MobSF triage — ${parsed.app.name}${parsed.app.version ? ` ${parsed.app.version}` : ''} (${parsed.app.platform}) — ${date} ${tally}`;
+  if (CODE_SOURCES.has(parsed.source)) return `${SOURCES[parsed.source]} triage — ${parsed.target} — ${date} ${tally}`;
   return `Invicti DAST triage — ${parsed.host || 'unknown target'} — ${date} ${tally}`;
 }
 
@@ -627,10 +711,10 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
   const priorities = parsed.findings.filter(finding => verdicts.get(finding.id).disposition === 'TRUE POSITIVE')
     .sort((a, b) => SEVERITY_RANK[verdicts.get(a.id).severity] - SEVERITY_RANK[verdicts.get(b.id).severity]).slice(0, 15);
   const target = parsed.source === 'mobsf' ? `${parsed.app.name}${parsed.app.version ? ` ${parsed.app.version}` : ''} (${parsed.app.identifier || 'identifier not recorded'}, ${parsed.app.platform})` : parsed.target || 'not recorded';
-  const lines = [`# Findings Triage: ${scanner} scan of ${parsed.source === 'mobsf' ? parsed.app.name : parsed.host || 'unknown target'}`, '',
+  const lines = [`# Findings Triage: ${scanner} ${CODE_SOURCES.has(parsed.source) ? `findings for ${parsed.target}` : `scan of ${parsed.source === 'mobsf' ? parsed.app.name : parsed.host || 'unknown target'}`}`, '',
     `**Status**: ${triaged ? `Triaged by ${model}` : `NOT TRIAGED — ${NOT_TRIAGED}`}`, `**Date**: ${uploadedAt.toISOString().slice(0, 10)}`,
     `**Input**: ${filename.replace(/[\n|]/g, ' ')} (${scanner} ${parsed.format.toUpperCase()} report, uploaded to the Workbench)`,
-    `**Scanner**: ${parsed.source === 'mobsf' ? 'MobSF (mobile static analysis)' : 'Invicti DAST'}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
+    `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
     `**Source context**: ${workspace ? workspace.repoPath : 'none (scan evidence only)'}`, `**Findings reviewed**: ${parsed.findings.length}${parsed.omitted ? ` of ${parsed.total} (${parsed.omitted} lowest-severity findings omitted)` : ''}`,
     `**Reviewed by**: ${AGENT_ID}`, '', '## TIER 1 — EXECUTIVE SUMMARY', '',
     triaged ? `Threatlint triaged ${parsed.findings.length} ${scanner} finding(s) for ${target}: ${summary.tp} true positive, ${summary.fp} false positive, ${summary.ambiguous} ambiguous.${untriaged ? ` ${untriaged} finding(s) could not be triaged and are AMBIGUOUS.` : ''} A scanner label, severity, or certainty alone was not treated as a verified vulnerability.`
@@ -645,7 +729,7 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
   lines.push('', '## TIER 2 — DETAILED FINDINGS', '');
   if (!parsed.findings.length) lines.push('The report contains no findings to triage (no findings).');
   for (const finding of parsed.findings) lines.push(findingSection({ ...finding, source: parsed.source }, verdicts.get(finding.id), scanner), '');
-  lines.push('## Residual Risk', '', `${parsed.omitted ? `${parsed.omitted} finding(s) beyond the ${MAX_FINDINGS}-finding limit were not reviewed. ` : ''}${parsed.source === 'invicti' ? 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.' : 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.'} Verdicts are advisory and need human confirmation before closing tickets.`);
+  lines.push('## Residual Risk', '', `${parsed.omitted ? `${parsed.omitted} finding(s) beyond the ${MAX_FINDINGS}-finding limit were not reviewed. ` : ''}${parsed.source === 'invicti' ? 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.' : parsed.source === 'mobsf' ? 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.' : `${scanner} results are static findings as exported; the reviewed source may differ from the scanned revision, and runtime behaviour was not observed.`} Verdicts are advisory and need human confirmation before closing tickets.`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -682,7 +766,38 @@ function parseAvitMapping(value) {
 }
 
 /** AVIT -> findings it covers, and the conservative combined disposition: any TP -> TP; else any AMBIGUOUS -> AMBIGUOUS; all FP -> FP. */
-function avitTargets(mapping, findings) {
+function avitTargets(mapping, findings) { return groupTargets(mapping, findings).map(({ reference, ...rest }) => ({ avit: reference, ...rest })); }
+
+/** Scanner reference (DOJO-…, SONAR-…) for the whole upload, or finding id/original id -> reference ("FP-001=DOJO-12" lines or JSON). */
+function parseReferenceMapping(toolId, value) {
+  if (value == null || value === '' || (typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length)) return null;
+  let mapping = value;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    if (text.length > 64 * 1024) fail('The reference mapping is too long');
+    if (text.startsWith('{') || text.startsWith('[')) { try { mapping = JSON.parse(text); } catch { fail('The reference mapping is not valid JSON'); } }
+    else if (text.includes('=')) mapping = Object.fromEntries(text.split(/[\n,;]+/).map(pair => pair.trim()).filter(Boolean).map(pair => { const eq = pair.lastIndexOf('='); return [pair.slice(0, eq).trim(), pair.slice(eq + 1).trim()]; }));
+    else {
+      const references = scanners.parseReferences(toolId, text);
+      if (references.length > 1) fail(`Several references need a mapping: give finding-id=reference pairs (e.g. FP-001=${scanners.tool(toolId).example}), or one reference for the whole upload`);
+      return references[0];
+    }
+  }
+  if (Array.isArray(mapping)) mapping = Object.fromEntries(mapping.map(item => [item?.findingId ?? item?.id, item?.reference]));
+  if (!mapping || typeof mapping !== 'object') fail('Invalid reference mapping');
+  const entries = Object.entries(mapping);
+  if (entries.length > MAX_FINDINGS) fail(`Map at most ${MAX_FINDINGS} findings`);
+  const result = {};
+  for (const [key, reference] of entries) {
+    if (!key || key.length > 200 || typeof reference !== 'string') fail('Each mapping entry needs a finding id and a reference');
+    result[key] = scanners.parseReferences(toolId, reference)[0];
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+/** Reference -> findings it covers, with the conservative combined disposition (as for AVITs). */
+function groupTargets(mapping, findings) {
   const groups = new Map();
   const add = (avit, finding) => { if (!groups.has(avit)) groups.set(avit, []); if (!groups.get(avit).includes(finding)) groups.get(avit).push(finding); };
   if (typeof mapping === 'string') for (const finding of findings) add(mapping, finding);
@@ -693,9 +808,9 @@ function avitTargets(mapping, findings) {
       for (const finding of matched) add(avit, finding);
     }
   }
-  return [...groups.entries()].map(([avit, covered]) => {
+  return [...groups.entries()].map(([reference, covered]) => {
     const dispositions = new Set(covered.map(finding => finding.disposition));
-    return { avit, findings: covered.map(finding => finding.id), disposition: dispositions.has('TRUE POSITIVE') ? 'TRUE POSITIVE' : dispositions.has('AMBIGUOUS') || !covered.length ? 'AMBIGUOUS' : 'FALSE POSITIVE' };
+    return { reference, findings: covered.map(finding => finding.id), disposition: dispositions.has('TRUE POSITIVE') ? 'TRUE POSITIVE' : dispositions.has('AMBIGUOUS') || !covered.length ? 'AMBIGUOUS' : 'FALSE POSITIVE' };
   });
 }
 
@@ -797,7 +912,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     const id = crypto.randomUUID();
     const job = { id, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
       counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 }, findings: [], reportId: null, sessionId: workspace?.id || null, workspaceId: workspace?.id || null, avit,
-      model: settings ? { provider: settings.provider, model: settings.model } : null, warning, detail: 'Queued', servicenow: null, createdAt: Date.now(), updatedAt: Date.now() };
+      model: settings ? { provider: settings.provider, model: settings.model } : null, warning, detail: 'Queued', servicenow: null, scanners: {}, createdAt: Date.now(), updatedAt: Date.now() };
     jobs.set(id, job);
     while (jobs.size > MAX_JOBS) jobs.delete(jobs.keys().next().value);
     persist();
@@ -844,9 +959,58 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     return { ok, actions };
   }
 
-  return { create, post, get: id => summary(jobFor(id)), list: () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(job => summary(job, false)),
+  /**
+   * The explicit, confirmed post to DefectDojo or SonarQube. Findings imported from that tool map to themselves; others
+   * need a reference for the whole upload or finding-id=reference pairs. DefectDojo gets the Word report attached;
+   * SonarQube (no attachments) gets a summary comment naming where the report lives.
+   */
+  async function postScanner(id, body = {}) {
+    const job = jobFor(id);
+    const spec = scanners.tool(body.tool);
+    if (body.confirm !== true) fail(`Posting to ${spec.label} needs confirmation: send {"confirm": true} after the user confirms`);
+    if (job.status !== 'done') fail(`The import is ${job.status}; post once triage is done`, 409);
+    let mapping = body.references != null && body.references !== '' ? parseReferenceMapping(spec.id, body.references) : null;
+    if (!mapping && SOURCE_TOOL[job.source] === spec.id) mapping = Object.fromEntries(job.findings.map(finding => [finding.id, finding.originalId]));
+    if (!mapping) fail(`Posting to ${spec.label} is disabled: this upload did not come from ${spec.label}. Enter the ${spec.label} reference (or finding-id=reference pairs) to post.`);
+    const located = job.reportId && reports.find(job.reportId);
+    if (!located) fail('The triage report is no longer available', 404);
+    const { report } = located;
+    if (spec.attachments && (!report.docxPath || !fs.existsSync(report.docxPath))) fail('The Word report is unavailable; install python-docx so the report can be attached', 409);
+    let where = '';
+    if (spec.id === 'sonar') {
+      if (body.reportUrl) {
+        let url;
+        try { url = new URL(String(body.reportUrl)); } catch { fail('The report location must be an https:// URL'); }
+        if (url.protocol !== 'https:' || url.username || url.password) fail('The report location must be an https:// URL');
+        where = url.href;
+      } else where = `Threatlint Workbench report "${String(job.title).slice(0, 200)}" (Findings; Word export ${report.docxPath ? path.basename(report.docxPath) : 'unavailable'})`;
+    }
+    const targets = groupTargets(mapping, job.findings);
+    const connection = scanners.connection(spec.id);
+    const content = spec.attachments ? fs.readFileSync(report.docxPath) : null;
+    const actions = [];
+    for (const target of targets) {
+      try {
+        const result = spec.id === 'dojo'
+          ? await scanners.resolveDojo(connection, target.reference, { disposition: target.disposition, files: [{ name: `${target.reference}-threatlint-fp-review.docx`, content, type: DOCX_TYPE }] }, { fetchImpl: integrations.fetchImpl })
+          : await scanners.resolveSonar(connection, target.reference, { disposition: target.disposition, summary: `${target.findings.join(', ')} ${target.disposition} in ${String(job.title).slice(0, 200)}`, where }, { fetchImpl: integrations.fetchImpl });
+        const attached = result.attachments.map(item => `${item.name}${item.alreadyAttached ? ' (already attached)' : ''}`).join(', ');
+        const detail = { closed: spec.id === 'dojo' ? 'marked false positive (inactive)' : 'marked false positive / safe', 'close not applied': 'false positive not applied', verified: 'marked verified; left active',
+          confirmed: 'confirmed; left open', noted: `${target.disposition} ${spec.id === 'dojo' ? 'note' : 'comment'} added; left open`, 'verify not applied': 'verified not applied' }[result.action] || result.action;
+        actions.push({ ...result, number: target.reference, findings: target.findings, detail: `${attached ? `Attached ${attached}; ` : ''}${detail}${result.detail ? ` (${result.detail})` : ''}` });
+      } catch (error) {
+        if (targets.length === 1) throw error;
+        actions.push({ reference: target.reference, number: target.reference, action: 'error', disposition: target.disposition, findings: target.findings, detail: error.message, error: error.message, ...(error.code ? { code: error.code } : {}) });
+      }
+    }
+    const ok = actions.every(action => !action.error && (action.disposition !== 'FALSE POSITIVE' || action.closed));
+    update(job, { scanners: { ...(job.scanners || {}), [spec.id]: { postedAt: Date.now(), ok, actions: actions.map(({ note, ...action }) => action) } } });
+    return { ok, tool: spec.id, actions };
+  }
+
+  return { create, post, postScanner, get: id => summary(jobFor(id)), list: () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(job => summary(job, false)),
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle: () => queue };
 }
 
 module.exports = { createScanImports, parseScanReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,
-  parseAvitMapping, avitTargets, MAX_UPLOAD, MAX_FINDINGS, NOT_TRIAGED, ScanImportError };
+  parseAvitMapping, avitTargets, parseReferenceMapping, groupTargets, CODE_SOURCES, MAX_UPLOAD, MAX_FINDINGS, NOT_TRIAGED, ScanImportError };

@@ -7,7 +7,9 @@ from ~/.threatlint/org.json (THREATLINT_HOME relocates it), for example:
    "snowClientIdParameter": "/appsec/servicenow/client-id",
    "snowClientSecretParameter": "/appsec/servicenow/client-secret",
    "semgrepTokenParameter": "/appsec/semgrep-token",
-   "semgrepDeployment": "12345"}
+   "semgrepDeployment": "12345",
+   "dojoTokenParameter": "/appsec/defectdojo-token",
+   "sonarTokenParameter": "/appsec/sonarqube-token"}
 
 An unset Parameter Store name means that credential is not read from Parameter Store; it is entered with
 `threatlint setup`, the matching login command, or the Workbench settings instead.
@@ -25,6 +27,9 @@ ENV = {
     "snowClientSecretParameter": "THREATLINT_SNOW_CLIENT_SECRET_PARAMETER",
     "semgrepTokenParameter": "THREATLINT_SEMGREP_TOKEN_PARAMETER",
     "semgrepDeployment": "THREATLINT_SEMGREP_DEPLOYMENT",
+    # Parameter Store names of the DefectDojo and SonarQube API tokens (optional; see docs/*-integration.md).
+    "dojoTokenParameter": "THREATLINT_DOJO_TOKEN_PARAMETER",
+    "sonarTokenParameter": "THREATLINT_SONAR_TOKEN_PARAMETER",
     # Sidekick (reporting, ownership, bulk closure). A comma-separated list in the environment; a JSON list in org.json.
     "adoOrganizations": "THREATLINT_ADO_ORGANIZATIONS",
     "emailDomain": "THREATLINT_EMAIL_DOMAIN",
