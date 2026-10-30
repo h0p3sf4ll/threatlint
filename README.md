@@ -158,6 +158,7 @@ Use LM Studio for fully local analysis, or **View sample report** to see the out
 - [Desktop and Browser Workbench](#desktop-and-browser-workbench)
 - [Agent Skills and Professional Findings Reports](#agent-skills-and-professional-findings-reports)
 - [Requirements](#requirements)
+- [Models](#models)
 - [Quick Start With Claude Code](#quick-start-with-claude-code)
 - [Quick Start With Local Models (LM Studio)](#quick-start-with-local-models-lm-studio)
 - [Quick Start With Codex / AGENTS.md Tools](#quick-start-with-codex--agentsmd-tools)
@@ -744,6 +745,22 @@ No project dependency, service account, or external scanner is required. `threat
 
 ---
 
+## Models
+
+With the Claude (Anthropic) provider, Threatlint uses **`claude-sonnet-5-5` for scanning** and **`claude-opus-5-5` for everything else**:
+
+| Work | Default model | Where |
+| --- | --- | --- |
+| Security analysis runs: the `appsec-*` agents and their slash commands, Workbench review playbooks, FP review/triage, AVIT batches, scan-import triage, DefectDojo/SonarQube review, DAST review, `threatlint run --provider claude`, CI scan workflows, the Teams bot | `claude-sonnet-5-5` | agent/command frontmatter `model:`, `src/threatlint/models.py`, `web/lib/model-policy.cjs`, workflow `--model` defaults |
+| Conversation and assistance: Ask Threatlint, PR chat (`threatlint_chat.py`), auto-fix | `claude-opus-5-5` | same modules; `appsec-auto-fix.yml` |
+
+An explicit choice always wins: a model picked in Workbench Settings, `--model`, or a workflow `model` input.
+Otherwise the defaults can be changed with `THREATLINT_SCAN_MODEL` / `THREATLINT_GENERAL_MODEL`
+(environment, or GitHub repository variables for the `appsec-*` workflows) or the `scanModel` / `generalModel`
+keys of `~/.threatlint/org.json`. Other providers (OpenAI, Copilot, LM Studio, GitHub Models) keep their own defaults.
+
+---
+
 ## Quick Start With Claude Code
 
 The slash commands are the fastest way to get a report and a Word document.
@@ -923,10 +940,10 @@ All 22 agents are available. The bot uses Claude AI (configurable via `CLAUDE_MO
 
 ### Claude Model
 
-By default the bot uses `claude-sonnet-5`. Override with:
+By default the bot uses the Threatlint scanning model, `claude-sonnet-5-5` (see [Models](#models)). Override with:
 
 ```bash
-export CLAUDE_MODEL=claude-opus-5
+export CLAUDE_MODEL=claude-opus-5-5
 ```
 
 ---

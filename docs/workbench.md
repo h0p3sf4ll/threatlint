@@ -53,6 +53,12 @@ account/server. No hard-coded cloud model catalogue is assumed.
   | OpenAI | `OPENAI_API_KEY` → an API key saved by Codex (`codex login --with-api-key`, in `~/.codex/auth.json`). A Codex *ChatGPT-account* sign-in only works inside Codex and is not used. |
   | GitHub Copilot | `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → the GitHub CLI sign-in (`gh auth token`; run `gh auth login` once) |
 
+  **Claude defaults:** with Anthropic, the dropdown's first entry is *Threatlint default*, shown in Settings as
+  "Scanning: claude-sonnet-5-5 · Chat: claude-opus-5-5". Leaving it selected runs review, triage, AVIT, scanner and
+  scan-import jobs on `claude-sonnet-5-5` and Ask Threatlint on `claude-opus-5-5`. Picking any model uses it for
+  every run. `THREATLINT_SCAN_MODEL` / `THREATLINT_GENERAL_MODEL` (or `scanModel` / `generalModel` in
+  `~/.threatlint/org.json`) change the defaults for the runner; see [Models](../README.md#models).
+
   Copilot lists only models your plan enables that support `/chat/completions` with tool calls,
   because reviews need streamed tool use. Copilot plan quotas apply: an exhausted quota shows
   HTTP 429. Claude Code's subscription login (macOS Keychain / `~/.claude/.credentials.json`) is

@@ -3,7 +3,7 @@ name: appsec-runtime-reviewer
 description: "Use for read-only runtime security review: correlate authorized captures with source, distinguish header/status observations from verified vulnerabilities, and assess authentication state, deployment drift, and validation evidence."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-runtime-validation, threatlint-runtime-auth-workflows]
 ---

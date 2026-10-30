@@ -1,6 +1,7 @@
 ---
 description: "Software supply chain audit: third-party dependency risk, unpinned versions, dependency confusion, typosquatting, lockfile integrity, and malicious install hooks. Saves a Word document report."
 argument-hint: "Optional: specific manifest file or ecosystem to audit (default: all manifests)"
+model: claude-sonnet-5-5
 ---
 
 Delegate to the `appsec-dependency-auditor` agent. Pass any manifest path or ecosystem name as the scope.

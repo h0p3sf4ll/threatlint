@@ -3,7 +3,7 @@ name: appsec-business-logic-reviewer
 description: "Use for business-logic security review: workflow and entitlement abuse, payment/credit invariants, idempotency, race conditions, asynchronous side effects, and role/tenant semantics grounded in source evidence."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-business-logic]
 ---

@@ -3,7 +3,7 @@ name: appsec-cicd-auditor
 description: "Use proactively for CI/CD pipeline security audits: GitHub Actions, Jenkins, GitLab CI, CircleCI, and Azure Pipelines. Finds script injection, unpinned actions, excessive permissions, fork exposure, artifact integrity gaps, and supply chain risks in the pipeline itself."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-pipeline-review]
 ---

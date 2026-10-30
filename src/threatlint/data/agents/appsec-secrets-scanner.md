@@ -3,7 +3,7 @@ name: appsec-secrets-scanner
 description: "Use proactively to hunt for hardcoded secrets, credentials, tokens, and high-entropy strings across the entire codebase and git history. Covers API keys, private keys, connection strings, leaked cloud credentials, and misconfigured secret management."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-secrets-triage]
 ---

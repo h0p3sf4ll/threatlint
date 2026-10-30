@@ -3,7 +3,7 @@ name: appsec-ai-security-reviewer
 description: "Use for AI/LLM application security review: direct/indirect prompt injection, tool and agent authorization, RAG ingestion/retrieval, memory and tenant boundaries, generated output sinks, provider data flows, and resource budgets."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-ai-security]
 ---

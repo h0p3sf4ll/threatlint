@@ -1,6 +1,7 @@
 ---
 description: "Deep-dive authentication and authorization security review: OAuth/OIDC, JWT, sessions, CSRF, MFA, RBAC, privilege escalation paths, and multi-tenancy isolation. Saves a Word document."
 argument-hint: "Optional: specific auth component, file, or flow to focus on (default: full auth system)"
+model: claude-sonnet-5-5
 ---
 
 Delegate to the `appsec-auth-reviewer` agent. Pass any component name or file path as the review scope.

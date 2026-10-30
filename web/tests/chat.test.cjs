@@ -76,4 +76,15 @@ describe('Conversations', () => {
     assert.match((await converse({ question: '' })).at(-1).message, /Ask a question/);
     assert.match((await converse({ question: 'x', context: { type: 'report', reportId: 'nope' } })).at(-1).message, /not part of this workspace/);
   });
+  // Runs last: it adds conversations that the earlier count assertions do not expect.
+  it('uses the general (Opus) model for Claude chat when no model is chosen, and an explicit model when one is', async () => {
+    const config = await (await fetch(`http://${base}/api/config`)).json();
+    assert.deepEqual(config.modelPolicy, { scan: 'claude-sonnet-5-5', general: 'claude-opus-5-5' });
+    const defaulted = await converse({ question: 'Which model answers?', provider: 'claude', apiKey: 'sk-ant-session', lmstudioModel: undefined });
+    assert.equal(defaulted.at(-1).type, 'chat_complete');
+    assert.deepEqual({ provider: calls.at(-1).provider, model: calls.at(-1).model, purpose: calls.at(-1).purpose }, { provider: 'claude', model: 'claude-opus-5-5', purpose: 'chat' });
+    await converse({ question: 'And now?', provider: 'claude', apiKey: 'sk-ant-session', model: 'claude-haiku-5-5', lmstudioModel: undefined });
+    assert.equal(calls.at(-1).model, 'claude-haiku-5-5');
+  });
+
 });

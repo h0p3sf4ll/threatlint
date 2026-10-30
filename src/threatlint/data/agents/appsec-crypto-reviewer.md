@@ -3,7 +3,7 @@ name: appsec-crypto-reviewer
 description: "Use for cryptographic implementation review: algorithms/modes, security purpose, entropy, nonce and key lifecycle, KDFs, signature/MAC validation, TLS verification, and compatibility-aware remediation."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-cryptography]
 ---

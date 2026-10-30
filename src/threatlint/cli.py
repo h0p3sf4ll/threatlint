@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from threatlint import __version__
+from threatlint import models as _models
 from threatlint.skills import SKILLS as _SKILLS_SRC
 from threatlint.servicenow import (
     ServiceNowError,
@@ -379,7 +380,7 @@ def _stream_turn(base_url: str, model: str, messages: list[dict], api_key: str) 
                 for line in lines:
                     turn.feed_line(line)
     except (OSError, http.client.HTTPException) as exc:
-        raise RuntimeError(f"LM Studio request failed: {exc}") from exc
+        raise RuntimeError(f"Model request failed: {exc}") from exc
     return turn
 
 
@@ -679,6 +680,20 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
 _OPENAI_DEFAULT_MODEL = "gpt-5.6"
+# Anthropic's OpenAI-compatible endpoint (chat completions with streaming and tool calls).
+_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+_RUN_PROVIDERS = ("lmstudio", "openai", "claude")
+_API_KEY_ENV = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+_PROVIDER_LABEL = {"openai": "OpenAI", "claude": "Anthropic (Claude)"}
+
+
+def _default_run_model(provider: str, explicit: str | None = "") -> str:
+    """Model for an analysis run: an explicit --model wins; Claude follows the scanning policy (threatlint.models)."""
+    if explicit:
+        return explicit
+    if provider == "claude":
+        return _models.scan_model()
+    return _OPENAI_DEFAULT_MODEL if provider == "openai" else ""
 
 
 def _resolve_agent_file(mode: str) -> tuple[str, Path] | None:
@@ -764,12 +779,12 @@ def _resolve_provider(args: argparse.Namespace) -> tuple[str, str, str] | None:
     """(provider, base_url, api_key), or None after printing why the provider is unusable."""
     provider = getattr(args, "provider", "lmstudio") or "lmstudio"
     api_key = getattr(args, "api_key", "") or ""
-    if provider == "openai":
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    if provider in _API_KEY_ENV:
+        api_key = api_key or os.environ.get(_API_KEY_ENV[provider], "")
         if not api_key:
-            print(_red("ERROR: OpenAI API key required. Pass --api-key or set OPENAI_API_KEY."))
+            print(_red(f"ERROR: {_PROVIDER_LABEL[provider]} API key required. Pass --api-key or set {_API_KEY_ENV[provider]}."))
             return None
-        return provider, _OPENAI_BASE_URL, api_key
+        return provider, _OPENAI_BASE_URL if provider == "openai" else _ANTHROPIC_BASE_URL, api_key
     base_url = args.base_url.rstrip("/")
     if not _lmstudio_models(base_url):
         print(_red("ERROR: LM Studio (Bionic) is not running or no model is loaded."))
@@ -781,7 +796,7 @@ def _resolve_provider(args: argparse.Namespace) -> tuple[str, str, str] | None:
 
 def _print_run_header(mode: str, provider: str, base_url: str, model: str, target: str) -> None:
     print(_bold(f"\nthreatlint run {mode}"))
-    print(f"  Provider  : {'OpenAI' if provider == 'openai' else f'LM Studio ({base_url})'}")
+    print(f"  Provider  : {_PROVIDER_LABEL.get(provider) or f'LM Studio ({base_url})'}")
     if model:
         print(f"  Model     : {model}")
     if target:
@@ -833,7 +848,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(_red(f"ERROR: Cannot load findings: {exc}"))
         return 1
 
-    model = getattr(args, "model", "") or (_OPENAI_DEFAULT_MODEL if provider == "openai" else "")
+    model = _default_run_model(provider, getattr(args, "model", ""))
     _print_run_header(mode, provider, base_url, model, getattr(args, "target", "") or "")
 
     try:
@@ -891,12 +906,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--head", metavar="SHA",
         help="Head commit SHA (security-review only)")
     p_run.add_argument("--model", metavar="MODEL",
-        help="Model ID (default: auto-detect for lmstudio; gpt-5.6 for openai)")
+        help="Model ID (default: auto-detect for lmstudio; gpt-5.6 for openai; "
+             f"{_models.SCAN_MODEL} for claude, or THREATLINT_SCAN_MODEL)")
     p_run.add_argument("--provider", metavar="PROVIDER", default="lmstudio",
-        choices=["lmstudio", "openai"],
-        help="LLM provider: lmstudio (default) or openai")
+        choices=list(_RUN_PROVIDERS),
+        help="LLM provider: lmstudio (default), openai, or claude")
     p_run.add_argument("--api-key", metavar="KEY", dest="api_key",
-        help="API key for the provider (for OpenAI; or set OPENAI_API_KEY env var)")
+        help="API key for the provider (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
     p_run.add_argument("--base-url", metavar="URL", default="http://localhost:1234/v1",
         help="LM Studio API base URL (default: http://localhost:1234/v1)")
     p_run.add_argument("--output-dir", metavar="DIR",

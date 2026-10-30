@@ -109,7 +109,7 @@ function createConversations({ store, reports, runtime, override }) {
   async function ask(message, send, signal) {
     const question = typeof message.question === 'string' ? message.question.trim() : '';
     if (!question || question.length > LIMITS.question) throw new HttpError(`Ask a question between 1 and ${LIMITS.question} characters`);
-    const settings = providerRequest(message);
+    const settings = providerRequest(message, 'chat');
     let conversation = message.conversationId ? conversations.get(message.conversationId) : null;
     if (message.conversationId && !conversation) throw new HttpError('Conversation not found', 404);
     let session, evidence = '';

@@ -3,7 +3,7 @@ name: appsec-threat-modeler
 description: "Use proactively for application security threat modeling of source code, architecture, IaC, CI/CD, or dependency configuration. When the user has no target or application context, autonomously discover the repository and produce an initial evidence-based threat model."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-threat-modeling]
 ---

@@ -198,6 +198,21 @@ async function githubSettings(page) {
 }
 function base(page) { return new URL(page.url()).origin; }
 
+// Claude with no model picked: Settings shows the policy, the default option saves, and review runs use the scanning model.
+async function claudeDefaults(page) {
+  await page.route(/\/api\/models$/, route => route.fulfill({ json: { models: [{ id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' }], source: 'session' } }));
+  await page.locator('#settings-button').click(); await page.locator('input[name=provider][value=claude]').check();
+  await page.waitForFunction(() => document.getElementById('model-source').textContent.includes('1 model'));
+  assert.match(await page.locator('#model-policy-note').innerText(), /Scanning: claude-sonnet-5-5 · Chat: claude-opus-5-5/);
+  assert.equal(await page.locator('#model-select').inputValue(), '', 'Threatlint default is preselected');
+  assert.match(await page.locator('#model-select option[value=""]').innerText(), /Threatlint default/);
+  await page.locator('#settings-form button[type=submit]').click();
+  assert.equal(await page.locator('#settings-error').innerText(), '');
+  await page.locator('[data-view="workbench"]').click();
+  assert.match(await page.locator('#run-summary').innerText(), /claude-sonnet-5-5/);
+  await page.unroute(/\/api\/models$/);
+}
+
 (async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-browser-'));
   const repo = path.join(temporary, 'repo'); fs.mkdirSync(repo);
@@ -249,10 +264,11 @@ function base(page) { return new URL(page.url()).origin; }
     await scanImport(page);
     await scannerFlows(page);
     await githubSettings(page);
+    await claudeDefaults(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, and mobile layout.');
+    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, Claude model defaults, and mobile layout.');
   } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });

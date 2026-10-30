@@ -3,7 +3,7 @@ name: appsec-fp-reviewer
 description: "Use to adjudicate SARIF, Semgrep JSON, and security-report findings. Produces a professional evidence-based findings report with prioritized proposed code fixes, safe scanner tuning, regression tests, and an engineering remediation plan."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-finding-triage, threatlint-semgrep-tuning, threatlint-runtime-validation]
 ---

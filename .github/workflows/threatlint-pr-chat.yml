@@ -33,7 +33,7 @@ on:
         type: string
         default: claude
       model:
-        description: Model override. Empty uses the provider default.
+        description: Model override. Empty uses the provider default (claude-opus-5-5 for claude).
         type: string
         default: ''
       threatlint-repository:

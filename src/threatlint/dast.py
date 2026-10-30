@@ -555,7 +555,7 @@ def step_review(args, state: dict, env: rt.EnvironmentProvider | None = None) ->
     provider, base_url, api_key = resolved
     with open(path, encoding="utf-8") as handle:
         message = f"The repository to analyze is located at: {state['checkout']}\n" + findings_text(f"DAST evidence for {state['avit']}", handle.read())
-    output = cli._run_agent(base_url, args.model or (cli._OPENAI_DEFAULT_MODEL if provider == "openai" else ""), agent_prompt("appsec-fp-reviewer"),
+    output = cli._run_agent(base_url, cli._default_run_model(provider, args.model), agent_prompt("appsec-fp-reviewer"),
                             message + "\nBegin your analysis now and produce the complete report as specified.", state["checkout"], api_key=api_key)
     if not output.strip():
         raise ResolveError("The reviewer produced no report")
@@ -632,10 +632,10 @@ def add_dast_parser(actions) -> None:
     dast.add_argument("--test-command", help="Test command run in the app image against APP_URL (default: detected)")
     dast.add_argument("--start-command", help="Command that starts the app (default: detected)")
     dast.add_argument("--keep-env", action="store_true", help="Leave the environment running after the probe (teardown later with --step teardown)")
-    dast.add_argument("--review-provider", choices=["lmstudio", "openai"], help="Run the FP review with this model provider (default: hand off to Claude Code)")
+    dast.add_argument("--review-provider", choices=["lmstudio", "openai", "claude"], help="Run the FP review with this model provider (default: hand off to Claude Code)")
     dast.add_argument("--model", help="Review model ID")
     dast.add_argument("--base-url", default="http://localhost:1234/v1", help="LM Studio API base URL")
-    dast.add_argument("--api-key", help="OpenAI API key (or OPENAI_API_KEY)")
+    dast.add_argument("--api-key", help="Provider API key (or OPENAI_API_KEY / ANTHROPIC_API_KEY)")
     dast.add_argument("--resolve", action="store_true", help="After the review, resolve the AVIT in ServiceNow (attach; close FP / note TP)")
     dast.add_argument("--report", help="FP review report for --step resolve (default: WORK/fp_review.md)")
     dast.add_argument("--docx", help="Word report to attach (default: converted from the report)")
