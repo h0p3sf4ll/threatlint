@@ -106,6 +106,61 @@ function resolveOutcome(output) {
   };
 }
 
+/** The history entries for what `avit resolve` did: attached, closed / note added, Semgrep ignored, rule tuned. */
+function outcomeActions(outcome, disposition) {
+  const actions = [];
+  if (outcome.attached) actions.push({ kind: 'attached', detail: 'Word report attached to the AVIT' });
+  if (outcome.closed === true) actions.push({ kind: 'closed', detail: 'Closed as false positive with the Threatlint work note' });
+  else if (outcome.closed === 'state not applied') actions.push({ kind: 'warning', detail: 'ServiceNow did not keep the closed state/substate' });
+  if (outcome.leftOpen) actions.push({ kind: 'noted', detail: `Work note added; left open (${disposition === 'AMBIGUOUS' ? 'ambiguous' : 'true positive'})` });
+  for (const line of outcome.semgrep || []) actions.push({ kind: /Tuned|Published|already runs/.test(line) ? 'tuned' : /ignored/i.test(line) ? 'semgrep-ignored' : 'semgrep', detail: line.replace(/^[✓!]\s*/, 'Semgrep: ') });
+  return actions;
+}
+
+/**
+ * The progress-bar bucket for an item's final event: closed, noted (left open with a work note), error, or
+ * skipped (out of scope, cancelled, or over the batch limit).
+ */
+function terminalResult(stage, { disposition, outcome } = {}) {
+  if (stage === 'error') return 'error';
+  if (['out-of-scope', 'cancelled', 'skipped'].includes(stage)) return 'skipped';
+  if (disposition === 'REPO REMOVED' || outcome?.closed === true) return 'closed';
+  return 'noted';
+}
+
+const TOKEN_SPLIT = /[\s,;]+/;
+const SCTASK_PATTERN = /^SCTASK\d{7,10}$/;
+/**
+ * A pasted list of AVIT and SCTASK numbers in any mix, separated by commas, spaces, semicolons, or new lines.
+ * Returns each kind deduplicated, plus `order` (both kinds, input order) so tasks expand in place.
+ */
+function parseBatchInput(value) {
+  const text = Array.isArray(value) ? value.join(' ') : String(value ?? '');
+  if (text.length > 64 * 1024) throw new HttpError('The AVIT list is too long');
+  const tokens = [...new Set(text.toUpperCase().split(TOKEN_SPLIT).filter(Boolean))];
+  const invalid = tokens.filter(token => !servicenow.AVIT_PATTERN.test(token) && !SCTASK_PATTERN.test(token));
+  if (invalid.length) throw new HttpError(`Not an AVIT or SCTASK number: ${invalid.slice(0, 5).join(', ')} (expected AVIT plus 7 to 15 digits, e.g. AVIT000000095938462, or SCTASK plus 7 to 10 digits, e.g. SCTASK14120565)`);
+  if (!tokens.length) throw new HttpError('Enter at least one AVIT or SCTASK number');
+  return { avits: tokens.filter(token => token.startsWith('AVIT')), sctasks: tokens.filter(token => token.startsWith('SCTASK')), order: tokens };
+}
+
+/**
+ * The review order: input order, each SCTASK replaced by its AVITs. An AVIT named twice (directly or by more
+ * than one task) is reviewed once; `shared[task]` lists a task's AVITs that an earlier entry already queued.
+ * Over `max`, the remainder is returned as `skipped` (reported, never silently dropped).
+ */
+function planBatch(order, fromTasks, max) {
+  const all = [], shared = {};
+  for (const token of order) {
+    const avits = token.startsWith('SCTASK') ? fromTasks[token] || [] : [token];
+    for (const avit of avits) {
+      if (!all.includes(avit)) all.push(avit);
+      else if (token.startsWith('SCTASK')) (shared[token] ||= []).push(avit);
+    }
+  }
+  return { all, shared, kept: all.slice(0, max), skipped: all.slice(max) };
+}
+
 /** Required credentials that `threatlint setup --check` reports as missing (ServiceNow, Azure DevOps PAT, Semgrep token). */
 async function setupStatus(cli = runCli, env = {}) {
   const result = await cli(['setup', '--check', '--json'], { env });
@@ -119,13 +174,10 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
 
   function validate(message) {
-    // SCTASK numbers are expanded server-side (from the task description) before the run starts.
-    const text = String(message.avits || '');
-    const avitText = text.replace(/\bSCTASK\d{7,10}\b/gi, ' ').trim();
-    if (!avitText && !/\bSCTASK\d{7,10}\b/i.test(text)) servicenow.parseAvitNumbers(text);
-    const numbers = avitText ? servicenow.parseAvitNumbers(avitText) : [];
+    // SCTASK numbers are expanded server-side (from each task description) before the run starts.
+    const { avits: numbers, sctasks, order } = parseBatchInput(message.avits);
     if (numbers.length > MAX_BATCH) throw new HttpError(`Review at most ${MAX_BATCH} AVITs at a time`);
-    return { numbers, settings: providerRequest(message) };
+    return { numbers, sctasks, order, settings: providerRequest(message) };
   }
 
   /** Session-only ServiceNow values from the page; anything blank comes from the saved Threatlint config. */
@@ -138,7 +190,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   }
 
   async function reviewOne(avit, { settings, message, semgrep, env, profile, signal, send }) {
-    const step = (stage, detail = '', extra = {}) => send({ type: 'avit_item', avit, stage, detail, ...extra });
+    const step = (stage, detail = '', extra = {}) => send({ type: 'avit_item', avit, stage, detail, ...extra, ...(extra.done ? { result: terminalResult(stage, extra) } : {}) });
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-avit-'));
     let created = null, sessionId = null;
     const repo = path.join(work, 'repo');
@@ -199,6 +251,8 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
       const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath, '--checkout', repo, '--yes', ...profile], { env });
       const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);
+      // Each ServiceNow / Semgrep action is its own history entry before the final status.
+      for (const action of outcomeActions(outcome, disposition)) step('resolving', action.detail, { action: action.kind });
       return step(resolved.code === 0 ? 'done' : 'error', resolved.code === 0 ? 'Report attached to the AVIT in ServiceNow (not kept locally)' : errorOf(resolved), { disposition, outcome, done: true });
     } catch (error) {
       return step(signal.aborted ? 'cancelled' : 'error', signal.aborted ? 'Cancelled' : error.message, { done: true });
@@ -210,43 +264,87 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     }
   }
 
-  async function run(message, send, controller) {
-    const { numbers, settings } = validate(message);
+  async function run(message, rawSend, controller) {
+    // Every event carries the time it happened, so the page can keep a timestamped history per card and per run.
+    const send = event => rawSend({ at: new Date().toISOString(), ...event });
+    const { numbers, sctasks, order, settings } = validate(message);
     const semgrep = await semgrepVersion();
     if (!semgrep) throw Object.assign(new HttpError(servicenow.SEMGREP_INSTALL, 412), { code: 'semgrep_missing' });
     const env = cliEnv(message);
     const missing = await missingSetup(env);
     if (missing.length) throw Object.assign(new HttpError(`Finish setup first: ${missing.map(item => `${item.name} (${item.fix})`).join('; ')}`, 412), { code: 'setup_incomplete' });
     const profile = typeof message.awsProfile === 'string' && /^[\w.@+-]{1,128}$/.test(message.awsProfile) ? ['--aws-profile', message.awsProfile] : [];
-    const sctasks = [...new Set((String(message.avits || '').toUpperCase().match(/\bSCTASK\d{7,10}\b/g) || []))];
-    // AVITs named in each SCTASK description join the batch; each task is closed once its AVITs are reviewed.
+    // Every SCTASK is expanded on its own; one that cannot be read is reported and the others continue.
+    for (const task of sctasks) send({ type: 'sctask_item', sctask: task, stage: 'queued', detail: 'Waiting to read the task description' });
     const fromTasks = {};
     for (const task of sctasks) {
-      const listed = await cli(['sctask', 'avits', task, ...profile], { env });
-      if (listed.code !== 0) { send({ type: 'sctask_item', sctask: task, stage: 'error', detail: errorOf(listed) || 'The task names no AVITs', done: true }); continue; }
-      try { fromTasks[task] = JSON.parse(lastLine(listed.stdout)).avits || []; } catch { fromTasks[task] = []; }
-      send({ type: 'sctask_item', sctask: task, stage: 'reviewing', avits: fromTasks[task], detail: `${fromTasks[task].length} AVIT(s) in the description` });
+      if (controller.signal.aborted) { send({ type: 'sctask_item', sctask: task, stage: 'cancelled', detail: 'Cancelled before the task was read', done: true }); continue; }
+      send({ type: 'sctask_item', sctask: task, stage: 'expanding', detail: 'Reading the AVITs named in the task description' });
+      let listed;
+      try { listed = await cli(['sctask', 'avits', task, ...profile], { env, signal: controller.signal }); }
+      catch (error) { listed = { code: 1, stdout: '', stderr: error.message }; }
+      let avits = [];
+      try { avits = JSON.parse(lastLine(listed.stdout)).avits || []; } catch { /* reported below */ }
+      avits = [...new Set(avits.map(avit => String(avit).toUpperCase()).filter(avit => servicenow.AVIT_PATTERN.test(avit)))];
+      if (listed.code !== 0 || !avits.length) { send({ type: 'sctask_item', sctask: task, stage: 'error', detail: errorOf(listed) || 'The task names no AVITs', done: true, result: 'error' }); continue; }
+      fromTasks[task] = avits;
     }
-    const all = [...new Set([...numbers, ...Object.values(fromTasks).flat()])];
-    if (!all.length) throw new HttpError('Enter at least one AVIT or SCTASK number');
-    if (all.length > MAX_BATCH) throw new HttpError(`Review at most ${MAX_BATCH} AVITs at a time`);
-    send({ type: 'avit_batch_start', avits: all, sctasks: Object.keys(fromTasks) });
-    for (const avit of all) {
-      if (controller.signal.aborted) { send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled', done: true }); continue; }
-      await reviewOne(avit, { settings, message, semgrep, env, profile, signal: controller.signal, send });
+    const { all, shared, kept, skipped } = planBatch(order, fromTasks, MAX_BATCH);
+    for (const [task, avits] of Object.entries(fromTasks)) {
+      const notKept = avits.filter(avit => skipped.includes(avit));
+      send({ type: 'sctask_item', sctask: task, stage: 'reviewing', avits, shared: shared[task] || [], skipped: notKept,
+        detail: `${avits.length} AVIT${avits.length === 1 ? '' : 's'} in the description${shared[task]?.length ? ` · ${shared[task].length} also listed earlier (reviewed once)` : ''}${notKept.length ? ` · ${notKept.length} over the ${MAX_BATCH}-AVIT limit, not reviewed` : ''}` });
     }
-    for (const task of Object.keys(fromTasks)) {
-      if (controller.signal.aborted) break;
+    if (!all.length && !Object.keys(fromTasks).length && !sctasks.length) throw new HttpError('Enter at least one AVIT or SCTASK number');
+    send({ type: 'avit_batch_start', avits: all, sctasks: Object.keys(fromTasks), requested: sctasks, max: MAX_BATCH,
+      truncated: skipped.length ? { total: all.length, reviewed: kept.length, skipped } : null });
+    for (const avit of skipped) send({ type: 'avit_item', avit, stage: 'skipped', detail: `Not reviewed: the batch is limited to ${MAX_BATCH} AVITs. Run it again to review this one.`, done: true, result: 'skipped' });
+    const finished = new Set(skipped);
+    const closeTask = async task => {
+      const avits = fromTasks[task];
+      const notKept = avits.filter(avit => skipped.includes(avit));
+      if (notKept.length === avits.length) {
+        send({ type: 'sctask_item', sctask: task, done: true, stage: 'cancelled', result: 'skipped', detail: `Not updated: none of its AVITs fit in this run (over the ${MAX_BATCH}-AVIT limit)` });
+        return;
+      }
       send({ type: 'sctask_item', sctask: task, stage: 'resolving', detail: 'Attaching each AVIT report and commenting on the task' });
-      const closed = await cli(['sctask', 'close', task, '--yes', ...profile], { env });
-      const out = `${closed.stdout}\n${closed.stderr}`;
-      send({ type: 'sctask_item', sctask: task, done: true, stage: closed.code === 0 ? 'done' : 'error',
-        detail: closed.code !== 0 ? errorOf(closed) : /✓ Closed /.test(out) ? 'Closed with the Threatlint comment and every AVIT report attached' : 'Comment added; left open until every AVIT is decided' });
+      try {
+        const closed = await cli(['sctask', 'close', task, '--yes', ...profile], { env });
+        const out = `${closed.stdout}\n${closed.stderr}`;
+        const isClosed = closed.code === 0 && /✓ Closed /.test(out);
+        send({ type: 'sctask_item', sctask: task, done: true, stage: closed.code === 0 ? 'done' : 'error', result: closed.code !== 0 ? 'error' : isClosed ? 'closed' : 'noted',
+          detail: closed.code !== 0 ? errorOf(closed) : isClosed ? 'Closed with the Threatlint comment and every AVIT report attached'
+            : `Comment added; left open until every AVIT is decided${notKept.length ? ` (${notKept.length} not reviewed in this run: over the ${MAX_BATCH}-AVIT limit)` : ''}` });
+      } catch (error) { send({ type: 'sctask_item', sctask: task, done: true, stage: 'error', result: 'error', detail: error.message }); }
+    };
+    // A task is closed as soon as its own AVITs are reviewed, without waiting for the rest of the batch.
+    const pending = new Set(Object.keys(fromTasks));
+    const closeReady = async () => {
+      for (const task of [...pending]) {
+        if (controller.signal.aborted) return;
+        const avits = fromTasks[task];
+        if (!avits.every(avit => finished.has(avit))) continue;
+        pending.delete(task);
+        await closeTask(task);
+      }
+    };
+    await closeReady();
+    for (const avit of kept) {
+      if (controller.signal.aborted) { send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled', done: true, result: 'skipped' }); continue; }
+      await reviewOne(avit, { settings, message, semgrep, env, profile, signal: controller.signal, send });
+      finished.add(avit);
+      for (const task of pending) {
+        const avits = fromTasks[task];
+        if (avits.includes(avit)) send({ type: 'sctask_item', sctask: task, stage: 'reviewing', progress: { reviewed: avits.filter(item => finished.has(item)).length, total: avits.length },
+          detail: `${avit} reviewed · ${avits.filter(item => finished.has(item)).length} of ${avits.length} AVITs done` });
+      }
+      await closeReady();
     }
+    for (const task of pending) send({ type: 'sctask_item', sctask: task, stage: 'cancelled', detail: 'Cancelled before every AVIT was reviewed; the task was not updated', done: true, result: 'skipped' });
     send({ type: 'avit_batch_complete', cancelled: controller.signal.aborted });
   }
 
   return { run };
 }
 
-module.exports = { createAvitBatch, redactSecrets, resolveOutcome, runCli, setupStatus, pythonPath, python };
+module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, MAX_BATCH, runCli, setupStatus, pythonPath, python };
