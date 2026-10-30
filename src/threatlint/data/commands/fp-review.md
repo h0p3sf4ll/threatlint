@@ -1,7 +1,7 @@
 ---
 description: "Triage security scanner findings as true or false positives. Generates precise Semgrep rule tuning for FPs and confirms exploit paths for TPs. Accepts a SARIF file, Semgrep JSON output, or a threatlint report."
 argument-hint: "Path to SARIF file, Semgrep JSON, threatlint report, a ServiceNow AVIT number, or an SCTASK naming AVITs (e.g., /tmp/semgrep.json, AVIT000000095938462, SCTASK14120565)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Invoke the `appsec-fp-reviewer` agent to triage security scanner findings.

@@ -142,8 +142,8 @@ steps:
           "summary table and per-finding Severity and Confidence fields. Proposed fixes are advisory; do not" \
           "modify repository files and do not claim proposed tests were run. Return only the final Markdown report.")"
         args=(-p "$prompt" --agent "$TL_AGENT" --max-turns "$TL_TURNS" --allowedTools "Read,Grep,Glob,Bash" --output-format text)
-        # Threatlint model policy: scanning runs default to claude-sonnet-5-5; the model parameter overrides it.
-        args+=(--model "${TL_MODEL:-claude-sonnet-5-5}")
+        # Threatlint model policy: scanning runs default to claude-opus-5-5; the model parameter overrides it.
+        args+=(--model "${TL_MODEL:-claude-opus-5-5}")
         cd "$TL_SOURCE"
         npx --yes "@anthropic-ai/claude-code@$TL_CLAUDE_VERSION" "${args[@]}" > "$TL_REPORT"
         echo "Report written: $(wc -c < "$TL_REPORT") bytes"

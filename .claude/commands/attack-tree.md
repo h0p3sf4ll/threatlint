@@ -1,7 +1,7 @@
 ---
 description: "Build a formal attack tree for a named asset: maps all attack paths from root goal to leaf conditions, with AND/OR nodes, control effectiveness, and prioritized mitigations. Saves a Word document."
 argument-hint: "Asset to attack-tree: database, payment-service, admin-panel, auth-service, or any named component"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Build a formal attack tree for the named asset. Use the `appsec-threat-modeler` agent for deep repository analysis, then structure the results as an attack tree.

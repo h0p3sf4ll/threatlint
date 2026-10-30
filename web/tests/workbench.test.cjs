@@ -135,7 +135,7 @@ describe('Pipeline integration without paid provider calls', () => {
     const socket = await connect();
     const payload = { action: 'run_pipeline', sessionId: session.sessionId, agentIds: ['appsec-threat-modeler'], provider: 'claude', apiKey: 'sk-ant-session' };
     assert.equal((await run(socket, payload)).at(-1).type, 'pipeline_complete');
-    assert.deepEqual({ provider: observed.at(-1).provider, model: observed.at(-1).model, purpose: observed.at(-1).purpose }, { provider: 'claude', model: 'claude-sonnet-5-5', purpose: 'review' });
+    assert.deepEqual({ provider: observed.at(-1).provider, model: observed.at(-1).model, purpose: observed.at(-1).purpose }, { provider: 'claude', model: 'claude-opus-5-5', purpose: 'review' });
     assert.equal((await run(socket, { ...payload, model: 'claude-opus-5-5' })).at(-1).type, 'pipeline_complete');
     assert.equal(observed.at(-1).model, 'claude-opus-5-5');
     socket.close();

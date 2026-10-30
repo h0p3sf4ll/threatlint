@@ -88,7 +88,7 @@ jobs:
 
           client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
           message = client.messages.create(
-              model=os.environ.get('APPSEC_MODEL', 'claude-sonnet-5-5') if '${{ parameters.model }}' == '' else '${{ parameters.model }}',
+              model=os.environ.get('APPSEC_MODEL', 'claude-opus-5-5') if '${{ parameters.model }}' == '' else '${{ parameters.model }}',
               max_tokens=8192,
               system='You are an expert application security engineer. Apply aggressive posture.',
               messages=[{'role': 'user', 'content': prompt}]

@@ -317,7 +317,7 @@ threatlint avit dast --avit-file tests/fixtures/dast/invicti-xss-search.json --r
 | test | Run the repository's own test suite in the app image, against `APP_URL`, on the same network. |
 | probe | Send at most 8 requests for the finding's vulnerability class (XSS marker, SQL error and boolean pairs, open redirect, traversal, directory listing, CORS, cookie and header checks) to the sandbox app. The Workbench's passive runtime checks (`RT-*`) run on every response. Requests and responses are redacted and written to `evidence.md`. |
 | teardown | Remove every container, network, volume and image labelled `threatlint.dast.run=<run id>`. On failure the checkout is deleted too. |
-| review | Write `review-request.md`: the evidence, the checkout path, and the exact report lines. Pass `/fp-review <work>/review-request.md` to Claude Code, or use `--review-provider lmstudio\|openai\|claude` to run the reviewer directly (`claude` defaults to the scanning model, `claude-sonnet-5-5`). The report is `<work>/fp_review.md`. |
+| review | Write `review-request.md`: the evidence, the checkout path, and the exact report lines. Pass `/fp-review <work>/review-request.md` to Claude Code, or use `--review-provider lmstudio\|openai\|claude` to run the reviewer directly (`claude` defaults to the scanning model, `claude-opus-5-5`). The report is `<work>/fp_review.md`. |
 | resolve | `--step resolve --work <work>` (or `--resolve` on the full run) converts the report to Word and runs the same path as `avit resolve`: attach, then close a false positive or add a work note to a true positive or ambiguous finding. Semgrep is skipped. The checkout is deleted. |
 
 Each step can be run alone with `--step <step> --work <dir>`. State is kept in `<dir>/dast-state.json`.

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from threatlint import org_config
 
-SCAN_MODEL = "claude-sonnet-5-5"
+SCAN_MODEL = "claude-opus-5-5"
 GENERAL_MODEL = "claude-opus-5-5"
 
 SCAN = "scan"

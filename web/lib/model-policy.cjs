@@ -11,7 +11,7 @@
 
 const { orgValue } = require('./org-config.cjs');
 
-const SCAN_MODEL = 'claude-sonnet-5-5';
+const SCAN_MODEL = 'claude-opus-5-5';
 const GENERAL_MODEL = 'claude-opus-5-5';
 
 function scanModel() { return orgValue('scanModel') || SCAN_MODEL; }

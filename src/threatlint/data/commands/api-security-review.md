@@ -1,7 +1,7 @@
 ---
 description: "OWASP API Security Top 10 (2023) review of REST, GraphQL, or gRPC APIs. Finds broken object-level auth, excessive data exposure, missing rate limits, function-level auth gaps, and more. Saves a Word document."
 argument-hint: "Optional: specific API path, router file, or service to review (default: all APIs discovered)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to the `appsec-api-security-reviewer` agent. Pass any path or service name as the review scope.

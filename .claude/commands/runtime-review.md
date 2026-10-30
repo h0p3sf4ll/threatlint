@@ -1,7 +1,7 @@
 ---
 description: "Review supplied redacted runtime captures against source, authentication state, and deployment revisions. Analysis only; no runtime testing."
 argument-hint: "Scope and optional redacted capture/report path; never credentials or session tokens"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to `appsec-runtime-reviewer`. Pass `$ARGUMENTS` as the scope and explicitly supplied redacted evidence locations.

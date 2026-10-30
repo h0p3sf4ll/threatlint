@@ -62,7 +62,7 @@ jobs:
 
             Do not modify any repository source files.
           claude_args: |
-            --model ${{ vars.THREATLINT_SCAN_MODEL || 'claude-sonnet-5-5' }}
+            --model ${{ vars.THREATLINT_SCAN_MODEL || 'claude-opus-5-5' }}
             --agent appsec-red-team
             --max-turns 20
             --allowedTools "Read,Grep,Glob,Bash"

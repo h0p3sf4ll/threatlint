@@ -3,7 +3,7 @@ name: appsec-threat-delta
 description: "Use proactively to compare a previous threat model or security report against the current repository state. Classifies each finding as New, Resolved, Regressed, or Unchanged, and surfaces net risk change. Requires a prior report in chain context or as a target file path."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-threat-delta]
 ---

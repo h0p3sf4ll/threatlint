@@ -67,7 +67,7 @@
   function formatTime(value) { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function selectedModel() { return state.preferences.models[state.preferences.provider] || ''; }
   // Model policy (from /api/config): with Claude and no model picked, the runner uses Sonnet for scanning and Opus for chat.
-  const POLICY_FALLBACK = { scan: 'claude-sonnet-5-5', general: 'claude-opus-5-5' };
+  const POLICY_FALLBACK = { scan: 'claude-opus-5-5', general: 'claude-opus-5-5' };
   function modelPolicy() { return { ...POLICY_FALLBACK, ...(state.config.modelPolicy || {}) }; }
   function policyLabel() { const policy = modelPolicy(); return `Scanning: ${policy.scan} · Chat: ${policy.general}`; }
   function effectiveModel(purpose = 'review', provider = state.preferences.provider) {

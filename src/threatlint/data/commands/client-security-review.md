@@ -1,7 +1,7 @@
 ---
 description: "Review browser, SPA, Electron, and mobile trust boundaries: DOM, origins, IPC, navigation, storage, and server enforcement."
 argument-hint: "Optional client, renderer, bridge, component, or redacted evidence path"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to `appsec-client-security-reviewer`. Pass `$ARGUMENTS` as the scope and supplied evidence locations.

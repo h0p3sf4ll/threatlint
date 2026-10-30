@@ -3,7 +3,7 @@ name: appsec-dependency-auditor
 description: "Use proactively for software supply chain security audits: third-party dependency risk, unpinned versions, dependency confusion, typosquatting, lockfile integrity, malicious install hooks, and abandoned packages."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-dependency-audit]
 ---

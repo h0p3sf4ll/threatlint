@@ -15,16 +15,16 @@ describe('Model policy', () => {
   afterEach(() => { for (const name of ENV) delete process.env[name]; fs.rmSync(path.join(process.env.THREATLINT_HOME, 'org.json'), { force: true }); });
 
   it('defaults scanning to Sonnet and everything else to Opus', () => {
-    assert.equal(policy.SCAN_MODEL, 'claude-sonnet-5-5');
+    assert.equal(policy.SCAN_MODEL, 'claude-opus-5-5');
     assert.equal(policy.GENERAL_MODEL, 'claude-opus-5-5');
-    assert.equal(policy.defaultModel('review'), 'claude-sonnet-5-5');
+    assert.equal(policy.defaultModel('review'), 'claude-opus-5-5');
     assert.equal(policy.defaultModel('chat'), 'claude-opus-5-5');
-    assert.deepEqual(policy.modelPolicy(), { scan: 'claude-sonnet-5-5', general: 'claude-opus-5-5' });
+    assert.deepEqual(policy.modelPolicy(), { scan: 'claude-opus-5-5', general: 'claude-opus-5-5' });
   });
 
   it('uses the policy for Claude review and chat runs when no model is chosen', () => {
-    assert.equal(providerRequest(claude({ model: '' })).model, 'claude-sonnet-5-5');
-    assert.equal(providerRequest(claude({}), 'review').model, 'claude-sonnet-5-5');
+    assert.equal(providerRequest(claude({ model: '' })).model, 'claude-opus-5-5');
+    assert.equal(providerRequest(claude({}), 'review').model, 'claude-opus-5-5');
     assert.equal(providerRequest(claude({ model: '  ' }), 'chat').model, 'claude-opus-5-5');
   });
 

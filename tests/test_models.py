@@ -21,9 +21,9 @@ def _no_policy_env(monkeypatch):
 
 
 def test_defaults_split_scanning_from_everything_else():
-    assert models.SCAN_MODEL == "claude-sonnet-5-5"
+    assert models.SCAN_MODEL == "claude-opus-5-5"
     assert models.GENERAL_MODEL == "claude-opus-5-5"
-    assert models.default_model("scan") == "claude-sonnet-5-5"
+    assert models.default_model("scan") == "claude-opus-5-5"
     assert models.default_model("general") == "claude-opus-5-5"
     with pytest.raises(ValueError):
         models.default_model("unknown")
@@ -150,12 +150,12 @@ def test_scan_workflows_default_to_scan_model_and_auto_fix_to_general_model():
         if "claude_args" not in text:
             continue
         expected = ("--model ${{ vars.THREATLINT_GENERAL_MODEL || 'claude-opus-5-5' }}" if path.stem == "appsec-auto-fix"
-                    else "--model ${{ vars.THREATLINT_SCAN_MODEL || 'claude-sonnet-5-5' }}")
+                    else "--model ${{ vars.THREATLINT_SCAN_MODEL || 'claude-opus-5-5' }}")
         assert text.count(expected) == text.count("claude_args:"), path.name
     action = (ROOT / ".github" / "actions" / "threatlint" / "action.yml").read_text(encoding="utf-8")
-    assert "--model ${{ inputs.model || 'claude-sonnet-5-5' }}" in action
+    assert "--model ${{ inputs.model || 'claude-opus-5-5' }}" in action
     steps = (ROOT / "azure-pipelines" / "templates" / "threatlint-steps.yml").read_text(encoding="utf-8")
-    assert 'args+=(--model "${TL_MODEL:-claude-sonnet-5-5}")' in steps
+    assert 'args+=(--model "${TL_MODEL:-claude-opus-5-5}")' in steps
 
 
 def test_azure_prompt_pipelines_follow_the_policy():

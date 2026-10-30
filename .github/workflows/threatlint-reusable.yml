@@ -27,7 +27,7 @@ on:
         type: string
         default: claude
       model:
-        description: Model override. Empty uses the provider default (claude-sonnet-5-5 for claude).
+        description: Model override. Empty uses the provider default (claude-opus-5-5 for claude).
         type: string
         default: ''
       target:

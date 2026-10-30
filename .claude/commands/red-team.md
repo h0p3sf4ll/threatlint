@@ -1,7 +1,7 @@
 ---
 description: "Adversarial scenario generation: produce realistic, detailed attack scenarios from multiple threat actor perspectives. Covers kill chain steps, MITRE ATT&CK techniques, detection gaps, and proof-of-concept descriptions. Saves a Word document."
 argument-hint: "Target component, service, or asset to red-team (leave blank for autonomous highest-risk selection)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Generate adversarial attack scenarios for the named target, modeling realistic attacker behavior across multiple threat actor personas.

@@ -10,7 +10,7 @@
  *
  * Optional:
  *   PORT                — HTTP port (default 3978)
- *   CLAUDE_MODEL        — model to use (default: the Threatlint scanning model, claude-sonnet-5-5,
+ *   CLAUDE_MODEL        — model to use (default: the Threatlint scanning model, claude-opus-5-5,
  *                         or THREATLINT_SCAN_MODEL / org.json scanModel; see web/lib/model-policy.cjs)
  */
 

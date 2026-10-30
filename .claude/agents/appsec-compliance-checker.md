@@ -3,7 +3,7 @@ name: appsec-compliance-checker
 description: "Use proactively to map security findings from a threat model or code review to specific controls in OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8. Accepts chain context from prior analysis agents."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-compliance-mapping]
 ---

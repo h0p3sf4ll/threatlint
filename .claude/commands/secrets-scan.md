@@ -1,7 +1,7 @@
 ---
 description: "Scan the entire repository and git history for hardcoded secrets, API keys, credentials, private keys, and high-entropy tokens. Saves a Word document report."
 argument-hint: "Optional: path to limit scan scope (default: full repository)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to the `appsec-secrets-scanner` agent. Pass any path argument as the scan scope.

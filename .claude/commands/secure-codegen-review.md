@@ -1,7 +1,7 @@
 ---
 description: "Review AI-generated or new code for insecure-by-default patterns and propose secure-by-default rewrites."
 argument-hint: "Optional files, diff range, or generated snippet path (defaults to the working-tree diff)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to `appsec-secure-codegen-reviewer`. Pass `$ARGUMENTS` as the scope; when empty, review the current working-tree diff.

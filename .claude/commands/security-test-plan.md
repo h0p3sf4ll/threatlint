@@ -1,7 +1,7 @@
 ---
 description: "Design source-grounded security regression and acceptance plans with finding traceability, role/tenant cases, and auth prerequisites."
 argument-hint: "Finding/report, invariant, component, or redacted evidence path; planning only"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to `appsec-security-test-planner`. Pass `$ARGUMENTS` as the source-backed findings, invariants, scope, and supplied evidence locations.

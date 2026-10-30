@@ -3,7 +3,7 @@ name: appsec-api-security-reviewer
 description: "Use proactively for REST, GraphQL, and gRPC API security reviews using the OWASP API Security Top 10. Finds broken object-level authorization, excessive data exposure, missing rate limiting, function-level authorization gaps, and injection in API endpoints."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-api-security]
 ---

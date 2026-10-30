@@ -747,11 +747,11 @@ No project dependency, service account, or external scanner is required. `threat
 
 ## Models
 
-With the Claude (Anthropic) provider, Threatlint uses **`claude-sonnet-5-5` for scanning** and **`claude-opus-5-5` for everything else**:
+With the Claude (Anthropic) provider, Threatlint uses **`claude-opus-5-5`** for both scanning and everything else. The two are set separately, so either can be changed on its own:
 
 | Work | Default model | Where |
 | --- | --- | --- |
-| Security analysis runs: the `appsec-*` agents and their slash commands, Workbench review playbooks, FP review/triage, AVIT batches, scan-import triage, DefectDojo/SonarQube review, DAST review, `threatlint run --provider claude`, CI scan workflows, the Teams bot | `claude-sonnet-5-5` | agent/command frontmatter `model:`, `src/threatlint/models.py`, `web/lib/model-policy.cjs`, workflow `--model` defaults |
+| Security analysis runs: the `appsec-*` agents and their slash commands, Workbench review playbooks, FP review/triage, AVIT batches, scan-import triage, DefectDojo/SonarQube review, DAST review, `threatlint run --provider claude`, CI scan workflows, the Teams bot | `claude-opus-5-5` | agent/command frontmatter `model:`, `src/threatlint/models.py`, `web/lib/model-policy.cjs`, workflow `--model` defaults |
 | Conversation and assistance: Ask Threatlint, PR chat (`threatlint_chat.py`), auto-fix | `claude-opus-5-5` | same modules; `appsec-auto-fix.yml` |
 
 An explicit choice always wins: a model picked in Workbench Settings, `--model`, or a workflow `model` input.
@@ -940,7 +940,7 @@ All 22 agents are available. The bot uses Claude AI (configurable via `CLAUDE_MO
 
 ### Claude Model
 
-By default the bot uses the Threatlint scanning model, `claude-sonnet-5-5` (see [Models](#models)). Override with:
+By default the bot uses the Threatlint scanning model, `claude-opus-5-5` (see [Models](#models)). Override with:
 
 ```bash
 export CLAUDE_MODEL=claude-opus-5-5

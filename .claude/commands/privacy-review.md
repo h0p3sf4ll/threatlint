@@ -1,7 +1,7 @@
 ---
 description: "Inventory personal/sensitive data and review its flows, minimization, retention, consent, and protection from source evidence."
 argument-hint: "Optional data domain, module, integration, or redacted evidence path"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to `appsec-privacy-reviewer`. Pass `$ARGUMENTS` as the scope and supplied evidence locations.

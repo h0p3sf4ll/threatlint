@@ -1,7 +1,7 @@
 ---
 description: "Security review of all IaC: Terraform, Kubernetes, Helm, Dockerfile, docker-compose. Finds misconfigured IAM, open network rules, missing encryption, and hardcoded secrets. Saves a Word document report."
 argument-hint: "Optional: specific path or IaC tool to focus on (default: all IaC in repository)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to the `appsec-iac-reviewer` agent. Pass any path or tool name argument as the review scope.

@@ -1,7 +1,7 @@
 ---
 description: "Deep-dive aggressive threat model with maximum finding coverage. Escalates borderline findings, requires bypass chain analysis for every defensive control, and forces multi-step attack chain exploration. Use for high-value targets, pentest contexts, or when you need exhaustive coverage over conservative precision."
 argument-hint: "Optional: component, path, service name, or feature to analyze (leave blank to discover)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Invoke the `appsec-threat-modeler` agent in **aggressive deep-dive mode**.

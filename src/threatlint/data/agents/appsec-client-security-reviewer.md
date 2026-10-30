@@ -3,7 +3,7 @@ name: appsec-client-security-reviewer
 description: "Use for browser, SPA, Electron, and mobile-client security review: DOM injection, origins, messaging and IPC, navigation/deep links, sensitive storage, service workers, and client/server privilege boundaries."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-client-security]
 ---

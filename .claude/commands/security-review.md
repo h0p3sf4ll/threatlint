@@ -1,7 +1,7 @@
 ---
 description: "Run an application security code review. Analyzes the working-tree diff by default, or a specified branch, commit range, or PR target. Produces a two-tier report with merge recommendation, structured findings, and codebase-specific remediation guidance. Saves the report as a Word document in the repository root."
 argument-hint: "Optional: branch, commit range (base..head), PR number, or path to review (defaults to working-tree diff)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Invoke the `appsec-code-reviewer` agent to produce a security-focused code review.

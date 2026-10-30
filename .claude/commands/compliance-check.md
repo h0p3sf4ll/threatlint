@@ -1,7 +1,7 @@
 ---
 description: "Map security findings from the most recent report to a named compliance framework. Produces a coverage matrix showing satisfied controls, gaps, and open findings. Saves a Word document."
 argument-hint: "Framework to check: OWASP-ASVS, PCI-DSS, HIPAA, SOC2, ISO27001, NIST-CSF, CIS (default: OWASP-ASVS)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Map existing security findings and the current codebase controls to the named compliance framework.

@@ -1,7 +1,7 @@
 ---
 description: "Security audit of all CI/CD pipeline configuration: GitHub Actions, Jenkins, GitLab CI, CircleCI. Finds script injection, unpinned actions, excessive permissions, and fork PR exposure. Saves a Word document report."
 argument-hint: "Optional: specific workflow file or CI tool to focus on (default: all pipeline config)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Delegate to the `appsec-cicd-auditor` agent. Pass any file path or tool name argument as the audit scope.

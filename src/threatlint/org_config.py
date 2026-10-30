@@ -10,7 +10,7 @@ from ~/.threatlint/org.json (THREATLINT_HOME relocates it), for example:
    "semgrepDeployment": "12345",
    "dojoTokenParameter": "/appsec/defectdojo-token",
    "sonarTokenParameter": "/appsec/sonarqube-token",
-   "scanModel": "claude-sonnet-5-5",
+   "scanModel": "claude-opus-5-5",
    "generalModel": "claude-opus-5-5"}
 
 An unset Parameter Store name means that credential is not read from Parameter Store; it is entered with

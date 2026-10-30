@@ -3,7 +3,7 @@ name: appsec-verify-fix
 description: "Use proactively to verify whether a specific security finding has been remediated. Accepts a finding ID, title, or description plus evidence location, and returns a verdict of REMEDIATED, PARTIALLY FIXED, STILL PRESENT, or REGRESSED with code-level proof."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-fix-verification]
 ---

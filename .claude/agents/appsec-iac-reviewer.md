@@ -3,7 +3,7 @@ name: appsec-iac-reviewer
 description: "Use proactively for Infrastructure as Code security reviews: Terraform, CloudFormation, Pulumi, Kubernetes, Helm, Dockerfile, and docker-compose. Finds misconfigured IAM, open network rules, missing encryption, excessive permissions, and hardcoded secrets."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-infrastructure-review]
 ---

@@ -1,7 +1,7 @@
 ---
 description: "Compare two threat model reports to surface new risks, resolved findings, regressions, and severity changes. Saves a delta report as a Word document."
 argument-hint: "Previous report path or git ref (e.g., path/to/old-report.md, HEAD~1, main)"
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 ---
 
 Compare the current state of the repository against a previous threat model to produce a security delta report.
