@@ -25,6 +25,9 @@ ENV = {
     "snowClientSecretParameter": "THREATLINT_SNOW_CLIENT_SECRET_PARAMETER",
     "semgrepTokenParameter": "THREATLINT_SEMGREP_TOKEN_PARAMETER",
     "semgrepDeployment": "THREATLINT_SEMGREP_DEPLOYMENT",
+    # Parameter Store names of the DefectDojo and SonarQube API tokens (optional; see docs/*-integration.md).
+    "dojoTokenParameter": "THREATLINT_DOJO_TOKEN_PARAMETER",
+    "sonarTokenParameter": "THREATLINT_SONAR_TOKEN_PARAMETER",
     # Sidekick (reporting, ownership, bulk closure). A comma-separated list in the environment; a JSON list in org.json.
     "adoOrganizations": "THREATLINT_ADO_ORGANIZATIONS",
     "emailDomain": "THREATLINT_EMAIL_DOMAIN",
