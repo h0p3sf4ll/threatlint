@@ -213,11 +213,140 @@ async function claudeDefaults(page) {
   await page.unroute(/\/api\/models$/);
 }
 
+/**
+ * False positive review end to end through the real runner: three SCTASKs (one unreadable) plus a direct AVIT, a
+ * stubbed `threatlint` CLI and a stubbed provider. One review waits on a gate so the page can be checked mid-run.
+ */
+const FPR = { A1: 'AVIT0000000000001', A2: 'AVIT0000000000002', A3: 'AVIT0000000000003', A4: 'AVIT0000000000004',
+  T1: 'SCTASK3000001', T2: 'SCTASK3000002', BAD: 'SCTASK3000009' };
+const fprGate = { waiting: null, release: null };
+function fprArmGate() { fprGate.waiting = new Promise(resolve => { fprGate.release = resolve; }); }
+fprArmGate();
+const fprCalls = [];
+async function fprCli(args, options) {
+  fprCalls.push(args.slice(0, 3).join(' '));
+  const json = value => ({ code: 0, stdout: `✓\n${JSON.stringify(value)}\n`, stderr: '' });
+  if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true, source: 'test' }, { name: 'Azure DevOps PAT', configured: true, source: 'test' }, { name: 'Semgrep API token', configured: true, source: 'test' }]), stderr: '' };
+  if (args[0] === 'sctask' && args[1] === 'avits') {
+    if (args[2] === FPR.BAD) return { code: 1, stdout: '', stderr: `ERROR: ${FPR.BAD} was not found` };
+    return json({ sctask: args[2], avits: args[2] === FPR.T1 ? [FPR.A1, FPR.A2] : [FPR.A2, FPR.A3] });
+  }
+  if (args[0] === 'sctask' && args[1] === 'close') return { code: 0, stdout: args[2] === FPR.T1 ? `  ✓ Attached x\n  ✓ Closed ${args[2]}\n` : `  ✓ Attached x\n  ✓ Comment added; ${args[2]} left open until the remaining AVITs are decided\n`, stderr: '' };
+  if (args[0] === 'avit') {
+    const [, command, avit] = args;
+    if (command === 'fetch') { fs.writeFileSync(args[args.indexOf('-o') + 1], `## ${avit}\n`); return { code: 0, stdout: '✓', stderr: '' }; }
+    if (command === 'checkout') {
+      if (avit === FPR.A4) return { code: 1, stdout: '', stderr: 'ERROR: git clone failed: authentication required' };
+      fs.mkdirSync(args[args.indexOf('--dir') + 1], { recursive: true });
+      return json({ kind: 'sca', name: 'svc', branch: 'main', file_path: 'package.json' });
+    }
+    if (command === 'resolve') return { code: 0, stdout: avit === FPR.A1 ? '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' : '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
+  }
+  return require('../lib/avit-batch.cjs').runCli(args, options);
+}
+async function fprProvider(args) {
+  const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)?.[1];
+  if (!avit) return null;
+  args.onEvent({ type: 'tool_executing', tool: 'read_file', input: {} });
+  args.onEvent({ type: 'tool_executing', tool: 'grep', input: {} });
+  if (avit === FPR.A3) await Promise.race([fprGate.waiting, new Promise((_, reject) => args.signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }))]);
+  const disposition = { [FPR.A1]: 'FALSE POSITIVE', [FPR.A2]: 'TRUE POSITIVE', [FPR.A3]: 'AMBIGUOUS' }[avit];
+  return `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x; Semgrep Supply Chain; package.json:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: package.json:2\nProposed fix: y. Acceptance criteria: x.\n`;
+}
+async function fpReviewRun(page) {
+  const shots = process.env.THREATLINT_SCREENSHOT_DIR;
+  const shot = async name => { if (shots) { await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); }); await page.waitForTimeout(400); fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true }); } };
+  await page.route(/\/api\/servicenow\/settings$/, route => route.request().method() === 'GET'
+    ? route.fulfill({ json: { instance: 'https://example.service-now.com', clientId: 'synthetic-client', hasSecret: true, path: '/tmp/servicenow.json' } }) : route.continue());
+  await page.evaluate(() => localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider: 'lmstudio', models: { lmstudio: 'fixture-local-model' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: 'https://example.service-now.com' })));
+  await page.goto(`${base(page)}/#fpreview`); await page.reload(); await page.locator('#connection-status.online').waitFor();
+  await page.locator('#view-fpreview:not([hidden])').waitFor();
+  assert.match(await page.locator('#fpreview-avits').getAttribute('placeholder'), /SCTASK\d+, SCTASK\d+/);
+  await page.locator('#fpreview-avits').fill('SCTASK3000001, INC0012345');
+  await page.locator('#fpreview-start').click();
+  assert.match(await page.locator('#fpreview-error').innerText(), /Not an AVIT or SCTASK number: INC0012345/);
+  await page.locator('#fpreview-avits').fill(`${FPR.T1}, ${FPR.T2}; ${FPR.BAD}\n${FPR.A4}  ${FPR.A1}`);
+  await page.locator('#fpreview-start').click();
+
+  // Mid-run: A1 and A2 are finished, A3 waits on the gate, T1 is already closed (its own AVITs are done).
+  await page.locator(`#avit-${FPR.A3}.active`).waitFor();
+  await page.locator(`#sctask-${FPR.T1}[data-result=closed]`).waitFor();
+  const bar = page.locator('#fpreview-progress');
+  assert.equal(await bar.getAttribute('role'), 'progressbar');
+  assert.equal(await bar.getAttribute('aria-valuemax'), '4');
+  assert.equal(await bar.getAttribute('aria-valuenow'), '2');
+  assert.equal(await page.locator('#fpreview-counts').innerText(), '2 / 4 · 1 closed · 1 noted · 0 errors');
+  assert.equal(await page.locator('#fpreview-run .fp-run-header .fp-spinner').isVisible(), true, 'the run header spins while the run is active');
+  assert.equal(await page.locator(`#avit-${FPR.A3} .fp-spinner`).isVisible(), true, 'the active card spins');
+  assert.equal(await page.locator(`#avit-${FPR.A1} .fp-spinner`).isVisible(), false, 'a finished card does not');
+  assert.equal(await page.locator(`#sctask-${FPR.BAD} .avit-stage`).innerText(), 'ERROR', 'an unreadable task is reported');
+  assert.match(await page.locator(`#sctask-${FPR.T2} .fp-task-progress`).innerText(), /1 \/ 2 AVITs reviewed · 1 shared with an earlier entry/);
+  assert.equal(fprCalls.filter(call => call === `avit fetch ${FPR.A2}`).length, 1, 'an AVIT in two tasks is reviewed once');
+  await shot('fp-review-midrun-desktop');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal scroll at phone width mid-run');
+  await shot('fp-review-midrun-phone');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  fprGate.release();
+  await page.locator('#fpreview-run-status', { hasText: 'Complete' }).waitFor();
+  assert.equal(await bar.getAttribute('aria-valuenow'), '4');
+  assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
+  assert.match(await page.locator('#fpreview-task-counts').innerText(), /3 SCTASKs · 1 closed · 1 left open · 1 error/);
+  assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0, 'every spinner stops at the end');
+  assert.equal(await page.locator('#fpreview-run').getAttribute('aria-busy'), 'false');
+  const history = id => page.locator(`#${id} .fp-history-list .fp-history-stage`).evaluateAll(nodes => nodes.map(node => node.textContent));
+  assert.deepEqual(await history(`avit-${FPR.A1}`), ['Queued', 'Fetching', 'Cloning', 'Reviewing', 'Reviewing', 'Report saved', 'Updating ServiceNow', 'Attached', 'Closed', 'Semgrep ignored', 'Done'], 'each AVIT keeps its whole history, in order');
+  assert.match(await page.locator(`#avit-${FPR.A1} .fp-history-entry.tool .fp-history-detail`).textContent(), /2 tool calls/);
+  assert.deepEqual(await history(`avit-${FPR.A4}`), ['Queued', 'Fetching', 'Cloning', 'Error']);
+  assert.deepEqual(await history(`sctask-${FPR.T1}`), ['Queued', 'Reading task', 'Reviewing its AVITs', 'Reviewing its AVITs', 'Reviewing its AVITs', 'Updating the task', 'Done']);
+  const times = await page.locator(`#avit-${FPR.A1} .fp-history-time`).evaluateAll(nodes => nodes.map(node => node.dateTime));
+  assert.ok(times.every(Boolean) && times.every((time, index) => !index || time >= times[index - 1]), 'entries are timestamped in order');
+  const runLog = await page.locator('#fpreview-run-log .fp-history-entry').count();
+  assert.ok(runLog >= 40, `the run log lists every event (${runLog})`);
+  assert.deepEqual(await page.locator('#fpreview-run-log .fp-history-stage').evaluateAll(nodes => [nodes[0].textContent, nodes.at(-1).textContent]), ['Started', 'Complete']);
+  assert.equal(await page.locator(`#avit-${FPR.A1} .fp-history`).getAttribute('open'), null, 'finished cards collapse');
+  assert.notEqual(await page.locator(`#avit-${FPR.A4} .fp-history`).getAttribute('open'), null, 'a card with an error stays open');
+  await page.locator(`#avit-${FPR.A1} .fp-history summary`).click();
+  assert.equal(await page.locator(`#avit-${FPR.A1} .fp-history-list`).isVisible(), true, 'a card history can be expanded again');
+  await shot('fp-review-complete-desktop');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal scroll at phone width when complete');
+  await shot('fp-review-complete-phone');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  // The history survives a reload for this browser session.
+  await page.reload(); await page.locator('#connection-status.online').waitFor(); await page.locator('#view-fpreview:not([hidden])').waitFor();
+  assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
+  assert.equal(await page.locator('#fpreview-run-log .fp-history-entry').count(), runLog);
+  assert.deepEqual((await history(`avit-${FPR.A1}`)).length, 11);
+
+  // A reload mid-run: the server stops the batch with its connection, and the restored page says so.
+  fprArmGate();
+  await page.locator('#fpreview-avits').fill(FPR.A3);
+  await page.locator('#fpreview-start').click();
+  await page.locator(`#avit-${FPR.A3}.active`).waitFor();
+  await page.waitForTimeout(300);
+  await page.reload(); await page.locator('#connection-status.online').waitFor();
+  await page.locator('#fpreview-run-status', { hasText: 'Interrupted' }).waitFor();
+  assert.match(await page.locator('#fpreview-run-note').innerText(), /no run state is kept on the server/);
+  assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0);
+  assert.equal(await page.locator('#fpreview-start').isDisabled(), false, 'a new run can start after the interruption');
+  fprGate.release();
+  await page.unroute(/\/api\/servicenow\/settings$/);
+}
+
 (async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-browser-'));
   const repo = path.join(temporary, 'repo'); fs.mkdirSync(repo);
   const reportFixture = fs.readFileSync(path.join(__dirname, '../examples/fp-review.md'), 'utf8');
-  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), runProvider: async args => {
+  // Word export for the false positive review flow is deterministic; every other python call is unchanged.
+  const avitBatch = require('../lib/avit-batch.cjs'); const realPython = avitBatch.python();
+  const wrapper = path.join(temporary, 'python-wrapper.sh');
+  fs.writeFileSync(wrapper, `#!/bin/sh\ncase "$1" in *md_to_docx.py) printf PK-docx > "$3"; exit 0;; esac\nexec "${realPython}" "$@"\n`, { mode: 0o755 });
+  if (process.platform !== 'win32') avitBatch.python = () => wrapper;
+  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: { threatlintCli: fprCli }, runProvider: async args => {
+    const fpr = await fprProvider(args); if (fpr) return fpr;
     if (args.userMessage.includes('WAIT_FOR_CANCELLATION')) await new Promise((resolve, reject) => args.signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }));
     args.onEvent({ type: 'text_chunk', text: 'Synthetic integration fixture, not a scan.' });
     return reportFixture;
@@ -265,10 +394,11 @@ async function claudeDefaults(page) {
     await scannerFlows(page);
     await githubSettings(page);
     await claudeDefaults(page);
+    await fpReviewRun(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, Claude model defaults, and mobile layout.');
+    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, Claude model defaults, false positive review of several SCTASKs (progress, history, spinners, reload), and mobile layout.');
   } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });
