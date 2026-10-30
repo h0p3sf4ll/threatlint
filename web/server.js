@@ -28,6 +28,8 @@ const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 const { registerSidekickRoutes } = require('./lib/routes/sidekick.cjs');
 const { registerScanImportRoutes, scanImportBodyParsers } = require('./lib/routes/scan-import.cjs');
 const { createScanImports } = require('./lib/scan-import.cjs');
+const { createScannerBatch } = require('./lib/scanner-batch.cjs');
+const { registerScannerRoutes } = require('./lib/routes/scanners.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -48,7 +50,7 @@ function buildInfo() {
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
  * runProvider (replaces model calls for reviews and conversations in tests/recordings),
- * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli } for Semgrep, ServiceNow, and the AVIT batch).
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli } for Semgrep, ServiceNow, DefectDojo, SonarQube, and the AVIT and scanner batches).
  */
 function createWorkbench(options = {}) {
   // OS certificate store and the user's PATH, so gateways behind TLS inspection and CLIs like `gh` work from the Dock.
@@ -65,6 +67,7 @@ function createWorkbench(options = {}) {
   const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
 
   app.use(securityHeaders(server));
   // Scan reports upload up to 25 MB; every other route keeps the 7 MB JSON limit.
@@ -81,13 +84,14 @@ function createWorkbench(options = {}) {
   registerTriageRoutes(app, { reports, integrations: options.integrations });
   registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });
+  registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
   app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413 ? 'Request exceeds the 7 MB limit' : 'Request could not be processed' }));
 
   const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
-  const wss = attachSocket(server, { pipeline, conversations, avitBatch });
+  const wss = attachSocket(server, { pipeline, conversations, avitBatch, scannerBatch });
   // Scan-import progress goes to every open Workbench connection; polling GET /api/scan-import/:id works too.
   const unsubscribe = scanImports.subscribe(event => { for (const socket of wss.clients) if (socket.readyState === 1) socket.send(JSON.stringify(event)); });
 

@@ -2,7 +2,7 @@
 
 /**
  * WebSocket protocol. One connection runs at most one pipeline and one conversation answer.
- * Actions: run_pipeline, cancel, run_avit_batch, chat, chat_cancel. A connection runs one pipeline or AVIT batch at a time.
+ * Actions: run_pipeline, cancel, run_avit_batch, run_scanner_batch, chat, chat_cancel. A connection runs one pipeline, AVIT batch, or scanner batch at a time.
  */
 
 const { WebSocketServer } = require('ws');
@@ -10,7 +10,7 @@ const { localRequest } = require('./http.cjs');
 
 const MAX_PAYLOAD = 7 * 1024 * 1024;
 
-function attachSocket(server, { pipeline, conversations, avitBatch }) {
+function attachSocket(server, { pipeline, conversations, avitBatch, scannerBatch }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   server.on('upgrade', (req, socket, head) => {
     if (!localRequest(req, server)) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
@@ -43,6 +43,15 @@ function attachSocket(server, { pipeline, conversations, avitBatch }) {
       finally { jobs.pipeline = null; }
     }
 
+    async function runScannerBatch(message) {
+      if (jobs.pipeline) { send({ type: 'error', message: 'A review is already running on this connection' }); return; }
+      const controller = new AbortController();
+      jobs.pipeline = controller;
+      try { await scannerBatch.run(message, send, controller); }
+      catch (error) { send({ type: 'scanner_batch_error', tool: message.tool, message: error.message }); }
+      finally { jobs.pipeline = null; }
+    }
+
     async function chat(message) {
       if (jobs.chat) { send({ type: 'chat_error', message: 'Wait for the current answer or stop it first' }); return; }
       const controller = new AbortController();
@@ -55,6 +64,7 @@ function attachSocket(server, { pipeline, conversations, avitBatch }) {
     const actions = {
       run_pipeline: runPipeline,
       run_avit_batch: runAvitBatch,
+      run_scanner_batch: runScannerBatch,
       cancel: () => jobs.pipeline?.abort(),
       chat,
       chat_cancel: () => jobs.chat?.abort(),
