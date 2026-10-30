@@ -62,8 +62,12 @@ ADO_API_VERSION = '7.1'
 ADO_API = f'api-version={ADO_API_VERSION}'
 MODEL_TIMEOUT = 300
 
+# Threatlint model policy (src/threatlint/models.py): PR chat is assistance, so Claude defaults to the general
+# model (Opus). THREATLINT_GENERAL_MODEL overrides the default; an explicit --model / TL_MODEL always wins.
+GENERAL_MODEL = 'claude-opus-5-5'
+
 PROVIDERS = {
-    DEFAULT_PROVIDER: {'url': 'https://api.anthropic.com/v1/messages', 'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY'},
+    DEFAULT_PROVIDER: {'url': 'https://api.anthropic.com/v1/messages', 'model': GENERAL_MODEL, 'key': 'ANTHROPIC_API_KEY'},
     'openai': {'url': 'https://api.openai.com/v1/chat/completions', 'model': 'gpt-4o', 'key': 'OPENAI_API_KEY'},
     'github-models': {'url': 'https://models.inference.ai.azure.com/chat/completions', 'model': 'openai/gpt-4o', 'key': 'GH_TOKEN'},
     'lmstudio': {'url': None, 'model': '', 'key': None},
@@ -312,9 +316,10 @@ def call_model(provider, system, user, model='', env=None, opener=None):
     if provider not in PROVIDERS:
         raise ChatError(f'Unknown provider {provider}')
     spec = PROVIDERS[provider]
-    model = model or spec['model']
     if provider == DEFAULT_PROVIDER:
+        model = model or env.get('THREATLINT_GENERAL_MODEL', '').strip() or spec['model']
         return _claude(spec, system, user, model, env, opener)
+    model = model or spec['model']
     if provider == 'lmstudio':
         url, key, model = _lmstudio_endpoint(model, env, opener)
     else:

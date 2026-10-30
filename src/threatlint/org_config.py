@@ -9,7 +9,9 @@ from ~/.threatlint/org.json (THREATLINT_HOME relocates it), for example:
    "semgrepTokenParameter": "/appsec/semgrep-token",
    "semgrepDeployment": "12345",
    "dojoTokenParameter": "/appsec/defectdojo-token",
-   "sonarTokenParameter": "/appsec/sonarqube-token"}
+   "sonarTokenParameter": "/appsec/sonarqube-token",
+   "scanModel": "claude-sonnet-5-5",
+   "generalModel": "claude-opus-5-5"}
 
 An unset Parameter Store name means that credential is not read from Parameter Store; it is entered with
 `threatlint setup`, the matching login command, or the Workbench settings instead.
@@ -34,6 +36,9 @@ ENV = {
     "adoOrganizations": "THREATLINT_ADO_ORGANIZATIONS",
     "emailDomain": "THREATLINT_EMAIL_DOMAIN",
     "reportFooter": "THREATLINT_REPORT_FOOTER",
+    # Claude model policy (threatlint/models.py): scanning runs and chat/assistance defaults.
+    "scanModel": "THREATLINT_SCAN_MODEL",
+    "generalModel": "THREATLINT_GENERAL_MODEL",
 }
 
 
