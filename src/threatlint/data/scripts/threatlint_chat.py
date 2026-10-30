@@ -17,7 +17,7 @@ checked out. Replies are redacted for credentials, bounded in size, and carry a
 
 Usage
 -----
-GitHub Actions (reads GITHUB_EVENT_PATH, GITHUB_REPOSITORY, GH_TOKEN):
+GitHub Actions (reads GITHUB_EVENT_PATH, GITHUB_REPOSITORY, GH_TOKEN; without it, a configured Threatlint GitHub App):
     python3 threatlint_chat.py --platform github --provider claude
 
 Azure Pipelines (reads TL_EVENT_JSON from the service-hook webhook, SYSTEM_COLLECTIONURI,
@@ -378,6 +378,24 @@ def _github_thread(client, number, context, issue_comments):
             for item in conversation if item.get('id') != context.comment_id]
 
 
+def github_token(env):
+    """GH_TOKEN / GITHUB_TOKEN; when neither is set, a Threatlint GitHub App installation token (when threatlint is
+    installed and an App is configured in ~/.threatlint/github-app.json). Never printed."""
+    token = env.get('GH_TOKEN') or env.get('GITHUB_TOKEN')
+    if token:
+        return token
+    try:
+        from threatlint import github_app
+    except ImportError:
+        return ''
+    if not github_app.configured():
+        return ''
+    try:
+        return github_app.installation_token()
+    except github_app.GitHubAppError as exc:
+        raise ChatError(f'GitHub App token unavailable: {exc}') from None
+
+
 def run_github(args, env, opener=None):
     with open(env['GITHUB_EVENT_PATH'], encoding='utf-8') as handle:
         event = json.load(handle)
@@ -387,7 +405,7 @@ def run_github(args, env, opener=None):
     respond, reason = should_respond(context.body, context.author, context.author_type, context.association)
     if not respond:
         return print(f'Skipping: {reason}.')
-    client = GitHub(env.get('GITHUB_REPOSITORY', ''), env.get('GH_TOKEN') or env.get('GITHUB_TOKEN', ''), env.get('GITHUB_API_URL', 'https://api.github.com'), opener)
+    client = GitHub(env.get('GITHUB_REPOSITORY', ''), github_token(env), env.get('GITHUB_API_URL', 'https://api.github.com'), opener)
     number = int(context.pr)
     pr = _github_pr(client, number)
     diff = client.call('GET', pull_path(client.repo, number), accept='application/vnd.github.diff', raw=True)

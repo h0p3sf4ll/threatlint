@@ -11,10 +11,12 @@ Filters applied before creating an issue:
   - Confidence is CONFIRMED or PLAUSIBLE (THEORETICAL skipped by default)
   - No existing open GitHub issue whose title contains the finding ID
 
-Requires the GitHub CLI (gh) and a GH_TOKEN with issues:write permission.
+Requires the GitHub CLI (gh) and a GH_TOKEN with issues:write permission; without GH_TOKEN / GITHUB_TOKEN, a
+configured Threatlint GitHub App (threatlint github login, Issues: read & write) or `gh auth token` is used.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -61,8 +63,37 @@ def extract_findings(report_path):
     return findings
 
 
+def github_token():
+    """GH_TOKEN / GITHUB_TOKEN; when neither is set, a Threatlint GitHub App installation token (when threatlint is
+    installed and an App is configured in ~/.threatlint/github-app.json), then `gh auth token`. Never printed."""
+    for name in ('GH_TOKEN', 'GITHUB_TOKEN'):
+        if os.environ.get(name):
+            return os.environ[name]
+    try:
+        from threatlint import github_app
+    except ImportError:
+        github_app = None
+    if github_app is not None and github_app.configured():
+        try:
+            return github_app.installation_token()
+        except github_app.GitHubAppError as exc:
+            print(f'WARNING: GitHub App token unavailable ({exc}); trying `gh auth token`', file=sys.stderr)
+    try:
+        result = subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+_TOKEN = None
+
+
 def gh(*args):
-    result = subprocess.run(['gh', *args], capture_output=True, text=True)
+    global _TOKEN
+    if _TOKEN is None:
+        _TOKEN = github_token()
+    env = {**os.environ, 'GH_TOKEN': _TOKEN} if _TOKEN else None
+    result = subprocess.run(['gh', *args], capture_output=True, text=True, env=env)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 

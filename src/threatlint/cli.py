@@ -924,6 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_aws_parser(sub)
     from threatlint.ado_login import add_ado_parser
     add_ado_parser(sub)
+    from threatlint.github_app import add_github_parser
+    add_github_parser(sub)
     from threatlint.semgrep_platform import add_semgrep_parser
     add_semgrep_parser(sub)
     from threatlint.setup_wizard import add_setup_parser
@@ -963,6 +965,11 @@ def _cmd_ado(args: argparse.Namespace) -> int:
     return cmd_ado(args)
 
 
+def _cmd_github(args: argparse.Namespace) -> int:
+    from threatlint.github_app import cmd_github
+    return cmd_github(args)
+
+
 def _cmd_scanner(args: argparse.Namespace) -> int:
     from threatlint.scanners.cli import cmd_scanner
     return cmd_scanner(args)
@@ -989,7 +996,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick,
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick,
                 "dojo": _cmd_scanner, "sonar": _cmd_scanner}
     handler = commands.get(args.command)
     if handler is None:

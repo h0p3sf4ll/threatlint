@@ -6,6 +6,7 @@ configured, and can be re-run on its own. `threatlint setup --check` reports wha
   2. ServiceNow instance URL and OAuth client, saved for the CLI and Workbench (~/.threatlint/servicenow.json)
   3. Azure DevOps PAT with Code: Read                                (threatlint ado login)
   4. Semgrep API token                                               (threatlint semgrep login)
+  5. GitHub App, optional, for GitHub clones, PR comments, and issues (threatlint github login)
 Secrets are typed with hidden input or read from Parameter Store; they are never echoed.
 """
 
@@ -19,7 +20,7 @@ import sys
 import types
 from pathlib import Path
 
-from threatlint import ado_login, semgrep_platform, servicenow
+from threatlint import ado_login, github_app, semgrep_platform, servicenow
 
 
 def _yes(question: str) -> bool:
@@ -81,6 +82,24 @@ def step_semgrep(profile: str) -> None:
     print(f"✓ Semgrep token validated and saved to {semgrep_platform.login(profile=profile)}")
 
 
+def step_github() -> None:
+    """Optional: a GitHub App replaces personal GitHub tokens for clones, PR comments, issues, and API calls."""
+    if github_app.configured():
+        print(f"✓ GitHub App: configured ({github_app.load_config()['source']})")
+        return
+    current = github_app.source()
+    if input(f"Set up a GitHub App for GitHub access{' (now: ' + current + ')' if current else ''}? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("  Skipped. Run `threatlint github login` later; see docs/github-app.md.")
+        return
+    path, count, _owner = github_app.login()
+    print(f"✓ GitHub App validated ({count} repositor{'y' if count == 1 else 'ies'}) and saved to {path}")
+
+
+def optional_check() -> list[tuple[str, str, str]]:
+    """Optional integrations, reported by --check but not required for it to pass."""
+    return [("GitHub credential", github_app.source(), "threatlint github login  (or Workbench → Settings → GitHub)")]
+
+
 def check(profile: str | None = None) -> list[tuple[str, str, str]]:
     """(name, where it comes from or '', the command that fixes it) for each required credential. Never prints a value."""
     saved = servicenow.saved_config()
@@ -103,11 +122,13 @@ def cmd_check(args) -> int:
     else:
         for name, source, fix in results:
             print(f"✓ {name}: {source}" if source else f"✗ {name}: not configured. Run: {fix}")
+        for name, source, fix in optional_check():
+            print(f"✓ {name}: {source}" if source else f"- {name} (optional): not configured. Run: {fix}")
     return 0 if all(source for _name, source, _fix in results) else 1
 
 
 def add_setup_parser(sub) -> None:
-    p = sub.add_parser("setup", help="One-time setup: AWS SSO, ServiceNow, Azure DevOps PAT, and Semgrep token")
+    p = sub.add_parser("setup", help="One-time setup: AWS SSO, ServiceNow, Azure DevOps PAT, Semgrep token, and (optional) GitHub App")
     p.add_argument("--aws-profile", default="appsec", help="AWS CLI profile (default: appsec)")
     p.add_argument("--check", action="store_true", help="Report which required credentials are missing, without prompting")
     p.add_argument("--json", action="store_true", help="With --check, print the result as JSON")
@@ -120,13 +141,13 @@ def cmd_setup(args) -> int:
         print("ERROR: `threatlint setup` is interactive; run it in a terminal", file=sys.stderr)
         return 1
     steps = (("AWS sign-in", lambda: step_aws(args.aws_profile)), ("ServiceNow", lambda: step_servicenow(args.aws_profile)),
-             ("Azure DevOps", step_ado), ("Semgrep", lambda: step_semgrep(args.aws_profile)))
+             ("Azure DevOps", step_ado), ("Semgrep", lambda: step_semgrep(args.aws_profile)), ("GitHub App (optional)", step_github))
     failed = []
     for name, step in steps:
         print(f"\n── {name} ──")
         try:
             step()
-        except (servicenow.ServiceNowError, ado_login.AdoLoginError, semgrep_platform.SemgrepError, OSError) as exc:
+        except (servicenow.ServiceNowError, ado_login.AdoLoginError, semgrep_platform.SemgrepError, github_app.GitHubAppError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             failed.append(name)
     missing = [name for name, source, _fix in check(args.aws_profile) if not source]
