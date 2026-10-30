@@ -235,7 +235,7 @@
       row.append(select, button('×', 'icon-button', () => disconnect(item.id), `Disconnect ${item.label || item.account || 'source connection'}`));
       list.append(row);
     }
-    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above, or save an Azure DevOps PAT in Settings → Azure DevOps.'));
+    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above, save an Azure DevOps PAT in Settings → Azure DevOps, or a GitHub App in Settings → GitHub.'));
     syncSourceControls();
   }
   async function refreshConnections() {

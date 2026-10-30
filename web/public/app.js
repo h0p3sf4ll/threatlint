@@ -471,13 +471,13 @@
     $('api-key').value = state.credentials[provider] || '';
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
-    renderAccessNotes(); fillServiceNowForm(); void loadSemgrepSettings(); void loadAdoSettings();
+    renderAccessNotes(); fillServiceNowForm(); void loadSemgrepSettings(); void loadAdoSettings(); void loadGithubSettings();
     updateSettingsFields(provider);
   }
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'defectdojo', 'sonarqube'].includes(section) ? section : 'model'}`);
+    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube'].includes(section) ? section : 'model'}`);
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
     for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
@@ -532,6 +532,36 @@
     try { await request('/api/ado/settings', { method: 'POST', body: JSON.stringify({ organization, pat }) }); }
     catch (error) { $('ado-error').textContent = error.message; return; }
     $('ado-organization').value = ''; await loadAdoSettings(); toast(`PAT for ${organization} validated and saved. It is never shown again.`);
+  }
+  // GitHub App (shared with `threatlint github login`): the page learns only which values are set.
+  async function loadGithubSettings() {
+    try { state.githubSaved = await request('/api/github/settings'); } catch { state.githubSaved = null; }
+    const saved = state.githubSaved || {};
+    for (const id of ['github-app-id', 'github-installation-id', 'github-private-key-file']) $(id).value = '';
+    $('github-app-id').placeholder = saved.appIdSet ? 'Set (leave blank to keep)' : 'App ID or client ID';
+    $('github-installation-id').placeholder = saved.installationIdSet ? 'Set (leave blank to keep)' : 'Installation ID';
+    $('github-private-key-file').placeholder = saved.privateKeyFileSet ? 'Set (leave blank to keep)' : '/path/to/your-app.private-key.pem';
+    $('github-api-url').value = saved.apiUrl || '';
+    $('github-use-app').checked = !!saved.configured; $('github-app-fields').hidden = !saved.configured; $('github-remove').hidden = !saved.configured;
+    $('github-status').textContent = saved.configured
+      ? `GitHub App in use${saved.fromEnvironment ? ' (environment overrides apply)' : ''}: App ID, installation ID, and private key file are set in ${saved.path}. Sources → GitHub lists the installation's repositories.`
+      : 'Not configured. GitHub uses GH_TOKEN / GITHUB_TOKEN or the GitHub CLI sign-in.';
+  }
+  async function saveGithub(event) {
+    event.preventDefault(); $('github-error').textContent = '';
+    if (!$('github-use-app').checked) { toast('GitHub App is not enabled.'); return; }
+    const body = { appId: $('github-app-id').value.trim(), installationId: $('github-installation-id').value.trim(),
+      privateKeyFile: $('github-private-key-file').value.trim(), apiUrl: $('github-api-url').value.trim() };
+    let result;
+    try { result = await request('/api/github/settings', { method: 'POST', body: JSON.stringify(body) }); }
+    catch (error) { $('github-error').textContent = error.message; return; }
+    await loadGithubSettings();
+    toast(`GitHub App validated: ${result.repositories} repositor${result.repositories === 1 ? 'y' : 'ies'} visible. Saved; the key is never copied.`);
+  }
+  async function removeGithub() {
+    if (!confirm('Remove the saved GitHub App settings? The private key file is left in place.')) return;
+    try { state.githubSaved = await request('/api/github/settings', { method: 'DELETE' }); } catch (error) { $('github-error').textContent = error.message; return; }
+    await loadGithubSettings(); toast('GitHub App settings removed.');
   }
   async function loadSavedServiceNow() {
     try { state.snowSaved = await request('/api/servicenow/settings'); } catch { state.snowSaved = null; }
@@ -862,7 +892,8 @@
     $('configure-provider').addEventListener('click', showSettings);
     $('servicenow-form').addEventListener('submit', saveServiceNow);
     $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
-    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo);
+    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo); $('github-form').addEventListener('submit', saveGithub); $('github-remove').addEventListener('click', removeGithub);
+    $('github-use-app').addEventListener('change', () => { $('github-app-fields').hidden = !$('github-use-app').checked; });
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });
     $('settings-form').addEventListener('submit', saveSettings);
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });
