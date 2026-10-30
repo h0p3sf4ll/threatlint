@@ -68,7 +68,7 @@ Outputs: `report-path`, `sarif-path`, `mode`.
 | --- | --- | --- | --- |
 | `agents` | `agent` | `appsec-code-reviewer` | Comma-separated agent IDs (workflow, max 20) or a single ID (action). Any agent in the [agent catalogue](agents.md). |
 | `provider` | `provider` | `claude` | `claude` (agentic, reads the repo), `openai`, or `github-models` (prompt-based, uses `github.token`). |
-| `model` | `model` | provider default | Model override, e.g. `claude-sonnet-5-5` or `gpt-4o`. |
+| `model` | `model` | provider default (`claude-sonnet-5-5` for `claude`) | Model override, e.g. `claude-opus-5-5` or `gpt-4o`. |
 | `target` | `target` | `''` | Component, path, or objective. Passed as scope, never as instructions. |
 | — | `findings-file` | `''` | SARIF/JSON/Markdown evidence for `appsec-fp-reviewer` and specialist agents. |
 | — | `base` / `head` | PR base/head, push `before`/`GITHUB_SHA`, else `HEAD~1` | Diff range for diff-scoped agents. |
@@ -191,7 +191,7 @@ and uses only the Python standard library.
 
 | Provider | Credential | Default model |
 | --- | --- | --- |
-| `claude` | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5` |
+| `claude` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` (`THREATLINT_GENERAL_MODEL` overrides) |
 | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
 | `github-models` | `GH_TOKEN` (the workflow token) | `openai/gpt-4o` |
 | `lmstudio` | none (`LMSTUDIO_BASE_URL`, self-hosted agents only) | the loaded model |
