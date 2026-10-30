@@ -14,6 +14,7 @@ const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
 const catalog = require('../model-catalog.cjs');
 const threatlintConfig = require('../threatlint-config.cjs');
+const { modelPolicy } = require('../model-policy.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -27,7 +28,7 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   const sessionFor = id => sessions.get(id) || (() => { throw new HttpError('Session not found', 404); })();
 
   app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
-    providers: await credentialSources(),
+    providers: await credentialSources(), modelPolicy: modelPolicy(),
     semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
     servicenow: { ...servicenow.access(), instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
   // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.

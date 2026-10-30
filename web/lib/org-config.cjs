@@ -16,6 +16,9 @@ const ENV = {
   snowClientSecretParameter: 'THREATLINT_SNOW_CLIENT_SECRET_PARAMETER',
   semgrepTokenParameter: 'THREATLINT_SEMGREP_TOKEN_PARAMETER',
   semgrepDeployment: 'THREATLINT_SEMGREP_DEPLOYMENT',
+  // Claude model policy (model-policy.cjs): scanning runs and chat/assistance defaults.
+  scanModel: 'THREATLINT_SCAN_MODEL',
+  generalModel: 'THREATLINT_GENERAL_MODEL',
 };
 
 function orgPath() { return path.join(process.env.THREATLINT_HOME || path.join(os.homedir(), '.threatlint'), 'org.json'); }

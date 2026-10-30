@@ -66,6 +66,16 @@
   function repoName(repoPath) { return repoPath.split(/[\\/]/).findLast(Boolean) || repoPath; }
   function formatTime(value) { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function selectedModel() { return state.preferences.models[state.preferences.provider] || ''; }
+  // Model policy (from /api/config): with Claude and no model picked, the runner uses Sonnet for scanning and Opus for chat.
+  const POLICY_FALLBACK = { scan: 'claude-sonnet-5-5', general: 'claude-opus-5-5' };
+  function modelPolicy() { return { ...POLICY_FALLBACK, ...(state.config.modelPolicy || {}) }; }
+  function policyLabel() { const policy = modelPolicy(); return `Scanning: ${policy.scan} · Chat: ${policy.general}`; }
+  function effectiveModel(purpose = 'review', provider = state.preferences.provider) {
+    const chosen = state.preferences.models[provider] || '';
+    if (chosen || provider !== 'claude') return chosen;
+    return purpose === 'chat' ? modelPolicy().general : modelPolicy().scan;
+  }
+  function modelReady() { return !!effectiveModel(); }
   function cloudProvider() {
     if (state.preferences.provider !== 'lmstudio') return true;
     try { return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(state.preferences.lmstudioUrl).hostname); } catch { return true; }
@@ -133,15 +143,17 @@
     const provider = state.preferences.provider;
     document.dispatchEvent(new CustomEvent('threatlint:context', { detail: Object.freeze({
       session: state.session ? { id: state.session.id, repoPath: state.session.repoPath } : null,
-      connected: state.connected, ready: !!selectedModel() && (!cloudProvider() || state.consent.has(consentKey())),
+      connected: state.connected, ready: modelReady() && (!cloudProvider() || state.consent.has(consentKey())),
       reports: state.reports.length, ran: state.reports.length > 0,
       socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
         ...providerKeys(provider) },
+      // Display only: the model each kind of run uses (an explicit choice, else the Claude policy default).
+      models: { review: effectiveModel('review'), chat: effectiveModel('chat') },
     }) }));
-    for (const [step, done] of [['repo', !!state.session], ['model', !!selectedModel()], ['run', state.reports.length > 0], ['fix', state.reports.length > 0 && state.asked]]) {
+    for (const [step, done] of [['repo', !!state.session], ['model', modelReady()], ['run', state.reports.length > 0], ['fix', state.reports.length > 0 && state.asked]]) {
       document.querySelector(`#onboarding [data-step="${step}"]`)?.classList.toggle('done', done);
     }
-    $('onboarding').hidden = !!state.session && !!selectedModel() && state.reports.length > 0 && state.asked;
+    $('onboarding').hidden = !!state.session && modelReady() && state.reports.length > 0 && state.asked;
   }
   function updateRunControls() {
     publishContext();
@@ -157,7 +169,7 @@
     $('choose-repo').disabled = state.running;
     $('settings-button').disabled = state.running;
     $('configure-provider').disabled = state.running;
-    let summary = `${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} ready · ${selectedModel() || 'configure a model'}`;
+    let summary = `${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} ready · ${effectiveModel() || 'configure a model'}`;
     if (!state.pipeline.length) summary = 'Add at least one specialist';
     if (!state.session) summary = 'Choose a repository to get started';
     if (!state.connected) summary = 'Connecting to the local runner…';
@@ -598,6 +610,7 @@
     $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
     $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : 'API key ';
     const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
+    $('model-policy-note').textContent = provider === 'claude' ? `Default when no model is picked · ${policyLabel()}. A model chosen here is used for every run.` : '';
     $('environment-key-note').textContent = local ? '' : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
     if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; }
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
@@ -611,7 +624,8 @@
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
     const model = $('model-id').value.trim();
-    if (!model) { $('settings-error').textContent = 'Load models and choose one, or enter a model ID.'; return; }
+    // Empty means "Threatlint default" for Claude (Sonnet for scanning, Opus for chat); other providers need a model.
+    if (!model && provider !== 'claude') { $('settings-error').textContent = 'Load models and choose one, or enter a model ID.'; return; }
     let url;
     try {
       url = new URL($('model-url').value || DEFAULTS.lmstudioUrl);
@@ -655,8 +669,10 @@
     const select = $('model-select');
     const options = models.map(model => { const option = el('option', '', model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id); option.value = model.id; return option; });
     if (selected && !models.some(model => model.id === selected)) { const option = el('option', '', `${selected} (current)`); option.value = selected; options.unshift(option); }
+    const claude = document.querySelector('input[name=provider]:checked')?.value === 'claude';
+    if (claude) { const option = el('option', '', `Threatlint default (${policyLabel()})`); option.value = ''; options.unshift(option); }
     if (!options.length) { const option = el('option', '', 'Load models to choose'); option.value = ''; options.push(option); }
-    select.replaceChildren(...options); select.value = selected || options[0].value; select.dataset.loaded = models.length ? '1' : '';
+    select.replaceChildren(...options); select.value = selected || (claude ? '' : options[0].value); select.dataset.loaded = models.length ? '1' : '';
     $('model-id').value = select.value;
   }
   async function discoverModels() {
@@ -673,7 +689,7 @@
         if (!models.length) throw new Error('No models are available for this key. Check the account or plan.');
       }
       const current = $('model-id').value.trim() || state.preferences.models[provider];
-      fillModelSelect(models, models.some(model => model.id === current) ? current : models[0].id);
+      fillModelSelect(models, models.some(model => model.id === current) ? current : provider === 'claude' ? '' : models[0].id);
       $('model-source').textContent = `${models.length} model${models.length > 1 ? 's' : ''} available · listed with ${source === 'session' ? 'the key entered here' : source}`;
     } catch (error) { $('model-source').textContent = ''; $('settings-error').textContent = error.message; }
     finally { $('discover-models').disabled = false; }
@@ -774,7 +790,7 @@
     }
     box.append(heading, list);
     box.className = `field-note small ${state.setupMissing.length ? 'fp-status-warn' : 'subtle'}`;
-    $('fpreview-model').textContent = selectedModel() ? `Model: ${selectedModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
+    $('fpreview-model').textContent = effectiveModel() ? `Model: ${effectiveModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
   }
   async function startAvitBatch(event) {
     event.preventDefault(); $('fpreview-error').textContent = '';
@@ -783,7 +799,7 @@
     try { avits = parseAvits($('fpreview-avits').value.replace(/\bSCTASK\d{7,10}\b/gi, ' ')); } catch (error) { $('fpreview-error').textContent = error.message; return; }
     if (!avits.length && !sctasks.length) { $('fpreview-error').textContent = 'Enter at least one AVIT or SCTASK number.'; return; }
     if (avits.length > 50) { $('fpreview-error').textContent = 'Review at most 50 AVITs at a time.'; return; }
-    if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
+    if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
     if (!state.connected || state.running || state.fpreviewRunning) { toast('Another review is running, or the Workbench is not connected.', true); return; }
@@ -807,7 +823,7 @@
       case 'avit_batch_error': fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
-      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${selectedModel()}`); break;
+      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${effectiveModel()}`); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
       case 'text_chunk': logText(event.text); break;
@@ -860,7 +876,7 @@
       if (avits.length && state.attachment) { toast('Use either an attached findings file or ServiceNow AVITs for one review, not both.', true); return; }
       if (avits.length && !servicenowReady()) { showSettingsSection('servicenow'); toast('Authenticate through SSO and set the ServiceNow instance, client ID, and secret first.', true); return; }
     }
-    if (!selectedModel()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
+    if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     const provider = state.preferences.provider;
     if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : 'A provider API key is required for this review.', true); return; }

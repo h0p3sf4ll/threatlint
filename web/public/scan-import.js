@@ -75,7 +75,8 @@
   function updateControls() {
     $('scanimport-start').disabled = !state.file || state.submitting || isLive(state.job?.status);
     const settings = state.context?.settings;
-    $('scanimport-model').textContent = settings?.model ? `Model: ${settings.model} (${settings.provider}).` : 'Choose a model in Settings before importing.';
+    const model = state.context?.models?.review || settings?.model;
+    $('scanimport-model').textContent = model ? `Model: ${model} (${settings.provider}).` : 'Choose a model in Settings before importing.';
   }
   function setFile(file) {
     setError('');

@@ -13,6 +13,7 @@ const { runClaude, runOpenAi, validateBaseUrl } = require('./providers.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
+const { defaultModel } = require('./model-policy.cjs');
 
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
@@ -54,15 +55,20 @@ function buildUserMessage(repoPath, target = '', chainContexts = [], attachment 
   return `${message}\n\nProduce the complete professional report required by your role and skills. All fixes are advisory; do not modify the repository. Do not claim proposed tests were run. Return the final report in the final response, not only in intermediate investigation messages.`;
 }
 
-/** Resolves provider, key, model, and base URL from a client message plus server environment. */
-function providerRequest(message) {
+/**
+ * Resolves provider, key, model, and base URL from a client message plus server environment. `purpose` ('review'
+ * or 'chat') picks the Claude default model when the user has not chosen one (see model-policy.cjs).
+ */
+function providerRequest(message, purpose = 'review') {
   const provider = message.provider || 'claude';
   if (!PROVIDERS.includes(provider)) throw new HttpError('Unknown model provider');
   const sessionKey = { claude: message.apiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
   const credential = provider === 'lmstudio' ? { key: null } : configuredKey(provider, sessionKey);
   const key = credential.key;
   if (provider !== 'lmstudio' && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
-  const model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
+  let model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
+  // An explicit model always wins; otherwise Claude follows the policy (Sonnet for scanning, Opus for chat).
+  if (provider === 'claude' && (model == null || (typeof model === 'string' && !model.trim()))) model = defaultModel(purpose);
   if (typeof model !== 'string' || !model.trim() || model.length > 200) throw new HttpError('Choose a model in Settings before running');
   const baseUrl = { claude: credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
   return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl, headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };

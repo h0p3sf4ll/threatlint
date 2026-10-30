@@ -10,7 +10,8 @@
  *
  * Optional:
  *   PORT                — HTTP port (default 3978)
- *   CLAUDE_MODEL        — model to use (default claude-sonnet-5)
+ *   CLAUDE_MODEL        — model to use (default: the Threatlint scanning model, claude-sonnet-5-5,
+ *                         or THREATLINT_SCAN_MODEL / org.json scanModel; see web/lib/model-policy.cjs)
  */
 
 const path = require('node:path');
@@ -18,9 +19,11 @@ const fs = require('node:fs');
 const restify = require('restify');
 const { BotFrameworkAdapter, TurnContext, ActivityHandler } = require('botbuilder');
 const Anthropic = require('@anthropic-ai/sdk');
+const { scanModel } = require('../web/lib/model-policy.cjs');
 
 const PORT = Number.parseInt(process.env.PORT || '3978', 10);
-const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
+// Every bot command runs a security analysis agent, so it follows the scanning model policy.
+const MODEL = process.env.CLAUDE_MODEL || scanModel();
 const DATA_DIR = path.resolve(__dirname, '../src/threatlint/data');
 const AGENTS_DIR = path.join(DATA_DIR, 'agents');
 const MAX_OUTPUT_TOKENS = 8192;

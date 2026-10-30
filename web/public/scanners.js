@@ -148,7 +148,7 @@
     const filter = readFilter(tool);
     if (!references && !filter) { $(ids.error(tool)).textContent = tool === 'dojo' ? 'Enter finding ids, or a product, engagement, test, or tag.' : 'Enter issue keys, or a project key.'; return; }
     const context = state.context;
-    if (!context?.settings?.model) { $(ids.error(tool)).textContent = 'Choose a model in Settings first.'; return; }
+    if (!(context?.models?.review || context?.settings?.model)) { $(ids.error(tool)).textContent = 'Choose a model in Settings first.'; return; }
     if (!context.ready) { $(ids.error(tool)).textContent = 'Finish the model settings (and authorize the remote provider) in Settings first.'; return; }
     if (!(state.saved[tool]?.hasToken && state.saved[tool]?.url)) { $(ids.error(tool)).textContent = `Configure ${spec.label} in Settings first.`; return; }
     if (!context.connected || context.socket?.readyState !== 1) { $(ids.error(tool)).textContent = 'The Workbench is not connected.'; return; }
