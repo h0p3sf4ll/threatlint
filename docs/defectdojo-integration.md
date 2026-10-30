@@ -11,7 +11,7 @@ repository and branch the finding names, triage, then resolve with an explicit c
 | DefectDojo base URL (HTTPS) | e.g. `https://defectdojo.example.test` (a pasted `…/api/v2/…` URL is trimmed to the base) |
 | API v2 token | DefectDojo → your profile → **API v2 Key** |
 | Permissions | The token's user must **view** findings, tests and engagements in the products you review, and **edit** findings (notes, files, status) to resolve them |
-| Repository access | Same as AVIT review: an Azure DevOps PAT (`threatlint ado login`) or GitHub (`gh auth login` / `GH_TOKEN`) |
+| Repository access | Same as AVIT review: an Azure DevOps PAT (`threatlint ado login`) or GitHub ([GitHub App](github-app.md) via `threatlint github login`, else `GH_TOKEN` / `gh auth login`) |
 
 ## Credentials
 

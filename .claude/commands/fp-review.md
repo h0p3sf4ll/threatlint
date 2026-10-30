@@ -30,7 +30,7 @@ Use `$WORK` for every path below. Never hard-code `/tmp`.
 - ServiceNow OAuth client: `threatlint setup` (or Workbench → Settings → ServiceNow)
 - Azure DevOps PAT (Code: Read): `threatlint ado login --organization <Organization Name>` (or Workbench → Settings → Azure DevOps)
 - Semgrep API token: `threatlint semgrep login` (or Workbench → Settings → Semgrep)
-- Reading these from Parameter Store needs `threatlint aws login` first. GitHub AVITs need `gh auth login`.
+- Reading these from Parameter Store needs `threatlint aws login` first. GitHub AVITs need a GitHub App (`threatlint github login`), `GH_TOKEN`, or `gh auth login`.
 
 `threatlint setup` configures all of them in one pass.
 - The ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`.
@@ -53,7 +53,7 @@ For each AVIT number:
    threatlint ado status
    threatlint avit checkout <AVIT> --dir $WORK/repo
    ```
-   - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with `gh auth login` or `GH_TOKEN`.
+   - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with the GitHub App (`threatlint github login`), then `GH_TOKEN`, then `gh auth login`.
    - If the clone fails because the repository is **not found**, run `threatlint avit close-removed <AVIT> --yes`. It confirms with Azure DevOps that the repository was deleted (not renamed or inaccessible), then closes the AVIT with "Closed by Threatlint, repo removed." and no report. If the repository exists but the AVIT's branch was deleted, review the flagged file on the default branch and say so in the report.
    - If `threatlint ado status` shows no PAT and the clone fails, stop. Tell the user to run `threatlint ado login --organization <Organization Name>` in their terminal, then retry.
    - Do not triage against a different branch or a local copy.

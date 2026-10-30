@@ -128,6 +128,7 @@ Use LM Studio for fully local analysis, or **View sample report** to see the out
 
 | Capability | Where | Docs |
 | --- | --- | --- |
+| **GitHub App authentication**: one GitHub App (Metadata + Contents read; PR/Issues write only if wanted) for Sources → GitHub, GitHub clones, PR comments, issues, and API calls. Short-lived installation tokens minted locally, config only in `~/.threatlint/github-app.json` | `threatlint github login/status/logout`, Workbench → **Settings → GitHub** | [GitHub App](docs/github-app.md) |
 | **DefectDojo and SonarQube integrations**: fetch findings by id or filter, check out the repository/branch/commit they name, triage with the FP reviewer, and post the verdict back after confirmation (DefectDojo: report attached, note, false_p / verified; SonarQube: summary comment, False Positive / Confirm, hotspot Safe). Also importable as JSON in *Import scan report*. Pluggable adapters for more tools | `threatlint dojo …`, `threatlint sonar …`, Workbench → **DefectDojo review** / **SonarQube review** | [DefectDojo](docs/defectdojo-integration.md), [SonarQube](docs/sonarqube-integration.md) |
 | **Source code managers**: connect GitHub (fine-grained PAT or app installation token) or Azure DevOps (PAT), browse repositories and branches, and open a hook-free shallow checkout with provider/branch/commit provenance | Workbench → **Sources** | [Workbench guide](docs/workbench.md#source-code-managers) |
 | **Runtime scanning** with every common auth workflow, anonymous and multi-role comparison, status assertions, passive header/cookie/CORS/debug checks, and Markdown/HTML/JSON evidence export | Workbench → **Runtime** | [Runtime scanning](docs/workbench.md#runtime-scanning) |
@@ -444,7 +445,7 @@ are configured. `threatlint setup` walks through every step; each command can al
 | 3 | **ServiceNow** instance + OAuth client (required) | `threatlint setup` | *Settings → ServiceNow* | `threatlint setup --check` |
 | 4 | **Azure DevOps PAT**, scope *Code: Read* (required) | `threatlint ado login --organization <your-ado-org>` | *Settings → Azure DevOps* | `threatlint ado status` |
 | 5 | **Semgrep API token**, Web API scope (required; used for triage, downloading the original rule, publishing the tuned rule and changing policies) | `threatlint semgrep login` (reads `/<your-prefix>/semgrep-token` from Parameter Store, or prompts with hidden input) | *Settings → Semgrep* | `threatlint semgrep status` |
-| 6 | GitHub (only for GitHub-hosted AVITs) | `gh auth login`, or set `GH_TOKEN` | — | `gh auth status` |
+| 6 | GitHub (only for GitHub-hosted AVITs) | `threatlint github login` (GitHub App, preferred), or `gh auth login` / `GH_TOKEN` | *Settings → GitHub* | `threatlint github status` |
 
 `threatlint setup --check` lists each required credential and where it comes from, without printing any
 value, and exits non-zero when one is missing. `threatlint setup` ends with the same check and reports
@@ -501,7 +502,7 @@ label. The flow is:
      - `THREATLINT_ADO_PAT`, `AZURE_DEVOPS_EXT_PAT`, or `az login` also work.
      - If none is configured, `avit checkout` offers the PAT setup interactively. The Workbench's
        *Settings → Azure DevOps* section saves it the same way.
-   - **GitHub:** `gh auth login` or `GH_TOKEN`.
+   - **GitHub:** a GitHub App (`threatlint github login`, see [docs/github-app.md](docs/github-app.md)), then `GH_TOKEN` / `GITHUB_TOKEN`, then `gh auth login`.
 2. The FP reviewer triages the finding on that branch and saves the report.
 3. `threatlint avit resolve <AVIT> --report <md> [--docx <docx>]` acts on the verdict. Every write asks
    for confirmation (`--yes` skips the prompts).

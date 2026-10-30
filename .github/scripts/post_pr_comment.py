@@ -7,6 +7,8 @@ Usage:
         --report /tmp/appsec-report.md \
         --pr 42 \
         --run-url https://github.com/org/repo/actions/runs/123
+
+Without GH_TOKEN / GITHUB_TOKEN, a configured Threatlint GitHub App (threatlint github login) or `gh auth token` is used.
 """
 import argparse
 import os
@@ -157,15 +159,37 @@ def build_comment(summary, run_url):
     return '\n'.join(lines)
 
 
+def github_token():
+    """GH_TOKEN / GITHUB_TOKEN; when neither is set, a Threatlint GitHub App installation token (when threatlint is
+    installed and an App is configured in ~/.threatlint/github-app.json), then `gh auth token`. Never printed."""
+    for name in ('GH_TOKEN', 'GITHUB_TOKEN'):
+        if os.environ.get(name):
+            return os.environ[name]
+    try:
+        from threatlint import github_app
+    except ImportError:
+        github_app = None
+    if github_app is not None and github_app.configured():
+        try:
+            return github_app.installation_token()
+        except github_app.GitHubAppError as exc:
+            print(f'WARNING: GitHub App token unavailable ({exc}); trying `gh auth token`', file=sys.stderr)
+    try:
+        result = subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
 def post_comment(pr_number, comment_body):
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    token = github_token()
     if not token:
-        print('ERROR: GH_TOKEN or GITHUB_TOKEN must be set.', file=sys.stderr)
+        print('ERROR: set GH_TOKEN or GITHUB_TOKEN, run `threatlint github login` (GitHub App), or `gh auth login`.', file=sys.stderr)
         sys.exit(1)
 
     result = subprocess.run(
         ['gh', 'pr', 'comment', str(pr_number), '--body', comment_body],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env={**os.environ, 'GH_TOKEN': token},
     )
     if result.returncode != 0:
         print(f'ERROR posting PR comment: {result.stderr}', file=sys.stderr)

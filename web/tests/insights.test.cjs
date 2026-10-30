@@ -5,6 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+// Never read the developer's real ~/.threatlint (saved GitHub App, PATs) during tests.
+process.env.THREATLINT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-home-'));
+for (const name of ['THREATLINT_GITHUB_APP_ID', 'THREATLINT_GITHUB_APP_INSTALLATION_ID', 'THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE']) delete process.env[name];
 const { createWorkbench } = require('../server.js');
 const { createDemoApp } = require('../examples/demo-app.cjs');
 const { collectFacts, aggregate, matrix, validateDashboard } = require('../lib/metrics.cjs');

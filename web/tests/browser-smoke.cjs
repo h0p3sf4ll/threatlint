@@ -5,6 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+// Never read the developer's real ~/.threatlint (saved GitHub App, PATs) during tests.
+process.env.THREATLINT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-home-'));
+for (const name of ['THREATLINT_GITHUB_APP_ID', 'THREATLINT_GITHUB_APP_INSTALLATION_ID', 'THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE']) delete process.env[name];
 const { createWorkbench } = require('../server.js');
 const { SKILL_MAP } = require('../lib/agents.cjs');
 
@@ -171,6 +174,28 @@ async function scannerFlows(page) {
   await page.locator('#scanner-post-cancel').click();
   await page.unroute(/\/api\/scanners\/(dojo|sonar)\/(settings|resolve)$/);
 }
+/** Settings → GitHub against a stubbed /api/github/settings: only "set" flags come back, the typed values are cleared. */
+async function githubSettings(page) {
+  const posted = [];
+  const status = configured => ({ configured, appIdSet: configured, installationIdSet: configured, privateKeyFileSet: configured, apiUrl: 'https://api.github.com', fromEnvironment: false, path: '/tmp/github-app.json' });
+  await page.route(/\/api\/github\/settings$/, async route => {
+    const request = route.request();
+    if (request.method() === 'POST') { posted.push(request.postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...status(true), repositories: 2, owner: 'example-org' }) }); }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(status(posted.length > 0)) });
+  });
+  await page.locator('#settings-button').click();
+  await page.locator('#github-form').scrollIntoViewIfNeeded();
+  assert.equal(await page.locator('#github-app-fields').isVisible(), false, 'App fields stay hidden until "Use GitHub App" is checked');
+  await page.locator('#github-use-app').check();
+  await page.locator('#github-app-id').fill('1000001');
+  await page.locator('#github-installation-id').fill('2000002');
+  await page.locator('#github-private-key-file').fill('/tmp/synthetic-app.pem');
+  await page.locator('#github-form button[type=submit]').click();
+  await page.locator('#github-status', { hasText: 'GitHub App in use' }).waitFor();
+  assert.deepEqual(posted[0], { appId: '1000001', installationId: '2000002', privateKeyFile: '/tmp/synthetic-app.pem', apiUrl: 'https://api.github.com' });
+  for (const id of ['#github-app-id', '#github-installation-id', '#github-private-key-file']) assert.equal(await page.locator(id).inputValue(), '', `${id} is cleared after saving`);
+  await page.unroute(/\/api\/github\/settings$/);
+}
 function base(page) { return new URL(page.url()).origin; }
 
 (async () => {
@@ -223,10 +248,11 @@ function base(page) { return new URL(page.url()).origin; }
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
     await scanImport(page);
     await scannerFlows(page);
+    await githubSettings(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, and mobile layout.');
+    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, and mobile layout.');
   } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });

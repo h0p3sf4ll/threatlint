@@ -56,7 +56,7 @@ When a Parameter Store name is unset, that credential is not read from Parameter
 | ServiceNow OAuth client (**required**) | `threatlint setup` | `threatlint setup --check` |
 | Azure DevOps PAT, Code: Read (**required**; one per organization) | `threatlint ado login --organization <your-ado-org>` (repeat for each organization) | `threatlint ado status` |
 | Semgrep API token (**required**) | `threatlint semgrep login` | `threatlint semgrep status` |
-| GitHub, for GitHub-hosted AVITs only | `gh auth login` | `gh auth status` |
+| GitHub, for GitHub-hosted AVITs only | `threatlint github login` ([GitHub App](github-app.md)), or `gh auth login` | `threatlint github status` |
 
 The three **required** credentials gate every AVIT review. `threatlint setup` reports setup as incomplete
 until all three are present. The Workbench refuses to start a batch until `threatlint setup --check` passes

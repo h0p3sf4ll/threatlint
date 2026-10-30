@@ -454,8 +454,10 @@ def git_credential(scm: str, organization: str = "") -> tuple[str, str]:
             return f"Bearer {token}", "az login"
         pat, source = load()  # last resort: another organization's PAT (works when the PAT spans organizations)
         return ("Basic " + base64.b64encode(f":{pat}".encode()).decode(), source) if pat else ("", "")
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or _run_tool("gh", ["auth", "token"], 30)
-    return ("Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode(), "GitHub") if token else ("", "")
+    # GitHub: the GitHub App installation token when an App is configured, then GH_TOKEN / GITHUB_TOKEN, then `gh auth token`.
+    from threatlint.github_app import github_token  # noqa: PLC0415
+    token, source = github_token(gh_cli=lambda: _run_tool("gh", ["auth", "token"], 30))
+    return ("Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode(), source) if token else ("", "")
 
 
 def _git_auth_env(scm: str, organization: str = "") -> dict[str, str]:
@@ -556,7 +558,7 @@ def checkout_repository(target: dict[str, str], directory: str, file_path: str =
         result = _sparse_clone(git, target, directory, file_path, env)
     if result.returncode != 0:
         reason = (result.stderr.strip().splitlines() or ["git clone failed"])[-1][:300]
-        hint = (" Run `threatlint ado login` to save a PAT with Code: Read (or set THREATLINT_ADO_PAT / run `az login`)." if target["scm"] == "azure-devops" else " Run `gh auth login` or set GH_TOKEN.")
+        hint = (" Run `threatlint ado login` to save a PAT with Code: Read (or set THREATLINT_ADO_PAT / run `az login`)." if target["scm"] == "azure-devops" else " Run `threatlint github login` (GitHub App), `gh auth login`, or set GH_TOKEN.")
         raise ServiceNowError(f"Could not clone {target['web_url']}{' branch ' + target['branch'] if target['branch'] else ''}: {reason}.{hint}")
     return directory
 
