@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/vendor/marked.js" defer></script>
   <script src="/vendor/purify.js" defer></script>
+  <script src="/fpreview-run.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
   <script src="/scan-import.js" defer></script>
@@ -301,17 +302,17 @@
         <div class="sk-body" id="sk-actions-body"></div>
       </section>
       <section class="view" id="view-fpreview" aria-labelledby="fpreview-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SERVICENOW AVR · CODESECURITY</div><h1 id="fpreview-title">False positive review</h1><p class="page-description">Submit one AVIT or a list. Each AVIT is reviewed on its own repository and branch, gets its own Word report, and is closed or annotated on its own.</p></div></div>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SERVICENOW AVR · CODESECURITY</div><h1 id="fpreview-title">False positive review</h1><p class="page-description">Submit AVITs, SCTASKs, or a mixed list. Each AVIT is reviewed on its own repository and branch, gets its own Word report, and is closed or annotated on its own.</p></div></div>
         <form id="fpreview-form" class="settings-card fpreview-form">
-          <label for="fpreview-avits">AVIT numbers</label>
-          <textarea id="fpreview-avits" rows="4" spellcheck="false" placeholder="AVIT000000092808580&#10;AVIT000000095995078, AVIT000000041277488&#10;SCTASK14120565"></textarea>
-          <p class="field-note small subtle">AVIT numbers (AVIT plus 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599) or catalog tasks (e.g. SCTASK14120565), separated by commas, spaces, or new lines (up to 50 AVITs). For an SCTASK, every AVIT in its description is reviewed, then the task gets each report attached and a “Closed by Threatlint” comment, and is closed once every AVIT is decided.</p>
+          <label for="fpreview-avits">AVIT and SCTASK numbers<span data-tip="fpreview-input"></span></label>
+          <textarea id="fpreview-avits" rows="4" spellcheck="false" aria-describedby="fpreview-avits-note" placeholder="SCTASK14120565, SCTASK14120571&#10;AVIT000000092808580; AVIT000000095995078&#10;AVIT000000041277488 SCTASK14120590"></textarea>
+          <p class="field-note small subtle" id="fpreview-avits-note">Any number of AVITs (AVIT plus 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599) and catalog tasks (SCTASK plus 7 to 10 digits, e.g. SCTASK14120565), in any mix, separated by commas, spaces, semicolons, or new lines; a pasted list works. Each SCTASK is expanded into the AVITs in its description; an AVIT named more than once is reviewed once. Up to 50 AVITs per run: extra AVITs from SCTASKs are listed as skipped, not dropped. Each task gets its AVIT reports attached and a “Closed by Threatlint” comment as soon as its own AVITs are reviewed, and is closed once every AVIT is decided. One task failing does not stop the others.</p>
           <div class="fpreview-outcomes small subtle"><div><strong>False positive</strong> · Word report attached, closed (state 3 / substate 3) with “Closed by Threatlint as a false positive, see attached report.”, Semgrep finding ignored, and for SAST/Secrets the rule tuned once.</div><div><strong>True positive</strong> · Word report attached, left open with “True positive, see attached report.”</div><div><strong>Ambiguous</strong> · Word report attached, left open with “Ambiguous, see attached report.”</div></div>
           <div id="fpreview-setup" class="field-note small" aria-live="polite"></div>
           <p class="form-error" id="fpreview-error" role="alert"></p>
           <div class="settings-actions"><span class="small subtle" id="fpreview-model">Uses the model chosen in Settings.</span><div class="input-row"><button class="button secondary hidden" id="fpreview-cancel" type="button">Stop</button><button class="button primary" id="fpreview-start" type="submit">Review AVITs</button></div></div>
         </form>
-        <div id="fpreview-results" class="fpreview-results" aria-live="polite"></div>
+        <div id="fpreview-results" class="fpreview-results"></div>
       </section>
       <section class="view" id="view-dojoreview" aria-labelledby="dojoreview-title" hidden>
         <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>DEFECTDOJO · API V2</div><h1 id="dojoreview-title">DefectDojo review</h1><p class="page-description">Review DefectDojo findings by id or by filter. Each finding is checked on its own repository and branch, gets its own report in Findings, and is posted back to DefectDojo only after you confirm.</p></div></div>

@@ -724,50 +724,10 @@
     refreshReports().catch(error => toast(error.message, true)); refreshSessions().catch(() => {});
   }
   // ── False positive review (AVIT batch) ──
-  const STAGES = { fetching: 'Fetching', checkout: 'Cloning', triage: 'Triaging', reported: 'Reported', resolving: 'Updating ServiceNow',
-    done: 'Done', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', queued: 'Queued' };
-  function avitCard(avit) {
-    let card = document.getElementById(`avit-${avit}`);
-    if (card) return card;
-    card = el('article', 'avit-card'); card.id = `avit-${avit}`;
-    const header = el('header'); header.append(el('span', 'avit-id', avit), el('span', 'avit-stage stage-queued', 'Queued'), el('span', 'avit-disposition'));
-    card.append(header, el('div', 'avit-detail'), el('ul', 'avit-outcome'), el('div', 'avit-actions'));
-    $('fpreview-results').append(card);
-    return card;
-  }
-  function renderAvitItem(event) {
-    const card = avitCard(event.avit);
-    const stage = card.querySelector('.avit-stage');
-    if (event.stage && STAGES[event.stage]) { stage.textContent = STAGES[event.stage]; stage.className = `avit-stage stage-${event.stage}`; }
-    if (event.tool) { state.avitTools[event.avit] = (state.avitTools[event.avit] || 0) + 1; card.querySelector('.avit-detail').textContent = `Inspecting the repository (${state.avitTools[event.avit]} tool calls)…`; }
-    else if (event.detail !== undefined) card.querySelector('.avit-detail').textContent = event.detail;
-    if (event.disposition) { const badge = card.querySelector('.avit-disposition'); badge.className = 'avit-disposition disposition-badge'; badge.textContent = event.disposition; }
-    if (event.outcome) {
-      const list = card.querySelector('.avit-outcome'); list.replaceChildren();
-      const o = event.outcome;
-      if (o.attached) list.append(el('li', '', 'Word report attached to the AVIT'));
-      if (o.closed === true) list.append(el('li', '', 'Closed as false positive with the Threatlint work note'));
-      if (event.disposition === 'FALSE POSITIVE' && o.closed && !o.tuned && (o.semgrep || []).some(line => /Rule not tuned/.test(line))) list.append(el('li', 'fp-status-warn', 'The rule was not tuned, so this false positive can recur. Re-run this AVIT, or run `threatlint avit semgrep <AVIT> --report <report> --checkout <dir>`.'));
-      if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
-      if (o.leftOpen) list.append(el('li', '', 'Left open with “True positive, see attached report.”'));
-      for (const line of o.semgrep || []) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
-    }
-    if (event.report && !card.querySelector('.avit-actions button')) {
-      card.querySelector('.avit-actions').append(button('Read report ↗', 'button secondary small-button', () => openReportUrl(event.report.previewUrl).catch(error => toast(error.message, true))));
-      if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; card.querySelector('.avit-actions').append(word); }
-    }
-  }
-  function renderSctaskItem(event) {
-    let card = document.getElementById(`sctask-${event.sctask}`);
-    if (!card) {
-      card = el('article', 'avit-card sctask-card'); card.id = `sctask-${event.sctask}`;
-      const header = el('header'); header.append(el('span', 'avit-id', event.sctask), el('span', 'avit-stage stage-queued', 'Catalog task'));
-      card.append(header, el('div', 'avit-detail')); $('fpreview-results').prepend(card);
-    }
-    const stage = card.querySelector('.avit-stage');
-    const label = { reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error' }[event.stage];
-    if (label) { stage.textContent = label; stage.className = `avit-stage stage-${event.stage === 'reviewing' ? 'triage' : event.stage}`; }
-    card.querySelector('.avit-detail').textContent = event.avits ? `${event.detail}: ${event.avits.join(', ')}` : event.detail || '';
+  // Cards, history, and progress live in fpreview-run.js; created on first use so the page loads without it.
+  function fpRun() {
+    if (!state.fpRun && window.ThreatlintFpRun) state.fpRun = window.ThreatlintFpRun.create($('fpreview-results'));
+    return state.fpRun;
   }
   function fpreviewRunning(running) {
     state.fpreviewRunning = running;
@@ -794,11 +754,13 @@
   }
   async function startAvitBatch(event) {
     event.preventDefault(); $('fpreview-error').textContent = '';
-    let avits;
-    const sctasks = [...new Set(($('fpreview-avits').value.toUpperCase().match(/\bSCTASK\d{7,10}\b/g) || []))];
-    try { avits = parseAvits($('fpreview-avits').value.replace(/\bSCTASK\d{7,10}\b/gi, ' ')); } catch (error) { $('fpreview-error').textContent = error.message; return; }
+    // Any mix of AVIT and SCTASK numbers; the runner expands each SCTASK into its AVITs and deduplicates them.
+    let parsed;
+    try { parsed = window.ThreatlintFpRun.parseInput($('fpreview-avits').value); } catch (error) { $('fpreview-error').textContent = error.message; return; }
+    const { avits, sctasks, order } = parsed;
+    const maxAvits = state.config.servicenow?.maxAvits || 50;
     if (!avits.length && !sctasks.length) { $('fpreview-error').textContent = 'Enter at least one AVIT or SCTASK number.'; return; }
-    if (avits.length > 50) { $('fpreview-error').textContent = 'Review at most 50 AVITs at a time.'; return; }
+    if (avits.length > maxAvits) { $('fpreview-error').textContent = `Review at most ${maxAvits} AVITs at a time (${avits.length} entered). AVITs from SCTASKs over the limit are reported as skipped.`; return; }
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
@@ -806,21 +768,19 @@
     if (!await requireSemgrep()) return;
     await updateFpreviewSetup();
     if (state.setupMissing.length) { $('fpreview-error').textContent = `Finish the required setup first: ${state.setupMissing.join(', ')}.`; return; }
-    state.avitTools = {}; $('fpreview-results').replaceChildren(); for (const avit of avits) avitCard(avit);
+    fpRun().start({ avits, sctasks, model: effectiveModel() });
     fpreviewRunning(true);
     const provider = state.preferences.provider;
-    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: [...avits, ...sctasks].join(' '), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
       servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
   }
 
   function handleEvent(event) {
     switch (event.type) {
-      case 'avit_batch_start': for (const avit of event.avits) avitCard(avit); break;
-      case 'sctask_item': renderSctaskItem(event); break;
-      case 'avit_item': renderAvitItem(event); break;
-      case 'avit_batch_complete': fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
-      case 'avit_batch_error': fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
+      case 'avit_batch_start': case 'sctask_item': case 'avit_item': fpRun()?.handle(event); break;
+      case 'avit_batch_complete': fpRun()?.handle(event); fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
+      case 'avit_batch_error': fpRun()?.handle(event); fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${effectiveModel()}`); break;
@@ -848,6 +808,7 @@
     socket.addEventListener('close', () => {
       state.connected = false; $('connection-status').textContent = 'Disconnected'; $('connection-status').className = 'connection offline';
       if (state.running) finishRun('interrupted');
+      if (state.fpreviewRunning) { fpRun()?.interrupt('The connection to the Workbench closed; the runner stops a batch when its connection closes'); fpreviewRunning(false); }
       updateRunControls();
       if (!state.intentionalClose) state.reconnectTimer = setTimeout(connectSocket, 3000);
     });
@@ -990,6 +951,8 @@
     // Retire secret-bearing preferences used by the old UI; do not migrate stored credentials.
     for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) localStorage.removeItem(key);
     wireEvents(); renderPresets(); renderPipeline(); renderReports(); updateProviderDisplay();
+    // The last false positive review of this browser session, as far as it got (see fpreview-run.js).
+    try { fpRun()?.restore(); } catch (error) { console.error('Could not restore the false positive review history', error.message); }
     if (desktop) { $('runtime-badge').textContent = 'DESKTOP WORKBENCH'; $('app-version').textContent = desktop.version; }
     try {
       [state.agents, state.skills, state.config] = await Promise.all([request('/api/agents'), request('/api/skills'), request('/api/config')]);
