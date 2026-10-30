@@ -3,7 +3,7 @@ name: appsec-security-test-planner
 description: "Use to design evidence-grounded security regression and acceptance plans: map findings/invariants to safe cases, role/tenant coverage, manual SSO/MFA prerequisites, separate runtime authorization, owners, and honest validation status."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-security-test-design, threatlint-runtime-auth-workflows]
 ---

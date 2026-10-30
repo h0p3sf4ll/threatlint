@@ -3,7 +3,7 @@ name: appsec-attack-tree
 description: "Use proactively to generate a formal AND/OR attack tree for the most critical threats in a repository. Produces a Mermaid-rendered tree, bypass analysis for each defense node, and a ranked table of leaf nodes by exploitability and impact. Best used after appsec-threat-modeler."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-attack-tree]
 ---

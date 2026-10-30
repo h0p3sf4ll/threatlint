@@ -3,7 +3,7 @@ name: appsec-code-reviewer
 description: "Use proactively when reviewing a pull request, git diff, code change, or risky configuration change for application security regressions, insecure patterns, missing controls, or exposed secrets."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-secure-code-review]
 ---

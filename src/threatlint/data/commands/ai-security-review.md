@@ -1,6 +1,7 @@
 ---
 description: "Review AI/LLM prompt, retrieval, memory, tool/agent authority, tenant isolation, output sinks, and provider data boundaries."
 argument-hint: "Optional AI flow, tool, retrieval pipeline, component, or redacted evidence path"
+model: claude-sonnet-5-5
 ---
 
 Delegate to `appsec-ai-security-reviewer`. Pass `$ARGUMENTS` as the scope and supplied evidence locations.

@@ -1,6 +1,7 @@
 ---
 description: "Run an application security threat model. Discovers the repo automatically when no target is given, or focuses on a specified component, path, service, or feature area."
 argument-hint: "Optional: component, path, service name, or feature to analyze (leave blank to discover)"
+model: claude-sonnet-5-5
 ---
 
 Invoke the `appsec-threat-modeler` agent to produce a two-tier AppSec threat model.

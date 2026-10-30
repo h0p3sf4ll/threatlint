@@ -3,7 +3,7 @@ name: appsec-secure-codegen-reviewer
 description: "Use to review AI/model-generated or newly written code for insecure-by-default patterns: injection sinks, unsafe deserialization, disabled TLS verification, weak crypto, hardcoded secrets, missing authorization, permissive CORS, unsafe file paths, and SSRF, with secure-by-default rewrites."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-secure-codegen]
 ---

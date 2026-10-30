@@ -1,6 +1,7 @@
 ---
 description: "Re-examine a specific finding from a previous report after a fix has been applied. Confirms remediated, partially fixed, or still present. Saves a short verification report."
 argument-hint: "Finding ID to verify (e.g., TM-003, CR-012) — optionally followed by the branch or commit containing the fix"
+model: claude-sonnet-5-5
 ---
 
 Re-examine a specific finding from a previous report to verify whether the remediation is effective.

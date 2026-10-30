@@ -3,7 +3,7 @@ name: appsec-auth-reviewer
 description: "Use proactively for deep-dive authentication and authorization security reviews: OAuth 2.0/OIDC implementation, JWT security, session management, CSRF, MFA, SSO, RBAC/ABAC correctness, privilege escalation paths, and multi-tenancy isolation."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-auth-security]
 ---

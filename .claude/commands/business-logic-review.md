@@ -1,6 +1,7 @@
 ---
 description: "Review business-flow invariants, entitlements, idempotency, races, and asynchronous side effects from source evidence."
 argument-hint: "Optional business flow, service, component, or redacted evidence path"
+model: claude-sonnet-5-5
 ---
 
 Delegate to `appsec-business-logic-reviewer`. Pass `$ARGUMENTS` as the scope and supplied evidence locations.

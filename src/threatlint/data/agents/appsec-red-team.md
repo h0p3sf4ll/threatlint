@@ -3,7 +3,7 @@ name: appsec-red-team
 description: "Use proactively to generate 5 adversarial attack scenarios against the repository with full kill chains (initial access through impact), attacker profiles, IoCs, and purple-team test cases. Each scenario is grounded in evidence from the actual codebase."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-purple-team]
 ---

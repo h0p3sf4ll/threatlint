@@ -1,6 +1,7 @@
 ---
 description: "Review cryptographic purpose, primitives, key/nonce lifecycles, KDFs, verification, and TLS from source evidence."
 argument-hint: "Optional cryptographic use, module, configuration, or redacted evidence path"
+model: claude-sonnet-5-5
 ---
 
 Delegate to `appsec-crypto-reviewer`. Pass `$ARGUMENTS` as the scope and supplied evidence locations.

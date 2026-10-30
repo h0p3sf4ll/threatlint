@@ -3,7 +3,7 @@ name: appsec-privacy-reviewer
 description: "Use for privacy and sensitive-data review: PII inventory, data flows to logs, analytics, AI providers, and third parties, minimization, retention, consent, access control, and encryption-at-rest gaps."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: claude-sonnet-5-5
 permissionMode: plan
 skills: [threatlint-evidence-analysis, threatlint-actionable-reporting, threatlint-privacy-review]
 ---
