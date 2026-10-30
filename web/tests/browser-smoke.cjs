@@ -105,6 +105,72 @@ async function scanImport(page) {
   await page.locator('#scanimport-snow-cancel').click();
   await page.unroute(/\/api\/scan-import(\/.*)?$/);
 }
+/** DefectDojo / SonarQube: settings, review page against a stubbed batch, confirmed post, and the import's Post to DefectDojo. */
+async function scannerFlows(page) {
+  const [session] = await page.evaluate(() => fetch('/api/sessions').then(response => response.json()));
+  const [saved] = await page.evaluate(id => fetch(`/api/session/${id}/reports`).then(response => response.json()), session.id);
+  const calls = { settings: [], resolve: [], importPost: [] };
+  await page.route(/\/api\/scanners\/(dojo|sonar)\/(settings|resolve)$/, async route => {
+    const request = route.request(), [, tool, action] = /\/api\/scanners\/(dojo|sonar)\/(settings|resolve)$/.exec(new URL(request.url()).pathname);
+    const json = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (action === 'settings' && request.method() === 'POST') { calls.settings.push({ tool, ...request.postDataJSON() }); }
+    if (action === 'settings') return json(200, { tool, url: calls.settings.some(item => item.tool === tool) ? 'https://dojo.example.test' : '', hasToken: calls.settings.some(item => item.tool === tool), tokenSource: 'saved', path: '/tmp/defectdojo.json' });
+    calls.resolve.push({ tool, ...request.postDataJSON() });
+    return json(200, { ok: true, reference: 'DOJO-1201', lines: ['✓ Attached DOJO-1201-threatlint-fp-review.docx', '✓ Note added', '✓ Marked false positive (inactive)'] });
+  });
+  await page.locator('#settings-button').click();
+  // The remote fixture model from the earlier step needs consent before any review can start.
+  await page.locator('#cloud-consent').check(); await page.locator('#settings-form button[type=submit]').click();
+  await page.locator('#settings-button').click();
+  await page.locator('#dojo-form').scrollIntoViewIfNeeded();
+  await page.locator('#dojo-url').fill('https://dojo.example.test');
+  await page.locator('#dojo-token').fill('synthetic-dojo-token-0000');
+  await page.locator('#dojo-form button[type=submit]').click();
+  await page.locator('#dojo-status', { hasText: 'Configured' }).waitFor();
+  assert.deepEqual(calls.settings[0], { tool: 'dojo', url: 'https://dojo.example.test', token: 'synthetic-dojo-token-0000' });
+  assert.equal(await page.locator('#dojo-token').inputValue() === 'synthetic-dojo-token-0000', false, 'the token is masked after saving');
+  assert.equal(await page.locator('#sonar-form').isVisible(), true, 'SonarQube has its own settings section');
+
+  // The runner socket is stubbed in the page: the review emits a reported finding, then the post is confirmed.
+  await page.locator('[data-view="dojoreview"]').click();
+  await page.locator('#view-dojoreview:not([hidden])').waitFor();
+  await page.locator('#dojoreview-start').click();
+  assert.match(await page.locator('#dojoreview-error').innerText(), /Enter finding ids/);
+  await page.locator('#dojoreview-references').fill('1201');
+  const sent = await page.evaluate(() => new Promise(resolve => {
+    const original = WebSocket.prototype.send;
+    WebSocket.prototype.send = function send(data) {
+      const message = JSON.parse(data);
+      if (message.action === 'run_scanner_batch') { WebSocket.prototype.send = original; window.__scannerSocket = this; resolve(message); return undefined; }
+      return original.call(this, data);
+    };
+    document.getElementById('dojoreview-start').click();
+    setTimeout(() => resolve({ error: document.getElementById('dojoreview-error').textContent }), 5000);
+  }));
+  assert.equal(sent.error, undefined, `the review did not start: ${sent.error}`);
+  assert.deepEqual([sent.tool, sent.references, !!sent.model], ['dojo', '1201', true]);
+  // The runner is not asked to review; the page receives the events a review would send.
+  await page.evaluate(report => {
+    for (const event of [{ type: 'scanner_batch_start', tool: 'dojo', references: ['DOJO-1201'] },
+      { type: 'scanner_item', tool: 'dojo', reference: 'DOJO-1201', stage: 'triage', detail: 'web · main · src/app/search.py' },
+      { type: 'scanner_item', tool: 'dojo', reference: 'DOJO-1201', stage: 'triage', agentTool: 'read_file' },
+      { type: 'scanner_item', tool: 'dojo', reference: 'DOJO-1201', stage: 'reported', detail: 'Report saved to Findings. Nothing was posted to DefectDojo.', disposition: 'FALSE POSITIVE', report, done: true },
+      { type: 'scanner_batch_complete', tool: 'dojo', cancelled: false }]) window.__scannerSocket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) }));
+  }, saved);
+  await page.locator('#scanner-dojo-DOJO-1201 .avit-stage', { hasText: 'Reported' }).waitFor();
+  assert.equal(calls.resolve.length, 0, 'nothing is posted during the review');
+  await page.locator('#scanner-dojo-DOJO-1201 [data-post]').click();
+  await page.locator('#scanner-post-dialog[open]').waitFor();
+  assert.match(await page.locator('#scanner-post-steps').innerText(), /Attach the Word report[\s\S]*Closed by Threatlint as a false positive[\s\S]*false_p = true/);
+  await page.locator('#scanner-post-cancel').click();
+  assert.equal(calls.resolve.length, 0, 'cancel posts nothing');
+  await page.locator('#scanner-dojo-DOJO-1201 [data-post]').click();
+  await page.locator('#scanner-post-confirm').click();
+  await page.locator('#scanner-post-result', { hasText: 'Posted to DefectDojo' }).waitFor();
+  assert.deepEqual(calls.resolve, [{ tool: 'dojo', reportId: saved.id, reference: 'DOJO-1201', confirm: true }]);
+  await page.locator('#scanner-post-cancel').click();
+  await page.unroute(/\/api\/scanners\/(dojo|sonar)\/(settings|resolve)$/);
+}
 function base(page) { return new URL(page.url()).origin; }
 
 (async () => {
@@ -156,10 +222,11 @@ function base(page) { return new URL(page.url()).origin; }
     assert.equal(await page.locator('#cloud-consent').isChecked(), false);
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
     await scanImport(page);
+    await scannerFlows(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), and mobile layout.');
+    console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, and mobile layout.');
   } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });

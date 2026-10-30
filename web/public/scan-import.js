@@ -14,14 +14,14 @@
   const STEPS = ['queued', 'parsing', 'triaging', 'done'];
   const STATUS_LABELS = { queued: 'Queued', parsing: 'Parsing', triaging: 'Triaging', done: 'Done', error: 'Error' };
   const STATUS_DETAIL = { queued: 'Queued. The runner starts it shortly.', parsing: 'Parsing the report into findings…', triaging: 'Triaging each finding against the evidence…' };
-  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', auto: 'Auto-detect' };
+  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', auto: 'Auto-detect' };
   const AVIT = /^AVIT\d{7,15}$/;
   const state = { workspaceChosen: false, file: null, context: null, job: null, jobId: null, pollTimer: null, lastStep: 'queued', report: null, submitting: false, posting: false };
 
   // Help for this page, merged into /api/help by insights.js (server entries win on a shared key or id).
   window.ThreatlintHelpExtras = {
     tooltips: {
-      'scanimport-source': 'Auto-detect reads the file to tell an Invicti export from a MobSF report. Choose one explicitly if detection fails.',
+      'scanimport-source': 'Auto-detect reads the file to tell Invicti, MobSF, DefectDojo (/api/v2/findings/ JSON), and SonarQube (/api/issues/search or /api/hotspots/search JSON) apart. Choose one explicitly if detection fails.',
       'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
       'scanimport-avit': 'The ServiceNow AVIT this scan belongs to: AVIT followed by 7 to 15 digits. Needed only to post the result to ServiceNow.',
       'scanimport-servicenow': 'Attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives and ambiguous findings. Asks first.',
@@ -80,7 +80,7 @@
   function setFile(file) {
     setError('');
     if (!file) return;
-    if (!/\.(xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose an Invicti XML or JSON export, or a MobSF JSON report.`); return; }
+    if (!/\.(xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose an Invicti XML or JSON export, a MobSF JSON report, or a DefectDojo or SonarQube findings JSON.`); return; }
     if (!file.size) { setError(`${file.name} is empty. Export the scan report again.`); return; }
     if (file.size > MAX_BYTES) { setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB; export a filtered report (for example, without request/response bodies) or split it.`); return; }
     state.file = file;
@@ -116,7 +116,7 @@
   }
   async function submit(event) {
     event.preventDefault(); setError('');
-    if (!state.file) { setError('Choose an Invicti or MobSF report first.'); return; }
+    if (!state.file) { setError('Choose a scan report first.'); return; }
     const avit = normalizeAvit($('scanimport-avit').value);
     const invalid = avitError(avit, false);
     if (invalid) { setError(invalid); $('scanimport-avit').focus(); return; }
@@ -209,6 +209,8 @@
     $('scanimport-findings').replaceChildren(...rows);
     setReportLinks(state.report);
     $('scanimport-post').disabled = !job.reportId;
+    // scanners.js offers Post to DefectDojo / SonarQube for the same finished import.
+    document.dispatchEvent(new CustomEvent('threatlint:scanimport-job', { detail: job }));
   }
   function setReportLinks(report) {
     for (const [id, url] of [['scanimport-download-md', report?.mdUrl], ['scanimport-download-docx', report?.docxUrl]]) {
@@ -309,7 +311,7 @@
       const actions = el('div', 'report-card-actions');
       actions.append(el('span', `operations-pill scanimport-pill-${status}`, STATUS_LABELS[status].toUpperCase()),
         button(status === 'done' ? 'View result' : isLive(status) ? 'Follow' : 'Details', 'button secondary small-button', () => startJob(item, false), `View import ${text(item.title) || item.id}`));
-      row.append(el('span', 'agent-monogram', item.source === 'mobsf' ? 'MO' : item.source === 'invicti' ? 'IN' : 'SC'), info, actions);
+      row.append(el('span', 'agent-monogram', ({ mobsf: 'MO', invicti: 'IN', defectdojo: 'DD', sonarqube: 'SQ' })[item.source] || 'SC'), info, actions);
       return row;
     }));
   }
