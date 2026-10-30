@@ -1,0 +1,15 @@
+{
+  "total": 2, "p": 1, "ps": 100,
+  "paging": {"pageIndex": 1, "pageSize": 100, "total": 2},
+  "issues": [
+    {"key": "AYxExampleKey01", "rule": "pythonsecurity:S3649", "severity": "CRITICAL", "component": "web:src/app/search.py", "project": "web",
+     "line": 42, "message": "Change this code to not construct SQL queries directly from user-controlled data.", "type": "VULNERABILITY", "status": "OPEN",
+     "textRange": {"startLine": 42, "endLine": 42}, "tags": ["cwe", "owasp-a3"]},
+    {"key": "AYxExampleKey03", "rule": "python:S5332", "severity": "MINOR", "component": "web:src/app/client.py", "project": "web",
+     "line": 7, "message": "Using http protocol is insecure. Use https instead.", "type": "VULNERABILITY", "status": "OPEN"}
+  ],
+  "components": [
+    {"key": "web:src/app/search.py", "path": "src/app/search.py", "qualifier": "FIL"},
+    {"key": "web:src/app/client.py", "path": "src/app/client.py", "qualifier": "FIL"}
+  ]
+}

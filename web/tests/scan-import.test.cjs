@@ -50,7 +50,7 @@ describe('Scan report parsing', () => {
   });
   it('rejects files that are not Invicti or MobSF reports', () => {
     for (const content of ['{"version":"2.1.0","runs":[]}', '<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
-      assert.throws(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti or MobSF report/, content);
+      assert.throws(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti, MobSF, DefectDojo, or SonarQube report/, content);
     assert.throws(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /PDF reports cannot be imported/);
     assert.throws(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /ZIP, APK, and IPA/);
     assert.throws(() => scan.parseScanReport(Buffer.alloc(0)), /empty/);
@@ -243,7 +243,7 @@ describe('Scan import routes', () => {
 
   it('rejects non-reports and unsafe XML at upload with 400', async () => {
     const sarif = await api('/api/scan-import', { filename: 'scan.xml', content: Buffer.from('{"runs":[]}').toString('base64') });
-    assert.equal(sarif.status, 400); assert.match(sarif.body.error, /not an Invicti or MobSF report/);
+    assert.equal(sarif.status, 400); assert.match(sarif.body.error, /not an Invicti, MobSF, DefectDojo, or SonarQube report/);
     const xxe = await api('/api/scan-import', { filename: 'scan.xml', content: Buffer.from('<!DOCTYPE x [<!ENTITY a "b">]><invicti-enterprise/>').toString('base64') });
     assert.equal(xxe.status, 400); assert.match(xxe.body.error, /DOCTYPE/);
     assert.equal((await api('/api/scan-import', { filename: 'x', content: '!!notbase64!!' })).status, 400);

@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Manual Invicti / MobSF report upload: POST creates a queued import (triage runs in the background), GET polls it,
- * and POST /:id/servicenow posts the finished report to ServiceNow only with {confirm: true}.
+ * Manual Invicti / MobSF / DefectDojo / SonarQube report upload: POST creates a queued import (triage runs in the background),
+ * GET polls it, and POST /:id/servicenow (or /:id/scanner with {tool}) posts the finished report only with {confirm: true}.
  */
 
 const express = require('express');
@@ -77,6 +77,8 @@ function registerScanImportRoutes(app, { scanImports }) {
   app.get('/api/scan-import', handle(() => scanImports.list()));
   app.get('/api/scan-import/:id', handle(req => scanImports.get(req.params.id)));
   app.post('/api/scan-import/:id/servicenow', handle(req => scanImports.post(req.params.id, req.body || {})));
+  // DefectDojo ({"tool": "dojo"}) or SonarQube ({"tool": "sonar"}); also only with {"confirm": true}.
+  app.post('/api/scan-import/:id/scanner', handle(req => scanImports.postScanner(req.params.id, req.body || {})));
 }
 
 module.exports = { registerScanImportRoutes, scanImportBodyParsers, parseMultipart, parseJsonUpload, JSON_LIMIT };
