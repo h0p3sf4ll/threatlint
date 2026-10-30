@@ -64,6 +64,18 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
         matches.append({"id": identifier.group(1) if identifier else "", "title": re.sub(r"^\[?[A-Z][A-Z0-9]*-\d+\]?\s*[—–:-]?\s*", "", header).strip(),
                         "disposition": disposition.group(0).upper() if disposition else "", "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
     if not matches:
+        # A single-finding report with a plain heading (`## Finding`): its own Original finding line decides.
+        originals = [m for m in re.finditer(r"(?im)^\**Original finding\**\s*:\s*(.+)$", report) if avit in m.group(1).upper()]
+        if len(originals) == 1 and len(re.findall(r"(?im)^\**Original finding\**\s*:", report)) == 1:
+            body = report[originals[0].start():]
+            def field(name: str) -> str:
+                match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
+                return match.group(1).replace("*", "").strip() if match else ""
+            disposition = _DISPOSITION.search(field("Disposition|Verdict"))
+            title = re.search(r"(?m)^#\s+(.+)$", report)
+            matches.append({"id": "", "title": title.group(1).strip() if title else avit, "disposition": disposition.group(0).upper() if disposition else "",
+                            "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
+    if not matches:
         raise ResolveError(f"The report has no finding whose Original finding is {avit}")
     if len({match["disposition"] for match in matches}) > 1:
         raise ResolveError(f"The report gives {avit} conflicting dispositions; resolve it manually")

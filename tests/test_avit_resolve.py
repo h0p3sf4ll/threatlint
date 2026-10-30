@@ -405,3 +405,11 @@ def test_verdict_is_found_under_an_unbracketed_finding_heading():
     report = REPORT.replace("#### [FP-001] —", "## FP-001 —")
     verdict = ar.verdict_for(report, AVIT)
     assert (verdict["id"], verdict["disposition"], verdict["title"]) == ("FP-001", "FALSE POSITIVE", "AWS key placeholder in terraform.tfvars")
+
+
+def test_a_single_finding_report_without_a_finding_id_heading_uses_its_original_finding_line():
+    report = REPORT.replace("#### [FP-001] — AWS key placeholder in terraform.tfvars", "## Finding")
+    assert ar.verdict_for(report, AVIT)["disposition"] == "FALSE POSITIVE"
+    two = report + "\n**Original finding**: AVIT0042599; r; Semgrep Secrets; a:1\n**Disposition**: TRUE POSITIVE\n"
+    with pytest.raises(ar.ResolveError):
+        ar.verdict_for(two, AVIT)  # several findings without headings are not guessed apart
