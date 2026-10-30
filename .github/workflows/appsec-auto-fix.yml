@@ -124,6 +124,7 @@ jobs:
             - Do NOT push to main/master — work on the current branch only
             - If a fix would introduce a new security issue, skip it and explain why
           claude_args: |
+            --model ${{ vars.THREATLINT_GENERAL_MODEL || 'claude-opus-5-5' }}
             --max-turns 40
             --allowedTools "Read,Edit,Write,Bash,Grep,Glob"
 

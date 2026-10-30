@@ -28,7 +28,7 @@ inputs:
     required: false
     default: claude
   model:
-    description: Model override. Empty uses the provider default.
+    description: Model override. Empty uses the provider default (claude-sonnet-5-5, the Threatlint scanning model, for provider=claude).
     required: false
     default: ''
   target:
@@ -202,7 +202,7 @@ runs:
         claude_args: |
           --agent ${{ inputs.agent }}
           --max-turns ${{ inputs.max-turns }}
-          ${{ inputs.model != '' && format('--model {0}', inputs.model) || '' }}
+          --model ${{ inputs.model || 'claude-sonnet-5-5' }}
           --allowedTools "Read,Grep,Glob,Bash"
 
     # ─── OpenAI / GitHub Models ─────────────────────────────────────────────
