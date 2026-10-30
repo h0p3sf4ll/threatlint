@@ -399,3 +399,9 @@ def test_a_renamed_repository_whose_branch_was_deleted_falls_back_to_the_default
     assert clones == [("old", "feat/x"), ("new-name", "feat/x"), ("new-name", "")]
     result = json.loads(out.getvalue().strip().splitlines()[-1])
     assert result["renamed_to"] == "new-name" and result["branch_deleted"] == "feat/x"
+
+
+def test_verdict_is_found_under_an_unbracketed_finding_heading():
+    report = REPORT.replace("#### [FP-001] —", "## FP-001 —")
+    verdict = ar.verdict_for(report, AVIT)
+    assert (verdict["id"], verdict["disposition"], verdict["title"]) == ("FP-001", "FALSE POSITIVE", "AWS key placeholder in terraform.tfvars")

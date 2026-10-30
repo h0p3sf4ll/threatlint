@@ -48,7 +48,8 @@ class ResolveError(RuntimeError):
 
 def verdict_for(report: str, avit: str) -> dict[str, str]:
     """The finding in an FP report whose Original finding names this AVIT: id, title, disposition, confidence."""
-    sections = re.split(r"(?m)^#{2,6}\s+(?=\[[A-Z][A-Z0-9]*-\d+\])", report)
+    # Finding headings: `#### [FP-001] — title`, or without brackets (`## FP-001 — title`).
+    sections = re.split(r"(?m)^#{2,6}\s+(?=\[?[A-Z][A-Z0-9]*-\d+\b)", report)
     matches = []
     for section in sections[1:]:
         header, _, body = section.partition("\n")
@@ -59,8 +60,8 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
             match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
             return match.group(1).replace("*", "").strip() if match else ""
         disposition = _DISPOSITION.search(field("Disposition|Verdict"))
-        identifier = re.match(r"\[([A-Z][A-Z0-9]*-\d+)\]", header)
-        matches.append({"id": identifier.group(1) if identifier else "", "title": re.sub(r"^\[[^\]]+\]\s*[—–:-]?\s*", "", header).strip(),
+        identifier = re.match(r"\[?([A-Z][A-Z0-9]*-\d+)\]?", header)
+        matches.append({"id": identifier.group(1) if identifier else "", "title": re.sub(r"^\[?[A-Z][A-Z0-9]*-\d+\]?\s*[—–:-]?\s*", "", header).strip(),
                         "disposition": disposition.group(0).upper() if disposition else "", "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
     if not matches:
         raise ResolveError(f"The report has no finding whose Original finding is {avit}")
