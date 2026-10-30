@@ -93,8 +93,10 @@ function registerSidekickRoutes(app, { integrations = {} } = {}) {
     const runs = await call(['runs', '--limit', '200']);
     const found = (runs.runs || []).find(item => item.id === need(req.params.id, ID, 'run'));
     if (!found || !found.workbook || !fs.existsSync(found.workbook)) throw new HttpError('Workbook not found', 404);
-    res.download(found.workbook, path.basename(found.workbook));
-  }, { fallback: true }));
+    // Wait for the stream: `handle` would otherwise see no payload and end the response as a 204 first.
+    await new Promise((resolve, reject) => res.download(found.workbook, path.basename(found.workbook),
+      error => (error && !res.headersSent ? reject(error) : resolve())));
+  }));
   app.get('/api/sidekick/trends', handle(req => call(['trends', need(text(req.query.loadout, 80), NAME, 'loadout'), '--months', String(int(req.query.months, 0, 120, 12))])));
   app.get('/api/sidekick/actions', handle(req => call(['actions', ...(req.query.id ? ['--id', need(String(req.query.id), ID, 'action')] : []), '--limit', String(int(req.query.limit, 1, 1000, 200))])));
   app.get('/api/sidekick/owner', handle(req => {

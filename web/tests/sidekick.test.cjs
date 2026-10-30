@@ -11,12 +11,15 @@ const { createWorkbench } = require('../server.js');
 describe('Sidekick routes', () => {
   let wb, base;
   const calls = [];
+  const workbook = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tl-wb-')), 'Vulnerability Report 2026-10-30.xlsx');
   before(async () => {
+    fs.writeFileSync(workbook, Buffer.concat([Buffer.from('PK'), Buffer.alloc(200, 1)]));
     const sidekickCli = async (args, input, onLine) => {
       calls.push({ args, input });
       if (onLine) { onLine({ type: 'progress', current: 1, total: 2 }); onLine({ type: 'log', message: 'api: 3 branches' }); }
       if (args[0] === 'loadouts') return { code: 0, json: { loadouts: { 'Team A': [] }, powered: {} } };
       if (args[0] === 'loadout-save') return { code: 0, json: { name: args[1], entries: 1, warnings: [], added: 1, removed: 0 } };
+      if (args[0] === 'runs') return { code: 0, json: { runs: [{ id: 'b'.repeat(32), workbook }, { id: 'c'.repeat(32), workbook: workbook + '.gone' }] } };
       if (args[0] === 'report') return { code: 0, json: { runId: 'a'.repeat(32), rows: 2, failed: 0 } };
       if (args[0] === 'avit-close') return { code: 1, error: 'A closure reason is required' };
       return { code: 0, json: {} };
@@ -43,6 +46,15 @@ describe('Sidekick routes', () => {
     const args = calls.find(c => c.args[0] === 'report').args;
     assert.deepEqual(args.slice(0, 6), ['report', 'Team A', '--stale-days', '30', '--workers', '10']);
     assert.equal(args[6], '--cancel-file', 'jobs pass a portable cancel file');
+  });
+
+  it('downloads a run workbook as an attachment', async () => {
+    const res = await fetch(`${base}/api/sidekick/runs/${'b'.repeat(32)}/workbook`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-disposition'), /attachment; filename=.*Vulnerability Report 2026-10-30\.xlsx/);
+    assert.equal(Buffer.from(await res.arrayBuffer()).length, 202);
+    assert.equal((await fetch(`${base}/api/sidekick/runs/${'c'.repeat(32)}/workbook`)).status, 404);
+    assert.equal((await fetch(`${base}/api/sidekick/runs/not-an-id/workbook`)).status, 400);
   });
 
   it('validates closure requests before the CLI sees them', async () => {
