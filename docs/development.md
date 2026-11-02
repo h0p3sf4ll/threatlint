@@ -125,15 +125,17 @@ its existing rules. Contributors/builders need Git LFS and checked-out objects
 if LFS is adopted. Review host quotas and archive behavior at that time.
 Do not rewrite existing history or force-push as a routine documentation update.
 
-To re-record the narrated demos:
+To prepare the narrated demos for a human female narrator:
 
 ```bash
-npm --prefix web run videos
+npm --prefix web run videos:scripts -- --output-dir /tmp/threatlint-narration
 ```
 
-The recording script requires Playwright Chromium, ffmpeg, and a supported speech
-tool (`say` or `espeak-ng`). `THREATLINT_VOICE` selects a narration voice.
-Keep recordings fixture-based and free of private data.
+Follow the [recording and listening workflow](narration.md), then import the
+approved WAV takes with `--narration-dir`. Rendering requires Playwright Chromium
+and ffmpeg/ffprobe; there is no synthetic speech fallback. Use `--output-dir` for
+a draft before replacing published media. Keep visuals fixture-based and free
+of private data.
 
 ## Keep organization details out of commits
 

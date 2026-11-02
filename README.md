@@ -131,6 +131,8 @@ evidence/reporting workflows plus domain-specific skills—not just a role name.
 
 The demonstrations use local fixtures and synthetic examples. More videos are
 available in the Workbench under **Learn & videos**.
+The existing voiceovers are synthetic; the [human narration workflow](docs/narration.md)
+provides scripts and recording guidance for their replacement.
 
 ## Clear boundaries build trust
 

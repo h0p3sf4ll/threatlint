@@ -3,13 +3,12 @@
 /**
  * Builds the narrated video library and README screenshots from the real app.
  *
- *   npm --prefix web run videos            # all videos
- *   npm --prefix web run videos -- runtime # one video by id
+ *   npm --prefix web run videos:scripts -- --output-dir /path/to/packet
+ *   npm --prefix web run videos -- --narration-dir /path/to/packet overview
  *
- * Requirements: Playwright Chromium (npx playwright install chromium), ffmpeg,
- * and a text-to-speech engine: macOS `say` (default) or `espeak-ng`/`espeak`.
- * Set THREATLINT_VOICE to pick a macOS voice and THREATLINT_BROWSER_EXECUTABLE
- * to use a specific Chromium.
+ * Requirements for rendering: human-recorded scene takes, Playwright Chromium,
+ * and ffmpeg/ffprobe. Script export needs only Node. Set
+ * THREATLINT_BROWSER_EXECUTABLE to use a specific Chromium.
  *
  * Every scene is a real screenshot of the workbench, driven against local
  * fixtures only: a deliberately weak loopback demo app, a fake source manager,
@@ -22,42 +21,14 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { chromium } = require('playwright');
-const { createWorkbench } = require('../server.js');
-const { createDemoApp } = require('../examples/demo-app.cjs');
 const { VIDEOS } = require('../lib/help.cjs');
+const { parseArgs, exportPacket, loadRecordings } = require('./video-narration.cjs');
 
 const ROOT = path.resolve(__dirname, '../..');
 const MEDIA = path.join(ROOT, 'web/public/media');
 const DOCS_MEDIA = path.join(ROOT, 'docs/media');
 const WIDTH = 1440, HEIGHT = 900;
-const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-videos-'));
-
-// Friendly female narrator: the best installed US-English female voice, warmest first.
-const FEMALE_VOICES = ['Ava (Premium)', 'Ava (Enhanced)', 'Zoe (Premium)', 'Zoe (Enhanced)', 'Samantha (Enhanced)', 'Allison (Enhanced)', 'Samantha'];
-const SPEECH_RATE = '168';
-let narrator;
-function voice() {
-  if (narrator) return narrator;
-  if (process.env.THREATLINT_VOICE) return (narrator = process.env.THREATLINT_VOICE);
-  const installed = execFileSync('say', ['-v', '?'], { encoding: 'utf8' }).split('\n').map(line => line.split(/\s{2,}/)[0].trim());
-  narrator = FEMALE_VOICES.find(name => installed.includes(name)) || 'Samantha';
-  console.log(`Narrator voice: ${narrator}`);
-  return narrator;
-}
-function tts(text, file) {
-  if (process.platform === 'darwin') {
-    execFileSync('say', ['-v', voice(), '-r', SPEECH_RATE, '-o', file, '--data-format=LEI16@22050', text]);
-    return;
-  }
-  for (const engine of ['espeak-ng', 'espeak']) {
-    try { execFileSync(engine, ['-v', 'en-us+f3', '-s', '155', '-w', file, text]); return; } catch { /* try the next engine */ }
-  }
-  throw new Error('No text-to-speech engine found. Install espeak-ng or run on macOS.');
-}
-function duration(file) {
-  return Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString().trim());
-}
+let WORK;
 function ffmpeg(args) { execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]); }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -91,12 +62,15 @@ async function chatAnswer(args) {
     : '**Why it matters:** `request.args["id"]` flows straight into the query at `api/customers.py:42`, so `\' OR \'1\'=\'1` returns every customer.\n\n**Fix:**\n\n```python\ncursor.execute(\n    "SELECT id, name FROM customers WHERE id = %s",\n    (customer_id,),\n)\n```\n\n**Regression test:**\n\n```python\ndef test_lookup_rejects_injection(client):\n    assert client.get("/customers?id=\' OR \'1\'=\'1").json == []\n```';
 }
 
-async function setup() {
+async function setup(ctx) {
+  const { chromium } = require('playwright');
+  const { createWorkbench } = require('../server.js');
+  const { createDemoApp } = require('../examples/demo-app.cjs');
   const repo = path.join(WORK, 'payments-api'); fs.mkdirSync(repo);
   fs.writeFileSync(path.join(repo, 'app.py'), 'print("synthetic")\n');
   const report = fs.readFileSync(path.join(ROOT, 'web/examples/fp-review.md'), 'utf8');
-  const demo = createDemoApp(); await new Promise(resolve => demo.listen(0, '127.0.0.1', resolve));
-  const workbench = createWorkbench({ storageDir: path.join(WORK, 'state'), sourceManagers: fakeSourceManagers(repo), runProvider: async args => {
+  const demo = ctx.demo = createDemoApp(); await new Promise(resolve => demo.listen(0, '127.0.0.1', resolve));
+  const workbench = ctx.workbench = createWorkbench({ storageDir: path.join(WORK, 'state'), sourceManagers: fakeSourceManagers(repo), runProvider: async args => {
     if (args.purpose === 'chat') return chatAnswer(args);
     for (const step of ['Reading the route table…\n', 'Tracing request.args into the query builder…\n', 'Checking the authorization decorator…\n']) {
       args.onEvent({ type: 'text_chunk', text: step }); await new Promise(resolve => setTimeout(resolve, 350));
@@ -106,8 +80,8 @@ async function setup() {
   await new Promise(resolve => workbench.server.listen(0, '127.0.0.1', resolve));
   const launch = { headless: true };
   if (process.env.THREATLINT_BROWSER_EXECUTABLE) launch.executablePath = process.env.THREATLINT_BROWSER_EXECUTABLE;
-  const browser = await chromium.launch(launch);
-  return { repo, demo, demoUrl: `http://127.0.0.1:${demo.address().port}`, workbench, base: `http://127.0.0.1:${workbench.server.address().port}`, browser };
+  ctx.browser = await chromium.launch(launch);
+  Object.assign(ctx, { repo, demoUrl: `http://127.0.0.1:${demo.address().port}`, base: `http://127.0.0.1:${workbench.server.address().port}` });
 }
 
 // A caption bar and a pointer highlight are drawn into the page for each frame.
@@ -152,17 +126,17 @@ pre{margin:0;padding:22px 26px;white-space:pre-wrap}.cmd{color:#8ce5c7}.bad{colo
 
 const STORIES = {
   overview: ctx => [
-    { say: 'Hi! This is Threatlint. Think of it as a security reviewer who sits right next to you. It reads your code, and tells you exactly what to fix: the file, the line, the fix, and the test.', act: async page => { await page.goto(ctx.base); await page.locator('#connection-status.online').waitFor(); } },
+    { say: 'Security findings should help you move forward, not leave you guessing. Threatlint brings specialist reviewers to your code, with evidence, proposed fixes, and tests your team can use.', act: async page => { await page.goto(ctx.base); await page.locator('#connection-status.online').waitFor(); } },
     { say: 'Start from a playbook. Each one is a curated set of agents for a common task, like reviewing a pull request or checking code your AI assistant just wrote.', highlight: '#workflow-presets' },
     { say: 'The agent library has twenty-two specialists: threat modeling, APIs, authentication, secrets, infrastructure, privacy, and secure code generation.', act: async page => { await page.click('[data-view="agents"]'); } },
     { say: 'Connect GitHub or Azure DevOps to check out any branch, then review it in one click.', act: async page => { await page.click('[data-view="sources"]'); } },
-    { say: 'Runtime scanning tests a running app with real authentication, and draws the full attack chain from identity to impact.', act: async page => { await page.click('[data-view="runtime"]'); await page.click('#runtime-demo'); await page.waitForTimeout(500); await page.evaluate(() => document.getElementById('runtime-graph-board').scrollIntoView({ block: 'start' })); await page.evaluate(() => window.scrollBy(0, -60)); } },
-    { say: 'Stuck on a finding? Just ask Threatlint, and it answers from your own code. Metrics show your progress, and the Learn tab has a guide for every workflow. Your code is never modified. Let’s find it, fix it, and prove it.', act: async page => { await page.click('[data-view="learn"]'); } },
+    { say: 'For an application you are authorized to test, runtime scanning connects request and authentication evidence to findings and possible impact. This example uses a local demonstration app.', act: async page => { await page.click('[data-view="runtime"]'); await page.click('#runtime-demo'); await page.waitForTimeout(500); await page.evaluate(() => document.getElementById('runtime-graph-board').scrollIntoView({ block: 'start' })); await page.evaluate(() => window.scrollBy(0, -60)); } },
+    { say: 'Stuck on a finding? Ask Threatlint to explain it using your code. Reviews propose changes for your team to assess; they do not apply fixes. Metrics help track progress, and the Learn tab shows your next step.', act: async page => { await page.click('[data-view="learn"]'); } },
   ],
   'first-review': ctx => [
     { say: 'Let’s run your very first review together. Open a repository from the top right. Threatlint only reads it.', highlight: '#choose-repo', act: async page => { await page.goto(ctx.base); await page.locator('#connection-status.online').waitFor(); } },
     { say: 'Type or browse to the folder, then press Open.', highlight: '#repository-dialog', act: async page => { await page.click('#choose-repo'); await page.fill('#repo-path', ctx.repo); } },
-    { say: 'Next, choose a model. LM Studio keeps everything on your machine. Claude and OpenAI work too, and keys are held in memory only.', highlight: '#settings-dialog', act: async page => { await page.click('#open-repository'); await page.locator('#repository-dialog').waitFor({ state: 'hidden' }); await page.click('#settings-button'); await page.fill('#model-id', 'qwen2.5-coder-32b'); } },
+    { say: 'Next, choose a model. A local LM Studio endpoint keeps model inference on your machine. Cloud providers process the review context you send them. Choose the option your organization permits.', highlight: '#settings-dialog', act: async page => { await page.click('#open-repository'); await page.locator('#repository-dialog').waitFor({ state: 'hidden' }); await page.click('#settings-button'); await page.fill('#model-id', 'qwen2.5-coder-32b'); } },
     { say: 'Pick a playbook. Here, Pull request review loads the code, API, and authentication reviewers into your pipeline. Hover any question mark for an explanation.', highlight: '.pipeline-panel', act: async page => { await page.click('#settings-form button[type=submit]'); await page.getByRole('button', { name: /Pull request review/ }).click(); } },
     { say: 'Press Run. The activity panel streams what each agent inspects. For this walkthrough a recorded sample report stands in for a live model.', highlight: '.activity-panel', act: async page => { await page.click('#start-run'); await page.waitForTimeout(1600); } },
     { say: 'When it finishes, open Findings and read them. Each one cites a file and line, a severity, a proposed fix, and a regression test.', act: async page => { await page.waitForFunction(() => /complete|attention/i.test(document.getElementById('activity-badge').textContent), null, { timeout: 20000 }); await page.click('[data-view="reports"]'); await page.getByRole('button', { name: 'Read report ↗' }).first().click(); await page.click('#report-tab-findings'); } },
@@ -221,10 +195,10 @@ const STORIES = {
     { say: 'Save it. Dashboards are stored locally, and Export CSV takes the raw findings into your own BI tool.', act: async page => { await page.click('#dashboard-save'); await page.waitForTimeout(900); } },
   ],
   ide: ctx => [
-    { say: 'Threatlint also works inside your editor, so code generated by AI assistants is secure by default.', act: async page => { await page.setContent(terminalPage('terminal — your-repo', ['$ pip install threatlint', '$ threatlint ide install', ...ctx.ideInstall])); } },
+    { say: 'Catch risky patterns while the code is still fresh in your mind. Threatlint brings secure coding guidance and focused checks into your editor, including code written with an AI assistant.', act: async page => { await page.setContent(terminalPage('terminal — your-repo', ['$ pip install threatlint', '$ threatlint ide install', ...ctx.ideInstall])); } },
     { say: 'One command installs secure coding rules for GitHub Copilot, Cursor, Windsurf, and Claude Code, plus a Claude Code hook, VS Code tasks, and a pre-commit check.' },
     { say: 'The guard is a fast, offline checker with rules for injection, unsafe deserialization, disabled TLS verification, weak crypto, and hardcoded secrets. Every finding comes with a secure alternative.', act: async page => { await page.setContent(terminalPage('terminal — your-repo', ['$ threatlint guard generated.py', ...ctx.guard])); } },
-    { say: 'In Claude Code, the hook runs the guard after every edit. Findings are sent back to the model, which rewrites the code before you ever see it. The VS Code extension shows the same findings inline on save.' },
+    { say: 'In Claude Code, the configured hook checks edits and returns findings to the assistant. Review any suggested changes yourself. The VS Code extension also shows findings inline on save. These checks help, but they do not guarantee secure code.' },
     { say: 'Before you push, run the secure code generation agent on your diff from the workbench. Then let the reusable CI template gate the pull request.', act: async page => { await page.goto(ctx.base); await page.locator('#connection-status.online').waitFor(); await page.getByRole('button', { name: /Check AI-generated code/ }).click(); } },
   ],
 };
@@ -259,7 +233,14 @@ function commandOutput(command, args, options = {}) {
   try { return execFileSync(command, args, { encoding: 'utf8', ...options }); } catch (error) { return `${error.stdout || ''}${error.stderr || ''}`; }
 }
 
-async function build(id, ctx) {
+function recordingPlan(ids = []) {
+  const unknown = ids.filter(id => !VIDEOS.some(video => video.id === id));
+  if (unknown.length) throw new Error(`Unknown video: ${unknown.join(', ')}. Choose from: ${VIDEOS.map(video => video.id).join(', ')}`);
+  return VIDEOS.filter(video => !ids.length || ids.includes(video.id))
+    .map(video => ({ ...video, scenes: STORIES[video.id]({}) }));
+}
+
+async function build(id, ctx, recordings, media, docsMedia) {
   const video = VIDEOS.find(item => item.id === id);
   const scenes = STORIES[id](ctx);
   const page = await ctx.browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
@@ -268,45 +249,84 @@ async function build(id, ctx) {
     if (scene.act) await scene.act(page, ctx);
     await page.waitForTimeout(250);
     await caption(page, scene.caption || scene.say, scene.highlight);
-    const frame = path.join(WORK, `${id}-${index}.png`), audio = path.join(WORK, `${id}-${index}.wav`), clip = path.join(WORK, `${id}-${index}.mp4`);
+    const frame = path.join(WORK, `${id}-${index}.png`), clip = path.join(WORK, `${id}-${index}.mp4`);
+    const { file: audio, seconds: takeSeconds } = recordings.get(id)[index];
     await page.screenshot({ path: frame });
-    tts(scene.say, audio);
-    const seconds = duration(audio) + 0.7;
-    ffmpeg(['-loop', '1', '-i', frame, '-i', audio, '-filter_complex', `[0:v]scale=${WIDTH}:${HEIGHT},fade=t=in:st=0:d=0.25,format=yuv420p[v];[1:a]apad=pad_dur=0.7[a]`,
-      '-map', '[v]', '-map', '[a]', '-t', seconds.toFixed(2), '-r', '24', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-tune', 'stillimage', '-c:a', 'aac', '-b:a', '96k', '-ar', '44100', clip]);
+    const seconds = takeSeconds + 0.7;
+    ffmpeg(['-loop', '1', '-i', frame, '-i', audio, '-filter_complex', `[0:v]scale=${WIDTH}:${HEIGHT},fade=t=in:st=0:d=0.25,format=yuv420p[v];[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=pad_dur=0.7[a]`,
+      '-map', '[v]', '-map', '[a]', '-t', seconds.toFixed(2), '-r', '24', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-tune', 'stillimage', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', clip]);
     clips.push({ clip, frame, seconds });
     if (index === 0 || (id === 'runtime-scan' && index === 5) || (id === 'dashboards' && index === 1) || (id === 'ask' && index === 2)) fs.copyFileSync(frame, path.join(WORK, `${id}-poster.png`));
   }
   await page.close();
   const list = path.join(WORK, `${id}.txt`);
   fs.writeFileSync(list, clips.map(item => `file '${item.clip}'`).join('\n'));
-  ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', path.join(MEDIA, video.file)]);
+  ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', path.join(media, video.file)]);
   // Posters double as README screenshots; GIFs are silent, low-frame-rate previews.
-  ffmpeg(['-i', path.join(WORK, `${id}-poster.png`), '-vf', 'scale=1280:-1', path.join(MEDIA, video.poster)]);
-  fs.copyFileSync(path.join(MEDIA, video.poster), path.join(DOCS_MEDIA, video.poster));
+  ffmpeg(['-i', path.join(WORK, `${id}-poster.png`), '-vf', 'scale=1280:-1', path.join(media, video.poster)]);
+  fs.copyFileSync(path.join(media, video.poster), path.join(docsMedia, video.poster));
   const gifList = path.join(WORK, `${id}-gif.txt`);
   fs.writeFileSync(gifList, clips.map(item => `file '${item.frame}'\nduration ${Math.min(3.2, item.seconds).toFixed(2)}`).join('\n') + `\nfile '${clips.at(-1).frame}'`);
-  ffmpeg(['-f', 'concat', '-safe', '0', '-i', gifList, '-vf', 'scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer:bayer_scale=4', '-r', '1', path.join(DOCS_MEDIA, `${id}.gif`)]);
+  ffmpeg(['-f', 'concat', '-safe', '0', '-i', gifList, '-vf', 'scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer:bayer_scale=4', '-r', '1', path.join(docsMedia, `${id}.gif`)]);
   const total = clips.reduce((sum, item) => sum + item.seconds, 0);
   console.log(`✓ ${video.file}  ${scenes.length} scenes · ${total.toFixed(0)}s narrated`);
 }
 
-(async () => {
-  fs.mkdirSync(MEDIA, { recursive: true }); fs.mkdirSync(DOCS_MEDIA, { recursive: true });
-  const ctx = await setup();
-  ctx.seedMetrics = () => seedMetrics(ctx);
-  ctx.seedReport = () => seedReport(ctx);
-  const threatlint = process.env.THREATLINT_CLI || 'threatlint';
-  const ideRepo = path.join(WORK, 'ide-repo'); fs.mkdirSync(ideRepo); execFileSync('git', ['init', '-q'], { cwd: ideRepo });
-  ctx.ideInstall = commandOutput(threatlint, ['ide', 'install', '--target', ideRepo]).trim().split('\n');
-  const sample = path.join(ideRepo, 'generated.py');
-  fs.writeFileSync(sample, 'import pickle, subprocess, requests\n\ndef load(blob):\n    return pickle.loads(blob)\n\ndef thumbnail(name):\n    subprocess.run(f"convert {name} thumb.png", shell=True)\n\nAPI_KEY = "sk_live_' + 'EXAMPLEONLYNOTAREALKEY000"\nrequests.get("https://api.example.com", verify=False)\n');
-  ctx.guard = commandOutput(threatlint, ['guard', 'generated.py'], { cwd: ideRepo }).trim().split('\n');
-  const only = process.argv.slice(2);
-  try {
-    for (const video of VIDEOS) if (!only.length || only.includes(video.id)) await build(video.id, ctx);
-  } finally {
-    await ctx.browser.close(); await ctx.workbench.close(); ctx.demo.close();
-    fs.rmSync(WORK, { recursive: true, force: true });
+async function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  if (options.help) {
+    console.log(`Human-recorded video library
+
+Export: npm run videos:scripts -- --output-dir DIR [video IDs]
+Check:  npm run videos:check -- --narration-dir DIR [video IDs]
+Render: npm run videos -- --narration-dir DIR [--output-dir DRAFT_DIR] [video IDs]
+
+Without --output-dir, rendering replaces the published library.
+Record and approve a human female narrator; no synthetic speech is generated.
+Video IDs: ${VIDEOS.map(video => video.id).join(', ')}`);
+    return;
   }
-})().catch(error => { console.error(error); process.exit(1); });
+  const videos = recordingPlan(options.ids);
+  if (options.mode === 'export') {
+    exportPacket(options.outputDir, videos);
+    console.log(`Recording scripts and brief: ${options.outputDir}`);
+    return;
+  }
+  const recordings = loadRecordings(options.narrationDir, videos);
+  if (options.mode === 'check') {
+    console.log(`Validated ${videos.length} videos. Listen to the takes to approve delivery and recording rights before publishing.`);
+    return;
+  }
+  const media = options.outputDir || MEDIA;
+  const docsMedia = options.outputDir ? path.join(options.outputDir, 'previews') : DOCS_MEDIA;
+  const ctx = {};
+  WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-videos-'));
+  try {
+    fs.mkdirSync(media, { recursive: true }); fs.mkdirSync(docsMedia, { recursive: true });
+    await setup(ctx);
+    ctx.seedMetrics = () => seedMetrics(ctx);
+    ctx.seedReport = () => seedReport(ctx);
+    if (videos.some(video => video.id === 'ide')) {
+      const threatlint = process.env.THREATLINT_CLI || 'threatlint';
+      const ideRepo = path.join(WORK, 'ide-repo'); fs.mkdirSync(ideRepo); execFileSync('git', ['init', '-q'], { cwd: ideRepo });
+      ctx.ideInstall = commandOutput(threatlint, ['ide', 'install', '--target', ideRepo]).trim().split('\n');
+      const sample = path.join(ideRepo, 'generated.py');
+      fs.writeFileSync(sample, 'import pickle, subprocess, requests\n\ndef load(blob):\n    return pickle.loads(blob)\n\ndef thumbnail(name):\n    subprocess.run(f"convert {name} thumb.png", shell=True)\n\nAPI_KEY = "sk_live_' + 'EXAMPLEONLYNOTAREALKEY000"\nrequests.get("https://api.example.com", verify=False)\n');
+      ctx.guard = commandOutput(threatlint, ['guard', 'generated.py'], { cwd: ideRepo }).trim().split('\n');
+    }
+    for (const video of videos) await build(video.id, ctx, recordings, media, docsMedia);
+  } finally {
+    try {
+      await Promise.all([
+        ctx.browser?.close(),
+        ctx.workbench?.close(),
+        ctx.demo?.listening && new Promise((resolve, reject) => ctx.demo.close(error => error ? reject(error) : resolve())),
+      ]);
+    } finally {
+      fs.rmSync(WORK, { recursive: true, force: true });
+    }
+  }
+}
+
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+module.exports = { main, recordingPlan };

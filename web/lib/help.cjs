@@ -4,7 +4,7 @@
  * Developer help content shared by the browser and desktop workbench.
  * TOOLTIPS: keyed by the data-tip attribute in index.html.
  * HELP_TOPICS: short, task-oriented guides shown in the Learn view.
- * VIDEOS: narrated walkthroughs rendered by docs/media/build-videos.cjs into
+ * VIDEOS: narrated walkthroughs rendered by web/scripts/build-videos.cjs into
  *   web/public/media (MP4 with voiceover) and docs/media (GIF previews).
  */
 
