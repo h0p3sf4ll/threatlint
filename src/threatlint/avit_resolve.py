@@ -26,6 +26,11 @@ import urllib.parse
 import urllib.request
 
 from threatlint import servicenow as sn
+from threatlint import avit_cli, avit_repositories, avit_semgrep
+from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
+from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
+from threatlint.avit_report import ResolveError, report_line as _report_line, verdict_for
+from threatlint.avit_semgrep import same_path as _same_path, tail as _tail
 
 # Work notes, exactly as AppSec asked for them.
 CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
@@ -37,51 +42,6 @@ CLOSED_STATE, CLOSED_SUBSTATE = "3", "3"
 # semgrep.dev serves the same API as semgrep.app and resolves on networks that block semgrep.app.
 SEMGREP_API = os.environ.get("THREATLINT_SEMGREP_API", "https://semgrep.dev").rstrip("/") + "/api/v1"
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-_DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
-
-
-class ResolveError(RuntimeError):
-    """A user-actionable failure; messages never contain credential values."""
-
-
-# ── Report parsing ───────────────────────────────────────────────────────────
-
-def verdict_for(report: str, avit: str) -> dict[str, str]:
-    """The finding in an FP report whose Original finding names this AVIT: id, title, disposition, confidence."""
-    # Finding headings: `#### [FP-001] — title`, or without brackets (`## FP-001 — title`).
-    sections = re.split(r"(?m)^#{2,6}\s+(?=\[?[A-Z][A-Z0-9]*-\d+\b)", report)
-    matches = []
-    for section in sections[1:]:
-        header, _, body = section.partition("\n")
-        original = re.search(r"(?im)^\**Original finding\**\s*:\s*(.+)$", body)
-        if avit not in (original.group(1) if original else header).upper():
-            continue
-        def field(name: str) -> str:
-            match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
-            return match.group(1).replace("*", "").strip() if match else ""
-        disposition = _DISPOSITION.search(field("Disposition|Verdict"))
-        identifier = re.match(r"\[?([A-Z][A-Z0-9]*-\d+)\]?", header)
-        matches.append({"id": identifier.group(1) if identifier else "", "title": re.sub(r"^\[?[A-Z][A-Z0-9]*-\d+\]?\s*[—–:-]?\s*", "", header).strip(),
-                        "disposition": disposition.group(0).upper() if disposition else "", "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
-    if not matches:
-        # A single-finding report with a plain heading (`## Finding`): its own Original finding line decides.
-        originals = [m for m in re.finditer(r"(?im)^\**Original finding\**\s*:\s*(.+)$", report) if avit in m.group(1).upper()]
-        if len(originals) == 1 and len(re.findall(r"(?im)^\**Original finding\**\s*:", report)) == 1:
-            body = report[originals[0].start():]
-            def field(name: str) -> str:
-                match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
-                return match.group(1).replace("*", "").strip() if match else ""
-            disposition = _DISPOSITION.search(field("Disposition|Verdict"))
-            title = re.search(r"(?m)^#\s+(.+)$", report)
-            matches.append({"id": "", "title": title.group(1).strip() if title else avit, "disposition": disposition.group(0).upper() if disposition else "",
-                            "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
-    if not matches:
-        raise ResolveError(f"The report has no finding whose Original finding is {avit}")
-    if len({match["disposition"] for match in matches}) > 1:
-        raise ResolveError(f"The report gives {avit} conflicting dispositions; resolve it manually")
-    if not matches[0]["disposition"]:
-        raise ResolveError(f"{matches[0]['id'] or avit} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition")
-    return matches[0]
 
 
 # ── ServiceNow writes ────────────────────────────────────────────────────────
@@ -138,83 +98,16 @@ def semgrep_token(profile: str | None) -> str:
 
 
 def _semgrep(path: str, token: str, *, body: dict | None = None) -> dict:
-    request = urllib.request.Request(f"{SEMGREP_API}{path}", data=json.dumps(body).encode() if body is not None else None,
-                                     headers={"Authorization": f"Bearer {token}", "Accept": "application/json", **({"Content-Type": "application/json"} if body is not None else {})})
-    try:
-        with sn._OPENER.open(request, timeout=120) as response:  # noqa: S310 - fixed HTTPS host, redirects refused
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        hint = {401: " Check the Semgrep token.", 403: " The token needs Web API scope.", 404: " Check the deployment and project."}.get(exc.code, "")
-        raise ResolveError(f"Semgrep returned HTTP {exc.code}.{hint}") from exc
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        raise ResolveError(f"Semgrep request failed: {exc}") from exc
-
-
-def _tail(value: str) -> str:
-    return str(value or "").replace("\\", "/").lstrip("./")
-
-
-def _same_path(found: str, wanted: str) -> bool:
-    a, b = _tail(found), _tail(wanted)
-    return bool(a and b) and (a == b or a.endswith("/" + b) or b.endswith("/" + a))
+    return avit_semgrep.request(path, token, body=body, api=SEMGREP_API)
 
 
 def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict[str, str], deployment: str | None = None,
                     report_text: str = "") -> tuple[dict, list[dict]]:
     """Open Semgrep findings for the same project, file, and rule/line as the AVIT."""
-    from threatlint.semgrep_platform import deployment as find_deployment, SemgrepError  # noqa: PLC0415
-    try:
-        dep = find_deployment(token, deployment or "")
-    except SemgrepError as exc:
-        raise ResolveError(str(exc)) from exc
-    path, line, rule = context.get("file_path", ""), context.get("line", ""), context.get("rule", "")
-    if not path:
-        raise ResolveError("The AVIT has no File Path, so its Semgrep finding cannot be matched narrowly")
-    # Semgrep names ADO projects "{Project}/{Repository}" and GitHub ones "{owner}/{repo}".
-    named = list(dict.fromkeys(name for name in (f"{target.get('project')}/{target['name']}" if target.get("project") else "",
-                                                 f"{target.get('organization')}/{target['name']}") if name and not name.startswith("/")))
-    if not line.isdigit():
-        line = _report_line(report_text, context.get("avit", "")) if report_text else None
-        line = str(line) if line else ""
-    if not line.isdigit():
-        # Without a line the match would cover every finding of the rule in the file, including real ones.
-        raise ResolveError("Neither the AVIT nor the report records the flagged line, so the Semgrep finding cannot be matched narrowly; pass --line")
-    near = lambda found: found is not None and abs(int(found) - int(line)) <= 3
-    matches = []
-    if kind in ("sast", "sca"):
-        for project in named:
-            for page in range(20):
-                query = urllib.parse.urlencode({"issue_type": kind, "repos": project, "status": "open", "dedup": "true", "page": page, "page_size": 100})
-                findings = _semgrep(f"/deployments/{urllib.parse.quote(dep['slug'])}/findings?{query}", token).get("findings", [])
-                for finding in findings:
-                    name = str(finding.get("rule_name") or (finding.get("rule") or {}).get("name", ""))
-                    location = finding.get("location") or {}
-                    if rule and not (name == rule or name.endswith("." + rule) or rule.endswith("." + name)):
-                        continue
-                    if _same_path(location.get("file_path", ""), path) and near(location.get("line")):
-                        matches.append({"id": int(finding["id"]), "rule": name, "path": location.get("file_path"), "line": location.get("line"), "ref": finding.get("ref")})
-                if len(findings) < 100:
-                    break
-            if matches:
-                break
-    else:
-        cursor = ""
-        for _ in range(20):
-            query = urllib.parse.urlencode({"limit": 100, **({"cursor": cursor} if cursor else {}), **{"repo": named[0]}})
-            data = _semgrep(f"/deployments/{dep['id']}/secrets?{query}", token)
-            for finding in data.get("findings", []):
-                found_path, _, found_line = str(finding.get("findingPath", "")).rpartition(":")
-                if not found_path:
-                    found_path, found_line = finding.get("findingPath", ""), ""
-                status = str(finding.get("status", ""))
-                if any(word in status for word in ("FIXED", "IGNORED", "REMOVED")):
-                    continue
-                if _same_path(found_path, path) and near(found_line or None):
-                    matches.append({"id": int(finding["id"]), "rule": finding.get("type"), "path": found_path, "line": found_line or None, "ref": finding.get("ref")})
-            cursor = data.get("cursor") or ""
-            if not cursor or not data.get("findings"):
-                break
-    return dep, matches
+    return avit_semgrep.semgrep_matches(
+        token, kind, target, context, deployment, report_text, query=_semgrep,
+        report_line=_report_line, same_path=_same_path,
+    )
 
 
 def semgrep_ignore(token: str, slug: str, kind: str, ids: list[int], note: str) -> int:
@@ -224,139 +117,11 @@ def semgrep_ignore(token: str, slug: str, kind: str, ids: list[int], note: str) 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def add_resolve_parsers(actions) -> None:
-    checkout = actions.add_parser("checkout", help="Clone the repository and branch named in the AVIT (SCM Tool, Organization, Project, Repository, Branch)")
-    checkout.add_argument("number", metavar="AVIT")
-    checkout.add_argument("--dir", required=True, help="Empty directory to clone into")
-    sn.add_avit_arguments(checkout)
-    semgrep = actions.add_parser("semgrep", help="Re-run the Semgrep triage for an AVIT already closed as a false positive by Threatlint")
-    semgrep.add_argument("number", metavar="AVIT")
-    semgrep.add_argument("--line", type=int, help="Flagged line, when the AVIT does not record one (narrows the match to ±3 lines)")
-    semgrep.add_argument("--semgrep-deployment", help="Semgrep deployment ID or slug (default: THREATLINT_SEMGREP_DEPLOYMENT, org.json, or the token's only deployment)")
-    semgrep.add_argument("--report", help="FP report with a **Tuned rule** block: also tune the rule (SAST/Secrets)")
-    semgrep.add_argument("--checkout", help="The AVIT checkout, to validate the tuned rule against the flagged file (deleted afterwards)")
-    sn.add_avit_arguments(semgrep)
-    note = actions.add_parser("note", help="Add a work note to an AVIT without changing its state (e.g. why it could not be reviewed)")
-    note.add_argument("number", metavar="AVIT")
-    note.add_argument("--message", required=True, help="Work note text")
-    note.add_argument("--yes", action="store_true", help="Apply without prompting")
-    sn.add_avit_arguments(note)
-    removed = actions.add_parser("close-removed", help="Close an AVIT whose repository was deleted (verified first; no report is attached)")
-    removed.add_argument("number", metavar="AVIT")
-    removed.add_argument("--yes", action="store_true", help="Apply without prompting")
-    sn.add_avit_arguments(removed)
-    resolve = actions.add_parser("resolve", help="Upload the FP report to the AVIT; close it and tune Semgrep when it is a false positive")
-    resolve.add_argument("number", metavar="AVIT")
-    resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
-    resolve.add_argument("--docx", required=True, help="Word report to attach (the only file attached to the AVIT)")
-    resolve.add_argument("--semgrep-deployment", help="Semgrep deployment slug when the token can access several")
-    resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")
-    resolve.add_argument("--skip-rule-tuning", action="store_true", help="Ignore the Semgrep finding but do not replace the rule")
-    resolve.add_argument("--checkout", help="The AVIT checkout (from `avit checkout`); used to validate the tuned rule, then deleted")
-    resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
-    resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
-    sn.add_avit_arguments(resolve)
-    from threatlint.dast import add_dast_parser  # noqa: PLC0415
-    add_dast_parser(actions)
-
-
-def _session(args):
-    if not args.snow_instance:
-        raise ResolveError(f"Set the ServiceNow instance with --snow-instance or {sn.INSTANCE_ENV}")
-    instance = sn.validate_instance_url(args.snow_instance)
-    client_id, client_secret = sn.resolve_credentials(args.aws_profile)
-    return instance, sn.access_token(instance, client_id, client_secret)
-
-
-def _confirm(question: str, yes: bool) -> None:
-    if yes:
-        return
-    if not sys.stdin.isatty():
-        raise ResolveError("Confirmation required: rerun with --yes after reviewing the verdict")
-    if input(f"{question} [y/N] ").strip().lower() not in ("y", "yes"):
-        raise ResolveError("Cancelled; nothing was changed")
-
-
 def cmd_checkout(args) -> int:
-    [avit] = sn.parse_avit_numbers(args.number)
-    instance, token = _session(args)
-    record = _record(instance, token, avit)
-    kind = sn.finding_kind(record)
-    try:
-        target = sn.repository_target(record["context"])
-    except sn.ServiceNowError as exc:
-        if sn.in_code_security_view(record):
-            raise
-        # Other tools (DAST, pen test, …) often name no repository; the review uses the AVIT's own evidence.
-        raise ResolveError(f"{avit} names no repository ({exc}); triage it from the AVIT evidence without a checkout") from exc
-    if target["scm"] == "azure-devops" and not sn.git_credential("azure-devops", target["organization"])[0] and sys.stdin.isatty():
-        from threatlint.ado_login import prompt_and_save  # noqa: PLC0415
-        print("  No Azure DevOps credential found; set up a PAT now (Code: Read).")
-        print(f"  ✓ Saved to {prompt_and_save(target['organization'])}")
-    print(f"  {avit} : {target['web_url']} · branch {target['branch'] or '(default)'} · {record['context'].get('file_path', 'no file path')}")
-    path = record["context"].get("file_path", "")
-    try:
-        target = _checkout_branch(target, args.dir, path)
-    except sn.ServiceNowError as exc:
-        renamed = renamed_ado_repository(target, args) if target["scm"] == "azure-devops" and "not found" in str(exc) else None
-        if not renamed:
-            raise
-        print(f"  ! {target['name']} was renamed in Azure DevOps to {renamed}; cloning it (Semgrep still uses the original project name)")
-        quote = lambda value: urllib.parse.quote(value, safe="")
-        url = f"https://dev.azure.com/{quote(target['organization'])}/{quote(target['project'])}/_git/{quote(renamed)}"
-        shutil.rmtree(args.dir, ignore_errors=True)
-        target = _checkout_branch({**target, "clone_url": url, "web_url": url, "renamed_to": renamed}, args.dir, path)
-    print(f"✓ Checked out to {args.dir}")
-    print(json.dumps({"avit": avit, "kind": kind, "checkout": os.path.abspath(args.dir), **target, **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
-    return 0
-
-
-def _checkout_branch(target: dict[str, str], directory: str, path: str) -> dict[str, str]:
-    """Check out the AVIT's branch; when it was deleted, the default branch (the flagged file may still be there)."""
-    try:
-        sn.checkout_repository(target, directory, path)
-        return target
-    except sn.ServiceNowError as exc:
-        if not (target["branch"] and re.search(r"Remote branch .* not found", str(exc))):
-            raise
-        print(f"  ! Branch {target['branch']} no longer exists; checking out the default branch instead")
-        shutil.rmtree(directory, ignore_errors=True)
-        target = {**target, "branch_deleted": target["branch"], "branch": ""}
-        sn.checkout_repository(target, directory, path)
-        if path and not os.path.exists(os.path.join(directory, path)):
-            raise ResolveError(f"Branch {target['branch_deleted']} was deleted and {path} is not on the default branch") from exc
-        return target
-
-
-def renamed_ado_repository(target: dict[str, str], args) -> str | None:
-    """Current name of an ADO repository the AVIT knows by an old name.
-
-    ServiceNow keeps the name from scan time. Semgrep's project record keeps the repository's GUID in its
-    URL, and Azure DevOps resolves a GUID under the current name.
-    """
-    import base64  # noqa: PLC0415
-    from threatlint import semgrep_platform as sp  # noqa: PLC0415
-    from threatlint.ado_login import load  # noqa: PLC0415
-    from threatlint.tls import ssl_context  # noqa: PLC0415
-    try:
-        token = sp.resolve_token(getattr(args, "aws_profile", None))[0]
-        dep = sp.deployment(token)
-        project = sp.call(f"/api/v1/deployments/{urllib.parse.quote(dep['slug'])}/projects/{urllib.parse.quote(target['project'] + '/' + target['name'], safe='/')}", token)
-    except sp.SemgrepError:
-        return None
-    url = str((project.get("project") or project).get("url", ""))
-    match = re.search(r"/_apis/git/repositories/([0-9a-f-]{36})", url)
-    pat, _source = load(target["organization"])
-    if not match or not pat:
-        return None
-    request = urllib.request.Request(f"https://dev.azure.com/{urllib.parse.quote(target['organization'])}/_apis/git/repositories/{match.group(1)}?api-version=7.1",
-                                     headers={"Authorization": "Basic " + base64.b64encode(f":{pat}".encode()).decode(), "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=30, context=ssl_context()) as response:  # noqa: S310 - fixed HTTPS host
-            name = json.loads(response.read()).get("name")
-    except (urllib.error.URLError, ValueError):
-        return None
-    return name if isinstance(name, str) and name and name != target["name"] else None
+    return avit_repositories.cmd_checkout(
+        args, session=_session, read_record=_record, checkout_branch=_checkout_branch,
+        renamed_repository=renamed_ado_repository,
+    )
 
 
 def cmd_note(args) -> int:
@@ -370,33 +135,6 @@ def cmd_note(args) -> int:
     update(instance, token, record["sys_id"], {"work_notes": message})
     print(f"  ✓ Work note added to {avit}; state unchanged")
     return 0
-
-
-def repository_removed(target: dict[str, str]) -> bool:
-    """True only when Azure DevOps, asked with a working credential for the organization, says the repository
-    does not exist under that name or any rename. A credential or network failure is never taken as removal."""
-    import base64  # noqa: PLC0415
-    from threatlint.tls import ssl_context  # noqa: PLC0415
-    if target.get("scm") != "azure-devops":
-        raise ResolveError("Only Azure DevOps repositories can be checked for removal")
-    header, _source = sn.git_credential("azure-devops", target["organization"])
-    if not header:
-        raise ResolveError(f"No Azure DevOps credential for {target['organization']}; cannot confirm the repository was removed")
-    quote = lambda value: urllib.parse.quote(value, safe="")
-    def get(url: str):
-        request = urllib.request.Request(url, headers={"Authorization": header, "Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=120, context=ssl_context()) as response:  # noqa: S310 - fixed HTTPS host
-            body = response.read()
-        if not body.lstrip().startswith(b"{"):
-            raise ResolveError(f"Azure DevOps did not accept the credential for {target['organization']}; cannot confirm removal")
-        return json.loads(body)
-    try:
-        repos = get(f"https://dev.azure.com/{quote(target['organization'])}/_apis/git/repositories?api-version=7.1").get("value", [])
-    except urllib.error.URLError as exc:
-        raise ResolveError(f"Could not list {target['organization']} repositories: {exc}") from exc
-    if len(repos) == 0:
-        raise ResolveError(f"The credential sees no repositories in {target['organization']}; cannot confirm removal")
-    return not any(repo.get("name", "").lower() == target["name"].lower() for repo in repos)
 
 
 def cmd_close_removed(args) -> int:
@@ -492,11 +230,6 @@ def cmd_resolve(args) -> int:
     return 0
 
 
-def _report_line(report: str, avit: str) -> int | None:
-    match = re.search(rf"Original finding\W*:\s*{avit};[^\n]*:(\d+)\s*$", report, re.M)
-    return int(match.group(1)) if match else None
-
-
 def remove_checkout(path: str | None) -> bool:
     """Delete the AVIT checkout once triage and validation are done; read-only git objects are made writable first."""
     if not path or not os.path.isdir(path) or not os.path.isdir(os.path.join(path, ".git")):
@@ -550,12 +283,4 @@ def cmd_semgrep(args) -> int:
 
 
 def run(handler, args) -> int:
-    try:
-        return handler(args)
-    except (ResolveError, sn.ServiceNowError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    finally:
-        # The checkout holds a copy of someone else's source (possibly live secrets); never leave it on disk.
-        if getattr(args, "avit_command", "") in ("resolve", "semgrep") and not getattr(args, "keep_checkout", False) and remove_checkout(getattr(args, "checkout", None)):
-            print(f"  ✓ Deleted the local checkout {args.checkout}")
+    return avit_cli.run(handler, args, remove_checkout=remove_checkout)

@@ -1,140 +1,127 @@
 # <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Threatlint in the IDE: secure-by-default code generation
 
-▶ Watch: [Secure-by-default code in the IDE](../web/public/media/ide.mp4) (narrated) · also in the app under **Learn & videos**.
+Catch a risky pattern while the code is still in front of you. Threatlint pairs secure-coding
+instructions for your AI assistant with an offline pattern checker, `threatlint guard`.
+Findings name the rule, CWE, and secure alternative; specialist reviews provide the deeper
+source/control tracing a pattern match cannot.
 
-Threatlint meets you where you write code. Two pieces work together:
-
-1. **Instructions.** Secure-by-default instructions load into your AI coding assistant (Copilot,
-   Cursor, Claude Code, Windsurf), so generated code starts out with parameterized queries, argument
-   arrays, `secrets`, verified TLS, and server-side authorization.
-2. **`threatlint guard`.** This is a deterministic, offline, dependency-free check. It runs on save,
-   after every AI edit, in pre-commit, and in CI. It catches the insecure patterns that still slip
-   through and tells you, or the model, the secure alternative.
-
-Neither piece replaces the evidence-led specialist agents. Use them for anything security-sensitive
-(see [the workflow](#recommended-workflow)).
+[Watch the IDE walkthrough](../web/public/media/ide.mp4) or open **Learn & videos** in the Workbench.
 
 ## One-command setup
 
-```bash
-pip install threatlint
-cd your-repo
-threatlint ide install                       # all editors
-threatlint ide install --editors claude,copilot   # or a subset: vscode,cursor,claude,copilot,windsurf
-```
+1. Install the CLI, enter your repository, and choose your editors:
 
-| File | Editor | What it does |
-| --- | --- | --- |
-| `.github/copilot-instructions.md` (marked section) | GitHub Copilot | Repository-wide secure-coding instructions |
-| `.github/instructions/threatlint-secure-code.instructions.md` | Copilot / VS Code | Same rules with `applyTo: "**"` |
-| `.cursor/rules/threatlint-secure-code.mdc` | Cursor | Rule with `alwaysApply: true` |
-| `.windsurfrules` (marked section) | Windsurf | Workspace rules |
-| `CLAUDE.md` (marked section) | Claude Code | Project instructions |
-| `.claude/settings.json` | Claude Code | `PostToolUse` hook on `Edit\|Write\|MultiEdit` that runs `threatlint guard --hook` |
-| `.vscode/tasks.json` | VS Code / Cursor / Windsurf | *Guard workspace*, *Guard current file*, *Guard staged changes* tasks with a problem matcher |
-| `.pre-commit-config.yaml` | Any | `threatlint-guard` hook (created only if the file is absent; otherwise the snippet is printed) |
+   ```bash
+   pip install threatlint
+   cd your-repo
+   threatlint ide install --editors claude,copilot
+   # Omit --editors to install for vscode,cursor,claude,copilot,windsurf.
+   ```
 
-The installer is idempotent. Markdown content stays between
-`<!-- threatlint:secure-code:begin/end -->` markers and is updated in place. JSON files are merged:
-your existing settings, hooks, and tasks are kept. Re-run the command after upgrading threatlint to
-refresh the rules. `threatlint ide instructions` prints the canonical text
-(`src/threatlint/data/ide/secure-code-instructions.md`) if you want to paste it somewhere else.
+2. Inspect the reported `added`, `updated`, `unchanged`, or `skipped` files before committing.
+   **This command writes repository configuration.**
+3. Check one existing source file:
+
+   ```bash
+   threatlint guard src/service.py --fail-on medium
+   ```
+
+**Expected result:** findings with location and a secure alternative, or no matched patterns.
+Exit `1` means a finding met your threshold—not that every issue was found.
+Next: [install the editor extension](../ide/vscode/README.md) for inline feedback.
+
+| Files written | Purpose |
+| --- | --- |
+| `.github/copilot-instructions.md`, `.github/instructions/threatlint-secure-code.instructions.md` | Copilot instructions; the scoped file uses `applyTo: "**"` |
+| `.cursor/rules/threatlint-secure-code.mdc`, `.windsurfrules` | Always-applied Cursor rule / Windsurf instructions |
+| `CLAUDE.md`, `.claude/settings.json` | Claude instructions and `PostToolUse` guard hook |
+| `.vscode/tasks.json` | Workspace, current-file, and staged-file guard tasks |
+| `.pre-commit-config.yaml` | Hook config if absent; otherwise a snippet is printed when needed |
+
+Marked Markdown sections update in place; JSON settings/hooks/tasks are merged. Dedicated rule
+files are refreshed. Re-run after upgrading, then review the diff. The installer writes pre-commit
+configuration but does **not** activate Git hooks; install the hook through your existing
+pre-commit workflow. `threatlint ide instructions` prints the canonical instructions without installing.
 
 ## Per-editor usage
 
 ### VS Code, Cursor, Windsurf: the Threatlint extension
 
-The extension in [`ide/vscode`](../ide/vscode/README.md) runs the guard when a file is opened or
-saved:
-
-- Problems appear inline with the rule ID, the CWE, and the **secure alternative**. Hover over a
-  finding to see it.
-- A quick fix inserts a justified suppression comment.
-- The status bar shield shows the open counts.
-- **Threatlint: Open Workbench** launches the full Workbench, where you run the specialist agents,
-  connect sources, run runtime scans, and view dashboards.
-
-No extension? Run the `Threatlint: guard current file` task. Its problem matcher fills the Problems
-panel the same way.
+The [extension](../ide/vscode/README.md) scans file-backed documents on open/save by default.
+Hover for the secure alternative; the shield counts diagnostics, not verified vulnerabilities.
+**Threatlint: Open Workbench** opens the configured URL—it does not start the server.
+Without the extension, use the installed **Threatlint: guard current file** task.
 
 ### Claude Code
 
-`threatlint ide install --editors claude` adds the instructions to `CLAUDE.md` and registers this
-hook:
+The installer adds this hook:
 
 ```json
-{ "hooks": { "PostToolUse": [ { "matcher": "Edit|Write|MultiEdit",
-  "hooks": [ { "type": "command", "command": "threatlint guard --hook", "timeout": 30 } ] } ] } }
+{"hooks":{"PostToolUse":[{"matcher":"Edit|Write|MultiEdit","hooks":[{"type":"command","command":"threatlint guard --hook","timeout":30}]}]}}
 ```
 
-After every file edit, Claude Code sends the tool call JSON to the hook on stdin. If the edited file
-has a finding at medium severity or higher, the hook exits with code `2` and writes the findings and
-secure alternatives to stderr. Claude Code shows that output to the model, which then rewrites the
-code. Clean files exit `0` silently. To go deeper, ask for a review: *"use appsec-code-reviewer on
-my working-tree diff"*.
+For recognized file paths in the tool payload, medium-or-higher findings go to stderr with exit `2`,
+giving Claude feedback to act on. Otherwise the hook exits `0` silently. This is post-edit
+feedback, **not** an edit rollback or a guarantee the model will fix the code.
 
 ### GitHub Copilot (Chat and agent mode)
 
-Copilot reads `.github/copilot-instructions.md` and the `.instructions.md` file automatically. Copilot
-Chat custom agents (`threatlint install --copilot --local`) add `@appsec-code-reviewer` and the
-other specialists. After accepting a suggestion, save the file (the extension runs the guard) or run
-the *guard staged changes* task before committing.
+Copilot reads the installed instruction files. Install specialist agents separately with
+`threatlint install --copilot --local`; save accepted suggestions to trigger extension checks.
 
 ### Cursor and Windsurf
 
-Their rules files load the same instructions into every request. Install the VSIX for inline
-diagnostics; both editors accept VS Code extensions.
+Their rules carry the same instructions. Both accept VS Code extensions, but Copilot model access
+depends on the editor's Language Model API and sign-in; do not assume identical provider support.
 
 ## The guard
 
 ```bash
-threatlint guard                       # scan the current directory
-threatlint guard src/ app.py           # files or directories
-threatlint guard --staged              # only git-staged files (pre-commit)
-threatlint guard --format sarif -o threatlint.sarif   # for GitHub code scanning / ADO
-threatlint guard --format json         # machine-readable, used by the extension
-threatlint guard --fail-on medium      # exit 1 at or above this severity (default: high; "none" never fails)
+threatlint guard src/ app.py                 # explicit files/directories
+threatlint guard                            # current directory
+threatlint guard --staged                    # selects Git-staged filenames
+threatlint guard --format sarif -o threatlint.sarif
+threatlint guard --format json
+threatlint guard --fail-on medium            # default high; "none" never fails findings
 threatlint guard --list-rules
 ```
 
-It covers 21 rules: eval/exec on dynamic input, shell command injection, SQL built from strings,
-unsafe deserialization (pickle, `yaml.load`), disabled TLS verification, MD5/SHA-1 password hashing,
-non-cryptographic randomness for tokens, hardcoded AWS/GitHub/private-key/generic secrets
-(redacted in output), `innerHTML` and `dangerouslySetInnerHTML` with dynamic values, wildcard CORS
-with credentials, filesystem paths from request input, disabled JWT verification or `alg: none`,
-and debug mode. Each rule carries a CWE and a concrete secure alternative.
+The 21 rules cover patterns in injection, unsafe deserialization, disabled TLS verification,
+weak password hashing/token randomness, secret-like values, dynamic HTML, CORS, request-derived
+paths, JWT verification, and debug mode. Secret-rule snippets are redacted.
 
-The guard is line-oriented pattern matching. It is fast and predictable, and it misses anything that
-needs data-flow analysis. **A clean result is not a security approval.**
+**Limits:** line-oriented matching is not data-flow analysis. Files over 1,000,000 bytes, lines
+over 4,000 characters, unsupported types, and excluded build/vendor directories are skipped.
+`--staged` reads **working-tree contents** of staged filenames, not Git index blobs; an empty
+staged selection currently falls back to the current directory. A clean result is not approval.
 
 ## Suppression policy
 
-- Suppress only a **verified** false positive. Write the rule ID and a reason on the same line or
-  the line above:
-  `# threatlint-ignore: TL-PY-SHELL command is a constant; no user input`
-- A suppression without a reason is ignored. `ALL` works only on a single line, never file-wide.
-- For fixtures or rule definitions, a file-level opt-out in the first 10 lines must name specific
-  rules: `# threatlint-ignore-file: TL-PY-EVAL deliberately insecure test samples`.
-- Review suppressions in code review like any other code. To triage many scanner findings at once,
-  use the `appsec-fp-reviewer` agent; a false-positive verdict does not by itself authorize a
-  suppression.
+- Suppress only a verified false positive, naming a rule and reason on the same/preceding line:
+  `# threatlint-ignore: TL-PY-SHELL constant command; no user input`.
+- `ALL` is line-scoped, not file-wide. A reason is required.
+- Fixtures/rule definitions may name specific rules in the first 10 lines:
+  `# threatlint-ignore-file: TL-PY-EVAL intentionally insecure fixture`.
+- The extension quick fix inserts a comment **and changes source**. Replace
+  `REPLACE-WITH-VERIFIED-REASON` before saving; the scanner checks for a reason, not its truth.
+  Review suppressions as code changes. A triage verdict alone does not authorize them.
 
 ## Recommended workflow
 
-```text
-generate / write code ─► guard on save + AI hook ─► guard --staged (pre-commit)
-        ▲                     │ secure alternative fed back to you or the model
-        └─────────────────────┘
-  open PR ─► CI template (guard SARIF + appsec-code-reviewer on the diff) ─► merge
-```
+1. **Write/generate:** installed instructions guide the assistant; they do not enforce correctness.
+2. **Check:** use on-save checks or the Claude hook; repair the cause using the suggested alternative.
+3. **Review:** ask `appsec-code-reviewer` about the diff for auth, crypto, payments, tenancy,
+   file handling, and AI/tool changes. Reviews propose changes; they do not apply them.
+4. **Gate deliberately:** run guard in your pre-commit/CI workflow with an explicit threshold.
+   Check its exit status and the [CI setup](github-actions.md), rather than treating an editor
+   shield as a merge gate.
 
-1. **Generate.** The assistant already follows the installed secure-by-default instructions.
-2. **Guard on save / after each AI edit.** Fix findings with the listed secure alternative. Claude
-   Code fixes them itself through the hook.
-3. **Review the diff.** For changes that touch auth, crypto, payments, tenancy, file handling, or
-   AI/tool calls, run `appsec-code-reviewer` (Claude Code, Copilot, or the Workbench). Run it on
-   generated code too.
-4. **Pre-commit.** `threatlint guard --staged` blocks high-severity patterns before they reach the
-   remote.
-5. **CI.** The reusable GitHub Actions and Azure Pipelines templates upload guard SARIF and run the
-   specialist agents on every PR (see `docs/github-actions.md` and `azure-pipelines/README.md`).
+## Troubleshooting
+
+| Symptom | Next action |
+| --- | --- |
+| CLI not found in editor | Set `threatlint.executable` to the installed CLI's absolute path |
+| No inline findings | Save a file-backed document; check scan settings, severity filter, and skipped-file limits |
+| Claude ignores hook feedback | Check merged settings and CLI PATH; review the diff yourself |
+| Expected pre-commit hook did not run | Activate pre-commit separately and inspect its installed configuration |
+| Unsure whether a match is real | Trace the source/control path with a [specialist review](workbench.md#review-experience) |

@@ -1,358 +1,309 @@
 # <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Threatlint Workbench
 
-The workbench is a single-user, local-first interface for all fourteen Threatlint specialists.
-It runs as a browser application or a sandboxed Electron desktop app. Both use the same Node.js
-backend, canonical agent definitions, skill registry, provider adapters, and report parser.
+Turn a security question into an engineering decision: inspect the source, read the evidence,
+and leave with a proposed fix and regression assertions. The Workbench brings Threatlint's
+specialists, scanner triage, runtime observations, and reports into one single-user interface.
+Browser and Electron desktop use the same local Node.js backend and agent definitions.
 
 ## Requirements and first launch
 
-- Node.js **22+** with npm.
-- One configured model provider: a running LM Studio-compatible server, Anthropic, or OpenAI.
-- Optional: Python **3.9+** with `python-docx` for formatted Word exports.
-- For development tests: the Python `dev` extras provide pytest; JavaScript tests use Node's
-  built-in runner. Playwright is included as a development dependency for browser/desktop tests.
+You need Node.js **22+** and npm. A model provider is needed for reviews, but not for the synthetic
+report preview. Word export also needs Python **3.9+** with `python-docx`.
 
-From the repository root:
+1. From the repository root, install the Workbench dependencies and start it:
 
-```bash
-npm --prefix web ci
-npm --prefix web run desktop
-# Or run the same workbench in a browser:
-npm --prefix web start
-```
+   ```bash
+   npm --prefix web ci
+   npm --prefix web start
+   # Desktop instead:
+   npm --prefix web run desktop
+   ```
 
-The browser address is <http://127.0.0.1:3000>. Change `PORT` if necessary. The desktop app chooses
-its own available loopback port and starts/stops its backend with the application.
+2. Open <http://127.0.0.1:3000> in browser mode. Use `PORT` to change it. Desktop selects an
+   available loopback port and manages its backend.
+3. Choose **See a sample findings report** to explore the labelled synthetic report without a
+   model or credentials. **Expected result:** a findings view with evidence and proposed actions,
+   not a scan of your code.
+4. Configure a model below, then follow [Review experience](#review-experience) for your first
+   source-grounded review. No model scan starts automatically.
 
 ### Models and credentials
 
-Open **Model & settings**, select a provider, and enter a model ID actually available to your
-account/server. No hard-coded cloud model catalogue is assumed.
+Open **Settings → Model provider**, select a provider, and **Load models**. Choose an available
+tool-capable model; manual model IDs are also accepted.
 
-- **LM Studio:** load a tool-capable model, start its local server, leave the URL at
-  <http://localhost:1234/v1>, and click **Load models**. The model must support OpenAI-compatible
-  streamed tool calls for repository inspection. HTTP is restricted to loopback hosts; remote
-  compatible servers require HTTPS.
-- **False positive review:** *Test → False positive review* reviews one AVIT or a list, one at a time.
-  Each AVIT gets its own report, and its own closure or work note. See [avit-integration.md](avit-integration.md).
-- **Settings page:** *Settings* in the sidebar is a normal page with **Model provider**, **ServiceNow**
-  (instance, OAuth client, AWS CLI read), **Semgrep** (API token) and **Azure DevOps** (PAT) sections,
-  each saved separately. ServiceNow, Semgrep and Azure DevOps are required for *False positive review*,
-  which shows a setup checklist and does not start until all three are configured.
-- **Desktop app:** it trusts the OS certificate store (macOS Keychain / Windows certificate store), so model
-  gateways behind corporate TLS inspection work, and it adds your login-shell PATH so `gh`, `git`, `az`, and
-  `aws` are found when launched from the Dock or Start menu.
-- **Anthropic / OpenAI / Copilot:** choose the provider, and the **Model** dropdown fills with the
-  models your credential can use (click **Load models** to refresh). *Enter a model ID manually*
-  still accepts any ID. A session-only key typed in the dialog takes priority; otherwise the
-  Workbench uses the credential where each tool normally keeps it:
+| Provider | Setup and credential lookup |
+| --- | --- |
+| LM Studio / compatible | Load a model supporting OpenAI-compatible streamed tool calls and start the server; default URL `http://localhost:1234/v1`. Remote hosts require HTTPS; HTTP is loopback-only. |
+| Anthropic | Session key → `ANTHROPIC_API_KEY` → `env` in `~/.claude/settings.json` (`ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL`, from environment or settings, supports a gateway. |
+| OpenAI | Session key → `OPENAI_API_KEY` → API key in `~/.codex/auth.json`. A Codex ChatGPT-account sign-in is not used. |
+| GitHub Copilot | Session token → `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token`. Run `gh auth login` first if needed. |
 
-  | Provider | Looked up in order |
-  | --- | --- |
-  | Anthropic | `ANTHROPIC_API_KEY` → `env` block of `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json` on Windows: `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` (environment or settings.json) routes model listing and reviews through your gateway. |
-  | OpenAI | `OPENAI_API_KEY` → an API key saved by Codex (`codex login --with-api-key`, in `~/.codex/auth.json`). A Codex *ChatGPT-account* sign-in only works inside Codex and is not used. |
-  | GitHub Copilot | `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → the GitHub CLI sign-in (`gh auth token`; run `gh auth login` once) |
+On Windows, `~` means `%USERPROFILE%`. Claude Code subscription OAuth credentials are never read
+by the Workbench. Copilot lists plan-enabled models supporting tool calls and `/chat/completions`;
+account quotas still apply.
 
-  **Claude defaults:** with Anthropic, the dropdown's first entry is *Threatlint default*, shown in Settings as
-  "Scanning: claude-opus-5-5 · Chat: claude-opus-5-5". Leaving it selected runs review, triage, AVIT, scanner and
-  scan-import jobs and Ask Threatlint on `claude-opus-5-5`. Picking any model uses it for
-  every run. `THREATLINT_SCAN_MODEL` / `THREATLINT_GENERAL_MODEL` (or `scanModel` / `generalModel` in
-  `~/.threatlint/org.json`) change the defaults for the runner; see [Models](../README.md#models).
+With Anthropic, **Threatlint default** follows the runner's review/chat model policy. An explicit
+model overrides both; `THREATLINT_SCAN_MODEL` / `THREATLINT_GENERAL_MODEL` or `scanModel` /
+`generalModel` in `~/.threatlint/org.json` change the defaults. See [Setup](setup.md).
 
-  Copilot lists only models your plan enables that support `/chat/completions` with tool calls,
-  because reviews need streamed tool use. Copilot plan quotas apply: an exhausted quota shows
-  HTTP 429. Claude Code's subscription login (macOS Keychain / `~/.claude/.credentials.json`) is
-  never read. The UI shows which source is in use, never the value.
-- **Remote data consent:** cloud (including Copilot) and remote compatible-model reviews require explicit UI consent.
-  Prompts, attached findings, and inspected source/tool results are transmitted to that provider.
-- Credentials are never put into browser storage, session history, report metadata, or URLs.
-  Non-secret model/provider/URL preferences may be saved. Consent is not persisted across restarts.
+**Before sending source:** cloud providers, Copilot, and remote compatible servers require explicit
+UI consent. Prompts, attached findings, and inspected source/tool results go to that provider.
+Session model keys are not saved to browser storage, reports, or history. Non-secret preferences
+may persist; consent does not survive a restart.
 
-The workbench never starts a model scan automatically. Sample report preview is synthetic, labelled,
-and requires no provider. Integration tests use deterministic provider fixtures, not paid API calls.
+Integration credentials are different: **Settings** saves ServiceNow, Semgrep, Azure DevOps,
+GitHub App, DefectDojo, and SonarQube configuration through their respective setup flows.
+Do not assume those saved credentials are session-only. Desktop uses the OS certificate store
+and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands can be found.
 
 ## Review experience
 
-1. Open the source directory. The desktop uses a native picker; the browser accepts a path and
-   offers directory browsing. Workspace history is listed in the sidebar.
-2. Select **Security baseline**, **Pull request review**, **Find signal in the noise**, or
-   **Close the loop**, or build a custom ordered pipeline in the Agent library.
-3. Add an optional scope: component, path, commit comparison, finding ID, or precise question.
-   A findings-triage workflow needs an attachment, a findings path, or a preceding report.
-4. Attach `.sarif`, `.json`, `.md`, or `.txt` scanner/report input (UTF-8; maximum 5 MB).
-   The first 100,000 characters are supplied as clearly delimited untrusted evidence; truncation
-   is explicitly disclosed. This is **not** a promise that every item in a large scan was reviewed.
-5. Run. Agents receive their full mapped skills and use Read/Grep/Glob/read-only inspection tools.
-  Each subsequent specialist receives bounded executive and detailed-finding context from preceding reports and
-   must independently verify it. The history is not an authoritative proof of a finding.
-6. Follow live activity or stop the review. Cancellation aborts model requests; completed reports
-   remain available. Connection loss is labelled interrupted, never silently rerun or called success.
-7. Read/download completed reports. The finding view filters by severity and disposition while
-   retaining the full report and proposed fix text. Missing structured fields produce format warnings.
+1. **Open code.** Choose a local source directory, or [connect a source manager](#source-code-managers).
+   Desktop has a native picker; browser mode supports path entry and browsing.
+2. **Choose the decision.** Select **Security baseline**, **Pull request review**,
+   **Find signal in the noise**, **Close the loop**, or an ordered custom pipeline.
+3. **Narrow the question.** For example: “Review the working-tree diff for tenant authorization
+   changes.” Add a component, path, comparison, or finding ID when useful.
+4. **Supply evidence if triaging.** Attach UTF-8 `.sarif`, `.json`, `.md`, or `.txt` input,
+   supply a findings path, or use a preceding report. Attachments are limited to **5 MB**;
+   only the first **100,000 characters** enter the prompt. Truncation must be disclosed.
+   Pipeline Findings triage also requires Semgrep Community Edition on PATH (`semgrep --version`).
+5. **Run and inspect.** Specialists use mapped skills and read-only inspection tools. Later
+   specialists receive bounded preceding-report context, which they must independently verify.
+6. **Use the report.** Filter findings by severity/disposition, inspect the full evidence and
+   proposed fix, then download Markdown or Word. Missing fields produce format warnings.
 
-The Skills view exposes the exact packaged workflow bodies and their agent assignments. The registry
-is [the agent-to-skill map](../src/threatlint/data/agent-skills.json). Add a skill there, add its valid
-SKILL.md, wire its native discovery entry points, and run the skill/agent tests.
+**Expected result:** a saved advisory report—not applied code, a security approval, or proof every
+finding was reviewed. **Stop** cancels model requests; completed reports remain. A lost connection
+is labelled interrupted and does not silently rerun. Next: [read and act on reports](reports.md).
 
 ## Professional findings reports
 
-The false-positive reviewer is designed for an engineering handoff, not a verdict spreadsheet:
+The findings-triage specialist produces a handoff, not just a verdict:
 
-| Tier | Required content |
+| Section | What to use |
 | --- | --- |
-| Executive | Risk and decision, input accounting, prioritized actions, suggested owner/effort |
-| Findings | Original IDs, source revision/provenance, evidence/control trace, disposition, severity, confidence |
-| Engineering | Proposed code/config fixes, compatibility notes, regression assertions, acceptance matrix |
-| Scanner tuning | Original-rule prerequisites, narrow proposal, ruleid/ok fixtures, blast radius, approval and rollback |
+| Executive | Decision, input accounting, priorities, suggested owner and effort |
+| Findings | Original IDs, revision/provenance, evidence, disposition, severity, confidence |
+| Engineering | Proposed fixes, compatibility notes, regression assertions, acceptance criteria |
+| Scanner tuning | Rule prerequisites, narrow proposal, fixtures, blast radius, approval and rollback |
 
-The native agent specification is [the FP reviewer](../src/threatlint/data/agents/appsec-fp-reviewer.md).
-A [synthetic example](../web/examples/fp-review.md) is bundled for interface previews.
+**TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS** is separate from severity and confidence. Missing
+source revisions, callers, rules, or runtime evidence remain explicit limits. A false-positive
+verdict does not authorize suppression. Fixes are **NOT APPLIED** and suggested tests **NOT RUN**
+unless actual execution evidence is recorded.
 
-TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS is independent of severity/confidence. An unreviewed scan
-revision, unseen caller, missing scanner rule, or runtime uncertainty must be disclosed. A verified
-false positive does not establish suppression safety. Proposed fixes remain **NOT APPLIED**; proposed
-tests and scanner checks are **NOT RUN** unless actual execution evidence exists.
+Format checks assess structure, not citation accuracy, exploitability, rule semantics, or test
+success. Human review is required. See the [synthetic example](../web/examples/fp-review.md) and
+[canonical reviewer](../src/threatlint/data/agents/appsec-fp-reviewer.md).
 
-Automatic format checks inspect report headings, explicit fields, evidence-reference shapes,
-remediation sections, and acceptance language. They do **not** validate source citations, exploitability,
-Semgrep semantics, test outcomes, or coverage preservation. Human engineering/security review is required.
+For ServiceNow items, **Test → False positive review** accepts AVITs or SCTASKs and reviews AVITs
+one at a time. Its setup checklist requires ServiceNow OAuth, Semgrep, and Azure DevOps credentials.
+Configure them in Settings before starting; use the [AVIT guide](avit-integration.md) for closure
+and external-write behavior.
 
 ## Storage and security boundary
 
 ### Local storage
 
-- Browser runner: the user's home directory under `.threatlint/workbench`, unless
-  `THREATLINT_STATE_DIR` specifies another absolute directory.
-- Desktop: Electron's per-user application-data directory, in its workbench subdirectory.
-- Metadata is atomically persisted; report files live in per-session directories. Keys and uploaded
-  scanner attachments are not persisted. Reports contain source evidence and must be treated as
-  sensitive local documents. Reports and metadata are not encrypted at rest by the application.
-- Source is not modified by analysis. Generated reports are stored outside the inspected repository.
-- Removing a source directory does not automatically delete retained reports. Manage retention
-  using your local data policy; there is no cloud synchronization or telemetry service.
+| Data | Location / lifetime |
+| --- | --- |
+| Browser reports and history | `~/.threatlint/workbench`, or absolute `THREATLINT_STATE_DIR` |
+| Desktop reports and history | Electron's per-user application-data directory, under `workbench` |
+| Conversations / dashboards | `conversations.json` / `dashboards.json` beside history |
+| Session model keys / review attachments | Not persisted in review history |
+
+Reports are stored outside the inspected repository. Reports and conversation text can contain
+source evidence; they are **not application-encrypted at rest**. Removing a source directory does
+not delete retained reports. Apply your local retention policy; there is no cloud history sync.
 
 ### Execution controls
 
-- The backend binds loopback only, rejects cross-origin/browser requests and unexpected Host values,
-  and checks WebSocket origins. It is not an authenticated multi-user server and must not be
-  exposed through a public reverse proxy or port forward.
-- Tool commands run without a shell, use an allowlist, and reject mutations, command chaining,
-  interpreters, output flags, and common command hooks. Read/Grep/Glob paths are confined to the
-  selected repository and reject resolved symlink escapes.
-- Shell inspection is defense-in-depth, **not** an operating-system filesystem/process sandbox.
-  Git configuration, filesystem races, unusual external tools, and malicious repositories still
-  require caution. Use disposable OS/container isolation for untrusted repositories.
-- Desktop renderer: sandbox enabled, context isolation enabled, Node integration disabled.
-  Narrow IPC permits only native repository/findings selection; arbitrary filesystem/command
-  execution is not exposed to the renderer. Outbound renderer requests are blocked.
-- Reports/skills render through local `marked` and DOMPurify packages under a restrictive CSP.
-  No CDN, font service, or external image fetch is required. Raw provider errors are not treated
-  as trusted HTML. Untrusted repository/attachment text remains evidence rather than instructions.
-- No automatic exploit execution, secret validation, application patching, or scanner suppression.
+- **Local, not multi-user:** loopback binding, Host/origin checks, and WebSocket origin checks.
+  Do not expose the runner through a public proxy or port forward; it has no multi-user authentication.
+- **Analysis, not patching:** inspection commands use argument arrays and an allowlist; resolved
+  Read/Grep/Glob paths are repository-confined. Mutations, shell chaining, interpreters, output
+  flags, and common command hooks are rejected.
+- **Not an OS sandbox:** filesystem races, Git configuration, and external tools still matter.
+  Use disposable OS/container isolation for untrusted repositories.
+- **Desktop renderer:** sandboxed, context-isolated, no Node integration or arbitrary command IPC.
+  Outbound renderer requests are blocked. Reports use local rendering libraries, DOMPurify, and CSP.
+- **Separate write boundary:** review agents do not patch code, validate secrets, execute exploits,
+  or suppress scanner findings. Explicit integration post/resolve actions can change external
+  systems; read their confirmation and the relevant integration guide.
 
 ### Word export
 
-The converter is bundled, not dependent on a previous global Claude installation. The backend runs
-`python3` by default; set `THREATLINT_PYTHON` to an absolute Python executable when needed.
-That interpreter must have `python-docx` available. If conversion fails, the Markdown report remains
-readable/downloadable and the Word download is omitted. The app does not install Python packages.
+The bundled converter uses `python3`, or the absolute interpreter set by `THREATLINT_PYTHON`.
+That interpreter must already have `python-docx`; the app does not install it. Conversion failure
+leaves Markdown available and omits the Word download.
+
+## Source code managers
+
+1. Open **Sources**, choose GitHub or Azure DevOps cloud, and connect:
+
+   | Provider | Minimum read access |
+   | --- | --- |
+   | GitHub fine-grained PAT / App installation token | Contents: read; Metadata: read |
+   | Azure DevOps PAT + organization slug, not URL | Code: Read (`vso.code`) |
+
+2. Select a discovered repository and branch.
+3. Choose **Check out & open workspace**.
+
+**Expected result:** a shallow local clone with provider, repository, branch, and commit recorded.
+Hooks, submodules, and LFS are disabled. Discovery is GET-only with validated/pinned DNS and bounded
+responses. Connection tokens stay in memory and clear on disconnect/restart; a successful checkout
+can remain on disk and contains source.
+
+A saved [GitHub App](github-app.md) connects automatically and refreshes installation tokens.
+Source browsing does not support GitHub Enterprise Server or Azure DevOps Server.
+
+## Runtime scanning
+
+Observe a running app only when you have authority to test it:
+
+1. Open **Scan running app** and enter the target, authorization reason, and explicit normalized
+   origin-relative paths. No crawling or attack payloads are added.
+2. Choose authentication and optional role identities; set the request budget.
+3. Run, then inspect requests, coverage, and the [attack chain](#reading-the-attack-chain).
+
+The target receives `GET` requests. OAuth token/form-login workflows also send authentication
+`POST`s; API-key authentication may add a query parameter. Even GET can have side effects on
+an unsafe endpoint. The default **20**, maximum **100** target-request budget is shared across
+identities; untested paths remain marked **NOT TESTED**.
+
+Manual browser sign-in requires Playwright Chromium on the runner. Finish closes the browser and
+retains only target-origin cookies, with a 15-minute session lifetime. Exports in JSON, Markdown,
+or HTML omit configured authentication values. Review response evidence for sensitive data before sharing.
+
+| Authentication | What you provide |
+| --- | --- |
+| None / Bearer / Basic | No credential, token, or username/password |
+| API key / custom headers / cookie | Named header/query key, header JSON, or cookie string |
+| OAuth client credentials / refresh token / password | Explicit token endpoint and grant credentials; password grant only where permitted |
+| Form login | Login endpoint, field names, username/password; not an arbitrary SSO automation flow |
+| Mutual TLS | PEM client certificate/key and optional passphrase |
+| Browser state | Exported cookie state; localStorage tokens are not replayed |
+| Manual browser session | Complete SSO/MFA yourself, then Finish; no authentication bypass |
+
+Use only authorized test identities. Private/loopback targets require explicit opt-in.
+This observer is separate from the [AVIT ephemeral deployment/DAST flow](avit-integration.md).
+
+### Reading the attack chain
+
+Read left to right: **Scope & authority → Identity → Request → Response/control → Observation →
+Impact hypothesis**. Solid edges are observed; dashed amber edges are unvalidated hypotheses.
+Select a node for its chain; **Finding chains only** hides requests without findings. A `401/403`
+records a denial for that request, not proof authorization holds everywhere.
+
+## Importing a scan report
+
+1. Open **Import scan report** and choose an Invicti XML/JSON, MobSF JSON, DefectDojo findings
+   JSON, or SonarQube issues/hotspots JSON export (**25 MB** maximum).
+2. Leave **Scanner** on auto-detect or select it. Optionally select the matching workspace
+   and supply the destination finding reference.
+3. Import and inspect the saved findings/report. At most **500 findings** are retained;
+   omissions are disclosed. Without a usable model, results are **NOT TRIAGED**, with
+   AMBIGUOUS placeholders—not model verdicts.
+4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
+   **Post to SonarQube…**. Posting requires confirmation and can change status.
+
+Parsing is local; model triage sends finding evidence to your configured provider.
+SARIF/Semgrep inputs belong in [Findings triage](#review-experience), not this importer.
+Use the destination guide for write behavior: [AVIT](avit-integration.md),
+[DefectDojo](defectdojo-integration.md), [SonarQube](sonarqube-integration.md).
+
+## Ask Threatlint
+
+Ask about the workspace, report, individual finding, or runtime scan—for example:
+“Which control prevents this request from crossing tenant boundaries?”
+Chat uses the selected provider and read-only repository tools, with up to 24 tool rounds per answer.
+Context is delimited as untrusted evidence. Threads retain the last 20 turns within a
+60,000-character history budget; failed/stopped answers are discarded.
+
+## Metrics
+
+Use [Metrics and dashboards](dashboards.md) to group saved findings by workspace, severity,
+specialist, or time. Scores describe reported evidence, not certified security posture.
+
+## In-app help
+
+Use control **?** tooltips or **Learn & videos** (`?` keyboard shortcut) for task guides, glossary,
+and locally bundled videos. Rebuild videos with `npm --prefix web run videos`; requirements
+are in `web/scripts/build-videos.cjs`.
+
+## Developer flow
+
+The sidebar groups **Test** (review, sources, runtime, triage/import), **Fix** (Findings and Ask
+Threatlint), **Track** (Metrics), and **Reference** (Agents, Skills, help). The Skills view shows
+the packaged workflow bodies and assignments from the [registry](../src/threatlint/data/agent-skills.json).
 
 ## Desktop packaging
 
 ```bash
-# Build an unpacked application for the current platform
-npm --prefix web run desktop:pack
-
-# Produce distribution targets for the current platform
-npm --prefix web run desktop:dist
+npm --prefix web run desktop:pack   # unpacked application, current platform
+npm --prefix web run desktop:dist   # distribution targets, current platform
 ```
 
-Targets are macOS DMG/ZIP, Windows NSIS, and Linux AppImage/DEB. Build on the target OS for normal
-distribution workflows. Output is written to the ignored release directory under web.
-The app bundles canonical agents, all skills, the registry, report converter, frontend, and production
-Node modules. Python and local models are not bundled.
+Targets: macOS DMG/ZIP, Windows NSIS, Linux AppImage/DEB; output: `web/release`.
+Build on the target OS. Packages include the runner, UI, agents, skills, converter, and Python
+source—not a Python interpreter or local models.
 
-For an offline build using an already installed Electron distribution, from the web directory:
+For an offline pack using the already installed Electron distribution, from `web/`:
 
 ```bash
 npm run desktop:pack -- --mac --arm64 -c.mac.identity=null \
   -c.electronDist=node_modules/electron/dist -c.electronVersion=40.10.2
 ```
 
-The unsigned macOS application bundle has been built and smoke-tested during this change. Signing,
-notarization, installer distribution, auto-update infrastructure, and Windows/Linux runtime validation
-have **not** been completed. Do not describe the local unsigned bundle as a signed production release.
-Use your organization's signing/notarization process before distributing it to other machines.
-
-The ZIP-reader override pins the extractor to a maintained cached version. Revalidate packaging if
-Electron/extractor versions change; the override is explicit in the package manifest and lockfile.
+This command disables macOS signing. Do not equate packaging with signing, notarization, or
+cross-platform runtime validation. Follow your organization's distribution policy.
+The ZIP-reader override is explicit in the manifest/lockfile; revalidate after dependency changes.
 
 ## Tests and validation
 
+See [Development](development.md) for prerequisites. These are commands to run, not a claim
+that your checkout or live provider has passed:
+
 ```bash
-# Unit, API, tool-policy, provider-stream, persistence, and pipeline regression tests
 npm --prefix web test
 python -m pytest tests -q
-
-# Browser E2E (install Playwright's browser once, or use an installed Chromium executable)
-npx --prefix web playwright install chromium
 npm --prefix web run test:browser
-
-# Example: use locally installed Chrome without a browser download
-THREATLINT_BROWSER_EXECUTABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
-  npm --prefix web run test:browser
-
-# Real Electron startup, agent/skill counts, report preview, and renderer isolation
 npm --prefix web run test:desktop
 ```
 
-Set `THREATLINT_DESKTOP_EXECUTABLE` to a packaged executable to exercise a built app instead of
-the development Electron launch. Browser tests create isolated temporary repositories/history and
-use deterministic synthetic report fixtures. No live cloud credentials or models are required.
-
-Validated locally: all Python/Node regressions, the browser user journey including cancellation,
-credential non-persistence, history and mobile layout, and macOS ARM64 packaged Electron startup.
-Model-generated semantic quality and live cloud/local model interoperability still require testing
-against the actual chosen provider/model. Prompt improvements and format checks are not quality guarantees.
+Browser tests need Playwright Chromium (`npx --prefix web playwright install chromium`), or
+`THREATLINT_BROWSER_EXECUTABLE` pointing to installed Chromium/Chrome. Desktop tests accept
+`THREATLINT_DESKTOP_EXECUTABLE` for a packaged app. Tests use deterministic fixtures; live
+provider interoperability and model report quality need separate validation.
 
 ## Troubleshooting
 
-| Symptom | Next step |
+| Symptom | Next action |
 | --- | --- |
-| No local models | Load a tool-capable model in LM Studio and start its server; check URL/port |
-| API/model error | Check exact model ID, account access, credentials, and provider availability |
-| Missing Word button | Check the configured Python executable has `python-docx`; Markdown remains available |
-| Input too large | Split the scan by component/rule; inspect explicit unreviewed/truncation limitations |
-| Disconnected during a review | Completed reports are retained; incomplete review is not marked successful; reconnect and rerun explicitly |
-| Blocked inspection command | Use structured Read/Grep/Glob, or one supported read-only Git command without pipes/redirection |
-| History cannot be read | Original metadata is preserved; back it up and resolve invalid/corrupt JSON before restarting |
-| macOS warns about unsigned app | Use a locally built app according to your device policy; sign/notarize before distribution |
+| No local models | Load a tool-capable model; start LM Studio; check URL/port and **Load models** |
+| Model/API error or 429 | Check exact ID, credential source, account access, quota, and gateway URL |
+| Word download missing | Check `THREATLINT_PYTHON` and that interpreter's `python-docx`; use Markdown meanwhile |
+| Upload rejected / incomplete coverage | Check importer versus triage formats and limits; split by component/rule |
+| Review disconnected | Keep completed reports; explicitly rerun the incomplete review |
+| Inspection blocked | Use structured Read/Grep/Glob or one supported read-only Git command without shell syntax |
+| Corrupt history | Back up original metadata; repair invalid JSON before restarting |
+| Unsigned macOS warning | Follow device policy; sign/notarize before distributing |
 
 ## One codebase for browser and desktop
 
-`web/desktop/main.cjs` calls `createWorkbench()` from `web/server.js`, listens on a random loopback
-port, and loads the same `web/public` UI that the browser runner serves. The desktop app adds only
-native file pickers, a sandboxed renderer, and packaging. Every route, agent, view, chart, and video
-is the same in both, so a change to `server.js`, `web/lib/`, or `web/public/` is a change to both.
-`npm --prefix web run test:browser` and `npm --prefix web run test:desktop` exercise each shell.
-
-The packaged app is kept current with `desktop:dev` (live reload), the optional git hooks
-(`npm --prefix web run hooks:install`), `desktop:verify` / `desktop:sync` (build-stamp check), and
-the `desktop-build.yml` CI workflow. See the README section *Keeping the desktop app current*.
-
-## Source code managers
-
-**Sources** connects GitHub or Azure DevOps (cloud) with a token you provide:
-
-| Provider | Token | Permissions |
-| --- | --- | --- |
-| GitHub | Fine-grained PAT, or a GitHub App installation token | Contents: read, Metadata: read |
-| Azure DevOps | PAT plus organization name (not a URL) | Code: Read (`vso.code`) |
-
-With a GitHub App saved in **Settings → GitHub** (or by `threatlint github login`), Sources connects to GitHub
-on its own as *GitHub App · \<owner\>*. The runner mints the installation token server-side and replaces it
-before it expires. See [GitHub App authentication](github-app.md).
-
-Tokens are held in runner memory only and cleared on disconnect or restart. Discovery is GET-only
-with pinned, validated DNS, bounded pages, and response-size limits. **Check out & open workspace**
-creates a shallow clone with hooks, submodules, and LFS disabled, then opens it as a workspace that
-records provider, repository, branch, and commit. GitHub Enterprise Server and Azure DevOps Server
-are not supported yet.
-
-## Runtime scanning
-
-See the README section *Runtime scanning and the attack chain* for the auth matrix. Operational
-details:
-
-- Paths are explicit, origin-relative, and normalized. No crawling, query strings, or payloads.
-- The request budget (default 20, max 100) is shared across all identities. Paths beyond it are
-  reported as **not tested** in coverage.
-- Only `GET` is sent to the target. The token endpoint and form-login endpoint receive one `POST`
-  each when those workflows are selected.
-- Manual browser sign-in needs Playwright Chromium on the runner (`npx playwright install chromium`).
-  The sign-in browser is closed when you press Finish; only target-origin cookies are kept, for 15
-  minutes.
-- Exports (JSON, Markdown, HTML) contain observations and request metadata, never credentials.
-
-### Reading the attack chain
-
-Columns run left to right: **Scope & authority → Identity → Entrypoint (request) → Response /
-control → Finding observation → Impact hypothesis**. Solid lines are observed; dashed amber lines
-lead to impact hypotheses, which are never validated by the scanner. Select a node to see its full
-chain from target to impact in the inspector, and tick **Finding chains only** to hide requests that
-produced no finding. A `401/403` node is an access control that held.
-
-## Importing a scan report
-
-*Test → Import scan report* takes an **Invicti** (DAST, XML or JSON export) or **MobSF** (mobile,
-JSON report) file, up to 5 MB. Drop it on the page or press **Choose file**, leave **Scanner** on
-*Auto-detect* (or pick one), and optionally choose a **workspace** so triage can read the matching
-source, and enter the **AVIT number** (AVIT plus 7 to 15 digits).
-
-**Import and triage** shows progress as *Queued → Parsing → Triaging → Done*. The result shows
-the scan title and target, true-positive / false-positive / ambiguous counts, and a findings table
-(severity, disposition, confidence, location). The saved report appears in *Findings* with a
-descriptive title: **Open report** opens it there, and **Markdown** / **Word** download it.
-
-The file is parsed on this machine. Findings go only to the model provider chosen in Settings, and
-to ServiceNow only when you press **Post to ServiceNow**. That asks for the AVIT and confirmation
-first, then attaches the Word report, closes false positives as *Closed / False Positive* with the
-Threatlint comment, and adds work notes to true positives and ambiguous findings. It lists the
-actions ServiceNow applied, or the error (for example, an AVIT the integration account cannot read).
-*Previous imports* lists earlier imports, newest first. Endpoints: `POST /api/scan-import`,
-`GET /api/scan-import[/:id]`, `POST /api/scan-import/:id/servicenow`.
-
-## In-app help
-
-Every key control has a **?** tooltip. **Learn & videos** (or `?` on the keyboard) has the narrated
-video library, task guides, and a glossary. Videos live in `web/public/media`, so they play offline
-in both the browser and the desktop app. Rebuild them after UI changes with
-`npm --prefix web run videos`; see `web/scripts/build-videos.cjs` for requirements.
-
-## Metrics
-
-See [dashboards.md](dashboards.md).
-
-
-## Developer flow
-
-The sidebar follows the order you work in:
-
-1. **Test**: *Review code* (playbooks and pipeline), *Connect source* (GitHub / Azure DevOps
-   checkout), *Scan running app* (authenticated runtime scan), *False positive review* (AVITs),
-   and *Import scan report* (Invicti / MobSF files).
-2. **Fix**: *Findings* (reports with file:line, fix, and test) and *Ask Threatlint*.
-3. **Track**: *Metrics* and dashboards.
-4. **Reference**: *Agents*, *Skills*, and *Learn & videos*.
-
-A four-step checklist (open code → choose model → run → fix and ask) sits at the top of *Review
-code* until you've done each step once.
-
-## Ask Threatlint
-
-Conversations run over the same runner socket as reviews (`chat` / `chat_cancel` actions) and use
-the model chosen in Model & settings. Each conversation is about the workspace, a report, a single
-finding, or a runtime scan; that context is sent to the model once, as delimited untrusted data,
-and the assistant reads the repository with the read-only Read / Grep / Glob / Bash tools (24
-tool rounds per answer). Threads persist in `conversations.json` beside the workbench history
-(text only, never keys) and keep the last 20 turns within a 60,000-character budget. A failed or
-stopped answer is discarded so history never holds an unanswered turn.
+`web/desktop/main.cjs` calls `createWorkbench()` from `web/server.js` and loads the same
+`web/public` UI. Changes to the shared server, libraries, or frontend affect both shells.
+Use `desktop:dev` for live reload, `desktop:verify` / `desktop:sync` for build-stamp checks,
+and optional `hooks:install` for the repository's Git hooks. See [Development](development.md).
 
 ## Code layout
 
-| Module | Responsibility |
+| Area | Responsibility |
 | --- | --- |
-| `server.js` | Composition root: builds the store and services, registers routes, attaches the socket |
-| `lib/http.cjs` | Loopback guard, security headers, `handle()` error mapping, `HttpError` |
-| `lib/routes/*.cjs` | One module per area: workspace, sources, runtime, insights (metrics, dashboards, help, conversations) |
-| `lib/socket.cjs` | WebSocket action table (`run_pipeline`, `cancel`, `chat`, `chat_cancel`) |
-| `lib/pipeline.cjs` | Review validation, prompt building, `runModel()` shared by reviews and chat |
-| `lib/chat.cjs` | Conversation store, context resolution, multi-turn history |
-| `lib/report-writer.cjs` | Markdown/Word persistence and report metadata |
-| `lib/providers.cjs` | Claude and OpenAI-compatible streaming with tool use |
-| `lib/scm.cjs`, `lib/runtime.cjs`, `lib/metrics.cjs` | Source managers, runtime scanner, metrics |
-| `public/app.js` | Workspace, pipeline, reports; publishes `threatlint:context` to other view modules |
-| `public/operations.js`, `charts.js`, `insights.js`, `chat.js` | Sources & runtime, charts, metrics & help, conversations |
-
-View modules talk only through DOM events (`threatlint:navigate`, `threatlint:context`,
-`threatlint:ask`, `threatlint:workspace`, `threatlint:runtime-evidence`), never shared globals.
+| `web/server.js`, `web/lib/http.cjs`, `web/lib/routes/` | Composition, loopback policy, HTTP endpoints |
+| `web/lib/socket.cjs`, `pipeline.cjs`, `providers.cjs` | Review/chat actions, prompts, model streaming |
+| `web/lib/store.cjs`, `report-writer.cjs`, `chat.cjs` | Persistence, reports, conversations |
+| `web/lib/scm.cjs`, `runtime.cjs`, `metrics.cjs` | Source checkout, observations, dashboard facts |
+| `web/public/` | Views communicating through `threatlint:*` DOM events |

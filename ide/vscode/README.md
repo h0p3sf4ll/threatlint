@@ -1,50 +1,65 @@
 # Threatlint for VS Code
 
-Secure-by-default guardrails for the code you write, and for the code your AI assistant writes.
-
-- **Inline diagnostics on open and save.** Each finding names the rule ID and CWE and gives the
-  secure alternative. Hover over it to read the alternative.
-- **Quick fix to suppress a verified false positive.** It inserts a
-  `threatlint-ignore: RULE-ID reason` comment, which needs a real reason before it is honoured.
-- **Status bar shield.** It shows the open blocking (error) and warning counts. Click it to rescan
-  the workspace.
-- **Model picker (Copilot or Claude).** `Threatlint: Select model` lists the models your signed-in
-  accounts can use, and the robot item in the status bar shows the current one:
-  - **GitHub Copilot.** Listed through VS Code's Language Model API, using your existing Copilot
-    sign-in. The extension never sees a token. The first request asks you to allow Threatlint to use
-    Copilot.
-  - **Claude.** If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set, in the environment or in the
-    `env` block of `~/.claude/settings.json` (including `ANTHROPIC_BASE_URL` gateways), the list comes
-    from `GET /v1/models`. Without a key, a signed-in `claude` CLI is used with its model aliases
-    (`fable`, `opus`, `sonnet`, `haiku`). Claude Code OAuth credentials are never read.
-- **Explain a finding.** `Threatlint: Explain finding with selected model` sends the finding on the
-  cursor line plus ±20 lines of source to the selected model, with no tools, and opens the answer
-  beside the editor. It asks for consent once per provider.
-- **Commands:** `Threatlint: Scan workspace`, `Threatlint: Scan current file`,
-  `Threatlint: Open Workbench`, and `Threatlint: Install secure-by-default AI instructions`.
+See a risky pattern and its secure alternative before leaving the editor. Offline `guard`
+checks add rule/CWE diagnostics on open/save; optional Copilot/Claude explanations add context.
 
 ## Install
 
-```bash
-pip install threatlint            # provides the `threatlint guard` engine
-cd ide/vscode
-npx @vscode/vsce package          # produces threatlint-1.0.0.vsix
-code --install-extension threatlint-1.0.0.vsix
-```
+Requires VS Code **1.90+**, the Threatlint CLI, and Node/npm for packaging from this repository.
 
-For development, open `ide/vscode` in VS Code and press F5 to launch an Extension Development Host.
-The extension also works in Cursor and Windsurf, which are both VS Code forks.
+1. Install the checker and package the extension:
+
+   ```bash
+   pip install threatlint
+   cd ide/vscode
+   npx @vscode/vsce package
+   code --install-extension threatlint-1.0.0.vsix
+   ```
+
+2. Open a repository and run **Threatlint: Scan current file**.
+3. Hover any diagnostic for the secure alternative. The shield rescans the workspace when clicked.
+
+**Result:** Problems entries for matches—not security approval.
+Next: [install assistant instructions and hooks](../../docs/ide.md#one-command-setup).
+Cursor/Windsurf accept VS Code extensions; model availability depends on their editor APIs.
+For development, open this folder and press F5.
+
+## Commands and boundaries
+
+| Command | What happens |
+| --- | --- |
+| **Scan workspace / Scan current file** | Runs `threatlint guard --format json --fail-on none`; diagnostics do not block edits or commits |
+| **Install secure-by-default AI instructions** | Writes instructions, hooks, and tasks into the first workspace folder; inspect the diff |
+| **Open Workbench** | Opens the configured URL; [start the server separately](../../docs/workbench.md#requirements-and-first-launch) |
+| **Select model (Copilot or Claude)** | Lists account-available Copilot models and configured Claude models/CLI aliases; saves the non-secret selection |
+| **Explain finding with selected model** | Sends cursor-line findings and up to 20 lines of source either side; opens an answer beside the editor, without tools or code edits |
+
+Explanation consent persists per provider. Share only authorized source. Copilot owns sign-in;
+the extension does not obtain its token. Claude discovery reads `~/.claude/settings.json`'s `env`
+before process environment (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`);
+otherwise the installed CLI supplies aliases. Explanations prefer that CLI when available;
+it owns authentication. Claude OAuth credentials are never read.
+
+The suppression quick fix **edits source**, inserting `REPLACE-WITH-VERIFIED-REASON`.
+Replace it only after verifying a false positive; the checker cannot verify your justification.
+See the [suppression policy](../../docs/ide.md#suppression-policy).
 
 ## Settings
 
-| Setting | Default | Purpose |
+| Setting | Default | Use |
 | --- | --- | --- |
-| `threatlint.executable` | `threatlint` | Path to the CLI, e.g. a virtualenv's `bin/threatlint` |
-| `threatlint.scanOnSave` / `scanOnOpen` | `true` | When to run the guard |
-| `threatlint.minimumSeverity` | `low` | Hide findings below this severity |
-| `threatlint.claudeExecutable` | `claude` | Claude Code CLI used when Claude is signed in without an API key |
-| `threatlint.workbenchUrl` | `http://127.0.0.1:3000` | The local Workbench opened by the command |
+| `threatlint.executable` | `threatlint` | Absolute CLI path if the editor cannot find it |
+| `threatlint.scanOnSave` / `scanOnOpen` | `true` | Automatic local checks |
+| `threatlint.minimumSeverity` | `low` | Hide lower-severity diagnostics |
+| `threatlint.claudeExecutable` | `claude` | Claude CLI path |
+| `threatlint.workbenchUrl` | `http://127.0.0.1:3000` | Already-running Workbench |
 
-The guard is a fast pattern check. A clean result means no known-insecure pattern matched; it does
-**not** mean the code is approved. For auth, crypto, payments, tenancy, and file-handling changes,
-run the `appsec-code-reviewer` agent or the Workbench. See [docs/ide.md](../../docs/ide.md).
+## Troubleshooting
+
+| Symptom | Next action |
+| --- | --- |
+| Shield shows an alert | Hover it for the error; check CLI path and `threatlint guard --list-rules` |
+| No diagnostics | Save a file-backed document; inspect severity/scan settings and [checker limits](../../docs/ide.md#the-guard) |
+| No Copilot models | Check sign-in and editor Language Model API support |
+| Claude explanation fails | Check configured key/gateway or the signed-in CLI and executable path |
+| Match needs context | Use a [source-grounded specialist review](../../docs/workbench.md#review-experience), not a suppression by default |

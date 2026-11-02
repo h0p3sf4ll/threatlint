@@ -1,79 +1,98 @@
 # <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Metrics and dashboards
 
-The **Metrics** view turns every report saved in the workbench, and every runtime scan run in the
-current session, into numbers you can track. Data never leaves your machine; dashboards are stored
-in `dashboards.json` beside the workbench history.
+Find the next investigation without rereading every report. **Metrics** groups saved findings
+and current-session runtime observations by severity, workspace, specialist, and time.
+A workspace bar chart shows where reported HIGH findings cluster; inspect those reports before assigning work.
 
-▶ Watch: [Metrics and custom dashboards](../web/public/media/dashboards.mp4) (narrated, ~45 s), or
-open **Learn & videos** in the app.
+[Watch the walkthrough](../web/public/media/dashboards.mp4), or use **Learn & videos** in the app.
 
 ![Metrics dashboard](media/dashboards.png)
 
+## First useful view
+
+1. [Run a review](workbench.md#review-experience) so the Workbench has a saved report.
+2. Open **Metrics → Security posture** and choose a **Time range**: all, 7, 30, or 90 days.
+3. Inspect severity and workspace charts. Use hover/focus values or **Table** on supported charts.
+
+**Expected result:** retained evidence counts, not a fresh scan. Build a release view below.
+
 ## The built-in dashboard
 
-*Security posture* is read-only and always available:
+*Security posture* is read-only; **Customize** creates an editable copy.
 
-| Widget | Meaning |
+| Widget | How to interpret it |
 | --- | --- |
-| Open risk score | Σ severity weight of findings not marked FALSE POSITIVE, REMEDIATED, or RESOLVED. CRITICAL 10, HIGH 6, MEDIUM 3, LOW 1, INFO 0, unspecified 1 |
-| Findings | Count of parsed findings across reports and runtime scans |
-| Evidence coverage % | Share of findings that cite a `file:line` (runtime findings always carry request evidence) |
-| Reports & scans | Number of distinct reports and runtime scans |
-| Findings by severity | Donut, fixed severity colors |
-| Findings over time | Line by day, with hover crosshair |
-| Risk by specialist | Bar chart of open risk per agent |
-| Specialist × severity | Heatmap; darker blue means more findings |
-| Risk by workspace | Table you can sort into your backlog |
+| Open risk score | Sum of weights excluding FALSE POSITIVE, REMEDIATED, RESOLVED: CRITICAL 10, HIGH 6, MEDIUM 3, LOW 1, INFO 0, unspecified 1 |
+| Findings | Parsed finding count; repeated reports can count the same issue again |
+| Evidence coverage % | Findings with parsed evidence references; runtime observations count as evidenced. Not proof evidence is correct |
+| Reports & scans | Distinct reports and runtime scans |
+| Findings by severity / over time | Severity distribution and report/scan dates—not verified remediation progress |
+| Risk by specialist / workspace | Weighted open findings grouped by specialist or workspace label |
+| Specialist × severity | Finding counts; darker cells mean more findings |
 
-Use the **Time range** selector to limit every widget to the last 7, 30, or 90 days.
+Workspace labels use repository basenames or runtime target URLs; identical basenames can
+share a label. Scores prioritize reported evidence, not validated exploitability.
 
 ## Build your own
 
-1. Press **New dashboard**, or **Duplicate** / **Customize** to start from the built-in one.
-2. Name it, for example `API team · sprint 42`.
-3. **Add widget** and choose:
-   - **Metric**: `findings`, `riskScore`, `uniqueFindings` (deduplicated by fingerprint), `evidenceCoverage`, `reports`.
-   - **Group by** (dimension): `severity`, `agent` (specialist), `category` (discipline), `workspace`, `day`, `week`, `disposition`, `confidence`, `source` (report or runtime), `rule` (finding type, e.g. `CR`, `RT-CORS-REFLECT`).
-   - **Chart**: stat tile, column, bar, line, donut, table, or heatmap. A heatmap also needs **Columns** (a second dimension).
-   - **Size**: small (¼ row), medium (½), or full width.
-   - **Filter**: optionally restrict to one severity.
-4. Reorder with ↑ ↓, remove with ×, then **Save dashboard**.
+1. Choose **New dashboard**, **Duplicate**, or **Customize**. Name it, e.g. `API release review`.
+2. **Add widget**; choose metric, grouping, chart, width, and optional severity filter.
+3. For heatmaps choose **Columns** too. Reorder with ↑ / ↓, remove with ×.
+4. **Save dashboard** and select it from the dashboard menu.
 
-Every chart has hover/focus tooltips with exact values and a **Table** toggle, so no value depends on
-color alone. Severity colors are fixed across all charts; other categories keep a stable color per
-entity.
+**Result:** a layout saved locally in `dashboards.json` beside history.
+
+| Choice | Available values |
+| --- | --- |
+| Metric | `findings`, `riskScore`, `uniqueFindings` (fingerprint deduplication), `evidenceCoverage`, `reports` |
+| Group by | `severity`, `agent`, `category`, `workspace`, `day`, `week`, `disposition`, `confidence`, `source`, `rule` |
+| Chart | Stat tile, column, bar, line, donut, table, heatmap |
+| Size | Small (¼ row), medium (½), full width |
+
+Heatmaps always show **finding counts**. Severity colors are fixed; other entity colors stay stable.
 
 ### Recipes
 
-| Goal | Metric | Group by | Chart | Filter |
-| --- | --- | --- | --- | --- |
-| What blocks this release? | findings | workspace | bar | HIGH (add a second widget for CRITICAL) |
-| Is triage paying off? | findings | disposition | donut | — |
-| Which agent finds the most real risk? | riskScore | agent | bar | — |
-| Trend for the weekly review | findings | week | line | — |
-| Where are runtime issues? | findings | rule | table | source = runtime (via API) |
-| Hot spots | findings | workspace × severity | heatmap | — |
+| Question | Metric | Group by | Chart / filter |
+| --- | --- | --- | --- |
+| Where are HIGH findings? | findings | workspace | Bar; HIGH (add another widget for CRITICAL) |
+| What did triage decide? | findings | disposition | Donut |
+| How much weighted risk did each specialist report? | riskScore | agent | Bar |
+| What was reported each week? | findings | week | Line |
+| Which workspace/severity combinations dominate? | findings | workspace | Heatmap; columns = severity |
 
 ## Export and API
 
-- **Export CSV** downloads every finding (timestamp, source, workspace, agent, ID, title, severity,
-  confidence, disposition, evidence flag). Cells starting with `= + - @` are prefixed to prevent
-  spreadsheet formula injection.
-- The same data is available on the loopback API for scripts:
+**Export CSV** includes all retained rows—not the dashboard/time filter—with timestamp, source,
+workspace, agent/category, ID, title, severity, confidence, disposition, and evidence flag.
+Formula-like prefixes are escaped. Treat exports as sensitive.
+
+With the browser Workbench running on its default port:
 
 ```bash
 curl -s http://127.0.0.1:3000/api/metrics/overview
+curl -s http://127.0.0.1:3000/api/metrics/schema
 curl -s http://127.0.0.1:3000/api/metrics/query -H 'Content-Type: application/json' \
-  -d '{"metric":"riskScore","groupBy":"workspace","filters":{"severity":"HIGH","since":"2026-10-01"}}'
-curl -s http://127.0.0.1:3000/api/metrics/schema      # valid metrics, dimensions, charts
+  -d '{"metric":"riskScore","groupBy":"workspace","filters":{"severity":"HIGH","source":"report"}}'
 ```
 
-`filters` accepts `severity`, `agent` (agent ID), `category`, `workspace`, `source`,
-`disposition`, and `since` (ISO date). The API only answers same-origin loopback requests.
+Filters: `severity`, `agent` (ID), `category`, `workspace`, `source` (`report` / `runtime`),
+`disposition`, `since` (ISO date). The API checks browser origins; do not expose it publicly.
 
 ## Limits
 
-Metrics count what agents and the runtime observer reported. They are not a certification, a
-coverage guarantee, or proof that unreported issues are absent. Runtime scans are kept in memory
-for the session (last 25), so restart the workbench and they drop out of metrics; saved reports
-persist.
+Reports persist; the last 25 runtime scans disappear on restart. `uniqueFindings` deduplicates
+fingerprints, not verified vulnerabilities. Report volume, scope, or model changes can move charts
+without code changes. Calculations stay local; reviews may send source to your provider.
+
+## Troubleshooting
+
+| Symptom | Next action |
+| --- | --- |
+| Empty charts | Save a report, check the selected time range, then reopen Metrics |
+| Counts seem duplicated | Compare report dates/IDs; use `uniqueFindings` where appropriate |
+| Runtime counts disappeared | Restart clears session scans; export evidence before stopping |
+| Cannot edit Security posture | Choose **Customize** to save a copy |
+| CSV differs from visible chart | CSV exports all retained findings; apply filters in your analysis |
+
+Next: [turn findings into an engineering handoff](reports.md).

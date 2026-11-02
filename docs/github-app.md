@@ -1,118 +1,130 @@
 # GitHub App authentication
 
-Threatlint can use a **GitHub App** for all of its GitHub access: Sources → GitHub in the Workbench, cloning
-GitHub repositories for AVIT, DefectDojo, SonarQube and DAST checkouts, PR comments, issues, and the PR chat
-helper. An App gets a short-lived installation token (one hour) for each use. You don't need a personal access
-token, and access ends when you uninstall the App.
+Give Threatlint access to selected repositories without tying reviews to a personal token.
+A GitHub App supplies short-lived installation tokens for Workbench Sources, CLI checkouts,
+and optional PR comments/issues. Start with read-only permissions; add write access only for
+the actions you intend to use.
 
-Threatlint reads the App settings only from local configuration. Nothing about the App is built into the source,
-and the configuration file is never committed.
+## First successful connection
 
-## Credential order
-
-Clones and checkouts (`threatlint avit checkout`, `threatlint dojo|sonar checkout`, DAST `--repo`) and the
-Workbench try these sources in order:
-
-1. **GitHub App**, when one is configured.
-2. `GH_TOKEN`, then `GITHUB_TOKEN`.
-3. `gh auth token` (the GitHub CLI sign-in).
-
-If the App is configured but can't mint a token (a revoked key or an uninstalled App), Threatlint prints a
-warning without any values and moves on to the next source. With no App configured, nothing changes from
-before.
-
-The CI helper scripts (`.github/scripts/post_pr_comment.py`, `create_issues.py`, `threatlint_chat.py`) take the
-`GH_TOKEN` / `GITHUB_TOKEN` that the workflow gives them. They use the App only when neither variable is set
-and `threatlint` is installed, and then fall back to `gh auth token`.
+Follow steps 1–4 below. **Expected result:** `threatlint github login` validates the installation
+and reports the visible repository count/owner; **Sources → GitHub** can list those repositories.
+Validation contacts GitHub but does not post comments or issues.
+Next: [check out a workspace](workbench.md#source-code-managers).
 
 ## 1. Create the App
 
-In GitHub, go to **Settings → Developer settings → GitHub Apps → New GitHub App**. Use your organization's
-settings for an organization-owned App.
+In GitHub, open **Settings → Developer settings → GitHub Apps → New GitHub App**.
+Use organization settings for an organization-owned App.
 
-- **Name / homepage:** any.
-- **Webhook:** turn off **Active** (Threatlint doesn't receive webhooks).
-- **Repository permissions** (least privilege):
-
-  | Permission | Access | Needed for |
-  | --- | --- | --- |
-  | Metadata | Read-only | always (GitHub requires it) |
-  | Contents | Read-only | listing repositories and branches, cloning |
-  | Pull requests | Read & write | *only* if Threatlint should post PR comments or answer `/threatlint` |
-  | Issues | Read & write | *only* if Threatlint should open issues (`create_issues.py`) |
-
-  Leave every other permission at **No access**.
-- **Where can this App be installed:** *Only on this account*.
+| Setting | Choose |
+| --- | --- |
+| Name / homepage | Your App's name and homepage |
+| Webhook | Disable **Active**; Threatlint does not receive webhooks |
+| Metadata | Read-only |
+| Contents | Read-only for repository/branch listing and cloning |
+| Pull requests | Read & write **only** for PR comments or `/threatlint` replies |
+| Issues | Read & write **only** for `create_issues.py` |
+| Other permissions | No access |
+| Installation scope | **Only on this account** |
 
 ## 2. Generate a private key
 
-On the App's page, go to **Private keys → Generate a private key**. GitHub downloads a `.pem` file. Keep it
-outside any repository, readable only by you:
+Choose **Private keys → Generate a private key**. Store the downloaded PEM outside repositories.
+For example, after replacing the filename:
 
 ```bash
-mkdir -p ~/.threatlint/keys && mv ~/Downloads/<app-name>.*.private-key.pem ~/.threatlint/keys/
-chmod 600 ~/.threatlint/keys/*.pem
+mkdir -p ~/.threatlint/keys
+mv ~/Downloads/my-app.private-key.pem ~/.threatlint/keys/my-app.pem
+chmod 600 ~/.threatlint/keys/my-app.pem
 ```
+
+Use owner-only filesystem access on your platform. Never commit or paste the key into a report.
+The CLI needs system `openssl`; Workbench signing uses Node's `crypto`.
 
 ## 3. Install the App and find the IDs
 
-- **Install App** → choose the organization → *All repositories* or the repositories you review.
-- **App ID**: shown at the top of the App's *General* page. The App's *Client ID* also works.
-- **Installation ID**: the number at the end of the installation's settings URL
-  (`https://github.com/organizations/<org>/settings/installations/<installation-id>`).
+1. **Install App** on the account/organization; prefer **selected repositories**.
+2. Copy the **App ID** from General (Client ID also works).
+3. Copy the **Installation ID** from the installation settings URL:
+   `https://github.com/organizations/ORG/settings/installations/INSTALLATION_ID`.
 
 ## 4. Configure Threatlint
 
-**CLI**
-
 ```bash
-threatlint github login --app-id <app-id> --installation-id <installation-id> \
-  --private-key-file ~/.threatlint/keys/<app>.pem          # --api-url for GitHub Enterprise Cloud with data residency
-threatlint github status    # "GitHub App (App ID set, installation ID set, private key file set ...)"
-threatlint github logout    # removes the saved settings; the .pem stays where it is
+threatlint github login --app-id APP_ID --installation-id INSTALLATION_ID \
+  --private-key-file ~/.threatlint/keys/my-app.pem
+threatlint github status
 ```
 
-`login` checks the settings before it saves them. It mints an installation token, calls
-`GET /installation/repositories?per_page=1`, and prints only the repository count and owner. Run it without
-flags to be prompted. `threatlint setup` offers the same step as an optional part of the wizard.
+Replace the uppercase placeholders. Without flags, `login` prompts interactively. It mints a
+token and calls `GET /installation/repositories?per_page=1` **before** saving settings.
+`--api-url` supports a configured GitHub Enterprise Cloud data-residency API; this does not add
+custom-host support to Workbench Sources.
 
-**Workbench**
+Alternatively, open **Workbench → Settings → GitHub**, enable **Use GitHub App**, enter IDs and
+the absolute PEM path, then save. The server validates/signs; the browser receives status, not
+the key or token. Sources connects as **GitHub App · owner** and refreshes tokens.
+`threatlint setup` also offers App setup.
 
-Go to **Settings → GitHub**, check **Use GitHub App**, and enter the App ID, installation ID, and the absolute
-path to the `.pem`. **Save GitHub App** validates the same way and writes the same file. After that,
-**Sources → GitHub** connects on its own as *GitHub App · \<owner\>* and lists the installation's repositories.
-The Workbench server signs the JWT and holds the token. The browser only ever learns which values are set.
+## Credential order
+
+| Caller | Lookup order |
+| --- | --- |
+| Workbench Sources and CLI clones/checkouts | Configured App → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token` |
+| CI helpers (`post_pr_comment.py`, `create_issues.py`, `threatlint_chat.py`) | Workflow `GH_TOKEN` / `GITHUB_TOKEN` → App if Threatlint is installed → `gh auth token` |
+
+A failing configured App emits a redacted warning and falls back. Check the credential source
+before assuming App repository restrictions govern a run; a fallback token may have different access.
+Copilot **model** authentication is separate; see [Workbench model settings](workbench.md#models-and-credentials).
 
 ## Where the configuration lives
 
-`~/.threatlint/github-app.json` (`THREATLINT_HOME` relocates it), mode `0600`:
+`~/.threatlint/github-app.json` stores IDs, API URL, and the PEM **path**, not the PEM:
 
 ```json
-{"appId": "<app-id>", "installationId": "<installation-id>", "privateKeyFile": "/absolute/path/to/app.pem", "apiUrl": "https://api.github.com"}
+{"appId":"APP_ID","installationId":"INSTALLATION_ID","privateKeyFile":"/absolute/path/my-app.pem","apiUrl":"https://api.github.com"}
 ```
 
-Only the key's **path** is stored, and the key is read from that file each time a token is minted. Environment
-variables override the file field by field: `THREATLINT_GITHUB_APP_ID`, `THREATLINT_GITHUB_APP_INSTALLATION_ID`,
-`THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE`, `THREATLINT_GITHUB_API_URL`. To keep the PEM in AWS Parameter Store
-instead of on disk, set `THREATLINT_GITHUB_APP_PRIVATE_KEY_PARAMETER` or `"githubAppPrivateKeyParameter"` in
-`~/.threatlint/org.json`. The CLI reads the key with your AWS session and passes it to `openssl` over a pipe.
+`THREATLINT_HOME` relocates the file. POSIX permissions are `0600`; use appropriate Windows ACLs.
+Environment overrides are field-by-field: `THREATLINT_GITHUB_APP_ID`,
+`THREATLINT_GITHUB_APP_INSTALLATION_ID`, `THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE`,
+`THREATLINT_GITHUB_API_URL`.
+
+For a CLI key in AWS Parameter Store, set `THREATLINT_GITHUB_APP_PRIVATE_KEY_PARAMETER` or
+`githubAppPrivateKeyParameter` in `~/.threatlint/org.json`. The AWS session reads it and passes
+the PEM to `openssl` through a pipe. A configured key-file path takes precedence.
 
 ## How tokens are handled
 
-- The App JWT is RS256 with `iat` set 60 seconds in the past, `exp` 9 minutes ahead, and `iss` set to the App ID.
-  The CLI signs it with the system `openssl` (`openssl dgst -sha256 -sign <key file>`), so no Python crypto
-  package is needed. The Workbench signs it with Node's `crypto`.
-- The token exchange (`POST /app/installations/{id}/access_tokens`) requires HTTPS, refuses redirects, and
-  uses the OS trust store.
-- Installation tokens stay in memory only and are minted again five minutes before they expire. They're never
-  written to disk, logs, `.git/config`, or command lines. Clones receive them as a `GIT_CONFIG_*` extra header.
-- Error and status messages never include the App ID, installation ID, key path, key, JWT, or token.
+- RS256 App JWT: `iat` 60 seconds back, `exp` 9 minutes ahead, issuer = App ID.
+- Token exchange requires HTTPS and refuses redirects; OS trust is used.
+- Installation tokens normally last an hour; cached tokens refresh five minutes before expiry.
+  They remain in memory. Clone credentials use `GIT_CONFIG_*` extra headers, not URLs,
+  `.git/config`, or command-line tokens.
+- Status/error output avoids credential values. Status can still identify configuration source
+  and API URL; treat local configuration as sensitive.
 
 ## Rotation
 
-1. On the App's page, **generate a new private key** and save it with `chmod 600`.
-2. Run `threatlint github login --private-key-file <new.pem> ...`, or update the path in *Settings → GitHub*.
-3. Delete the old key on GitHub, then delete the old `.pem` file.
+1. Generate a new key and protect the file.
+2. Re-run `login` with **all three** App ID, installation ID, and new key-file arguments, or
+   update the Workbench settings. Validate access.
+3. Revoke the old key in GitHub, then remove its local PEM.
 
-To revoke all access right away, uninstall the App or suspend the installation. Installation tokens expire
-within an hour in any case.
+`threatlint github logout` removes saved settings, **not** the PEM, environment overrides, or the
+GitHub installation. To revoke access, suspend/uninstall the installation; do not rely on logout
+or file deletion alone.
+
+## Troubleshooting
+
+| Symptom | Next action |
+| --- | --- |
+| Validation fails | Check App versus installation ID, installed account, key revocation, and system `openssl` |
+| Repository absent | Check selected-repository installation access and Contents: read |
+| PR/issue writes denied | Add only the required write permission; approve updated installation permissions |
+| App warning but operation succeeds | Check fallback environment/CLI credentials and their permissions |
+| Sources rejects custom host | Sources supports GitHub cloud, not GitHub Enterprise Server |
+
+Validation coverage lives in mocked [CLI](../tests/test_github_app.py) and
+[Workbench](../web/tests/github-app.test.cjs) tests; this guide does not certify a live installation.

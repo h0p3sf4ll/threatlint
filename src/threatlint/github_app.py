@@ -22,13 +22,10 @@ Credential order for GitHub everywhere: GitHub App (when configured) -> GH_TOKEN
 
 from __future__ import annotations
 
-import base64
 import datetime
 import json
 import os
-import re
 import shutil
-import stat
 import subprocess
 import sys
 import threading
@@ -38,95 +35,34 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-APP_ID_ENV = "THREATLINT_GITHUB_APP_ID"
-INSTALLATION_ID_ENV = "THREATLINT_GITHUB_APP_INSTALLATION_ID"
-PRIVATE_KEY_FILE_ENV = "THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE"
-API_URL_ENV = "THREATLINT_GITHUB_API_URL"
-PRIVATE_KEY_PARAMETER_ENV = "THREATLINT_GITHUB_APP_PRIVATE_KEY_PARAMETER"
-DEFAULT_API_URL = "https://api.github.com"
-CONFIG_NAME = "github-app.json"
+from threatlint.github_app_payloads import (
+    GitHubAppError,
+    _APP_ID,
+    _INSTALLATION_ID,
+    _b64url,
+    _validate_ids,
+    jwt_signing_input,
+    validate_api_url,
+)
+from threatlint.github_app_config import (
+    API_URL_ENV, APP_ID_ENV, CONFIG_NAME, DEFAULT_API_URL, INSTALLATION_ID_ENV,
+    PRIVATE_KEY_FILE_ENV, PRIVATE_KEY_PARAMETER_ENV, _key_parameter,
+    config_path, home, load_config, saved_config, write_config,
+)
+from threatlint.github_app_cli import PERMISSIONS_HELP, _ask, add_github_parser, cmd_github, login
+
 TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 REFRESH_MARGIN_S = 300
 JWT_BACKDATE_S = 60
 JWT_LIFETIME_S = 540  # GitHub rejects an exp more than 10 minutes ahead
 _HTTP_TIMEOUT_S = 30
-_APP_ID = re.compile(r"[A-Za-z0-9.]{1,64}")  # numeric App ID or the App's client ID (Iv1.xxxx)
-_INSTALLATION_ID = re.compile(r"[0-9]{1,20}")
-PERMISSIONS_HELP = ("Repository permissions: Metadata (read), Contents (read); add Pull requests (read & write) and "
-                    "Issues (read & write) only if Threatlint should comment on PRs or open issues.")
 
 _cache: dict[tuple[str, str, str], tuple[str, float]] = {}
 _lock = threading.Lock()
 
 
-class GitHubAppError(RuntimeError):
-    """A user-actionable failure; messages never contain IDs, the key path, the key, or a token."""
-
-
-def home() -> Path:
-    return Path(os.environ.get("THREATLINT_HOME") or Path.home() / ".threatlint")
-
-
-def config_path() -> Path:
-    return home() / CONFIG_NAME
-
-
-def saved_config() -> dict[str, str]:
-    try:
-        value = json.loads(config_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(value, dict):
-        return {}
-    return {key: str(value.get(key) or "").strip() for key in ("appId", "installationId", "privateKeyFile", "apiUrl")}
-
-
-def _key_parameter() -> str:
-    if os.environ.get(PRIVATE_KEY_PARAMETER_ENV):
-        return os.environ[PRIVATE_KEY_PARAMETER_ENV].strip()
-    try:
-        from threatlint import org_config  # noqa: PLC0415
-        saved = json.loads(org_config.path().read_text(encoding="utf-8"))
-        return str(saved.get("githubAppPrivateKeyParameter") or "").strip() if isinstance(saved, dict) else ""
-    except (OSError, ValueError):
-        return ""
-
-
-def load_config() -> dict[str, str] | None:
-    """The App settings (environment over saved file), with "source"; None when no App is configured."""
-    saved = saved_config()
-    env = {"appId": os.environ.get(APP_ID_ENV, "").strip(), "installationId": os.environ.get(INSTALLATION_ID_ENV, "").strip(),
-           "privateKeyFile": os.environ.get(PRIVATE_KEY_FILE_ENV, "").strip(), "apiUrl": os.environ.get(API_URL_ENV, "").strip()}
-    config = {key: env[key] or saved.get(key, "") for key in env}
-    config["apiUrl"] = config["apiUrl"] or DEFAULT_API_URL
-    config["privateKeyParameter"] = "" if config["privateKeyFile"] else _key_parameter()
-    if not (config["appId"] and config["installationId"] and (config["privateKeyFile"] or config["privateKeyParameter"])):
-        return None
-    from_env = any(env[key] for key in ("appId", "installationId", "privateKeyFile"))
-    config["source"] = "environment" if from_env and not any(saved.values()) else ("environment + " + str(config_path()) if from_env else str(config_path()))
-    return config
-
-
 def configured() -> bool:
     return load_config() is not None
-
-
-def validate_api_url(url: str) -> str:
-    parts = urllib.parse.urlsplit((url or "").strip())
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
-        raise GitHubAppError("The GitHub API URL must be an https:// URL without credentials, query, or fragment")
-    return urllib.parse.urlunsplit(("https", parts.netloc, parts.path.rstrip("/"), "", ""))
-
-
-def _validate_ids(app_id: str, installation_id: str) -> None:
-    if not _APP_ID.fullmatch(app_id or ""):
-        raise GitHubAppError("The GitHub App ID is not valid (digits, or the App's client ID)")
-    if not _INSTALLATION_ID.fullmatch(installation_id or ""):
-        raise GitHubAppError("The GitHub App installation ID must be digits")
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 def _openssl() -> str:
@@ -180,11 +116,8 @@ def app_jwt(config: dict[str, str], now: float | None = None) -> str:
     """The App's RS256 JWT: iat = now - 60 s, exp = now + 9 min, iss = App ID."""
     _validate_ids(config["appId"], config["installationId"])
     issued = int(now if now is not None else time.time())
-    header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
-    payload = _b64url(json.dumps({"iat": issued - JWT_BACKDATE_S, "exp": issued + JWT_LIFETIME_S, "iss": config["appId"]},
-                                 separators=(",", ":")).encode())
-    signing_input = f"{header}.{payload}".encode("ascii")
-    return f"{header}.{payload}.{_b64url(_sign(signing_input, config))}"
+    signing_input = jwt_signing_input(config["appId"], issued, JWT_BACKDATE_S, JWT_LIFETIME_S)
+    return f"{signing_input.decode('ascii')}.{_b64url(_sign(signing_input, config))}"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -304,21 +237,7 @@ def installation_repositories(config: dict[str, str] | None = None, *, opener=No
 
 def save_config(app_id: str, installation_id: str, private_key_file: str, api_url: str = DEFAULT_API_URL) -> Path:
     """Write ~/.threatlint/github-app.json (0600). Only the key's path is stored, never the key."""
-    _validate_ids(app_id, installation_id)
-    api_url = validate_api_url(api_url or DEFAULT_API_URL)
-    key_file = os.path.abspath(os.path.expanduser(private_key_file))
-    if not os.path.isfile(key_file):
-        raise GitHubAppError("The private key file does not exist")
-    path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump({"appId": app_id, "installationId": installation_id, "privateKeyFile": key_file, "apiUrl": api_url}, handle, indent=2)
-        handle.write("\n")
-    os.replace(temporary, path)
-    if os.name != "nt":
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    path = write_config(config_path(), app_id, installation_id, private_key_file, api_url)
     clear_cache()
     return path
 
@@ -330,66 +249,3 @@ def logout() -> bool:
         return True
     except FileNotFoundError:
         return False
-
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-def add_github_parser(sub) -> None:
-    p = sub.add_parser("github", help="Set up GitHub App authentication for clones, PR comments, issues, and API calls")
-    actions = p.add_subparsers(dest="github_command", required=True)
-    login = actions.add_parser("login", help="Validate and save the GitHub App settings (~/.threatlint/github-app.json)")
-    login.add_argument("--app-id", default="", help="GitHub App ID (or client ID)")
-    login.add_argument("--installation-id", default="", help="Installation ID of the App on your organization")
-    login.add_argument("--private-key-file", default="", help="Path to the App's private key (.pem); only the path is saved")
-    login.add_argument("--api-url", default="", help=f"GitHub API URL (default {DEFAULT_API_URL})")
-    actions.add_parser("status", help="Show which GitHub credential is in use (never prints a value)")
-    actions.add_parser("logout", help="Remove the saved GitHub App settings (the .pem file is left in place)")
-
-
-def _ask(label: str, value: str, default: str = "") -> str:
-    if value:
-        return value.strip()
-    if not sys.stdin.isatty():
-        if default:
-            return default
-        raise GitHubAppError(f"Pass --{label.lower().replace(' ', '-')} when not running interactively")
-    answer = input(f"{label}{' [' + default + ']' if default else ''}: ").strip()
-    return answer or default
-
-
-def login(app_id: str = "", installation_id: str = "", private_key_file: str = "", api_url: str = "", *, opener=None) -> tuple[Path, int, str]:
-    saved = saved_config()
-    if not (app_id and installation_id and private_key_file) and sys.stdin.isatty():
-        print(PERMISSIONS_HELP)
-    app_id = _ask("App ID", app_id)
-    installation_id = _ask("Installation ID", installation_id)
-    private_key_file = _ask("Private key file", private_key_file)
-    api_url = validate_api_url(_ask("API URL", api_url, saved.get("apiUrl") or DEFAULT_API_URL))
-    _validate_ids(app_id, installation_id)
-    config = {"appId": app_id, "installationId": installation_id, "privateKeyFile": os.path.abspath(os.path.expanduser(private_key_file)),
-              "apiUrl": api_url, "privateKeyParameter": ""}
-    count, owner = installation_repositories(config, opener=opener)  # validates before saving
-    return save_config(app_id, installation_id, private_key_file, api_url), count, owner
-
-
-def cmd_github(args) -> int:
-    try:
-        if args.github_command == "login":
-            path, count, owner = login(args.app_id, args.installation_id, args.private_key_file, args.api_url)
-            print(f"✓ GitHub App validated: {count} repositor{'y' if count == 1 else 'ies'} visible{' (owner ' + owner + ')' if owner else ''}")
-            print(f"✓ Saved to {path} (App ID, installation ID, and key path set; the key itself is not copied)")
-        elif args.github_command == "status":
-            config = load_config()
-            if config:
-                key = "private key file set" if config.get("privateKeyFile") else "private key in Parameter Store"
-                print(f"GitHub credential: GitHub App (App ID set, installation ID set, {key}; from {config['source']}; API {config['apiUrl']})")
-            else:
-                current = source()
-                print(f"GitHub credential: {current} (no GitHub App configured)" if current else
-                      "No GitHub credential: run `threatlint github login`, set GH_TOKEN, or run `gh auth login`.")
-        else:
-            print(f"✓ Removed {config_path()}" if logout() else "No saved GitHub App settings")
-        return 0
-    except (GitHubAppError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1

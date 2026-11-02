@@ -16,28 +16,21 @@ SYSTEM_ACCESSTOKEN take precedence when set.
 
 from __future__ import annotations
 
-import base64
 import getpass
 import json
 import os
-import re
 import stat
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from threatlint.ado_payloads import AdoLoginError, _ORG, _PAT, store_payload, store_records, validation_request
+
 ENV_NAMES = ("THREATLINT_ADO_PAT", "AZURE_DEVOPS_EXT_PAT", "SYSTEM_ACCESSTOKEN")
 KEYRING_SERVICE = "threatlint-azure-devops"
-_ORG = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,49}")
-_PAT = re.compile(r"[A-Za-z0-9._~+/=-]{20,200}")
 PAT_HELP = ("Create a PAT at https://dev.azure.com/<organization>/_usersSettings/tokens with scope Code: Read "
             "(and Work Items: Read & write if you also close ADO items).")
-
-
-class AdoLoginError(RuntimeError):
-    """A user-actionable failure; messages never contain the PAT."""
 
 
 def store_path() -> Path:
@@ -60,12 +53,7 @@ def _urlopen(request, timeout):
 
 def validate(organization: str, pat: str, opener=_urlopen) -> None:
     """A PAT that can list projects in the organization; ADO answers bad tokens with a 203 sign-in page."""
-    if not _ORG.fullmatch(organization):
-        raise AdoLoginError("Enter the Azure DevOps organization name (e.g. contoso), not a URL")
-    if not _PAT.fullmatch(pat):
-        raise AdoLoginError("That does not look like an Azure DevOps PAT")
-    request = urllib.request.Request(f"https://dev.azure.com/{urllib.parse.quote(organization)}/_apis/projects?$top=1&api-version=7.1",
-                                     headers={"Authorization": "Basic " + base64.b64encode(f":{pat}".encode()).decode(), "Accept": "application/json"})
+    request = validation_request(organization, pat)
     try:
         with opener(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS host
             body = response.read()
@@ -84,13 +72,7 @@ def _read_store() -> dict[str, dict]:
         data = json.loads(store_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(data, dict):
-        return {}
-    if isinstance(data.get("organizations"), dict):
-        return {key: value for key, value in data["organizations"].items() if isinstance(value, dict)}
-    if data.get("storage"):  # single-PAT format; its keyring entry is under the username "pat"
-        return {str(data.get("organization") or "").lower(): {**data, "keyring_user": "pat"}}
-    return {}
+    return store_records(data)
 
 
 def _write_store(records: dict[str, dict]) -> None:
@@ -98,12 +80,8 @@ def _write_store(records: dict[str, dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Create with owner-only permissions; on Windows the user profile ACL already limits access.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    # Also keep the single-PAT keys at the top level, so older Threatlint copies (e.g. a desktop app not yet
-    # updated) still find their PAT and do not rewrite the file in the old format.
-    legacy = next((record for record in records.values() if record.get("keyring_user") in ("pat", None)), next(iter(records.values()), {}))
-    top = {key: legacy[key] for key in ("organization", "storage", "pat") if key in legacy}
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({**top, "organizations": records}, handle)
+        json.dump(store_payload(records), handle)
     if os.name != "nt":
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 

@@ -10,7 +10,6 @@ own cache, so `threatlint avit fetch`, `run fp-review --avit`, and the Workbench
 
 from __future__ import annotations
 
-import configparser
 import json
 import os
 import plistlib
@@ -20,6 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from threatlint.aws_profiles import read_section, write_profile
 from threatlint.servicenow import AWS_REGION
 from threatlint.tls import tool_env
 
@@ -144,40 +144,16 @@ def open_private(url: str) -> tuple[str | None, bool]:
 def ensure_profile(profile: str, start_url: str, sso_region: str, account_id: str, role_name: str,
                    session: str = DEFAULT_SESSION, path: Path | None = None) -> bool:
     """Create or update the SSO session and profile. Returns True when the file changed."""
-    path = path or aws_config_path()
-    config = configparser.RawConfigParser()
-    config.read(path, encoding="utf-8")
-    wanted = {
-        f"sso-session {session}": {"sso_start_url": start_url, "sso_region": sso_region, "sso_registration_scopes": "sso:account:access"},
-        f"profile {profile}": {"sso_session": session, "sso_account_id": account_id, "sso_role_name": role_name, "region": AWS_REGION, "output": "json"},
-    }
-    changed = False
-    for section, values in wanted.items():
-        if not config.has_section(section):
-            config.add_section(section)
-        for key, value in values.items():
-            if config.get(section, key, fallback=None) != value:
-                config.set(section, key, value)
-                changed = True
-    if changed:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            config.write(handle)
-    return changed
+    return write_profile(path or aws_config_path(), profile, start_url, sso_region, account_id, role_name, session, AWS_REGION)
 
 
 def existing_profile(profile: str, path: Path | None = None) -> dict[str, str] | None:
-    config = configparser.RawConfigParser()
-    config.read(path or aws_config_path(), encoding="utf-8")
     section = f"profile {profile}" if profile != "default" else "default"
-    return dict(config.items(section)) if config.has_section(section) else None
+    return read_section(path or aws_config_path(), section)
 
 
 def existing_session(name: str, path: Path | None = None) -> dict[str, str]:
-    config = configparser.RawConfigParser()
-    config.read(path or aws_config_path(), encoding="utf-8")
-    section = f"sso-session {name}"
-    return dict(config.items(section)) if name and config.has_section(section) else {}
+    return (read_section(path or aws_config_path(), f"sso-session {name}") or {}) if name else {}
 
 
 def _aws() -> str:

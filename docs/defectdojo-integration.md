@@ -1,106 +1,150 @@
 # DefectDojo integration
 
-Threatlint reviews DefectDojo findings with the Findings triage agent (`appsec-fp-reviewer`) and writes the
-verdict back to DefectDojo. It mirrors the [ServiceNow AVIT flow](avit-integration.md): fetch, check out the
-repository and branch the finding names, triage, then resolve with an explicit confirmation.
+Keep the decision and its source evidence with the finding. Threatlint fetches DefectDojo
+findings, locates their source, and runs findings triage. You approve posting and status changes.
+
+**Boundary:** fetching/reviewing does not update DefectDojo. `resolve` and `note` do, after
+confirmation. Semgrep-origin false positives can also trigger Semgrep writes; see [Resolve](#resolve).
 
 ## What you need
 
-| Item | Where it comes from |
+| Requirement | Setup |
 | --- | --- |
-| DefectDojo base URL (HTTPS) | e.g. `https://defectdojo.example.test` (a pasted `…/api/v2/…` URL is trimmed to the base) |
-| API v2 token | DefectDojo → your profile → **API v2 Key** |
-| Permissions | The token's user must **view** findings, tests and engagements in the products you review, and **edit** findings (notes, files, status) to resolve them |
-| Repository access | Same as AVIT review: an Azure DevOps PAT (`threatlint ado login`) or GitHub ([GitHub App](github-app.md) via `threatlint github login`, else `GH_TOKEN` / `gh auth login`) |
-
-## Credentials
-
-Resolved in this order; the token is never printed or logged:
-
-1. `THREATLINT_DOJO_URL` and `THREATLINT_DOJO_TOKEN`
-2. `~/.threatlint/defectdojo.json` (`THREATLINT_HOME` relocates it), written with mode `0600` by
-   `threatlint dojo login --url <url>` or *Workbench → Settings → DefectDojo*. The token is checked against
-   `GET /api/v2/findings/?limit=1` before it is saved.
-3. AWS Parameter Store, when `THREATLINT_DOJO_TOKEN_PARAMETER` (or `dojoTokenParameter` in `~/.threatlint/org.json`)
-   names a SecureString parameter; read with your own AWS CLI credentials.
-4. An interactive prompt (not saved).
-
-Requests refuse redirects so the token only reaches the validated host; pagination `next` links are followed only
-when they stay on the same base URL.
+| HTTPS URL / token | Instance URL; profile → **API v2 Key**. Pasted `/api/v2/…` paths are trimmed |
+| Permissions | View findings/tests/engagements; edit findings/notes/files/status only for posting |
+| Repository / model | [GitHub App](github-app.md), GitHub token/CLI, or `threatlint ado login`; [model setup](setup.md) |
+| Direct CLI triage | Semgrep Community Edition on PATH (`semgrep --version`); `run fp-review` requires it |
 
 ## CLI
 
+Replace `123` with an authorized finding:
+
+1. Validate/save the token (hidden prompt):
+
+   ```bash
+   threatlint dojo login --url https://defectdojo.example.test
+   ```
+
+2. Fetch without changing status:
+
+   ```bash
+   threatlint dojo fetch 123 -o dojo.md
+   ```
+
+3. Check out source into an empty directory:
+
+   ```bash
+   threatlint dojo checkout DOJO-123 --dir ./dojo-123
+   # Add --repo-url URL or --branch NAME to override missing/incorrect metadata.
+   ```
+
+4. Triage from the checkout; change `--provider` if needed:
+
+   ```bash
+   (cd dojo-123 && threatlint run fp-review --findings ../dojo.md --provider lmstudio)
+   ```
+
+**Result:** `dojo.md` and an advisory report, not closure. Check revision/limits before
+[posting](#resolve). Without source, review exported evidence and disclose uncertainty.
+
+For a bounded batch:
+
 ```bash
-threatlint dojo login --url https://defectdojo.example.test
-threatlint dojo fetch 123 DOJO-124 -o dojo.md                    # by id
-threatlint dojo fetch --product 3 --active true --severity High -o dojo.md   # by filter
-threatlint dojo checkout DOJO-123 --dir /tmp/dojo-123            # [--repo-url URL] [--branch NAME]
-threatlint dojo resolve DOJO-123 --report fp_review.md --docx fp_review.docx  # asks first; --yes to skip
-threatlint dojo note DOJO-123 --message "Could not review: repository archived" # asks first
+threatlint dojo fetch --product 3 --active true --severity High -o dojo.md
 ```
 
-Filters for `fetch`: `--product`, `--engagement`, `--test`, `--active`, `--verified`, `--severity` (repeatable),
-`--tag` (repeatable), `--limit` (default 50, at most 500). A search must be scoped by product, engagement, test, or tag.
-
-`fetch` writes a findings artifact for `/fp-review` or `threatlint run fp-review --findings dojo.md`. Each finding
-is keyed `DOJO-<id>`; the report's **Original finding** line must name it (`DOJO-123; <rule>; <tool>; <path:line>`).
-References match as whole tokens, so `DOJO-12` never matches `DOJO-123`.
+Filters: `--product`, `--engagement`, `--test`, `--active`, `--verified`, repeatable
+`--severity` / `--tag`, and `--limit` (default 50, maximum 500). Searches require product,
+engagement, test, or tag scope; explicit ID lists allow up to 50.
 
 ### Review target mapping
 
-| Context | DefectDojo field |
+| Context | Source field |
 | --- | --- |
-| Repository | engagement `source_code_management_uri` (GitHub or Azure DevOps URL) |
-| Branch | test `branch_tag`, else engagement `branch_tag` |
-| Commit | test `commit_hash`, else engagement `commit_hash` (checkout detaches there when reachable) |
-| File / line | `file_path` / `line` (or `sast_source_file_path` / `sast_source_line`) |
+| Repository | Engagement `source_code_management_uri` (GitHub or Azure DevOps) |
+| Branch | Test `branch_tag`, else engagement `branch_tag` |
+| Commit | Test `commit_hash`, else engagement `commit_hash`; detaches when reachable |
+| File / line | `file_path` / `line`, else `sast_source_file_path` / `sast_source_line` |
 | Rule | `vuln_id_from_tool`, else `vulnerability_ids`, else `CWE-<cwe>` |
-| Tool | test type name (`test.test_type`), else `found_by` |
-| Component | `component_name` `component_version` |
+| Tool / component | Test type, else `found_by`; `component_name` / `component_version` |
 
-A finding with no usable repository is reviewed from its own evidence (`checkout` explains why), or pass `--repo-url`.
+If a recorded commit is unreachable, checkout warns and reviews branch head instead.
+Reports must preserve **Original finding**, e.g.
+`DOJO-123; rule-id; Semgrep; src/search.py:42`. Matching uses whole references, so `DOJO-12`
+does not match `DOJO-123`.
+
+## Credentials
+
+CLI: `THREATLINT_DOJO_URL` / `THREATLINT_DOJO_TOKEN` → saved `~/.threatlint/defectdojo.json`
+→ Parameter Store token → unsaved prompt. `THREATLINT_HOME` relocates configuration. Login checks
+`GET /api/v2/findings/?limit=1` before saving, with POSIX mode `0600`; protect Windows ACLs too.
+
+Parameter Store: `THREATLINT_DOJO_TOKEN_PARAMETER` or `dojoTokenParameter` in `~/.threatlint/org.json`,
+using your AWS session (`--aws-profile`). Workbench shares the file; direct connections prefer
+saved values over environment. Tokens are masked/not returned to the page. Redirects are refused;
+pagination stays on the validated base URL.
 
 ## Resolve
 
-The report is attached **first**, so a finding is never closed without its evidence. Notes are the exact texts
-`threatlint avit resolve` uses.
+Inspect the matching report section first. To update **only DefectDojo**:
 
-| Verdict | DefectDojo changes |
+```bash
+threatlint dojo resolve DOJO-123 --report fp_review.md --docx fp_review.docx --skip-semgrep
+```
+
+The CLI asks first; `--yes` authorizes writes without prompting. `note` asks and changes no status:
+
+```bash
+threatlint dojo note DOJO-123 --message "Review blocked: repository archived."
+```
+
+| Verdict | Applied changes, in order |
 | --- | --- |
-| FALSE POSITIVE | `POST /api/v2/findings/{id}/files/` (`<ref>-threatlint-fp-review.docx`), note *“Closed by Threatlint as a false positive, see attached report.”*, `PATCH` `false_p=true, active=false, verified=false` |
-| TRUE POSITIVE | file, note *“True positive, see attached report.”*, `PATCH verified=true` (and `false_p=false, active=true` if it had been marked false positive) |
-| AMBIGUOUS | file and note *“Ambiguous, see attached report. Left open pending the evidence the report names.”*; nothing else |
+| FALSE POSITIVE | Attach Word report; note “Closed by Threatlint as a false positive, see attached report.”; set `false_p=true, active=false, verified=false` |
+| TRUE POSITIVE | Attach; note “True positive, see attached report.”; set `verified=true`; if previously false positive, clear `false_p` and reactivate |
+| AMBIGUOUS | Attach; note “Ambiguous, see attached report. Left open pending the evidence the report names.”; no status change |
 
-DefectDojo API v2 supports per-finding file uploads (`/findings/{id}/files/`), so the report is attached to the
-finding itself. A file whose title is already attached is not uploaded again.
+Attachment comes first; matching titles skip upload. Writes are **not transactional**: failure
+can leave attachments/notes without status changes. Inspect returned status/warnings before retrying.
 
-**Semgrep.** When the finding's tool is Semgrep and the verdict is FALSE POSITIVE, `resolve` (without
-`--skip-semgrep`) ignores the matching open Semgrep finding and, with `--checkout`, tunes the rule exactly as the
-AVIT flow does. Tuned rules are enabled only in `MODE_MONITOR` with the original disabled (enforced in
-`semgrep_platform`).
-
-## API calls
-
-| Call | Purpose |
-| --- | --- |
-| `GET /api/v2/findings/{id}/` | one finding |
-| `GET /api/v2/findings/?…&limit&offset` | filtered list |
-| `GET /api/v2/tests/{id}/`, `/engagements/{id}/`, `/test_types/{id}/` | repository, branch, commit, tool |
-| `GET`/`POST /api/v2/findings/{id}/files/` | existing files / attach the Word report |
-| `POST /api/v2/findings/{id}/notes/` | the Threatlint note |
-| `PATCH /api/v2/findings/{id}/` | status |
+**Semgrep:** omitting `--skip-semgrep` allows CLI false-positive resolution to ignore matching
+open Semgrep findings. `--skip-rule-tuning` keeps that triage write but skips replacement rules.
+With `--checkout`, supported rule tuning is validated against the flagged file; replacement rules
+are monitor-only and the original is disabled. The supplied checkout is deleted afterward,
+including on failure, unless `--keep-checkout` is set. Use a disposable checkout, not your working
+repository. DefectDojo and Semgrep outcomes are separate; inspect both.
 
 ## Workbench
 
-- **Settings → DefectDojo**: URL and token (masked; saved to the shared config only after the server accepts it).
-- **DefectDojo review**: finding ids or a filter; each finding is fetched, checked out, triaged with the model from
-  Settings, and saved to **Findings**. Nothing is written during the run. Each result has **Post to DefectDojo…**,
-  which shows every change and posts only after you confirm (`POST /api/scanners/dojo/resolve` with `confirm: true`).
-- **Import scan report** accepts a DefectDojo findings JSON (`/api/v2/findings/` response). **Post to DefectDojo…**
-  posts each imported finding back to itself, or to a reference you enter for uploads from other tools.
+1. Save URL/token in **Settings → DefectDojo**.
+2. Open **DefectDojo review**, enter IDs or a scoped filter, and run. Reports appear in **Findings**;
+   the review itself posts no external changes.
+3. Inspect each report, then **Post to DefectDojo…**. Confirm the previewed changes.
+   Semgrep posting is opt-in in the Workbench.
+
+**Import scan report** also accepts `/api/v2/findings/` JSON exports. Imported findings can post
+back to their original references or explicit mapped references after confirmation.
+Workbench review batches allow at most 50 findings; narrow filters if more match.
+
+## API calls
+
+Under `/api/v2/`: `GET findings/{id}/`, `findings/`, `tests/{id}/`, `engagements/{id}/`,
+`test_types/{id}/`, `findings/{id}/files/`; `POST findings/{id}/files/`,
+`findings/{id}/notes/`; `PATCH findings/{id}/`.
 
 ## Limits
 
-Verified only against mocked HTTP using DefectDojo's documented API v2 shapes. Custom DefectDojo deployments that
-require `verified` to stay set, or deduplication rules that reopen findings, can change what is stored; `resolve`
-reports what DefectDojo returned.
+[Python](../tests/test_scanners.py) and [Workbench](../web/tests/scanners.test.cjs) tests use
+mocked HTTP, not live certification. Custom verification/deduplication policies can alter or reopen findings.
+
+## Troubleshooting
+
+| Symptom | Next action |
+| --- | --- |
+| 401 / 403 | Check API v2 token and product-specific read/write access |
+| No repository | Check engagement SCM URL, or pass `--repo-url` |
+| No matching verdict | Preserve the complete `DOJO-<id>` in **Original finding** |
+| Attachment exists but status unchanged | Inspect server response/permissions; writes may have partially completed |
+| Semgrep unchanged | Check match metadata, token, warnings, and tuning prerequisites separately |
+
+Next: [review report evidence and acceptance criteria](reports.md) before approving closure.

@@ -1,20 +1,29 @@
 # GitHub Actions
 
-`threatlint` provides two GitHub Actions workflows for automated security analysis. Both support three AI providers — Claude, OpenAI, and GitHub Models (Copilot-aligned) — and automatically open GitHub issues for qualifying findings.
+Put evidence beside a change, then decide what should block a merge. Start with
+the [warn-mode, report-only caller](ci-templates.md#60-second-setup). It disables
+PR comments and Code Scanning and needs only `contents: read` with the OpenAI
+provider. Add publication permissions and blocking only after reviewing results.
 
-> **Reusing Threatlint from another repository?** Call the reusable workflow
-> [`threatlint-reusable.yml`](../.github/workflows/threatlint-reusable.yml) or the composite action
-> [`.github/actions/threatlint`](../.github/actions/threatlint/action.yml) instead of copying these files.
-> See [Reusable CI templates](ci-templates.md).
+For another repository, prefer [pinned reusable callers](ci-templates.md) over
+copied workflows.
 
 ## Included Workflows
 
+The two workflows below are the main entry points. Other
+[`appsec-*.yml` workflows](../.github/workflows/) cover individual specialists and
+scheduled analysis; [`appsec-auto-fix.yml`](#auto-fix-is-a-separate-write-path) is
+a separate write path.
+
 | Workflow | File | Trigger | Provider | Output |
 | --- | --- | --- | --- | --- |
-| AppSec PR Review | [.github/workflows/appsec-pr-review.yml](../.github/workflows/appsec-pr-review.yml) | Non-draft pull requests from branches in the same repository | Controlled by the `APPSEC_PROVIDER` repository variable (default: `claude`) | Workflow run log + GitHub issues |
-| AppSec Threat Model | [.github/workflows/appsec-threat-model.yml](../.github/workflows/appsec-threat-model.yml) | Manual `workflow_dispatch` run | Selected per-run via dispatch input (default: `claude`) | Workflow run log + GitHub issues |
+| AppSec PR Review | [.github/workflows/appsec-pr-review.yml](../.github/workflows/appsec-pr-review.yml) | Non-draft, same-repository PR | `APPSEC_PROVIDER` variable (default: `claude`) | Report artifact (30 days), PR summary, SARIF, qualifying issues |
+| AppSec Threat Model | [.github/workflows/appsec-threat-model.yml](../.github/workflows/appsec-threat-model.yml) | Manual `workflow_dispatch` | Dispatch input (default: `claude`) | Report artifact (90 days), SARIF, optional issues |
 
-The workflows are analysis-only. They never commit, push, or modify source files. When findings meet the configured severity threshold, they are opened as GitHub issues with `security` and `severity:*` labels.
+Their agents propose changes rather than edit source. **Publication is not read-only:**
+these workflows upload artifacts/SARIF, the PR workflow posts a comment, and both
+can create issues and labels. They request write permissions for those actions.
+The generic [composite action](ci-templates.md) gives you finer opt-in control.
 
 ## Supported Providers
 
@@ -24,7 +33,8 @@ The workflows are analysis-only. They never commit, push, or modify source files
 | `openai` | `OPENAI_API_KEY` repository secret | Prompt-based — diff and key context files are bundled into the request |
 | `github-models` | `GITHUB_TOKEN` (automatic — no extra secret needed) | Same prompt-based approach; uses the GitHub Models API endpoint |
 
-The `claude` provider is the most thorough — it runs an interactive agent that can follow call chains, read arbitrary files, and inspect configuration. The `openai` and `github-models` providers receive the diff (for PR review) or a curated file snapshot (for threat modeling) as static context; they cannot browse the codebase interactively.
+A larger tool surface is not a coverage guarantee. Review provider data handling
+and allowed tools before enabling analysis.
 
 ## Before Enabling
 
@@ -49,81 +59,97 @@ You need repository administrator access to complete this setup.
 2. Add `OPENAI_API_KEY` as a repository or organization secret.
 
 **For `github-models`:**
-No additional secret is required. The workflow uses the built-in `GITHUB_TOKEN`.
+No additional provider secret is required. The workflow uses `GITHUB_TOKEN`;
+confirm that your organization and token can access GitHub Models.
 
 ### 2. Configure the provider (PR review only)
 
-The PR review workflow reads the provider from a repository variable:
+Under **Settings → Secrets and variables → Actions → Variables**, set
+`APPSEC_PROVIDER` to `claude` (default), `openai`, or `github-models`.
+`APPSEC_MIN_ISSUE_SEVERITY` controls issue filing: `HIGH` by default; valid values
+are `CRITICAL`, `HIGH`, `MEDIUM`, and `LOW`.
 
-1. Open **Settings** > **Secrets and variables** > **Actions** > **Variables**.
-2. Create `APPSEC_PROVIDER` and set it to `claude`, `openai`, or `github-models`.
+### 3. Keep the workflow's support files together
 
-Leave the variable unset to use the default (`claude`). To control the minimum finding severity that triggers issue creation, create `APPSEC_MIN_ISSUE_SEVERITY` (default: `HIGH`; valid values: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`).
-
-### 3. Ensure the Python scripts are present
-
-The `create_issues.py` and `appsec_api.py` scripts must be committed to the repository at `.github/scripts/`. They are included in this repository. Copy them when installing into a target repo:
+Prefer a pinned reusable caller instead of copying workflows. If you maintain a
+copied per-agent workflow, carry its matching scripts and agent/skill definitions
+from the **same revision**. Copying only `appsec_api.py` is insufficient: it imports
+sibling prompt/helper modules.
 
 ```bash
 mkdir -p /path/to/your-repo/.github/scripts
-cp .github/scripts/appsec_api.py /path/to/your-repo/.github/scripts/
-cp .github/scripts/create_issues.py /path/to/your-repo/.github/scripts/
+cp .github/scripts/*.py /path/to/your-repo/.github/scripts/
 ```
+
+For Claude, also retain the required `.claude/agents/` and `.claude/skills/`
+definitions and applicable project instructions. Publication uses
+`post_pr_comment.py`, `to_sarif.py`, `gate_report.py`, and `create_issues.py`;
+the API provider uses `appsec_api.py` and its sibling modules.
 
 ## Enable the Workflows
 
-1. Review and merge the workflow files and the `.github/scripts/` files into the repository's default branch.
-2. Add the required authentication secret(s).
-3. Confirm that Actions are enabled for the repository.
-4. Open the **Actions** tab. You should see **AppSec PR Review** and **AppSec Threat Model**.
+1. Review triggers, source data sent to providers, scripts, agent definitions, and token permissions.
+2. Before enabling automatic PR runs, remove unwanted issue/comment/SARIF steps and their write permissions. The shipped PR workflow enables them.
+3. Merge the reviewed workflow/support files to the default branch and add provider secrets.
+4. Confirm Actions are enabled, then run a scoped manual threat model with `create_issues: false`.
 
 ## GitHub Issues for Findings
 
-After each analysis, `create_issues.py` reads the report, identifies findings at or above the minimum severity, and creates one GitHub issue per qualifying finding that does not already have an open issue.
+`create_issues.py` files one issue per qualifying report finding:
 
 **What gets filed:**
 - Severity at or above the configured threshold (default: HIGH)
-- Confidence is CONFIRMED or PLAUSIBLE (THEORETICAL skipped by default)
+- THEORETICAL skipped unless `--include-theoretical` is passed. The script does
+  not reject UNKNOWN confidence, so check report fields before trusting issue counts.
 - No existing open issue with the same finding ID in its title
 
-**Labels applied to each issue:**
-- `security` — applied to all findings
-- `severity:critical`, `severity:high`, `severity:medium`, or `severity:low` — applied by severity
+It creates missing `security` and `severity:<level>` labels
+(`critical`, `high`, `medium`, or `low`).
+The body includes the full finding block and metadata for the report date,
+severity/confidence, triggering PR (if supplied), and workflow run.
 
-Both labels are created automatically if they do not already exist. The issue body includes the full finding block from the report — preconditions, attack steps, evidence references, Remediation Guidance, and Test Case (code review) or Validation (threat model) — plus a metadata table that links back to the triggering PR and workflow run.
-
-**Deduplication:** the script searches for open issues whose title contains the finding ID (e.g., `[CR-001]`). If one is found, the finding is skipped. This prevents duplicate issues when the same finding appears across multiple PR updates or re-runs.
+**Deduplication is ID-based, not root-cause-based.** An open issue with `[CR-001]`
+in its title suppresses another `CR-001`, even if a later report uses that ID for a
+different bug. Review skips; do not treat issue counts as finding coverage.
 
 ## Run an Initial Threat Model
 
-1. Open the repository's **Actions** tab.
-2. Select **AppSec Threat Model**.
-3. Select **Run workflow** and choose the branch to inspect.
-4. Choose a **provider** (default: `claude`).
-5. Optionally enter a **target** such as `src/auth`, `payments webhook`, or `Terraform production infrastructure`.
-6. Choose whether to **create issues** for findings (default: true) and set a **minimum severity**.
-7. Leave `target` blank to make the agent inventory the repository and select an evidence-supported initial scope.
-8. Open the completed run and expand the analysis step to read the Markdown report in the log.
+1. Open **Actions → AppSec Threat Model → Run workflow**; select branch and provider.
+2. Set `target`, for example `src/auth` or `payments webhook`. Blank means autonomous
+   discovery and evidence-supported scope selection.
+3. Set **create issues** to `false` for the first run (default: `true`); choose a
+   minimum severity when enabling filing.
+4. Download the Markdown report from the run's **Artifacts** section.
 
 ## Automatic Pull-Request Review
 
-**AppSec PR Review** runs when a non-draft pull request is opened, reopened, synchronized, or marked ready for review. The provider is set by the `APPSEC_PROVIDER` repository variable (default: `claude`).
+**AppSec PR Review** runs on non-draft PR open, reopen, synchronize, and ready-for-review
+events. It publishes the full report artifact, comments a summary, and automatically
+files qualifying issues unless you remove that step.
 
-The report appears in the workflow run log. Any findings at or above `APPSEC_MIN_ISSUE_SEVERITY` (default: `HIGH`) that are not already tracked by an open issue are filed automatically.
-
-The workflow skips pull requests from forks. GitHub does not expose repository secrets to fork-triggered `pull_request` workflows, and running an AI agent with credentials against untrusted fork code is an unnecessary risk. Review fork contributions manually.
+Fork PRs are skipped. Same-repository changes are still untrusted input; review
+allowed agent tools and runner isolation rather than treating this guard as a sandbox.
 
 ## Warn vs fail
 
-Every workflow that gates on severity reads two repository variables
+The per-agent workflows read two repository variables
 (**Settings → Secrets and variables → Actions → Variables**):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `APPSEC_GATE_SEVERITY` | `CRITICAL` | Findings at or above this level (CONFIRMED/PLAUSIBLE) hit the gate. Empty disables it. |
+| `APPSEC_GATE_SEVERITY` | `CRITICAL` | CONFIRMED/PLAUSIBLE findings at or above this level hit the gate. Empty/unset falls back to `CRITICAL`. |
 | `APPSEC_GATE_MODE` | `warn` | `warn` adds a `::warning::` annotation per finding and keeps the check green. `fail` fails the check so branch protection can block the merge. |
 
-A run that produced no report warns rather than passes silently.
+For example, `HIGH` + `warn` annotates a HIGH/PLAUSIBLE finding without failing the
+gate. Change mode to `fail` and make the job required in branch protection to block.
+Other setup or provider failures can fail a warn-mode run.
+
+The two workflows above explicitly warn and skip the gate when the report is
+missing—even in `fail` mode. This differs from the generic templates, which pass
+missing reports to `gate_report.py` and fail in fail mode. An empty
+`APPSEC_GATE_SEVERITY` does **not** disable gating because the workflow expression
+uses `|| 'CRITICAL'`; remove/condition the gate step if maintaining a report-only
+copy, or use the generic template's `fail-on-severity: none`.
 
 ## Conversing on pull requests
 
@@ -139,11 +165,14 @@ The included workflows use these safeguards:
 
 - `pull_request`, not `pull_request_target`, for PR review.
 - A same-repository branch guard before the PR job runs.
-- Read-only `contents` and `pull-requests` permissions; `issues: write` scoped to issue creation only.
+- `contents: read`; PR review also requests `pull-requests: write` for comments,
+  `issues: write` for filing, and `security-events: write` for SARIF.
 - `id-token: write`, required by the Claude Code Action's GitHub App authentication flow.
-- Immutable SHA pins for `actions/checkout` and `anthropics/claude-code-action`.
+- Full SHA pins for `actions/checkout` and `anthropics/claude-code-action`
+  (not every action in these per-agent workflows is SHA-pinned).
 - Job timeouts and per-PR concurrency cancellation.
-- Read-only Claude agent tools and project-level agent guardrails.
+- Agent instructions prohibit source modification; the allowed Bash tool is not
+  itself a read-only execution sandbox.
 - Fork PR skipping to prevent secret exposure.
 
 The official Claude GitHub App has broader permissions than these workflow jobs. Review its permission request with your organization before installation. Organizations that need a narrower integration can follow the official Claude Code Action guidance for a custom GitHub App.
@@ -156,9 +185,10 @@ Set the `APPSEC_PROVIDER` repository variable to `openai` or `github-models` wit
 
 ### Change the Provider Model
 
-Pass `--model <model-id>` to `appsec_api.py` in the workflow step to override the default:
-- OpenAI: `gpt-4o`, `gpt-4o-mini`, `o3`, etc.
-- GitHub Models: `openai/gpt-4o`, `Meta-Llama-3.1-405B-Instruct`, etc.
+For Claude, set `THREATLINT_SCAN_MODEL` (default: `claude-opus-5-5`).
+For API providers, add `--model <model-id>` to `appsec_api.py`; defaults are
+`gpt-4o` (OpenAI) and `openai/gpt-4o` (GitHub Models). Confirm model access
+with your provider before changing it.
 
 ### Change Triggering Paths
 
@@ -175,7 +205,19 @@ on:
 
 ### Suppress Issue Creation for PR Review
 
-Remove or comment out the **Create GitHub issues for findings** step in the workflow if you want reports without automatic issue filing.
+Remove the **Create GitHub issues for findings** step and its `issues: write`
+permission for reports without issue filing. For manual threat models, choose
+`create_issues: false`; that input does not narrow the workflow's declared permissions.
+
+### Auto-fix is a separate write path
+
+[`appsec-auto-fix.yml`](../.github/workflows/appsec-auto-fix.yml) enables editing,
+committing, pushing a fix branch, and opening a PR. It is not a read-only reviewer.
+Do not install it as part of the minimal analysis setup. Review its dispatch and
+`/appsec-fix` comment triggers, enforce caller authorization, approve its write
+credentials, and require human review of any resulting PR. A request to “suggest
+a fix” in [PR chat](ci-templates.md#conversing-with-threatlint-on-pull-requests)
+does not enable this workflow.
 
 ### Update Action Pins
 
@@ -191,11 +233,11 @@ The `# v6` and `# v1` comments identify the release each SHA was resolved from. 
 | GitHub Models API returns 401 | Confirm `GITHUB_TOKEN` has access to GitHub Models in your plan. |
 | Claude Code Action cannot authenticate to GitHub | Confirm the Claude GitHub App is installed and `id-token: write` remains granted. |
 | PR review did not run | Check whether the PR is draft, from a fork, or did not match a configured trigger. |
-| Report is not visible on the pull request | Reports write to the workflow run log, not a PR comment. Open the run in the Actions tab. |
+| Full report is not visible on the pull request | PR review posts a summary; download the full Markdown artifact from the Actions run. Manual threat models do not post PR summaries. |
 | No issues created after analysis | Check that the report file was written. The **Create GitHub issues for findings** step logs the count of parsed findings and skipped reasons. |
 | Issues not labeled correctly | Confirm `GH_TOKEN` / `GITHUB_TOKEN` has `issues: write`. The script auto-creates labels if they are absent. |
 | Agent does not find project instructions | Confirm `.claude/agents/` and `CLAUDE.md` are present on the branch checked out by the workflow. |
-| OpenAI/GitHub Models report is less detailed | These providers receive static diff context rather than an interactive agent. For maximum depth, use `claude`. |
+| Report misses relevant context | Check the scoped inputs and snapshot limits; narrow the question or use Claude for repository traversal. No provider guarantees full coverage. |
 | Run takes too long or costs too much | Narrow the workflow trigger, reduce `--max-turns` in the Claude step, or give the manual workflow a precise target. |
 
 ## References

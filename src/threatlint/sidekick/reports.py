@@ -15,6 +15,7 @@ from typing import Callable
 
 from threatlint.sidekick import store
 from threatlint.sidekick.clients import Ado, ServiceNow, SidekickError, _safe
+from threatlint.sidekick.report_import import ALIASES, import_columns, import_rows, normalize_header as _norm
 from threatlint.sidekick.xlsx import read_xlsx, write_xlsx
 
 HEADERS = ["repository", "project", "organization", "total_branches", "stale_branches", "secrets", "total_critical",
@@ -174,14 +175,6 @@ def branch_report(organization: str, project: str, repository: str, stale_days: 
     return {"workbook": str(path), "total": len(branches), "stale": len(stale), "rows": stale}
 
 
-def _norm(header) -> str:
-    return re.sub(r"^_+|_+$", "", re.sub(r"[\s-]+", "_", str(header or "").strip().lower()))
-
-
-ALIASES = {"repo": "repository", "org": "organization", "secrets": "open_secrets", "open_secrets": "open_secrets",
-           "manager": "repo_manager", "repo_manager": "repo_manager"}
-
-
 def import_report(path: str, loadout: str, date: str = "") -> dict:
     """File an externally produced vReport under a loadout and date (one run per loadout per day)."""
     date = date or dt.date.today().isoformat()
@@ -191,29 +184,8 @@ def import_report(path: str, loadout: str, date: str = "") -> dict:
         if db.execute("SELECT 1 FROM report_runs WHERE loadout=? AND substr(created_at,1,10)=?", (loadout, date)).fetchone():
             raise SidekickError(f"{loadout} already has a report on {date}")
     table = read_xlsx(path)
-    if len(table) < 2:
-        raise SidekickError("The workbook has a header but no rows")
-    columns = [ALIASES.get(_norm(h), _norm(h)) for h in table[0]]
-    if "repository" not in columns or "project" not in columns:
-        raise SidekickError("The workbook needs repository and project columns")
-    default_org = store.default_organization()
-    rows = []
-    for raw in table[1:]:
-        record = {columns[i]: raw[i] for i in range(min(len(columns), len(raw)))}
-        if not record.get("repository") or not record.get("project"):
-            continue
-        row = {"repository": str(record["repository"]), "project": str(record["project"]),
-               "organization": str(record.get("organization") or default_org), "status": "complete",
-               "repo_manager": record.get("repo_manager") or "", "director": record.get("director") or ""}
-        for metric in store.METRICS:
-            value = record.get(metric)
-            try:
-                row[metric] = int(float(value)) if value not in (None, "") else None
-            except (TypeError, ValueError):
-                row[metric] = None
-        rows.append(row)
-    if not rows:
-        raise SidekickError("No rows with a repository and project")
+    columns = import_columns(table, aliases=ALIASES, normalize=_norm)
+    rows = import_rows(table[1:], columns, store.default_organization(), store.METRICS)
     copy = store.data_dir() / "reports" / f"{Path(path).stem}_imported_{uuid.uuid4().hex[:8]}.xlsx"
     shutil.copyfile(path, copy)
     run_id = store.record_run(loadout, rows, stale_days=90, duration=0, workbook=str(copy), created_at=f"{date}T12:00:00Z", imported=True)

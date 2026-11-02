@@ -48,8 +48,12 @@ class FakeHttp:
         raise AssertionError(f'unexpected request {request.get_method()} {request.full_url}')
 
 
-def test_mirrored_script_is_identical():
-    assert (ROOT / '.github/scripts/threatlint_chat.py').read_bytes() == (ROOT / 'src/threatlint/data/scripts/threatlint_chat.py').read_bytes()
+@pytest.mark.parametrize('name', sorted(
+    source.name for source in (ROOT / 'src/threatlint/data/scripts').glob('*.py')
+    if source.name != 'md_to_docx.py'
+))
+def test_mirrored_script_is_identical(name):
+    assert (ROOT / '.github/scripts' / name).read_bytes() == (ROOT / 'src/threatlint/data/scripts' / name).read_bytes()
 
 
 # ── Triggering ────────────────────────────────────────────────────────────────

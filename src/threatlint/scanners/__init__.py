@@ -3,6 +3,7 @@
 Implemented: DefectDojo (`threatlint dojo …`) and SonarQube / SonarCloud (`threatlint sonar …`). To add another
 tool (Checkmarx, Snyk, GitHub code scanning, …), subclass `base.Adapter`, implement its tool-specific methods,
 and register an instance here; `scanners.cli` then provides fetch / checkout / resolve / note / login for it.
+Pure FP-report syntax parsing lives in `scanners.verdicts`; `base.verdict_for` selects and validates a verdict.
 """
 
 from __future__ import annotations

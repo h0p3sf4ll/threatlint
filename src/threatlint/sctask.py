@@ -19,10 +19,12 @@ import sys
 import urllib.parse
 
 from threatlint import servicenow as sn
+from threatlint import sctask_cli, sctask_text
 from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, ResolveError, _confirm, _session
+from threatlint.sctask_text import _SCTASK, closing_comment, parse_sctask_numbers
+from threatlint.sctask_cli import add_sctask_parser
 
 TABLE = "sc_task"
-_SCTASK = re.compile(r"SCTASK\d{7,10}")
 # Closed Complete; override for instances with a different choice list.
 CLOSED_STATE = os.environ.get("THREATLINT_SNOW_SCTASK_CLOSED_STATE", "3")
 REPORT_SUFFIX = "-threatlint-fp-review.docx"
@@ -30,13 +32,9 @@ ACCESS_HELP = ("The OAuth client needs read and write access to the sc_task tabl
                "Ask the ServiceNow team to add sc_task to the client's ACLs.")
 
 
-def parse_sctask_numbers(text: str) -> list[str]:
-    return list(dict.fromkeys(_SCTASK.findall(str(text or "").upper())))
-
-
 def avits_in(text: str) -> list[str]:
     """AVIT numbers in free text, in order of appearance, without duplicates."""
-    return list(dict.fromkeys(sn._AVIT_PATTERN.findall(str(text or "").upper())))
+    return sctask_text.avits_in(text, sn._AVIT_PATTERN)
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -64,13 +62,15 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
         return {"avit": avit, "disposition": "NOT FOUND", "state": "", "report": None}
     row = sn._flatten(rows[0])
     notes = row.get("work_notes", "")
-    # The journal lists the newest entry first, so the earliest match is the latest verdict.
-    found = sorted((notes.find(text), label) for text, label in ((CLOSING_COMMENT, "FALSE POSITIVE"), (TRUE_POSITIVE_COMMENT, "TRUE POSITIVE"),
-                                                                 (AMBIGUOUS_COMMENT.split(".")[0], "AMBIGUOUS")) if text in notes)
+    disposition = sctask_text.journal_disposition(notes, (
+        (CLOSING_COMMENT, "FALSE POSITIVE"),
+        (TRUE_POSITIVE_COMMENT, "TRUE POSITIVE"),
+        (AMBIGUOUS_COMMENT.split(".")[0], "AMBIGUOUS"),
+    ))
     query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={row['sys_id']}^file_name={avit}{REPORT_SUFFIX}",
                                     "sysparm_fields": "sys_id,file_name", "sysparm_limit": "1"})
     attachments = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result", [])
-    return {"avit": avit, "disposition": found[0][1] if found else "NOT REVIEWED", "state": row.get("state", ""),
+    return {"avit": avit, "disposition": disposition, "state": row.get("state", ""),
             "report": attachments[0]["sys_id"] if attachments else None}
 
 
@@ -81,34 +81,13 @@ def _download(instance: str, token: str, attachment_id: str) -> bytes:
         return response.read()
 
 
-def closing_comment(outcomes: list[dict], leave_open: bool = False) -> str:
-    """The comment developers see on the task: one line per AVIT, then where to go next."""
-    decided = all(item["disposition"] in ("TRUE POSITIVE", "FALSE POSITIVE") for item in outcomes)
-    opening = ("Reviewed by Threatlint. Every AVIT below has a decision, so this task can be closed." if leave_open and decided
-               else "Reviewed by Threatlint." if leave_open else "Closed by Threatlint.")
-    lines = [f"{opening} Each AVIT below was reviewed against its repository and branch, and its report is attached to this task.", ""]
-    for item in outcomes:
-        lines.append({
-            "FALSE POSITIVE": f"- {item['avit']}: false positive, closed by Threatlint.",
-            "TRUE POSITIVE": f"- {item['avit']}: true positive, still open. Please remediate it in {item['avit']}.",
-            "AMBIGUOUS": f"- {item['avit']}: could not be decided from the code; left open for AppSec follow-up (see its report).",
-        }.get(item["disposition"], f"- {item['avit']}: not reviewed ({item['disposition'].lower()}); left open for AppSec follow-up."))
-    true_positives = [item["avit"] for item in outcomes if item["disposition"] == "TRUE POSITIVE"]
-    lines.append("")
-    if true_positives:
-        lines.append(f"Developers: {', '.join(true_positives)} {'is a confirmed finding' if len(true_positives) == 1 else 'are confirmed findings'} "
-                     "and must be fixed in the AVIT itself. Each attached report gives the evidence, the proposed fix and the acceptance criteria.")
-    lines.append("If you have questions about any decision, review the attached report for that AVIT first, then contact Application Security.")
-    return "\n".join(lines)
-
-
 def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, leave_open: bool = False) -> dict:
     task = fetch(instance, token, number)
     avits = avits_in(task.get("description", "") + "\n" + task.get("short_description", ""))
     if not avits:
         raise ResolveError(f"{number} names no AVIT numbers in its description")
     outcomes = [avit_outcome(instance, token, avit) for avit in avits]
-    decided = all(item["disposition"] in ("TRUE POSITIVE", "FALSE POSITIVE") for item in outcomes)
+    decided = sctask_text.all_decided(outcomes)
     closing = decided and not leave_open
     for item in outcomes:
         print(f"  {item['avit']} : {item['disposition']}{' · report attached' if item['report'] else ' · no Threatlint report'}", file=out)
@@ -141,33 +120,7 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, lea
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def add_sctask_parser(sub) -> None:
-    p = sub.add_parser("sctask", help="Review the AVITs named in a ServiceNow catalog task (SCTASK) and close it")
-    actions = p.add_subparsers(dest="sctask_command", required=True)
-    for name, text in (("avits", "List the AVIT numbers in the task's description"), ("close", "Attach each AVIT's report, comment, and close the task")):
-        action = actions.add_parser(name, help=text)
-        action.add_argument("number", metavar="SCTASK")
-        sn.add_avit_arguments(action)
-        if name == "close":
-            action.add_argument("--yes", action="store_true", help="Apply without prompting")
-            action.add_argument("--leave-open", action="store_true", help="Attach the reports and comment that the task can be closed, but do not close it")
-
-
 def cmd_sctask(args) -> int:
-    try:
-        numbers = parse_sctask_numbers(args.number)
-        if len(numbers) != 1:
-            raise ResolveError(f"Not an SCTASK number: {args.number} (expected e.g. SCTASK14120565)")
-        instance, token = _session(args)
-        if args.sctask_command == "avits":
-            task = fetch(instance, token, numbers[0])
-            avits = avits_in(task.get("description", "") + "\n" + task.get("short_description", ""))
-            for avit in avits:
-                print(avit)
-            print(json.dumps({"sctask": numbers[0], "state": task.get("state", ""), "avits": avits}))
-            return 0 if avits else 1
-        close(instance, token, numbers[0], args.yes, leave_open=args.leave_open)
-        return 0
-    except (ResolveError, sn.ServiceNowError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+    return sctask_cli.cmd_sctask(
+        args, session=_session, parse_numbers=parse_sctask_numbers, fetch=fetch, avits_in=avits_in, close=close,
+    )

@@ -4,6 +4,7 @@ Ported from the standalone Sidekick desktop app into Threatlint's CLI and Workbe
   sidekick.store      data directory, loadouts, saved queries, report history, action journal (sqlite)
   sidekick.clients    Azure DevOps and ServiceNow calls (branch stats, counts, batch close, users)
   sidekick.reports    vReports, branch reports, trends, scope accountability, xlsx output
+  sidekick.report_import  pure workbook header validation and report-row normalization
   sidekick.ops        ownership lookup, AVIT bulk closure and reversal, Semgrep bulk triage
   sidekick.cli        `threatlint sidekick …`
 

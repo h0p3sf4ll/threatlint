@@ -1,33 +1,68 @@
 # <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Agent Reference
 
-Detailed documentation for the registered threatlint security agents.
+Choose the decision you need to make, then ask the matching agent for evidence.
+“Can another tenant download this invoice?” gives a reviewer a sharper target than
+“check security.”
 
----
+## Choose by outcome
 
-## Table of Contents
+| I need to… | Agent / reference |
+| --- | --- |
+| Find the highest-risk component or model a feature | [Threat modeler](#appsec-threat-modeler) |
+| Decide whether a change is safe to merge | [Code reviewer](#appsec-code-reviewer) |
+| Review AI-generated or newly written code | [Secure codegen reviewer](#appsec-secure-codegen-reviewer) |
+| Assess packages, credentials, infrastructure, or pipelines | [Dependencies](#appsec-dependency-auditor) · [Secrets](#appsec-secrets-scanner) · [IaC](#appsec-iac-reviewer) · [CI/CD](#appsec-cicd-auditor) |
+| Trace endpoint access or identity decisions | [API reviewer](#appsec-api-security-reviewer) · [Auth reviewer](#appsec-auth-reviewer) |
+| Check workflows, clients, cryptography, or AI boundaries | [Business logic](#appsec-business-logic-reviewer) · [Client](#appsec-client-security-reviewer) · [Crypto](#appsec-crypto-reviewer) · [AI](#appsec-ai-security-reviewer) |
+| Trace sensitive data or map technical controls | [Privacy](#appsec-privacy-reviewer) · [Compliance](#appsec-compliance-checker) |
+| Decide whether scanner findings need action | [False positive reviewer](#appsec-fp-reviewer) |
+| Turn a threat into attack paths or defensive exercises | [Attack tree](#appsec-attack-tree) · [Red team](#appsec-red-team) |
+| Compare reports or check one claimed fix | [Threat delta](#appsec-threat-delta) · [Verify fix](#appsec-verify-fix) |
+| Interpret supplied runtime captures or plan regression tests | [Runtime reviewer](#appsec-runtime-reviewer) · [Security test planner](#appsec-security-test-planner) |
 
-- [appsec-threat-modeler](#appsec-threat-modeler)
-- [appsec-code-reviewer](#appsec-code-reviewer)
-- [appsec-dependency-auditor](#appsec-dependency-auditor)
-- [appsec-secrets-scanner](#appsec-secrets-scanner)
-- [appsec-iac-reviewer](#appsec-iac-reviewer)
-- [appsec-cicd-auditor](#appsec-cicd-auditor)
-- [appsec-api-security-reviewer](#appsec-api-security-reviewer)
-- [appsec-auth-reviewer](#appsec-auth-reviewer)
-- [appsec-fp-reviewer](#appsec-fp-reviewer)
-- [appsec-compliance-checker](#appsec-compliance-checker)
-- [appsec-attack-tree](#appsec-attack-tree)
-- [appsec-red-team](#appsec-red-team)
-- [appsec-threat-delta](#appsec-threat-delta)
-- [appsec-verify-fix](#appsec-verify-fix)
-- [appsec-runtime-reviewer](#appsec-runtime-reviewer)
-- [appsec-business-logic-reviewer](#appsec-business-logic-reviewer)
-- [appsec-client-security-reviewer](#appsec-client-security-reviewer)
-- [appsec-crypto-reviewer](#appsec-crypto-reviewer)
-- [appsec-ai-security-reviewer](#appsec-ai-security-reviewer)
-- [appsec-security-test-planner](#appsec-security-test-planner)
-- [appsec-secure-codegen-reviewer](#appsec-secure-codegen-reviewer)
-- [appsec-privacy-reviewer](#appsec-privacy-reviewer)
+## Start with one question
+
+In a client with Threatlint commands installed:
+
+```text
+/threat-model src/payments — trace webhook input to payment-state changes
+/security-review — review the staged and unstaged changes
+/fp-review findings.sarif — verify reachability before proposing a suppression
+/verify-fix CR-001 — check the original evidence at src/invoices.py:84
+```
+
+Give the agent the target, relevant finding/report, and decision you need. With no
+target, the threat modeler discovers and ranks candidate components; the code
+reviewer defaults to the working-tree diff. See [installation and clients](../README.md)
+and [CI callers](ci-templates.md) for other entry points.
+
+## Shared contract
+
+- **Analysis, not execution.** Agents do not edit source, install dependencies, stage
+  changes, or commit. Report persistence belongs to the host. Resolution and auto-fix
+  workflows are separate, explicitly authorized write paths—not permissions granted
+  by asking a reviewer for a fix.
+- **Evidence before conclusions.** Material claims need inspected `file:line` evidence.
+  Findings distinguish CONFIRMED, PLAUSIBLE, and THEORETICAL confidence; unknowns
+  remain explicit. A clean scoped report is not proof that the application is secure.
+- **Advice that engineers can use.** Reports include proposed fixes, implementation
+  notes, owner/effort, regression assertions, acceptance criteria, and limitations.
+  Proposed changes are **NOT APPLIED**; proposed tests are **NOT RUN** without actual
+  execution evidence. A false-positive verdict does not authorize suppression.
+- **No live validation by implication.** Runtime review analyzes supplied redacted
+  evidence. Test planning does not run tests, log in, bypass SSO/MFA, or authorize a
+  runtime engine.
+
+The [agent definitions](../src/threatlint/data/agents/) specify full protocols and
+report formats; the [agent-skill registry](../src/threatlint/data/agent-skills.json)
+assigns required shared and specialist skills. The summaries below are a selection
+guide, not a replacement for those contracts. See [the workbench](workbench.md)
+for evidence handoffs.
+
+Most reports separate an executive decision from technical findings. The technical
+section preserves finding IDs, severity/confidence, source evidence, attack path,
+impact, advisory mitigation, and proposed validation. Specialist formats below
+add inventories, verdicts, or test plans; their canonical definitions remain authoritative.
 
 ---
 
@@ -40,38 +75,28 @@ Detailed documentation for the registered threatlint security agents.
 
 ### Purpose
 
-Produces evidence-based threat models grounded in inspected source code, configuration, and infrastructure. When no target is specified, the agent autonomously inventories the repository, ranks candidate components by external exposure, privilege level, sensitive-data handling, and blast radius, then selects the highest-risk scope.
+Find the attack paths worth fixing first. The agent models inspected source,
+configuration, and infrastructure. Without a target, it inventories and ranks
+components by exposure, privilege, sensitive data, and blast radius, then explains
+its selected scope.
 
-### What It Reviews
-
-- Application source code and API surface
-- Authentication, authorization, session management, and trust boundaries
-- IaC, Dockerfile, CI/CD workflows, and dependency manifests
-- Secrets handling, encryption, and external service integrations
-- HTTP, CLI, queue, event, file, and WebSocket entry points
+**Scope:** source, API/CLI/queue/event/file/WebSocket entry points, identity and
+trust boundaries, IaC/containers, CI/CD, dependencies, secrets, encryption, and
+external integrations.
 
 ### Frameworks Applied
 
-- **STRIDE** — Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation
-- **OWASP Top 10** (2021)
-- **CWE** — weakness classification for each finding
-- **MITRE ATT&CK** — tactic and technique for applicable findings
-- **DREAD** — Damage, Reproducibility, Exploitability, Affected users, Discoverability (score /10)
-- **Compliance exposure** — PCI-DSS v4, HIPAA, SOC 2, ISO 27001, NIST CSF (when evidence supports)
+STRIDE, OWASP Top 10 (2021), CWE, applicable MITRE ATT&CK, DREAD (/10), and
+evidence-supported compliance exposure.
 
-### Attacker Personas
-
-External/Unauthenticated, Authenticated User, Privileged Insider, Supply-Chain, Infrastructure/Cloud, Nation-State/APT
+**Personas:** external/unauthenticated, authenticated user, privileged insider,
+supply-chain, infrastructure/cloud, and nation-state/APT.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Risk Posture (1–2 sentences)
-- Finding Summary table (CONFIRMED / PLAUSIBLE / THEORETICAL per severity)
-- Top Immediate Actions (Critical and High only)
-- Crown Jewel Analysis (asset → classification → impact → primary threat → control commensurate)
-- Regulatory and Compliance Exposure
-- Recommended Next Step
+**Tier 1 — Executive Summary:** risk posture, severity/confidence counts,
+Critical/High actions, crown jewels (asset/classification/impact/threat/control),
+supported compliance exposure, and one recommended next step.
 
 **Tier 2 — Technical Threat Model**
 - Discovery and Scope Selection (when autonomously selected)
@@ -104,7 +129,9 @@ External/Unauthenticated, Authenticated User, Privileged Insider, Supply-Chain, 
 
 ### Purpose
 
-Reviews a code change (diff, branch, pull request, or working-tree diff) for security regressions, missing controls, introduced secrets, and new attack surface. Produces a merge recommendation.
+Make a merge decision from the change—not a generic checklist. The reviewer traces
+security-relevant changed code and adjacent controls, then recommends BLOCK,
+MERGE WITH ACTION, or MERGE.
 
 ### Diff Targeting
 
@@ -116,38 +143,27 @@ Reviews a code change (diff, branch, pull request, or working-tree diff) for sec
 | `42` | Pull request via `gh pr diff` |
 | `-- path/` | Path-scoped diff |
 
-### What It Inspects
+**Scope:** changed routes, middleware, auth, validation/deserialization/queries,
+external calls, file/shell I/O, secrets, dependencies, CI/CD, containers, IaC, and
+removed or weakened controls. Adjacent callers and defenses provide context.
 
-- Changed entry points, route handlers, middleware, auth logic
-- Modified input validation, deserialization, or ORM queries
-- New or changed external calls, file I/O, shell commands
-- Secrets introduced, new dependencies, version changes
-- Modified CI/CD, Dockerfile, IaC, or security configuration
-- Removed or weakened security controls
-
-### Frameworks Applied
-
-- **OWASP Top 10** (2021)
-- **CWE**
-- **MITRE ATT&CK** tactic and technique
-- **Compliance** mapping where evidence supports
+**Mappings:** OWASP Top 10 (2021), CWE, MITRE ATT&CK, and evidence-supported
+compliance controls.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Change Risk Level: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
-- Finding Summary table
-- Tech Stack detected (language, framework, ORM, auth library)
-- Top Issues (Critical and High only)
-- Merge Recommendation: BLOCK / MERGE WITH ACTION / MERGE
+**Tier 1 — Executive Summary:** change risk (CRITICAL / HIGH / MEDIUM / LOW /
+CLEAN), finding counts, detected tech stack, Critical/High issues, and merge
+recommendation (BLOCK / MERGE WITH ACTION / MERGE).
 
 **Tier 2 — Technical Review**
 - Review Scope with numbered assumptions
-- Secrets Introduced section (required; "None detected." if absent)
-- New Dependencies section (required; "None added." if absent)
 - Per-finding blocks: Severity, Confidence, OWASP/CWE/ATT&CK, evidence from diff, exploit path, Remediation Guidance with before/after snippets, Test Case
 - Security-Positive Changes (required)
 - Residual Risk
+
+**Required report disclosures:** Secrets Introduced (“None detected.” if absent)
+and New Dependencies (“None added.” if absent).
 
 ---
 
@@ -160,30 +176,23 @@ Reviews a code change (diff, branch, pull request, or working-tree diff) for sec
 
 ### Purpose
 
-Audits package manifests and lockfiles for supply chain security risk. Covers CVE version ranges, dependency confusion attack surfaces, typosquatting, malicious install hooks, abandoned packages, lockfile integrity, and package manager configuration security.
+Decide which dependency changes reduce real supply-chain risk. The reviewer
+checks manifests, lockfiles, hooks, and registry configuration; advisory
+applicability needs version and reachability evidence, not a package-name match.
 
 ### Ecosystems Supported
 
 npm / yarn, PyPI (pip/poetry/pipenv), Go modules, Cargo (Rust), Maven/Gradle (Java), RubyGems, Composer (PHP)
 
-### What It Reviews
-
-- **CVE exposure** — known vulnerable version ranges
-- **Dependency confusion** — internal package names resolvable on public registries at higher versions
-- **Typosquatting** — package names within one edit-distance of popular packages
-- **Malicious install hooks** — `postinstall`, `prepare`, `install` scripts in npm; Python package hooks
-- **Abandoned packages** — no recent releases or maintainer activity indicators
-- **Version pinning** — floating ranges (`^`, `~`, `*`, `>=`) vs. exact pins
-- **Lockfile integrity** — presence, freshness, and hash coverage
-- **Registry configuration** — `.npmrc`, `pip.conf` custom registries that could introduce risk
+**Review focus:** CVE version ranges and applicability; confusion/typosquatting;
+install hooks (`postinstall`, `prepare`, `install`, Python hooks); maintenance
+signals; floating versions, lockfile freshness/hashes; and `.npmrc`/`pip.conf`
+registry configuration. Unverified advisory or maintenance data stays uncertain.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Supply Chain Risk Level
-- Finding Summary table
-- Top Issues
-- Recommended Actions: rotation/update priorities and audit commands
+**Tier 1 — Executive Summary:** supply-chain risk, finding counts, top issues,
+rotation/update priorities, and recommended audit commands.
 
 **Tier 2 — Technical Findings**
 - Manifests Reviewed table (ecosystem, lockfile present, risk)
@@ -201,9 +210,14 @@ npm / yarn, PyPI (pip/poetry/pipenv), Go modules, Cargo (Rust), Maven/Gradle (Ja
 
 ### Purpose
 
-Scans the repository for hardcoded credentials, API keys, private keys, database connection strings, and secret management anti-patterns. Extends detection beyond source code to git history hints, CI/CD configuration, environment files, and error output patterns.
+Locate credential exposure and plan revocation or rotation. The reviewer inspects
+source, configuration, history hints, and error-output patterns; it does not test
+whether credentials work or print complete secrets.
 
-### Secret Formats Detected
+### Secret Pattern Examples
+
+These are inspection cues, not an exhaustive detector or a guarantee of current
+provider formats. Context and entropy help distinguish credentials from fixtures.
 
 | Type | Pattern |
 |------|---------|
@@ -219,25 +233,16 @@ Scans the repository for hardcoded credentials, API keys, private keys, database
 | SendGrid API key | `SG.[A-Za-z0-9_-]{22}.[A-Za-z0-9_-]{43}` |
 | Slack token | `xox[bpas]-[0-9A-Za-z-]+` |
 | RSA / EC private key | `-----BEGIN ... PRIVATE KEY-----` |
-| Generic high-entropy | configurable entropy threshold |
+| Generic high-entropy | entropy and assignment context |
 | DB connection string | credentials in URI format |
 
-### What It Reviews
-
-- All source files (language-agnostic)
-- CI/CD workflow YAML (secret references vs. hardcoded values)
-- `.env`, `.env.*`, config files
-- IaC files (Terraform state, Kubernetes Secrets)
-- Build scripts and Makefile
-- git history (commit messages and blob scanning hints)
+**Scope:** source, CI/CD, `.env*`, configuration, Terraform state/Kubernetes
+Secrets, build scripts/Makefiles, and git history hints.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Secrets Exposure Level
-- Finding Summary table
-- Top Issues (Critical and High only)
-- Recommended Actions: rotation steps, `.gitignore` additions, secret manager migration
+**Tier 1 — Executive Summary:** exposure level, finding counts, Critical/High
+issues, and rotation, ignore-file, or secret-manager actions.
 
 **Tier 2 — Technical Findings**
 - Per-finding blocks: `SS-NNN`, secret type, location with line number, exposure context, active risk assessment, impact, mitigation
@@ -254,41 +259,25 @@ Scans the repository for hardcoded credentials, API keys, private keys, database
 
 ### Purpose
 
-Reviews Infrastructure as Code for security misconfigurations that could enable privilege escalation, lateral movement, data exfiltration, or availability attacks.
+Find configuration paths that expose infrastructure or widen a compromised
+identity's reach. Recommendations target the affected resource and its blast radius.
 
 ### IaC Tools Supported
 
 Terraform, Kubernetes (manifests and Helm), Dockerfile and docker-compose, AWS CloudFormation and CDK, Pulumi, Ansible (playbooks)
 
-### What It Reviews
+### Review Focus
 
-**Terraform / CloudFormation:**
-- IAM policies: wildcard actions, wildcard resources, overly-permissive trust policies
-- Security groups / NACLs: ports open to `0.0.0.0/0` or `::/0`
-- Encryption: S3 bucket encryption, RDS storage encryption, KMS key rotation
-- Network: public-facing resources without expected justification
-- Secrets: hardcoded credentials in resource attributes or variable defaults
-
-**Kubernetes:**
-- Pod security: `privileged: true`, `allowPrivilegeEscalation`, `runAsRoot`, `hostPID/hostNetwork`
-- RBAC: ClusterRoleBindings to `system:masters`, wildcard verbs in roles
-- Network policies: missing ingress/egress policies
-- Images: `:latest` tags, missing digest pinning
-- Secrets: secret data in ConfigMaps or environment variables in plaintext
-
-**Dockerfile:**
-- Base image: `:latest` tag, known-vulnerable base images
-- Running as root: missing `USER` instruction
-- `ADD` with URLs vs. `COPY`
-- Sensitive files (`*.pem`, `id_rsa`) copied into image
-- Multi-stage build misuse that leaves build tools in final image
+- **Terraform/CloudFormation:** IAM actions/resources/trust, public network
+  exposure (`0.0.0.0/0`, `::/0`), S3/RDS encryption, KMS rotation, and secrets.
+- **Kubernetes:** pod privileges and host access, RBAC including `system:masters`,
+  network policies, image tags/digests, and plaintext secret placement.
+- **Containers:** base-image provenance, `USER`, remote `ADD`, copied credentials,
+  and build-stage contents retained in the final image.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Infrastructure Risk Level
-- Finding Summary table
-- Top Issues
+**Tier 1 — Executive Summary:** infrastructure risk, finding counts, and top issues.
 
 **Tier 2 — Technical Findings**
 - IaC Inventory table (tool, files found, resources defined, issues)
@@ -305,45 +294,22 @@ Terraform, Kubernetes (manifests and Helm), Dockerfile and docker-compose, AWS C
 
 ### Purpose
 
-Audits CI/CD pipeline configuration — primarily GitHub Actions but also GitLab CI, CircleCI, and Jenkins — for security weaknesses that could enable secret theft, supply chain compromise, or unauthorized code execution.
+Find where pipeline inputs can reach credentials, runners, or release artifacts.
+The reviewer inspects GitHub Actions, GitLab CI, CircleCI, and Jenkins configuration.
 
-### What It Reviews
+### Review Focus
 
-**GitHub Actions — Script Injection:**
-Exhaustive check for untrusted context values interpolated into `run:` blocks:
-- `github.head_ref`, `github.base_ref`
-- `github.event.pull_request.title`, `.body`, `.head.ref`, `.head.label`
-- `github.event.issue.title`, `.body`
-- `github.event.comment.body`
-- `github.event.review.body`
-- `github.event.inputs.*`
-- `github.event.client_payload.*`
-
-**GitHub Actions — Workflow Risks:**
-- `pull_request_target` with checkout of PR head branch (TOCTOU + secret exposure)
-- Workflow permissions: `write-all`, missing `permissions:` block
-- Action pinning: actions not pinned to a specific commit SHA
-- `continue-on-error: true` on security-critical steps
-- `if: always()` without permission guards
-
-**Fork PR Exposure:**
-- Secrets accessible to fork-triggered workflows
-- `GITHUB_TOKEN` write permissions on fork PRs
-
-**Self-Hosted Runners:**
-- Runners shared across security boundaries
-- No ephemeral runner configuration
-
-**Artifact Integrity:**
-- Unsigned artifacts consumed by later steps
-- Missing attestation (SLSA)
+- **Injection:** untrusted `github.head_ref`/`base_ref`, PR/issue titles and
+  bodies, comment/review bodies, dispatch inputs, and `client_payload` in `run:`.
+- **Workflow trust:** `pull_request_target` plus PR-head checkout, token
+  permissions/inherited defaults, action SHA pins, `continue-on-error`, and
+  unguarded `if: always()` steps.
+- **Execution and release boundaries:** fork secrets/write tokens, shared or
+  persistent runners, unsigned downstream artifacts, and attestations.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Pipeline Security Level
-- Finding Summary table
-- Top Issues
+**Tier 1 — Executive Summary:** pipeline risk, finding counts, and top issues.
 
 **Tier 2 — Technical Findings**
 - Secret Exposure Map table (secret/variable, fork-accessible, logged, scope)
@@ -360,7 +326,9 @@ Exhaustive check for untrusted context values interpolated into `run:` blocks:
 
 ### Purpose
 
-Reviews all API endpoints — REST, GraphQL, gRPC, and WebSocket — for the OWASP API Security Top 10 (2023) and related weaknesses. Traces authorization checks from route definitions through to data access layers.
+Trace who can reach sensitive data through REST, GraphQL, gRPC, and WebSocket
+handlers. For example, “Does `GET /invoices/:id` bind the query to the caller's
+tenant?” focuses the review on enforcement, not the route name.
 
 ### OWASP API Security Top 10 Coverage
 
@@ -377,19 +345,12 @@ Reviews all API endpoints — REST, GraphQL, gRPC, and WebSocket — for the OWA
 | API9:2023 Inventory | Are all endpoints documented? Any shadow or undocumented endpoints? |
 | API10:2023 Unsafe Consumption | Are third-party API responses validated before use? |
 
-### Additional Checks
-
-- Mass assignment: request body fields bound directly to ORM models
-- Excessive data exposure: response bodies including fields beyond what the caller needs
-- Input validation: type coercion, schema validation, injection into downstream services
-- GraphQL introspection enabled in production; unbounded query depth/complexity
+Also traces mass assignment, response overexposure, coercion/schema validation,
+downstream injection, and GraphQL introspection/depth/complexity in context.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- API Security Level
-- Finding Summary table
-- Top Issues
+**Tier 1 — Executive Summary:** API risk, finding counts, and top issues.
 
 **Tier 2 — Technical Findings**
 - API Endpoint Inventory table (path, method, auth required, auth type, risk flags)
@@ -406,63 +367,28 @@ Reviews all API endpoints — REST, GraphQL, gRPC, and WebSocket — for the OWA
 
 ### Purpose
 
-Performs a deep-dive security review of all authentication and authorization code, tracing every privilege decision from request receipt to data access.
+Check whether identity and privilege survive the whole request path. The reviewer
+traces authentication, session, and authorization decisions through to data access.
 
 ### Coverage Areas
 
-**OAuth 2.0 / OIDC:**
-- Missing `state` parameter (CSRF against OAuth flow)
-- Missing PKCE for public clients
-- Redirect URI validation (open redirect, prefix matching bypass)
-- Scope minimization and principle of least privilege
-- ID token signature and claims validation
-
-**JWT:**
-- Algorithm confusion (`none`, RS256→HS256 downgrade)
-- Required claims validation (`iss`, `aud`, `exp`, `nbf`, `sub`)
-- Secret strength and rotation
-- Token storage (localStorage vs. httpOnly cookie)
-- JTI blacklisting for revocation
-
-**Session Management:**
-- Token entropy (minimum 128 bits)
-- Session fixation (regenerate on privilege change)
-- Revocation on logout and password change
-- Cookie flags: `HttpOnly`, `Secure`, `SameSite=Strict/Lax`
-- Absolute and sliding expiry
-
-**CSRF:**
-- Double-submit cookie or synchronizer token pattern
-- `SameSite` cookie attribute as defense-in-depth
-- Custom request header patterns
-
-**MFA:**
-- TOTP window size (1–2 steps max)
-- Backup code entropy and single-use enforcement
-- MFA bypass paths: account recovery, password reset, trusted-device bypass
-
-**RBAC / ABAC:**
-- Middleware order: auth before authz
-- Per-object permission checks (IDOR / BOLA)
-- Privilege escalation via role parameter manipulation
-- Multi-tenancy isolation: tenant scoping in all queries
-
-**Password Security:**
-- Hashing algorithm: `bcrypt` (cost ≥ 12) or `Argon2id`
-- No reversible encoding (Base64, AES-ECB) for password storage
-- Timing-safe comparison
-
-**Brute-Force / Account Enumeration:**
-- Rate limiting on login, password reset, and OTP endpoints
-- Consistent error messages (no user enumeration)
-- Account lockout and exponential backoff
+- **OAuth/OIDC:** state, public-client PKCE, exact redirect validation, scope,
+  and ID-token signatures/claims.
+- **JWT:** algorithm confusion (`none`, RS256→HS256), `iss`/`aud`/`exp`/`nbf`/`sub`,
+  signing-key strength/rotation, storage, and revocation.
+- **Sessions/CSRF:** entropy, privilege-change rotation, logout/password-change
+  revocation, secure cookie flags/expiry, synchronizer or double-submit tokens,
+  SameSite defense-in-depth, and header-based controls.
+- **MFA/recovery:** TOTP windows, single-use backup codes, reset/account-recovery
+  and trusted-device bypasses.
+- **RBAC/ABAC:** auth-before-authz ordering, object/tenant query scope, and
+  role-parameter escalation.
+- **Passwords and abuse:** nonreversible hashing/KDF parameters, safe comparisons,
+  login/reset/OTP throttling, enumeration, lockout, and backoff.
 
 ### Report Structure
 
-**Tier 1 — Executive Summary**
-- Auth Security Level
-- Finding Summary table
-- Top Issues
+**Tier 1 — Executive Summary:** auth risk, finding counts, and top issues.
 
 **Tier 2 — Technical Findings**
 - Auth Coverage Matrix table (category, reviewed, findings, library/pattern used)
@@ -609,10 +535,6 @@ Executive coverage summary and traceable acceptance matrix; per-ST-case provenan
 
 ---
 
-*All agents are read-only. They do not modify workspace files, install dependencies, stage changes, or create commits. Report persistence is host-owned. The new specialists do not control runtime engines or perform live validation; Teams and snapshot modes analyze supplied evidence only.*
-
----
-
 ## appsec-secure-codegen-reviewer
 
 **Finding prefix**: `SG-NNN`  
@@ -672,7 +594,9 @@ Produces a professionally written findings and remediation report from SARIF 2.1
 
 ### Required Skills
 
-The reviewer loads evidence analysis, actionable reporting, finding triage, and Semgrep tuning. All other agents load the shared evidence/reporting workflows plus their own specialist skill. See [the registry](../src/threatlint/data/agent-skills.json) and [the workbench guide](workbench.md).
+The reviewer loads evidence analysis, actionable reporting, finding triage, Semgrep
+tuning, and runtime validation. Required skills for every agent are assigned in
+[the registry](../src/threatlint/data/agent-skills.json).
 
 ### What It Reviews
 
@@ -707,23 +631,24 @@ The reviewer loads evidence analysis, actionable reporting, finding triage, and 
 
 ### Purpose
 
-Maps concrete technical security findings to specific control requirements in OWASP ASVS 4.0, PCI-DSS v4, HIPAA, SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, and CIS Controls v8. Detects applicable frameworks from repository evidence and labels only the controls that apply to the codebase under review.
+Turn technical findings into control-gap work, not a certification claim. The
+reviewer maps evidence to applicable requirements and flags scope or policy
+decisions that need organizational confirmation.
 
 ### What It Reviews
 
 - Prior findings from threat model, code review, or other agents (accepted via chain context)
 - Repository evidence for framework scope detection (payment code, health data, multi-tenancy, IaC, policies)
 - Per-finding control mapping with gap type: Missing / Partial / Met
-- Compliance roadmap to reach each framework's baseline
+- Technical remediation roadmap; policy and audit evidence remain separate
 
 ### Frameworks Applied
 
 - **OWASP ASVS 4.0** — always applicable for web applications
-- **PCI-DSS v4** — when payment card data or payment SDKs are detected
-- **HIPAA** — when health records, ePHI, or medical terminology is detected
-- **SOC 2 Type II** — when SaaS/cloud service, customer data, or uptime SLAs are detected
-- **ISO 27001:2022** — when formal information asset registers or policy references are detected
-- **NIST CSF 2.0** — when critical infrastructure signals or government context is detected
+- **PCI-DSS v4**, **HIPAA**, **SOC 2 Type II**, **ISO 27001:2022**, and
+  **NIST CSF 2.0** — assess relevance from payment, health-data, SaaS,
+  policy/asset-register, infrastructure, or government-context evidence.
+  A payment SDK or medical term alone does not establish regulatory scope.
 - **CIS Controls v8** — always applicable as a foundational baseline
 
 ### Report Structure
@@ -753,7 +678,9 @@ Maps concrete technical security findings to specific control requirements in OW
 
 ### Purpose
 
-Constructs a formal AND/OR attack tree for the most critical threat in the repository. Produces a Mermaid-rendered tree, bypass analysis for each defense node, a ranked leaf node table by exploitability and impact, and purple-team test cases. Best used after `appsec-threat-modeler` has identified the primary target.
+Identify which defensive change breaks an attack path. Use this after a threat
+model identifies the primary asset: the agent builds an evidence-backed AND/OR
+tree, examines defense bypasses, ranks leaves, and proposes purple-team cases.
 
 ### Node Types
 
@@ -764,23 +691,29 @@ Constructs a formal AND/OR attack tree for the most critical threat in the repos
 
 ### Frameworks Applied
 
-- **MITRE ATT&CK** — techniques mapped to each LEAF node
-- **CVSS v3.1** — exploitability score informing Difficulty ratings
+- Evidence-grounded difficulty and impact ranking; the canonical protocol uses
+  a CVSS-like ranking, not a formal CVSS v3.1 score.
 
 ### Report Structure
 
-**Tier 1 — Attack Tree (Mermaid)**
-- Complete `graph TD` tree with OR/AND/LEAF/DEF node styling
+**Tier 1 — Overview**
+- Root goal, selection rationale, path/defense/bypass counts, and critical path
 
-**Tier 2 — Leaf Node Ranking**
-- Ranking table: Difficulty (1–5), Impact (1–5), Risk = Impact × (6 − Difficulty)
-- Top 3 highest-risk complete paths
+**Tier 2 — Full Attack Tree**
+- Mermaid `graph TD` tree with OR/AND/LEAF/DEFENSE nodes and branch narrative
+- Keep diagrams to 4–5 levels; expand deeper subtrees separately
 
-**Tier 3 — Defense Bypass Analysis**
-- Per DEFENSE node: implementation, bypass status (BYPASSABLE / ROBUST / UNVERIFIABLE), bypass path with evidence, hardening recommendation
+**Tier 3 — Leaf Node Analysis**
+- Rank by difficulty (TRIVIAL / LOW / MEDIUM / HIGH / EXPERT), impact,
+  precondition, and evidence; detail the top three leaves and mitigations
 
-**Tier 4 — Purple-Team Test Cases**
-- Per top-3 path: prerequisites, steps, expected result, detection opportunity
+**Tier 4 — Defense Bypass Analysis**
+- Per defense: protected asset, bypass difficulty/evidence/feasibility, and
+  explicitly reasoned BLOCKED paths
+
+**Tier 5 — Purple-Team Test Cases**
+- Supported confirmed/high-probability paths, proposed steps, detection signals,
+  and remediation validation; tests remain NOT RUN
 
 ---
 
@@ -793,7 +726,9 @@ Constructs a formal AND/OR attack tree for the most critical threat in the repos
 
 ### Purpose
 
-Generates exactly 5 adversarial attack scenarios against the repository, each grounded in actual codebase evidence. Each scenario covers a distinct attacker profile and includes a complete ATT&CK-mapped kill chain, IoCs, detection gaps, and a purple-team test case.
+Explore how five attacker profiles could pursue source-supported paths. Each
+scenario includes an ATT&CK-mapped chain, indicators, detection gaps, and a proposed
+purple-team case. Unsupported kill-chain phases stay out; no attacks are executed.
 
 ### Attacker Profiles
 
@@ -827,7 +762,9 @@ Each of the 5 scenarios covers exactly one profile:
 
 ### Purpose
 
-Compares a previous threat model or security report to the current repository state. Classifies each prior finding with a verdict and surfaces new attack surfaces introduced since the prior report.
+See whether risk improved since the last report. The agent aligns prior findings
+with current source and history, classifies each result, and identifies new
+source-supported attack surfaces.
 
 ### Verdict Taxonomy
 
@@ -873,7 +810,9 @@ Compares a previous threat model or security report to the current repository st
 
 ### Purpose
 
-Verifies with precision whether a specific security finding has been remediated in the current codebase. Accepts a finding ID, title, or description and returns a verdict with code-level proof. Strictly single-finding scope — does not expand to report other observations.
+Decide whether one finding can be closed. Supply its ID, title or description,
+original evidence, and attack path. The reviewer checks current code, equivalent
+bypasses, and history without expanding into an unrelated audit.
 
 ### Verdict Taxonomy
 
@@ -899,4 +838,6 @@ Verifies with precision whether a specific security finding has been remediated 
 
 ---
 
-*All agents are read-only. They do not modify workspace files, install dependencies, stage changes, or create commits.*
+For execution or publication choices, see [reusable CI templates](ci-templates.md)
+and [GitHub workflows](github-actions.md). Neither a proposed fix nor a passing
+severity gate grants permission to apply changes.

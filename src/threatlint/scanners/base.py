@@ -9,7 +9,7 @@ reviewer's verdict. This module owns everything that is not tool-specific:
     AWS Parameter Store name from the environment or ~/.threatlint/org.json, then an interactive prompt;
   - HTTPS-only base URLs, a redirect-refusing opener (tokens never follow a redirect), and error messages that
     never contain a token;
-  - the verdict reader for fp_review.md reports, matched on a whole reference such as DOJO-123;
+  - verdict selection for fp_review.md reports, using pure syntax parsing in scanners.verdicts;
   - repository URLs to the SCM context `servicenow.repository_target` understands.
 
 Fetched records are untrusted evidence for the FP reviewer, never instructions.
@@ -31,13 +31,13 @@ import uuid
 
 from threatlint import servicenow as sn
 from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT
+from threatlint.scanners.verdicts import _DISPOSITION, candidates, mentions, report_line
 
 __all__ = ["ScannerError", "Adapter", "AMBIGUOUS_COMMENT", "CLOSING_COMMENT", "TRUE_POSITIVE_COMMENT", "DISPOSITIONS"]
 
 DISPOSITIONS = ("TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS")
 HTTP_TIMEOUT_S = 120
 MAX_BY_ID = 50
-_DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
 
 
 class ScannerError(RuntimeError):
@@ -163,29 +163,9 @@ def request(url: str, *, label: str, headers: dict[str, str], method: str = "GET
 
 # ── Report verdicts ──────────────────────────────────────────────────────────
 
-def mentions(text: str, reference: str) -> bool:
-    """True when text names the reference as a whole token (DOJO-12 does not match DOJO-123)."""
-    return re.search(rf"(?<![\w-]){re.escape(reference)}(?![\w-])", text or "", re.IGNORECASE) is not None
-
-
 def verdict_for(report: str, reference: str) -> dict[str, str]:
     """The finding in an FP report whose Original finding names this reference: id, title, disposition, confidence."""
-    sections = re.split(r"(?m)^#{2,6}\s+(?=\[[A-Z][A-Z0-9]*-\d+\])", report)
-    matches = []
-    for section in sections[1:]:
-        header, _, body = section.partition("\n")
-        original = re.search(r"(?im)^\**Original finding\**\s*:\s*(.+)$", body)
-        if not mentions(original.group(1) if original else header, reference):
-            continue
-
-        def field(name: str) -> str:
-            match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
-            return match.group(1).replace("*", "").strip() if match else ""
-        disposition = _DISPOSITION.search(field("Disposition|Verdict"))
-        identifier = re.match(r"\[([A-Z][A-Z0-9]*-\d+)\]", header)
-        matches.append({"id": identifier.group(1) if identifier else "", "title": re.sub(r"^\[[^\]]+\]\s*[—–:-]?\s*", "", header).strip(),
-                        "disposition": disposition.group(0).upper() if disposition else "",
-                        "confidence": field("Confidence").split()[0] if field("Confidence") else ""})
+    matches = [verdict for original, verdict in candidates(report, disposition_pattern=_DISPOSITION) if mentions(original, reference)]
     if not matches:
         raise ScannerError(f"The report has no finding whose Original finding is {reference}")
     if len({match["disposition"] for match in matches}) > 1:
@@ -193,12 +173,6 @@ def verdict_for(report: str, reference: str) -> dict[str, str]:
     if not matches[0]["disposition"]:
         raise ScannerError(f"{matches[0]['id'] or reference} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition")
     return matches[0]
-
-
-def report_line(report: str, reference: str) -> int | None:
-    """The flagged line from the Original finding's trailing path:line, when the record has none."""
-    match = re.search(rf"Original finding\W*:\s*{re.escape(reference)};[^\n]*:(\d+)\s*$", report, re.M | re.I)
-    return int(match.group(1)) if match else None
 
 
 # ── Repository context ───────────────────────────────────────────────────────

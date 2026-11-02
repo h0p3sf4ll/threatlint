@@ -38,13 +38,24 @@ from pathlib import Path
 
 from threatlint import org_config
 from threatlint import servicenow as sn
+from threatlint import semgrep_rule_text
+from threatlint import semgrep_policies
+from threatlint import semgrep_engine
+from threatlint import semgrep_cli
+from threatlint.semgrep_engine import merge_exclusions
+from threatlint.semgrep_policies import (
+    PRODUCT_POLICY, TUNED_MODE, products as _products, same_rule as _same_rule, tunes as _tunes,
+)
+from threatlint.semgrep_rule_text import (
+    EXCLUSION as _EXCLUSION,
+    fixture_lines as _fixture_lines,
+    tuned_rule_from_report,
+)
 from threatlint.tls import ssl_context, tool_env
 
 API = os.environ.get("THREATLINT_SEMGREP_API", "https://semgrep.dev").rstrip("/")
 KEYRING_SERVICE = "threatlint-semgrep"
 _TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,200}")
-PRODUCT_POLICY = {"sast": "PRODUCT_TYPE_SAST", "secrets": "PRODUCT_TYPE_SECRETS"}
-TUNED_MODE = "MODE_MONITOR"
 
 
 class SemgrepError(RuntimeError):
@@ -187,23 +198,8 @@ def deployment(token: str, wanted: str = "") -> dict:
 
 # ── Rule tuning ───────────────────────────────────────────────────────────────
 
-def tuned_rule_from_report(report: str) -> str:
-    """The YAML block the FP reviewer placed after `**Tuned rule**:`; empty when it proposed none."""
-    match = re.search(r"\*\*Tuned rule\*\*:\s*\n+```ya?ml\n(.*?)\n```", report, re.S)
-    return match.group(1).strip() + "\n" if match else ""
-
-
 def _semgrep(args: list[str], cwd: str | None = None, token: str | None = None) -> subprocess.CompletedProcess:
-    semgrep = shutil.which("semgrep")
-    if not semgrep:
-        raise SemgrepError("Semgrep Community Edition is required to validate the tuned rule")
-    env = tool_env()
-    env["SEMGREP_SEND_METRICS"] = "off"
-    if env.get("AWS_CA_BUNDLE"):
-        env.setdefault("REQUESTS_CA_BUNDLE", env["AWS_CA_BUNDLE"])
-    if token:
-        env["SEMGREP_APP_TOKEN"] = token
-    return subprocess.run([semgrep, *args], cwd=cwd, capture_output=True, text=True, timeout=600, check=False, env=env)
+    return semgrep_engine.run(args, cwd, token, environment=tool_env, error_type=SemgrepError)
 
 
 def _pro_flags() -> list[str]:
@@ -213,13 +209,7 @@ def _pro_flags() -> list[str]:
 
 def _matches(config: str, target: str, line: int | None, exact: bool = False) -> list[int]:
     """Lines the config reports in target: all of them, or those within 3 lines of `line` (exactly `line` when exact)."""
-    pro = _pro_flags()
-    result = _semgrep(["scan", *pro, "--config", config, "--json", "--quiet", "--metrics", "off", target])
-    try:
-        found = [item["start"]["line"] for item in json.loads(result.stdout).get("results", [])]
-    except (ValueError, KeyError):
-        raise SemgrepError(f"Semgrep could not scan with {config}: {(result.stderr or result.stdout).strip()[-300:]}") from None
-    return [value for value in found if line is None or (value == line if exact else abs(value - line) <= 3)]
+    return semgrep_engine.matches(config, target, line, exact, run=_semgrep, pro_flags=_pro_flags, error_type=SemgrepError)
 
 
 def original_rule_yaml(rule: str, token: str) -> str:
@@ -235,230 +225,50 @@ def original_rule_yaml(rule: str, token: str) -> str:
     return text
 
 
-def _fixture_lines(fixtures: str, rule_id: str) -> tuple[list[int], list[int]]:
-    """Lines expected to match (ruleid) and not to match (ok), as `semgrep --test` reads them."""
-    expect, avoid = [], []
-    lines = fixtures.splitlines()
-    for number, line in enumerate(lines, start=1):
-        marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+?)\s*(?:-->|\*/)?\s*$", line) or re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
-        if marker and rule_id in [part.strip() for part in marker.group(2).split(",")]:
-            # As in `semgrep --test`: a marker alone on its line annotates the next line; a trailing marker, its own line.
-            own_line = bool(line[:marker.start()].strip(" \t/#*-<!"))
-            (expect if marker.group(1) == "ruleid" else avoid).append(number if own_line else number + 1)
-    return expect, avoid
-
-
 def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, line: int | None, fixtures: str = "",
                         token: str | None = None) -> dict:
-    """Prove the tuned rule is safe to deploy, without human approval:
-
-    1. `semgrep --validate` accepts it;
-    2. its fixtures pass `semgrep --test` (rule and fixture side by side with the same name, the layout Semgrep
-       requires; other layouts crash Semgrep 1.107), so every `ruleid` (true positive) still fires and every
-       `ok` (the false-positive shape) is quiet;
-    3. the ORIGINAL rule fires on the `ok` lines, so the fixtures really model the false positive, and still
-       fires on the `ruleid` lines, so the tuning only removed what it claims to;
-    4. when the local engine can reproduce the finding in the flagged file, the tuned rule no longer reports it.
-       Interfile Pro taint often cannot be reproduced locally; that alone does not block deployment, because
-       steps 2–3 already prove the behaviour on the same code shape.
-    """
-    work = Path(tempfile.mkdtemp(prefix="threatlint-rule-"))
-    ids = re.findall(r"(?m)^\s*-\s*id:\s*([\w.-]+)", rule_yaml)
-    if len(ids) != 1:
-        raise SemgrepError("The tuned rule must contain exactly one rule")
-    rule_id = ids[0]
-    rule_path = work / f"{rule_id}.yaml"
-    rule_path.write_text(rule_yaml, encoding="utf-8")
-    check = _semgrep(["--validate", "--config", str(rule_path), "--metrics", "off"])
-    if check.returncode != 0:
-        raise SemgrepError(f"Tuned rule is not valid: {(check.stderr or check.stdout).strip()[-300:]}")
-    if not fixtures:
-        raise SemgrepError("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
-    suffix = Path(target_file).suffix or (".dockerfile" if Path(target_file).name.lower().startswith("dockerfile") else ".txt")
-    # A YAML fixture would overwrite the rule file itself; Semgrep pairs `<rule>.yaml` with `<rule>.test.yaml`.
-    fixture_path = work / f"{rule_id}{'.test' if suffix.lower() in ('.yaml', '.yml') else ''}{suffix}"
-    fixture_path.write_text(fixtures, encoding="utf-8")
-    # A rule whose `paths.include` names a file (e.g. Info.plist) only scans files with that name, so the
-    # original-rule check scans a copy of the fixture under the flagged file's own name.
-    scan_path = fixture_path
-    # Files such as Dockerfile have no extension; Semgrep recognises them by name, so scan a copy named like the target.
-    named_only = bool(target_file) and not Path(target_file).suffix
-    if (named_only or re.search(r"(?m)^\s+include:\s*\n\s+-\s*['\"]?[^*\n]+['\"]?\s*$", rule_yaml)) and target_file:
-        scan_path = work / "as-named" / Path(target_file).name
-        scan_path.parent.mkdir()
-        scan_path.write_text(fixtures, encoding="utf-8")
-    test = _semgrep(["--test", *_pro_flags(), "--metrics", "off", str(work)])
-    if test.returncode != 0 or "All tests passed" not in test.stdout:
-        raise SemgrepError(f"Tuned rule fixtures did not pass: {(test.stdout or test.stderr).strip()[-400:]}")
-    expect, avoid = _fixture_lines(fixtures, rule_id)
-    if not expect or not avoid:
-        raise SemgrepError("Fixtures need at least one `ruleid` (true positive kept) and one `ok` (the false positive) line")
-    original_text = original_rule_yaml(original_rule, token) if token else ""
-    if original_text:
-        original_path = work / "original" / "original.yaml"
-        original_path.parent.mkdir()
-        original_path.write_text(original_text, encoding="utf-8")
-        hits = set(_matches(str(original_path), str(scan_path), None))
-        if not set(avoid) <= hits:
-            raise SemgrepError("The original rule does not fire on the `ok` fixture lines, so they do not model this false positive")
-        if not set(expect) <= hits:
-            raise SemgrepError("The original rule misses a `ruleid` fixture line; the fixtures do not reflect the original rule")
-    local = {"reproduced": False, "dropped": None}
-    if target_file and Path(target_file).exists():
-        source = work / "original" / "original.yaml" if original_text else None
-        if source and line and _matches(str(source), target_file, line, exact=True):
-            local["reproduced"] = True
-            local["dropped"] = not _matches(str(rule_path), target_file, line, exact=True)
-            if not local["dropped"]:
-                raise SemgrepError("The tuned rule still reports the false-positive location; not deploying it")
-    return {"id": rule_id, "path": str(rule_path), "fixtures": True, "original_checked": bool(original_text), **local}
+    """Prove validity, fixture coverage, and any reproducible local false-positive drop."""
+    return semgrep_engine.validate_tuned_rule(
+        rule_yaml, original_rule, target_file, line, fixtures, token, run=_semgrep, pro_flags=_pro_flags,
+        matches=_matches, original_rule_yaml=original_rule_yaml, fixture_lines=_fixture_lines, error_type=SemgrepError,
+    )
 
 
 def publish(rule_path: str, token: str) -> str:
     """Publish as an org-private rule; returns the rule's registry path."""
-    directory = Path(tempfile.mkdtemp(prefix="threatlint-publish-"))
-    shutil.copy(rule_path, directory / Path(rule_path).name)
-    result = _semgrep(["publish", "--visibility=org_private", str(directory)], token=token)
-    output = f"{result.stdout}\n{result.stderr}"
-    if result.returncode != 0:
-        raise SemgrepError(f"semgrep publish failed: {output.strip()[-300:]}")
-    match = re.search(r"/r/([\w.:-]+)", output) or re.search(r"(?:rule|path)[^\w]+([\w-]+\.[\w.-]+)", output, re.I)
-    if not match:
-        raise SemgrepError(f"semgrep publish did not report the rule path: {output.strip()[-300:]}")
-    return match.group(1)
+    return semgrep_engine.publish(rule_path, token, run=_semgrep, error_type=SemgrepError)
 
 
 def _policy_rules(dep_id: str, policy_id: str, token: str) -> list[dict]:
-    rules, cursor = [], ""
-    for _ in range(20):
-        query = urllib.parse.urlencode({"limit": 2000, **({"cursor": cursor} if cursor else {})})
-        data = call(f"/api/policies/v1/deployments/{dep_id}/{policy_id}/rules?{query}", token)
-        rules += data.get("rules", [])
-        cursor = data.get("cursor") or ""
-        if not cursor:
-            break
-    return rules
-
-
-def _same_rule(path: str, rule: str) -> bool:
-    return path == rule or path.endswith("." + rule) or rule.endswith("." + path)
-
-
-def _products(kind: str) -> list[str]:
-    """The AVIT's own product first, then the other: a Semgrep Code rule (e.g. secrets-in-config-file) can raise a Secrets AVIT."""
-    return [PRODUCT_POLICY[kind], *(p for k, p in PRODUCT_POLICY.items() if k != kind)]
+    return semgrep_policies.policy_rules(dep_id, policy_id, token, call=call)
 
 
 def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str) -> list[dict]:
     """Add the tuned rule in monitor mode and disable the original, in every policy that runs it."""
-    all_policies = call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", [])
-    for product in _products(kind):
-        changes = _replace_in(token, dep, [p for p in all_policies if p.get("productType") == product], original_rule, tuned_path)
-        if changes:
-            return changes
-    raise SemgrepError(f"No policy runs {original_rule}; nothing to replace (the tuned rule is published but not enabled)")
+    return semgrep_policies.replace_in_policies(
+        token, dep, kind, original_rule, tuned_path, call=call, replace_in=_replace_in, error_type=SemgrepError,
+    )
 
 
 def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str, tuned_path: str) -> list[dict]:
-    changes = []
-    for policy in policies:
-        rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
-        original = [rule for rule in rules if _same_rule(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED"]
-        for rule in original:
-            # A tuned rule is only ever enabled in monitor mode, whatever mode the original ran in.
-            base = f"/api/policies/v1/deployments/{dep['id']}/{policy['id']}/rules"
-            call(f"{base}/{urllib.parse.quote(tuned_path, safe='.')}", token, method="PUT", body={"policyMode": TUNED_MODE})
-            call(f"{base}/{urllib.parse.quote(rule['path'], safe='.')}", token, method="PUT", body={"policyMode": "MODE_DISABLED"})
-            changes.append({"policy": policy.get("name"), "policy_id": policy["id"], "original": rule["path"], "tuned": tuned_path, "mode": TUNED_MODE,
-                            "original_mode": rule.get("policyMode", "MODE_MONITOR")})
-    return changes
-
-
-def _tunes(path: str, original_rule: str) -> bool:
-    """True when `path` is a Threatlint-tuned version (`[<deployment>.]<rule id>.tuned`) of exactly this rule.
-
-    The whole rule id is compared, case-insensitively (publishing may lowercase it): a rule's last segment alone
-    (e.g. `string`) would also match unrelated rules such as `...formatted-sql-string.tuned`."""
-    path, rule = path.lower(), original_rule.lower().removesuffix(".tuned")
-    if not path.endswith(".tuned"):
-        return False
-    stem = path[:-len(".tuned")]
-    return stem == rule or stem.endswith("." + rule)
+    return semgrep_policies.replace_in(
+        token, dep, policies, original_rule, tuned_path, call=call, policy_rules=_policy_rules, mode=TUNED_MODE,
+    )
 
 
 def disable_originals(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
     """Disable the original wherever its tuned rule is enabled in the same policy (it can be re-enabled after tuning)."""
-    changes = []
-    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
-        if policy.get("productType") not in _products(kind):
-            continue
-        rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
-        if not any(_tunes(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED" for rule in rules):
-            continue
-        for rule in rules:
-            path = str(rule.get("path", ""))
-            if not path.endswith(".tuned") and _same_rule(path, original_rule) and rule.get("policyMode") != "MODE_DISABLED":
-                call(f"/api/policies/v1/deployments/{dep['id']}/{policy['id']}/rules/{urllib.parse.quote(path, safe='.')}", token,
-                     method="PUT", body={"policyMode": "MODE_DISABLED"})
-                changes.append({"policy": policy.get("name"), "original": path, "mode": rule.get("policyMode")})
-    return changes
+    return semgrep_policies.disable_originals(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules)
 
 
 def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
     """Policies already running a Threatlint-tuned version of this rule (`[<deployment>.]<rule id>.tuned`)."""
-    found = []
-    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
-        if policy.get("productType") not in _products(kind):
-            continue
-        for rule in _policy_rules(str(dep["id"]), str(policy["id"]), token):
-            path = str(rule.get("path", ""))
-            if _tunes(path, original_rule) and rule.get("policyMode") != "MODE_DISABLED":
-                found.append({"policy": policy.get("name"), "tuned": path, "mode": rule.get("policyMode")})
-    return found
-
-
-_EXCLUSION = re.compile(r"^\s*-?\s*(pattern-not(?:-inside|-regex)?|metavariable-regex|pattern-sanitizers|regex):")
+    return semgrep_policies.existing_tuning(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules)
 
 
 def _exclusions(rule_yaml: str) -> list[str]:
     """Exclusion and sanitizer lines of a rule, compared without indentation."""
-    return [line.strip() for line in rule_yaml.splitlines() if _EXCLUSION.match(line)]
-
-
-def merge_exclusions(proposed: str, live: str, base: str = "") -> str | None:
-    """Combine a reviewer's tuned rule with a live tuned rule that changed since the reviewer read it.
-
-    A three-way merge (`git merge-file`) of proposal and live rule against their common ancestor, the
-    original rule, keeps both sets of changes. Without an ancestor, or when the two edit the same lines, it
-    returns None so the proposal is rejected rather than guessed at. The merged rule still runs the proof gate."""
-    if not base:
-        return None
-    rule_id = re.search(r"(?m)^\s*-\s*id:\s*(\S+)", proposed)
-    def normal(text: str) -> str:
-        # Compare rule bodies only: the id and the registry metadata differ between the three by design.
-        text = re.sub(r"(?m)^(\s*-\s*id:\s*)\S+", lambda m: m.group(1) + "RULE_ID", text, count=1)
-        lines, out, skipping, indent = text.splitlines(), [], False, 0
-        for line in lines:
-            if re.match(r"^\s+semgrep\.dev:\s*$", line) or re.match(r"^\s+(source|shortlink|rule-origin-note):", line):
-                skipping, indent = True, len(line) - len(line.lstrip())
-                continue
-            if skipping and (not line.strip() or len(line) - len(line.lstrip()) > indent):
-                continue
-            skipping = False
-            out.append(line)
-        return "\n".join(out) + "\n"
-    work = Path(tempfile.mkdtemp(prefix="threatlint-merge-"))
-    try:
-        for name, text in (("proposed", proposed), ("base", base), ("live", live)):
-            (work / name).write_text(normal(text), encoding="utf-8")
-        result = subprocess.run(["git", "merge-file", "-p", str(work / "proposed"), str(work / "base"), str(work / "live")],
-                                capture_output=True, text=True, timeout=60, check=False)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-    if result.returncode != 0 or "<<<<<<<" in result.stdout:
-        return None
-    merged = result.stdout
-    return merged.replace("RULE_ID", rule_id.group(1), 1) if rule_id else merged
+    return semgrep_rule_text.exclusions(rule_yaml, _EXCLUSION)
 
 
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
@@ -499,10 +309,7 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
         if missing:
             raise SemgrepError(f"The proposed rule drops {len(missing)} exclusion(s) the live tuned rule has (e.g. `{missing[0][:80]}`); "
                                "it must extend the live tuned rule, not replace it")
-    fixtures = ""
-    fixture = re.search(r"\*\*Tuned rule fixtures\*\*:\s*\n+```\w*\n(.*?)\n```", report, re.S)
-    if fixture:
-        fixtures = fixture.group(1) + "\n"
+    fixtures = semgrep_rule_text.fixtures_from_report(report)
     checked = validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures, token)
     where = "and no longer reports the flagged line" if checked["dropped"] else "(the flagged line needs interfile analysis, so the fixtures are the proof)"
     print(f"  ✓ Tuned rule {checked['id']} is valid, keeps every true-positive fixture, drops the false-positive shape{', matches the original rule,' if checked['original_checked'] else ''} {where}", file=out)
@@ -535,65 +342,23 @@ def rule_base(rule: str, kind: str, token: str, dep: dict) -> tuple[str, str]:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def login(token: str = "", deployment_slug: str = "", from_stdin: bool = False, profile: str | None = None) -> str:
-    if from_stdin:
-        token = sys.stdin.readline().strip()
-    if not token:
-        token = parameter_store_token(profile)
-        if token:
-            print(f"  Read the Semgrep token from Parameter Store {token_parameter()}.")
-    if not token:
-        if not sys.stdin.isatty():
-            raise SemgrepError("No terminal to prompt for the Semgrep token; pipe it with --token-stdin")
-        print("Create a Web API token in Semgrep AppSec Platform → Settings → Tokens.")
-        token = getpass.getpass("Semgrep API token (input hidden): ").strip()
-    if not _TOKEN.fullmatch(token):
-        raise SemgrepError("That does not look like a Semgrep API token")
-    dep = deployment(token, deployment_slug)
-    where = save_token(token, str(dep.get("id", "")))
-    return f"{where} (deployment {dep.get('name') or dep.get('slug')})"
+    return semgrep_cli.login(
+        token, deployment_slug, from_stdin, profile, parameter_token=parameter_store_token,
+        parameter_name=token_parameter, deployment=deployment, save_token=save_token,
+        token_pattern=_TOKEN, error_type=SemgrepError,
+    )
 
 
 def add_semgrep_parser(sub) -> None:
-    p = sub.add_parser("semgrep", help="Set up the Semgrep AppSec Platform API token")
-    actions = p.add_subparsers(dest="semgrep_command", required=True)
-    login_parser = actions.add_parser("login", help="Validate and save the Semgrep API token")
-    login_parser.add_argument("--token-stdin", action="store_true", help="Read the token from standard input")
-    login_parser.add_argument("--deployment", default="", help="Deployment slug when the token can access several")
-    login_parser.add_argument("--aws-profile", help="Read the token from Parameter Store with this AWS profile first")
-    actions.add_parser("status", help="Show where the token comes from (never prints it)")
-    base = actions.add_parser("rule-base", help="Write the rule a false-positive tuning should start from (live tuned rule, else the original)")
-    base.add_argument("rule", help="Semgrep rule ID from the AVIT")
-    base.add_argument("--kind", choices=sorted(PRODUCT_POLICY), required=True)
-    base.add_argument("-o", "--output", required=True, help="File to write the rule YAML to")
-    base.add_argument("--aws-profile")
-    actions.add_parser("logout", help="Remove the saved token")
+    semgrep_cli.add_semgrep_parser(sub, products=PRODUCT_POLICY)
+
+
+def _logout() -> None:
+    semgrep_cli.logout(keyring=_keyring(), store_path=store_path(), service=KEYRING_SERVICE)
 
 
 def cmd_semgrep(args) -> int:
-    try:
-        if args.semgrep_command == "login":
-            print(f"✓ Semgrep token validated and saved to {login('', args.deployment, args.token_stdin, args.aws_profile)}")
-        elif args.semgrep_command == "rule-base":
-            token = resolve_token(args.aws_profile)[0]
-            yaml_text, label = rule_base(args.rule, args.kind, token, deployment(token))
-            Path(args.output).write_text(f"# Tuning base: {label}\n{yaml_text}", encoding="utf-8")
-            print(f"✓ Wrote the {label} to {args.output}")
-        elif args.semgrep_command == "status":
-            try:
-                _token, source = resolve_token()
-                print(f"Semgrep token: {source}")
-            except SemgrepError as exc:
-                print(str(exc))
-        else:
-            keyring = _keyring()
-            if keyring:
-                try:
-                    keyring.delete_password(KEYRING_SERVICE, "token")
-                except Exception:  # noqa: BLE001
-                    pass
-            store_path().unlink(missing_ok=True)
-            print("✓ Saved Semgrep token removed")
-        return 0
-    except (SemgrepError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+    return semgrep_cli.cmd_semgrep(
+        args, login=login, resolve_token=resolve_token, rule_base=rule_base,
+        deployment=deployment, logout=_logout, error_type=SemgrepError,
+    )
