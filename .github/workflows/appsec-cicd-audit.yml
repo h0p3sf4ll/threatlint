@@ -40,9 +40,19 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # ─── Claude ───────────────────────────────────────────────────────────
+      - name: Validate Claude credentials
+        if: env.PROVIDER == 'claude'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Configure ANTHROPIC_API_KEY in Settings > Secrets and variables > Actions before running the Claude provider."
+            exit 1
+          fi
+
       - name: Run CI/CD audit (Claude)
         if: env.PROVIDER == 'claude'
-        uses: anthropics/claude-code-action@9c41ed18ca8b2b2a17eaef4723d5092ccdebc814 # v1
+        uses: anthropics/claude-code-action/base-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |

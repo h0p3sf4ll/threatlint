@@ -1,12 +1,6 @@
 'use strict';
 // Never read the developer's saved ~/.threatlint config.
 process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
-// Deterministic Word export: a stub "python" that writes the .docx argument.
-const stubDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-docx-'));
-const stub = require('node:path').join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
-require('node:fs').writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-// Node will not execFile a .cmd (CVE-2024-27980), so Windows converts with the real python-docx instead.
-if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,6 +11,7 @@ const { createWorkbench } = require('../server.js');
 const { closeAvitAsFalsePositive } = require('../lib/servicenow.cjs');
 const { matchFindings, ignoreAsFalsePositive, validateTarget } = require('../lib/semgrep-cloud.cjs');
 const { avitFor } = require('../lib/routes/triage.cjs');
+const { convertToWord } = require('./helpers/docx.cjs');
 
 const INSTANCE = 'https://example.service-now.com';
 const SYS_ID = 'a'.repeat(32);
@@ -127,7 +122,7 @@ describe('False-positive action routes', () => {
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-triage-store-'));
     const snow = fakeServiceNow(snowCalls), sg = fakeSemgrep(semgrepCalls);
     instance = createWorkbench({ storageDir: storage, runProvider: async args => { args.onEvent({ type: 'text_chunk', text: report }); return report; },
-      integrations: { semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
+      integrations: { convertToWord, semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
         fetchImpl: (url, options) => (url.startsWith('https://semgrep.dev') ? sg : snow)(url, options) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;

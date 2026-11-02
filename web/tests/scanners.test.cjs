@@ -2,11 +2,6 @@
 // Never read the developer's saved ~/.threatlint config.
 process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
 for (const name of ['THREATLINT_DOJO_URL', 'THREATLINT_DOJO_TOKEN', 'THREATLINT_SONAR_URL', 'THREATLINT_SONAR_TOKEN']) delete process.env[name];
-// Deterministic Word export: a stub "python" that writes the .docx argument.
-const stubDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-docx-'));
-const stub = require('node:path').join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
-require('node:fs').writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,6 +13,7 @@ const scanners = require('../lib/scanners.cjs');
 const scan = require('../lib/scan-import.cjs');
 const { filterArgs } = require('../lib/scanner-batch.cjs');
 const servicenow = require('../lib/servicenow.cjs');
+const { convertToWord } = require('./helpers/docx.cjs');
 
 const DOJO = 'https://dojo.example.test', SONAR = 'https://sonar.example.test';
 const FIXTURES = path.join(__dirname, 'fixtures/scan-import');
@@ -162,7 +158,7 @@ describe('Scanner Workbench routes', () => {
     instance = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-scanner-store-')),
       runProvider: async args => { const ref = /(DOJO-\d+|SONAR-[A-Za-z0-9_-]+)\.md/.exec(args.userMessage)?.[1]; return ref ? report(ref, ref === 'DOJO-1202' ? 'AMBIGUOUS' : 'FALSE POSITIVE')
         : `\`\`\`json\n${JSON.stringify({ verdicts: [...new Set(args.userMessage.match(/"id":"FP-\d{3}"/g) || [])].map(item => ({ id: item.slice(6, -1), disposition: 'FALSE POSITIVE', confidence: 'CONFIRMED', rationale: 'stub' })) })}\n\`\`\``; },
-      integrations: { fetchImpl: fakeServers(calls), threatlintCli } });
+      integrations: { convertToWord, fetchImpl: fakeServers(calls), threatlintCli } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
     socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });

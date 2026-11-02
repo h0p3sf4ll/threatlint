@@ -391,7 +391,7 @@ def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, dispo
     monkeypatch.setattr("sys.stdout", out)
     work = tmp_path / "run"
     (work / "repo" / ".git").mkdir(parents=True)
-    (work / dast.REPORT_FILE).write_text(_report(disposition))
+    (work / dast.REPORT_FILE).write_text(_report(disposition), encoding="utf-8")
     (work / "AVIT0000000900001-threatlint-fp-review.docx").write_bytes(b"PK-docx")
     state = {"work": str(work), "run_id": "tl-dast-0123456789", "avit": "AVIT0000000900001", "finding": finding(), "checkout": str(work / "repo")}
     try:

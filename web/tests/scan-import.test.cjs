@@ -1,11 +1,6 @@
 'use strict';
 // Never read the developer's saved ~/.threatlint config.
 process.env.THREATLINT_HOME = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-home-'));
-// Deterministic Word export: a stub "python" that writes the .docx argument.
-const stubDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'threatlint-docx-'));
-const stub = require('node:path').join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
-require('node:fs').writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,6 +12,7 @@ const scan = require('../lib/scan-import.cjs');
 const { parseMultipart, JSON_LIMIT } = require('../lib/routes/scan-import.cjs');
 const { parseReport } = require('../lib/reports.cjs');
 const servicenow = require('../lib/servicenow.cjs');
+const { convertToWord } = require('./helpers/docx.cjs');
 
 const FIXTURES = path.join(__dirname, 'fixtures/scan-import');
 const fixture = name => fs.readFileSync(path.join(FIXTURES, name));
@@ -221,7 +217,7 @@ describe('Scan import routes', () => {
   before(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-scan-repo-'));
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-scan-store-'));
-    instance = createWorkbench({ storageDir: storage, runProvider: async args => { prompts.push(args); return verdictsFor(args.userMessage); }, integrations: { fetchImpl: fakeServiceNow(snowCalls) } });
+    instance = createWorkbench({ storageDir: storage, runProvider: async args => { prompts.push(args); return verdictsFor(args.userMessage); }, integrations: { convertToWord, fetchImpl: fakeServiceNow(snowCalls) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
     ({ sessionId: workspaceId } = await api('/api/session/local', { repoPath: root }).then(response => response.body));
@@ -269,7 +265,7 @@ describe('Scan import routes', () => {
     assert.deepEqual(job.counts, { total: 2, tp: 1, fp: 1, ambiguous: 0 });
     assert.deepEqual(Object.keys(job.findings[0]).sort(), ['confidence', 'disposition', 'id', 'location', 'originalId', 'severity', 'title']);
     assert.equal(job.findings[0].disposition, 'TRUE POSITIVE'); assert.equal(job.target, 'https://shop.example.test/');
-    assert.match(prompts.at(-1).userMessage, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'workspace source context is offered');
+    assert.ok(prompts.at(-1).userMessage.includes(JSON.stringify(fs.realpathSync(root))), 'workspace source context is offered');
     assert.equal(prompts.at(-1).apiKey, undefined);
     assert.ok(job.reportId);
     assert.equal(job.report.sessionId, workspaceId); assert.ok(job.report.previewUrl && job.report.mdUrl && job.report.docxUrl);

@@ -102,11 +102,21 @@ def test_signing_never_puts_key_contents_on_argv(rsa_key, monkeypatch):
     assert seen and all("PRIVATE KEY" not in arg and pem not in arg for arg in seen[0])
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Parameter Store signing uses inherited POSIX file descriptors")
 def test_parameter_store_key_is_passed_over_a_pipe(rsa_key, monkeypatch):
     key, _ = rsa_key
     monkeypatch.setattr(github_app, "_read_parameter", lambda name: key.read_text())
     config = {**_config(key), "privateKeyFile": "", "privateKeyParameter": "/example/github-app-key"}
     assert github_app.app_jwt(config).count(".") == 2
+
+
+def test_parameter_store_key_is_rejected_on_windows_before_loading(monkeypatch):
+    monkeypatch.setattr(github_app, "os", types.SimpleNamespace(name="nt", path=os.path))
+    monkeypatch.setattr(github_app, "_openssl", lambda: "openssl")
+    monkeypatch.setattr(github_app, "_read_parameter", lambda _name: pytest.fail("The unsupported key must not be loaded"))
+    config = {"appId": APP_ID, "installationId": INSTALLATION_ID, "privateKeyFile": "", "privateKeyParameter": "/example/key"}
+    with pytest.raises(github_app.GitHubAppError, match="POSIX system; set a private key file instead"):
+        github_app.app_jwt(config)
 
 
 def test_unreadable_key_error_does_not_reveal_the_path(tmp_path):
@@ -263,7 +273,8 @@ def test_login_validates_saves_0600_and_prints_no_secrets(rsa_key, tmp_path, mon
     assert github_app.cmd_github(_args("login", app_id=APP_ID, installation_id=INSTALLATION_ID, private_key_file=str(key),
                                        api_url="https://api.github.test")) == 0
     saved = tmp_path / "github-app.json"
-    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     data = json.loads(saved.read_text())
     assert data == {"appId": APP_ID, "installationId": INSTALLATION_ID, "privateKeyFile": str(key), "apiUrl": "https://api.github.test"}
     assert "PRIVATE KEY" not in saved.read_text()

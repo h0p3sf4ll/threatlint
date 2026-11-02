@@ -54,6 +54,14 @@ You need repository administrator access to complete this setup.
 
    When using `CLAUDE_CODE_OAUTH_TOKEN`, replace the `anthropic_api_key` input with `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}` in both workflow files.
 
+**Push-triggered scans:** secrets, CI/CD, and IaC workflows use the standalone
+`claude-code-action/base-action`. The PR/issue wrapper does not accept `push`
+events; changing its version or supplying a prompt does not fix that mismatch.
+These scans need the Anthropic API key, not a Claude GitHub App installation.
+Their credential preflight fails explicitly if the secret is unavailable.
+For an organization secret, grant access to this repository. A successful test
+or desktop build is not evidence that a model-backed scan ran.
+
 **For `openai`:**
 1. Create an API key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 2. Add `OPENAI_API_KEY` as a repository or organization secret.

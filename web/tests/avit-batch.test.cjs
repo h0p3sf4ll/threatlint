@@ -8,13 +8,7 @@ const path = require('node:path');
 const { WebSocket } = require('ws');
 const { createWorkbench } = require('../server.js');
 const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResult, outcomeActions } = require('../lib/avit-batch.cjs');
-
-// Deterministic Word export.
-const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-docx-'));
-const stub = path.join(stubDir, process.platform === 'win32' ? 'docx.cmd' : 'docx');
-fs.writeFileSync(stub, process.platform === 'win32' ? '@echo PK-docx> %3\r\n' : '#!/bin/sh\nprintf PK-docx > "$3"\n', { mode: 0o755 });
-// Node will not execFile a .cmd (CVE-2024-27980), so Windows converts with the real python-docx instead.
-if (process.platform !== 'win32') process.env.THREATLINT_PYTHON = stub;
+const { convertToWord } = require('./helpers/docx.cjs');
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
 let storage;
@@ -58,7 +52,7 @@ describe('False positive review batch', () => {
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-store-'));
     wb = createWorkbench({ storageDir: storage,
       runProvider: async args => { const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1]; const text = report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE'); args.onEvent({ type: 'text_chunk', text }); return text; },
-      integrations: { semgrepVersion: async () => '1.107.0', threatlintCli } });
+      integrations: { convertToWord, semgrepVersion: async () => '1.107.0', threatlintCli } });
     await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${wb.server.address().port}`;
   });

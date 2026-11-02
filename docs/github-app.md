@@ -93,7 +93,8 @@ Environment overrides are field-by-field: `THREATLINT_GITHUB_APP_ID`,
 
 For a CLI key in AWS Parameter Store, set `THREATLINT_GITHUB_APP_PRIVATE_KEY_PARAMETER` or
 `githubAppPrivateKeyParameter` in `~/.threatlint/org.json`. The AWS session reads it and passes
-the PEM to `openssl` through a pipe. A configured key-file path takes precedence.
+the PEM to `openssl` through a pipe on POSIX systems. On Windows, use a protected
+private-key file instead. A configured key-file path takes precedence.
 
 ## How tokens are handled
 

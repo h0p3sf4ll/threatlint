@@ -50,7 +50,7 @@ function buildInfo() {
 /**
  * options: storageDir, sourceManagers, runtimeScanner (test seams),
  * runProvider (replaces model calls for reviews and conversations in tests/recordings),
- * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli } for Semgrep, ServiceNow, DefectDojo, SonarQube, and the AVIT and scanner batches).
+ * integrations ({ semgrepVersion, fetchImpl, readParameterStore, semgrepToken, threatlintCli, convertToWord } for external I/O).
  */
 function createWorkbench(options = {}) {
   // OS certificate store and the user's PATH, so gateways behind TLS inspection and CLIs like `gh` work from the Dock.
@@ -59,7 +59,7 @@ function createWorkbench(options = {}) {
   app.disable('x-powered-by');
   const server = http.createServer(app);
   const store = createStore(options.storageDir ?? defaultStorageDir());
-  const reports = createReportWriter(store);
+  const reports = createReportWriter(store, { convertToWord: options.integrations?.convertToWord });
   const scm = options.sourceManagers || createSourceManagers();
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);

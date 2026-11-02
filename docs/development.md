@@ -31,7 +31,9 @@ npm --prefix web run test:browser
 ```
 
 Those checks have their own runtime/browser prerequisites; passing unit tests
-does not imply they ran. Build the Python distribution with:
+does not imply they ran. Word-dependent Workbench unit tests inject a converter:
+they do not require shell wrappers or `python-docx` on the test host. The actual
+Python converter has separate tests. Build the Python distribution with:
 
 ```bash
 python3 -m build --wheel

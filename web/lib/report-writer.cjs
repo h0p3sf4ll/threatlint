@@ -15,14 +15,18 @@ const execFileAsync = promisify(execFile);
 const CONVERSION_TIMEOUT_MS = 60_000;
 const WORD_UNAVAILABLE = 'Word export unavailable. Install python-docx in the configured Python environment; Markdown remains available.';
 
-function createReportWriter(store) {
+async function convertMarkdownToWord(mdPath, docxPath) {
+  await execFileAsync(require('./avit-batch.cjs').python(), [path.join(DATA_DIR, 'scripts/md_to_docx.py'), mdPath, docxPath], { timeout: CONVERSION_TIMEOUT_MS, windowsHide: true });
+}
+
+function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {}) {
   function directoryFor(sessionId) {
     return store.directory ? path.join(store.directory, 'reports', sessionId) : path.join(os.tmpdir(), `threatlint-reports-${sessionId}`);
   }
 
-  async function convertToWord(mdPath, docxPath) {
+  async function writeWord(mdPath, docxPath) {
     try {
-      await execFileAsync(require('./avit-batch.cjs').python(), [path.join(DATA_DIR, 'scripts/md_to_docx.py'), mdPath, docxPath], { timeout: CONVERSION_TIMEOUT_MS, windowsHide: true });
+      await convertToWord(mdPath, docxPath);
       if (!fs.existsSync(docxPath)) return false;
       fs.chmodSync(docxPath, 0o600);
       return true;
@@ -39,7 +43,7 @@ function createReportWriter(store) {
     const mdPath = path.join(directory, `${agentId}-${timestamp}.md`);
     const docxPath = path.join(directory, `${agentId}-${timestamp}.docx`);
     fs.writeFileSync(mdPath, markdown, { mode: 0o600 });
-    const hasDocx = await convertToWord(mdPath, docxPath);
+    const hasDocx = await writeWord(mdPath, docxPath);
     const parsed = parseReport(markdown, agentId);
     const report = { id: crypto.randomUUID(), agentId, label: AGENTS[agentId].label, timestamp, mdPath, docxPath: hasDocx ? docxPath : null,
       sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE,
