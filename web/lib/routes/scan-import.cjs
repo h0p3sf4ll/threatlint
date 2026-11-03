@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Manual Invicti / MobSF / DefectDojo / SonarQube report upload: POST creates a queued import (triage runs in the background),
+ * Manual Invicti / MobSF (XML, JSON, or PDF) / DefectDojo / SonarQube report upload: POST creates a queued import (triage runs in the background),
  * GET polls it, and POST /:id/servicenow (or /:id/scanner with {tool}) posts the finished report only with {confirm: true}.
  */
 
@@ -68,11 +68,11 @@ function scanImportBodyParsers(app) {
 }
 
 function registerScanImportRoutes(app, { scanImports }) {
-  app.post('/api/scan-import', handle(req => {
+  app.post('/api/scan-import', handle(async req => {
     const type = String(req.headers['content-type'] || '');
     const upload = /^multipart\/form-data/i.test(type) ? parseMultipart(req.body, type) : /json/i.test(type) ? parseJsonUpload(req.body) : (() => { throw new HttpError('Upload as multipart/form-data or JSON {filename, content}', 415); })();
-    const { job } = scanImports.create(upload);
-    return { id: job.id, status: job.status };
+    const { accepted } = await scanImports.create(upload);
+    return accepted;
   }, { status: 201 }));
   app.get('/api/scan-import', handle(() => scanImports.list()));
   app.get('/api/scan-import/:id', handle(req => scanImports.get(req.params.id)));

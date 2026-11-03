@@ -109,20 +109,20 @@ describe('Scanner write-back for imported reports', () => {
 });
 
 describe('DefectDojo and SonarQube JSON imports', () => {
-  it('detects and normalises the exports to file:line findings keyed by their references', () => {
-    const dojo = scan.parseScanReport(fixture('defectdojo-findings.json'));
+  it('detects and normalises the exports to file:line findings keyed by their references', async () => {
+    const dojo = await scan.parseScanReport(fixture('defectdojo-findings.json'));
     assert.equal(dojo.source, 'defectdojo');
     assert.deepEqual(dojo.findings.map(finding => [finding.originalId, finding.severity, finding.location]),
       [['DOJO-1201', 'HIGH', 'src/app/search.py:42'], ['DOJO-1202', 'MEDIUM', 'src/app/config.py:9'], ['DOJO-1203', 'LOW', 'not recorded']]);
     assert.equal(dojo.findings[0].cwe, 'CWE-89'); assert.equal(dojo.findings[2].rule, 'CVE-2099-0001');
-    const sonar = scan.parseScanReport(fixture('sonarqube-issues.json'));
+    const sonar = await scan.parseScanReport(fixture('sonarqube-issues.json'));
     assert.equal(sonar.source, 'sonarqube'); assert.equal(sonar.target, 'web');
     assert.deepEqual(sonar.findings.map(finding => [finding.originalId, finding.severity, finding.location]), [['SONAR-AYxExampleKey01', 'HIGH', 'src/app/search.py:42'], ['SONAR-AYxExampleKey03', 'LOW', 'src/app/client.py:7']]);
-    const hotspots = scan.parseScanReport(fixture('sonarqube-hotspots.json'));
+    const hotspots = await scan.parseScanReport(fixture('sonarqube-hotspots.json'));
     assert.deepEqual(hotspots.findings.map(finding => [finding.originalId, finding.rule, finding.location]), [['SONAR-HOTSPOT-AYxExampleKey02', 'python:S2068', 'src/app/config.py:9']]);
     assert.throws(() => scan.detect(fixture('sonarqube-issues.json').toString(), 'defectdojo'), /SonarQube report, not DefectDojo/);
   });
-  it('reads reference mappings for posting', () => {
+  it('reads reference mappings for posting', async () => {
     assert.equal(scan.parseReferenceMapping('dojo', 'dojo-12'), 'DOJO-12');
     assert.deepEqual(scan.parseReferenceMapping('sonar', 'FP-001=AYxExampleKey01\nFP-002=HOTSPOT-AYxExampleKey02'), { 'FP-001': 'SONAR-AYxExampleKey01', 'FP-002': 'SONAR-HOTSPOT-AYxExampleKey02' });
     assert.throws(() => scan.parseReferenceMapping('dojo', '12 13'), /Several references need a mapping/);

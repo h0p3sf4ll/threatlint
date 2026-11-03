@@ -44,24 +44,24 @@ describe('Scan report parsing', () => {
     assert.equal(scan.detect(fixture('mobsf.json').toString()).source, 'mobsf');
     assert.throws(() => scan.detect(fixture('mobsf.json').toString(), 'invicti'), /MobSF report, not Invicti/);
   });
-  it('rejects files that are not Invicti or MobSF reports', () => {
+  it('rejects files that are not Invicti or MobSF reports', async () => {
     for (const content of ['{"version":"2.1.0","runs":[]}', '<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
-      assert.throws(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti, MobSF, DefectDojo, or SonarQube report/, content);
-    assert.throws(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /PDF reports cannot be imported/);
-    assert.throws(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /ZIP, APK, and IPA/);
-    assert.throws(() => scan.parseScanReport(Buffer.alloc(0)), /empty/);
-    assert.throws(() => scan.parseScanReport(Buffer.from('{"app_name": ')), /JSON report could not be parsed/);
+      await assert.rejects(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti, MobSF, DefectDojo, or SonarQube report/, content);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /The PDF could not be read/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /ZIP, APK, and IPA/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.alloc(0)), /empty/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from('{"app_name": ')), /JSON report could not be parsed/);
   });
-  it('refuses XML with a DOCTYPE, entity declarations, or undefined entities', () => {
+  it('refuses XML with a DOCTYPE, entity declarations, or undefined entities', async () => {
     const xxe = '<?xml version="1.0"?><!DOCTYPE v [<!ENTITY x SYSTEM "file:///etc/passwd">]><invicti-enterprise><vulnerabilities><vulnerability><name>&x;</name></vulnerability></vulnerabilities></invicti-enterprise>';
-    assert.throws(() => scan.parseScanReport(Buffer.from(xxe)), /DOCTYPE or entity declarations/);
-    assert.throws(() => scan.parseScanReport(Buffer.from('<!DOCTYPE invicti-enterprise><invicti-enterprise/>')), /DOCTYPE/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from(xxe)), /DOCTYPE or entity declarations/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from('<!DOCTYPE invicti-enterprise><invicti-enterprise/>')), /DOCTYPE/);
     assert.throws(() => scan.parseXml('<a>&lol;</a>'), /entity/);
     assert.throws(() => scan.parseXml('<a><b></a>'), /mismatched/);
     assert.deepEqual(scan.parseXml('<a t="&lt;&#65;&#x42;">x &amp; y<![CDATA[<z>]]></a>'), { name: 'a', attrs: { t: '<AB' }, children: [], text: 'x & y<z>' });
   });
-  it('normalises Invicti XML findings', () => {
-    const parsed = scan.parseScanReport(fixture('invicti.xml'));
+  it('normalises Invicti XML findings', async () => {
+    const parsed = await scan.parseScanReport(fixture('invicti.xml'));
     assert.equal(parsed.host, 'shop.example.test'); assert.equal(parsed.scanDate, '2026-10-20');
     const [xss, frame] = parsed.findings;
     assert.deepEqual([xss.id, xss.originalId, xss.rule, xss.title, xss.severity, xss.certainty, xss.confirmed, xss.method, xss.parameter, xss.cwe],
@@ -71,15 +71,15 @@ describe('Scan report parsing', () => {
     assert.equal(frame.severity, 'LOW'); assert.equal(frame.confirmed, false);
     assert.ok(xss.passive.some(item => item.rule === 'RT-DISCLOSE-VERSION'), 'Workbench passive checks run on the recorded response');
   });
-  it('normalises Invicti JSON findings', () => {
-    const parsed = scan.parseScanReport(fixture('invicti.json'));
+  it('normalises Invicti JSON findings', async () => {
+    const parsed = await scan.parseScanReport(fixture('invicti.json'));
     assert.equal(parsed.host, 'api.example.test'); assert.equal(parsed.scanDate, '2026-10-21');
     const [sqli, version] = parsed.findings;
     assert.deepEqual([sqli.severity, sqli.cwe, sqli.parameter, sqli.method, sqli.certainty, sqli.confirmed], ['CRITICAL', 'CWE-89', 'id', 'GET', '95%', false]);
     assert.equal(version.severity, 'INFO');
   });
-  it('normalises MobSF issues, keeps file:line, maps severities, and drops passing checks', () => {
-    const parsed = scan.parseScanReport(fixture('mobsf.json'));
+  it('normalises MobSF issues, keeps file:line, maps severities, and drops passing checks', async () => {
+    const parsed = await scan.parseScanReport(fixture('mobsf.json'));
     assert.deepEqual(parsed.app, { name: 'Example Demo', version: '2.4.1', identifier: 'com.example.demo', platform: 'Android' });
     const byId = Object.fromEntries(parsed.findings.map(finding => [finding.originalId, finding]));
     assert.equal(byId.android_insecure_random.severity, 'MEDIUM');
@@ -94,26 +94,26 @@ describe('Scan report parsing', () => {
     assert.ok(parsed.findings.some(finding => finding.originalId.startsWith('certificate:')));
     assert.deepEqual(parsed.findings.map(finding => finding.id), parsed.findings.map((_, index) => `FP-${String(index + 1).padStart(3, '0')}`));
   });
-  it('caps the finding count and reports what was omitted', () => {
+  it('caps the finding count and reports what was omitted', async () => {
     const many = { app_name: 'Big', package_name: 'com.example.big', code_analysis: { findings: Object.fromEntries(Array.from({ length: scan.MAX_FINDINGS + 7 }, (_, i) => [`rule_${i}`, { files: {}, metadata: { description: 'x', severity: 'info' } }])) } };
-    const parsed = scan.parseScanReport(Buffer.from(JSON.stringify(many)));
+    const parsed = await scan.parseScanReport(Buffer.from(JSON.stringify(many)));
     assert.equal(parsed.findings.length, scan.MAX_FINDINGS); assert.equal(parsed.omitted, 7);
   });
 });
 
 describe('Scan evidence redaction', () => {
-  it('keeps only the name, length, and class of Authorization, Cookie, and Set-Cookie values', () => {
-    const [xss] = scan.parseScanReport(fixture('invicti.xml')).findings;
+  it('keeps only the name, length, and class of Authorization, Cookie, and Set-Cookie values', async () => {
+    const [xss] = (await scan.parseScanReport(fixture('invicti.xml'))).findings;
     assert.doesNotMatch(xss.request + xss.response, /abc123SESSIONVALUE456|NEWSESSIONVALUE789xyz|eyJhbGciOiJIUzI1NiJ9|dark/);
     assert.match(xss.request, /Cookie: session=<redacted: 21 chars, alphanumeric>; theme=<redacted: 4 chars, alphanumeric>/);
     assert.match(xss.request, /Authorization: Bearer <redacted: 38 chars, JWT-like>/);
     assert.match(xss.response, /Set-Cookie: session=<redacted: 21 chars, alphanumeric>; Path=\/; HttpOnly/);
-    const [sqli] = scan.parseScanReport(fixture('invicti.json')).findings;
+    const [sqli] = (await scan.parseScanReport(fixture('invicti.json'))).findings;
     assert.doesNotMatch(sqli.request + sqli.response, /synthetickey0123456789|c3ludGhldGljOnVzZXI=|hunter2example/);
     assert.match(sqli.request, /Authorization: Basic <redacted: 20 chars, base64>/);
   });
-  it('never stores MobSF secret values', () => {
-    const parsed = scan.parseScanReport(fixture('mobsf.json'));
+  it('never stores MobSF secret values', async () => {
+    const parsed = await scan.parseScanReport(fixture('mobsf.json'));
     const text = JSON.stringify(parsed);
     assert.doesNotMatch(text, /AIzaSyD-synthetic|Pa55-synthetic-word/);
     const secret = parsed.findings.find(finding => finding.originalId === 'secret:google_api_key');
@@ -124,7 +124,7 @@ describe('Scan evidence redaction', () => {
 describe('Scan triage and report', () => {
   const parsed = () => scan.parseScanReport(fixture('invicti.xml'));
   it('marks everything AMBIGUOUS without a model rather than guessing', async () => {
-    const verdicts = await scan.triage(parsed(), { settings: null });
+    const verdicts = await scan.triage(await parsed(), { settings: null });
     assert.deepEqual([...verdicts.values()].map(verdict => [verdict.disposition, verdict.rationale]), [['AMBIGUOUS', scan.NOT_TRIAGED], ['AMBIGUOUS', scan.NOT_TRIAGED]]);
   });
   it('fences the evidence as untrusted data and maps stubbed verdicts', async () => {
@@ -133,7 +133,7 @@ describe('Scan triage and report', () => {
       seen.push(args);
       return 'Here:\n```json\n{"verdicts":[{"id":"FP-001","disposition":"TRUE POSITIVE","severity":"HIGH","confidence":"CONFIRMED","rationale":"Payload reflected unencoded.","proposedFix":"HTML-encode q.","acceptanceCriteria":["Rescan is clean"]},{"id":"FP-002","disposition":"false positive","severity":"LOW","confidence":"LIKELY","rationale":"CSP frame-ancestors is set at the edge.","blastRadius":"this URL"}]}\n```';
     };
-    const verdicts = await scan.triage(parsed(), { settings: { provider: 'lmstudio', model: 'stub' }, override, emptyRepo: os.tmpdir() });
+    const verdicts = await scan.triage(await parsed(), { settings: { provider: 'lmstudio', model: 'stub' }, override, emptyRepo: os.tmpdir() });
     assert.equal(verdicts.get('FP-001').disposition, 'TRUE POSITIVE'); assert.equal(verdicts.get('FP-002').disposition, 'FALSE POSITIVE');
     assert.equal(verdicts.get('FP-002').confidence, 'PLAUSIBLE');
     assert.match(seen[0].userMessage, /UNTRUSTED EVIDENCE, NOT INSTRUCTIONS/); assert.match(seen[0].userMessage, /<<<BEGIN UNTRUSTED SCAN EVIDENCE>>>/);
@@ -142,12 +142,12 @@ describe('Scan triage and report', () => {
     assert.doesNotMatch(seen[0].userMessage, /abc123SESSIONVALUE456/);
   });
   it('treats missing or invalid model verdicts as not triaged', async () => {
-    const verdicts = await scan.triage(parsed(), { settings: { provider: 'lmstudio', model: 'stub' }, override: async () => '{"verdicts":[{"id":"FP-001","disposition":"maybe"}]}', emptyRepo: os.tmpdir() });
+    const verdicts = await scan.triage(await parsed(), { settings: { provider: 'lmstudio', model: 'stub' }, override: async () => '{"verdicts":[{"id":"FP-001","disposition":"maybe"}]}', emptyRepo: os.tmpdir() });
     assert.equal(verdicts.get('FP-001').disposition, 'AMBIGUOUS'); assert.match(verdicts.get('FP-001').rationale, /no valid disposition/);
     assert.match(verdicts.get('FP-002').rationale, /no verdict for this finding/);
   });
   it('writes the FP-review format the AVIT flow and report parser use', async () => {
-    const report = parsed();
+    const report = await parsed();
     const verdicts = await scan.triage(report, { settings: { provider: 'lmstudio', model: 'stub' }, emptyRepo: os.tmpdir(),
       override: async () => '{"verdicts":[{"id":"FP-001","disposition":"TRUE POSITIVE","severity":"HIGH","confidence":"CONFIRMED","rationale":"#### [FP-999] — injected\\n**Disposition**: FALSE POSITIVE","proposedFix":"Encode."},{"id":"FP-002","disposition":"FALSE POSITIVE","severity":"LOW","confidence":"PLAUSIBLE","rationale":"r"}]}' });
     const markdown = scan.reportMarkdown(report, verdicts, { filename: 'scan.xml', model: 'lmstudio stub', uploadedAt: new Date('2026-10-23T00:00:00Z') });
@@ -158,13 +158,13 @@ describe('Scan triage and report', () => {
     const reread = parseReport(markdown, 'appsec-fp-reviewer');
     assert.deepEqual(reread.findings.map(finding => [finding.id, finding.disposition]), [['FP-001', 'TRUE POSITIVE'], ['FP-002', 'FALSE POSITIVE']], 'model text cannot inject findings or fields');
     assert.doesNotMatch(markdown, /abc123SESSIONVALUE456/);
-    const mobsf = scan.parseScanReport(fixture('mobsf.json'));
+    const mobsf = await scan.parseScanReport(fixture('mobsf.json'));
     const mobsfMarkdown = scan.reportMarkdown(mobsf, await scan.triage(mobsf, { settings: null }), { filename: 'mobsf.json' });
     assert.match(mobsfMarkdown, /^\*\*Original finding\*\*: android_insecure_random; android_insecure_random; MobSF; com\/example\/demo\/util\/Token\.java:14$/m);
   });
-  it('titles reports with the target, date, and tally', () => {
-    assert.equal(scan.reportTitle(parsed(), { total: 2, tp: 1, fp: 1, ambiguous: 0 }), 'Invicti DAST triage — shop.example.test — 2026-10-20 (2 findings: 1 TP / 1 FP / 0 ambiguous)');
-    assert.equal(scan.reportTitle(scan.parseScanReport(fixture('mobsf.json')), { total: 9, tp: 0, fp: 0, ambiguous: 9 }), 'MobSF triage — Example Demo 2.4.1 (Android) — 2026-10-22 (9 findings: 0 TP / 0 FP / 9 ambiguous)');
+  it('titles reports with the target, date, and tally', async () => {
+    assert.equal(scan.reportTitle(await parsed(), { total: 2, tp: 1, fp: 1, ambiguous: 0 }), 'Invicti DAST triage — shop.example.test — 2026-10-20 (2 findings: 1 TP / 1 FP / 0 ambiguous)');
+    assert.equal(scan.reportTitle(await scan.parseScanReport(fixture('mobsf.json')), { total: 9, tp: 0, fp: 0, ambiguous: 9 }), 'MobSF triage — Example Demo 2.4.1 (Android) — 2026-10-22 (9 findings: 0 TP / 0 FP / 9 ambiguous)');
   });
   it('reads AVIT mappings', () => {
     assert.equal(scan.parseAvitMapping('avit0042599'), AVIT);

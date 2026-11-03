@@ -126,7 +126,7 @@ repository. DefectDojo and Semgrep outcomes are separate; inspect both.
 3. Inspect each report, then **Post to DefectDojo…**. Confirm the previewed changes.
    Semgrep posting is opt-in in the Workbench.
 
-**Import scan report** also accepts `/api/v2/findings/` JSON exports. Imported findings can post
+**Triage a scan report** also accepts `/api/v2/findings/` JSON exports. Imported findings can post
 back to their original references or explicit mapped references after confirmation.
 Workbench review batches allow at most 50 findings; narrow filters if more match.
 

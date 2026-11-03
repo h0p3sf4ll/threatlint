@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Manual scan-report import: an uploaded Invicti (DAST, XML or JSON export), MobSF (mobile, report JSON), DefectDojo
+ * Manual scan-report import: an uploaded Invicti (DAST, XML, JSON, or PDF Detailed Scan Report), MobSF (mobile, report JSON or PDF report), DefectDojo
  * (API v2 findings JSON), or SonarQube (issues or hotspots search JSON) report is parsed, redacted, triaged by the
  * Findings triage agent (or left AMBIGUOUS when no model is configured), written as an FP-review report in the report
  * store, and on an explicit, confirmed second call posted to ServiceNow, DefectDojo, or SonarQube.
@@ -19,6 +19,8 @@ const { analyzeResponse } = require('./runtime.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const scanners = require('./scanners.cjs');
+const { pdfLines } = require('./pdf-text.cjs');
+const { detectPdf, parseInvictiPdf, parseMobsfPdf } = require('./scan-import-pdf.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const MAX_UPLOAD = 25 * 1024 * 1024;
@@ -282,21 +284,45 @@ function invictiList(value) {
   return get(sample, 'Severity') !== undefined && (get(sample, 'Url') !== undefined || get(sample, 'HttpRequest') !== undefined || get(sample, 'LookupId') !== undefined) ? list : null;
 }
 
-/** Text from an upload Buffer; refuses binaries (PDF, ZIP, APK/IPA) with a pointer to the export that is supported. */
-function decodeUpload(buffer) {
+const isPdf = buffer => buffer.subarray(0, 5).toString('latin1') === '%PDF-';
+function checkSize(buffer) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) fail('The uploaded file is empty');
   if (buffer.length > MAX_UPLOAD) fail(`The upload exceeds the ${MAX_UPLOAD / 1024 / 1024} MB limit`, 413);
-  if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') fail('PDF reports cannot be imported. Export the Invicti report as XML or JSON, or download the MobSF report JSON (/api/v1/report_json).');
-  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself (Invicti XML/JSON or MobSF report JSON), not the application or an archive.');
+}
+
+/** Text from a text upload Buffer; refuses binaries (ZIP, APK/IPA) with a pointer to a supported export. PDFs go through readReport. */
+function decodeUpload(buffer) {
+  checkSize(buffer);
+  if (isPdf(buffer)) fail('PDF reports are read with readReport (they are parsed asynchronously)');
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself (Invicti XML/JSON/PDF or MobSF report JSON/PDF), not the application or an archive.');
   if (buffer.includes(0)) fail('The upload is a binary file, not a supported scan report');
   return buffer.toString('utf8').replace(/^﻿/, '');
 }
 
-const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload the Invicti vulnerabilities export (XML or JSON), the MobSF report JSON (/api/v1/report_json), a DefectDojo findings JSON (/api/v2/findings/), or a SonarQube issues or hotspots JSON (/api/issues/search, /api/hotspots/search). SARIF and Semgrep files go to Findings triage.';
+const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload the Invicti vulnerabilities export (XML, JSON, or the Detailed Scan Report PDF), the MobSF report JSON (/api/v1/report_json) or PDF report, a DefectDojo findings JSON (/api/v2/findings/), or a SonarQube issues or hotspots JSON (/api/issues/search, /api/hotspots/search). SARIF and Semgrep files go to Findings triage.';
 
-/** Detects the report by content (never by extension) and returns its parsed document. */
+const UNSUPPORTED_PDF = 'This PDF is not an Invicti Detailed Scan Report or a MobSF PDF report. Upload one of those, or the XML/JSON export.';
+const MOBSF_WEB_PDF = 'This PDF is a browser print of the MobSF web page, whose tables are paginated, so findings beyond the first page of each table are missing. Use MobSF\'s "PDF Report" button (or the report JSON, /api/v1/report_json) instead.';
+const checkHint = hint => { if (!['auto', ...Object.keys(SOURCES)].includes(hint)) fail('source must be "auto", "invicti", "mobsf", "defectdojo", or "sonarqube"'); };
+const checkMatch = (source, hint) => { if (hint !== 'auto' && hint !== source) fail(`The file is a ${SOURCES[source]} report, not ${SOURCES[hint]}; choose "auto" or the matching source`); };
+
+/** Detects any supported upload (text or PDF) by content and returns its parsed document. */
+async function readReport(buffer, hint = 'auto') {
+  checkHint(hint);
+  checkSize(buffer);
+  if (!isPdf(buffer)) return detect(decodeUpload(buffer), hint);
+  let lines;
+  try { lines = await pdfLines(buffer); } catch (error) { fail(error.message); }
+  const source = detectPdf(lines);
+  if (source === 'mobsf-web') fail(MOBSF_WEB_PDF);
+  if (!source) fail(UNSUPPORTED_PDF);
+  checkMatch(source, hint);
+  return { source, format: 'pdf', document: lines };
+}
+
+/** Detects a text report by content (never by extension) and returns its parsed document. */
 function detect(text, hint = 'auto') {
-  if (!['auto', ...Object.keys(SOURCES)].includes(hint)) fail('source must be "auto", "invicti", "mobsf", "defectdojo", or "sonarqube"');
+  checkHint(hint);
   const trimmed = text.trimStart();
   let detected;
   if (trimmed.startsWith('<')) {
@@ -313,7 +339,7 @@ function detect(text, hint = 'auto') {
     else if (invictiList(value)) detected = { source: 'invicti', format: 'json', document: value };
     else fail(UNSUPPORTED);
   } else fail(UNSUPPORTED);
-  if (hint !== 'auto' && hint !== detected.source) fail(`The file is a ${SOURCES[detected.source]} report, not ${SOURCES[hint]}; choose "auto" or the matching source`);
+  checkMatch(detected.source, hint);
   return detected;
 }
 
@@ -473,6 +499,24 @@ function parseMobsf(report) {
     version: String(version).slice(0, 40), identifier: String(identifier).slice(0, 200), platform }, scanDate: dateOf(report.timestamp || report.scan_date), findings };
 }
 
+// ── PDF reports (layout parsed in scan-import-pdf.cjs, normalised here like the exports) ──
+
+/** "Oct. 8, 2024, 5:11 p.m." (MobSF) → "Oct 8, 2024" so dateOf can read it. */
+const pdfDate = text => String(text || '').replace(/^([A-Z][a-z]{2,8})\.?\s+(\d{1,2}),\s*(\d{4}).*$/, '$1 $2, $3');
+
+function invictiFromPdf(lines) {
+  const { target, scanTime, findings } = parseInvictiPdf(lines);
+  return { target, host: hostOf(target), scanDate: dateOf(scanTime), findings: findings.map(invictiFinding) };
+}
+
+function mobsfFromPdf(lines) {
+  const { app, scanDate, findings } = parseMobsfPdf(lines);
+  const name = app.name || app.identifier || 'Mobile app';
+  return { target: `${name}${app.version ? ` ${app.version}` : ''}${app.identifier ? ` (${app.identifier})` : ''}`,
+    app: { name: name.slice(0, 120), version: app.version.slice(0, 40), identifier: app.identifier.slice(0, 200), platform: app.platform },
+    scanDate: dateOf(pdfDate(scanDate)), findings: findings.map(mobsfFinding) };
+}
+
 // ── DefectDojo and SonarQube (code-level findings) ──────────────────────────
 
 const DOJO_SEVERITY = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', low: 'LOW', info: 'INFO', informational: 'INFO' };
@@ -529,10 +573,18 @@ function parseSonar(document) {
 
 const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((severity, index) => [severity, index]));
 
+/** Report parser for each supported source:format. */
+const PARSERS = {
+  'invicti:xml': parseInvictiXml, 'invicti:json': parseInvictiJson, 'invicti:pdf': invictiFromPdf,
+  'mobsf:json': parseMobsf, 'mobsf:pdf': mobsfFromPdf,
+  'defectdojo:json': parseDojo, 'sonarqube:json': parseSonar,
+};
+
 /** Full parse of a detected report into bounded, redacted findings with stable FP-NNN ids (highest severity first). */
 function extract(detected) {
-  const parsed = detected.source === 'mobsf' ? parseMobsf(detected.document) : detected.source === 'defectdojo' ? parseDojo(detected.document) : detected.source === 'sonarqube' ? parseSonar(detected.document)
-    : detected.format === 'xml' ? parseInvictiXml(detected.document) : parseInvictiJson(detected.document);
+  const parse = PARSERS[`${detected.source}:${detected.format}`];
+  if (!parse) fail(`${SOURCES[detected.source] || detected.source} ${detected.format} reports are not supported`);
+  const parsed = parse(detected.document);
   const ordered = parsed.findings.map((finding, index) => ({ ...finding, order: index })).sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.order - b.order);
   const kept = ordered.slice(0, MAX_FINDINGS).map((finding, index) => {
     const { order, ...rest } = finding;
@@ -541,7 +593,7 @@ function extract(detected) {
   return { ...parsed, source: detected.source, format: detected.format, findings: kept, total: parsed.findings.length, omitted: Math.max(0, parsed.findings.length - MAX_FINDINGS) };
 }
 
-function parseScanReport(buffer, { source = 'auto' } = {}) { return extract(detect(decodeUpload(buffer), source)); }
+async function parseScanReport(buffer, { source = 'auto' } = {}) { return extract(await readReport(buffer, source)); }
 
 // ── Triage ───────────────────────────────────────────────────────────────────
 
@@ -898,9 +950,9 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   }
 
   /** Validates and structurally parses the upload now (bad input is a 400); extraction and triage run in the background. */
-  function create({ filename, content, fields = {} }) {
+  async function create({ filename, content, fields = {} }) {
     const name = path.basename(String(filename || 'scan-report')).replace(/[^\w.() -]/g, '_').slice(0, 200) || 'scan-report';
-    const detected = detect(decodeUpload(content), String(fields.source || 'auto').toLowerCase());
+    const detected = await readReport(content, String(fields.source || 'auto').toLowerCase());
     const avit = parseAvitMapping(fields.avit);
     let workspace = null;
     if (fields.workspaceId) {
@@ -916,10 +968,12 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     jobs.set(id, job);
     while (jobs.size > MAX_JOBS) jobs.delete(jobs.keys().next().value);
     persist();
+    // The caller's answer describes the job as accepted; the background run starts mutating `job` immediately.
+    const accepted = { id: job.id, status: job.status };
     // One import triages at a time; settings (and any session key) live only in this closure.
     const done = queue.then(() => runJob(job, detected, settings, workspace));
     queue = done.catch(() => {});
-    return { job, done };
+    return { job, accepted, done };
   }
 
   function jobFor(id) { return jobs.get(id) || fail('Scan import not found', 404); }
@@ -1012,5 +1066,5 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle: () => queue };
 }
 
-module.exports = { createScanImports, parseScanReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,
+module.exports = { createScanImports, parseScanReport, readReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,
   parseAvitMapping, avitTargets, parseReferenceMapping, groupTargets, CODE_SOURCES, MAX_UPLOAD, MAX_FINDINGS, NOT_TRIAGED, ScanImportError };

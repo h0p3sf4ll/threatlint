@@ -106,10 +106,10 @@ For a status-neutral note, use
    in **Findings**.
 3. Select **Post to SonarQube…**, supply an optional HTTPS report location, and confirm.
 
-**Import scan report** also accepts `/api/issues/search` and `/api/hotspots/search` JSON exports;
+**Triage a scan report** also accepts `/api/issues/search` and `/api/hotspots/search` JSON exports;
 posting maps each imported result back to its issue/hotspot.
 Workbench review batches allow at most 50 findings; narrow filters if more match.
-See [Workbench import limits](../workbench.md#importing-a-scan-report).
+See [Workbench import limits](../workbench.md#triaging-a-scan-report).
 
 ## API calls
 

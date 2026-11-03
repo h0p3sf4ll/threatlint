@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Import scan report: upload an Invicti (DAST) or MobSF (mobile) report, follow its triage, open or download
+ * Triage a scan report: upload an Invicti (DAST) or MobSF (mobile) report (XML, JSON, or PDF), follow its triage, open or download
  * the saved findings report, and post the outcome to ServiceNow. Independent of app.js state; workspace and
  * model come from threatlint:context, and reports open through threatlint:open-report.
  * CSP-safe: DOM nodes and textContent only. Every value from a scan report is rendered as text.
@@ -21,17 +21,17 @@
   // Help for this page, merged into /api/help by insights.js (server entries win on a shared key or id).
   window.ThreatlintHelpExtras = {
     tooltips: {
-      'scanimport-source': 'Auto-detect reads the file to tell Invicti, MobSF, DefectDojo (/api/v2/findings/ JSON), and SonarQube (/api/issues/search or /api/hotspots/search JSON) apart. Choose one explicitly if detection fails.',
+      'scanimport-source': 'Auto-detect reads the file to tell Invicti (XML, JSON, or Detailed Scan Report PDF), MobSF (JSON or PDF report), DefectDojo (/api/v2/findings/ JSON), and SonarQube (/api/issues/search or /api/hotspots/search JSON) apart. Choose one explicitly if detection fails.',
       'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
       'scanimport-avit': 'The ServiceNow AVIT this scan belongs to: AVIT followed by 7 to 15 digits. Needed only to post the result to ServiceNow.',
       'scanimport-servicenow': 'Attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives and ambiguous findings. Asks first.',
       'scanimport-disposition': 'TRUE POSITIVE = the evidence supports it. FALSE POSITIVE = the evidence rules it out. AMBIGUOUS = not enough evidence either way; a person decides.',
     },
-    topics: [{ id: 'scan-import', title: 'Import an Invicti or MobSF scan report', minutes: 2, steps: [
-      'Export the scan: Invicti as XML or JSON, MobSF as its JSON report.',
-      'Open Test → Import scan report and drop the file, or press Choose file.',
+    topics: [{ id: 'scan-import', title: 'Triage a scan report (false positive review)', minutes: 2, steps: [
+      'Get the report: Invicti as XML, JSON, or its Detailed Scan Report PDF; MobSF as its JSON or PDF report (the PDF Report button, not a browser print).',
+      'Open Test → Triage a scan report and drop the file, or press Choose file.',
       'Leave Scanner on Auto-detect, or pick Invicti or MobSF. Optionally pick a workspace so triage can read the matching source, and enter the AVIT number.',
-      'Press Import and triage. Progress moves through Queued → Parsing → Triaging → Done.',
+      'Press Triage findings. Progress moves through Queued → Parsing → Triaging → Done.',
       'Review the counts and the findings table, then press Open report, or download it as Markdown or Word. It is also listed in Findings.',
       'Press Post to ServiceNow, check what will happen, and confirm. The Word report is attached, false positives are closed, and the rest get work notes.',
     ] }],
@@ -173,7 +173,7 @@
   function renderJob(job) {
     const status = STATUS_LABELS[job.status] ? job.status : 'queued';
     $('scanimport-job-eyebrow').textContent = `${sourceLabel(job.source).toUpperCase()} IMPORT`;
-    $('scanimport-job-title').textContent = text(job.title) || 'Importing scan report';
+    $('scanimport-job-title').textContent = text(job.title) || 'Triaging scan report';
     $('scanimport-job-target').textContent = job.target ? `Target · ${text(job.target)}` : '';
     const pill = $('scanimport-job-status'); pill.textContent = STATUS_LABELS[status].toUpperCase(); pill.className = `operations-pill scanimport-pill-${status}`;
     renderSteps(status);

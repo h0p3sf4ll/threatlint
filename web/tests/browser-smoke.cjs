@@ -12,7 +12,7 @@ const { createWorkbench } = require('../server.js');
 const { SKILL_MAP } = require('../lib/agents.cjs');
 
 /**
- * Import scan report against stubbed /api/scan-import endpoints. The finished import points at the report the
+ * Triage a scan report against stubbed /api/scan-import endpoints. The finished import points at the report the
  * smoke run already saved, so Open report and the downloads use the real Findings routes.
  */
 async function scanImport(page) {

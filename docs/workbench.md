@@ -197,13 +197,22 @@ Impact hypothesis**. Solid edges are observed; dashed amber edges are unvalidate
 Select a node for its chain; **Finding chains only** hides requests without findings. A `401/403`
 records a denial for that request, not proof authorization holds everywhere.
 
-## Importing a scan report
+## Triaging a scan report
 
-1. Open **Import scan report** and choose an Invicti XML/JSON, MobSF JSON, DefectDojo findings
-   JSON, or SonarQube issues/hotspots JSON export (**25 MB** maximum).
+**Triage a scan report** is false positive review for a scanner's report file. Every finding gets a
+verdict (true positive, false positive, or ambiguous) with its evidence, in a findings report.
+
+1. Open **Triage a scan report** and choose the report (**25 MB** maximum):
+   - Invicti: XML, JSON, or the **Detailed Scan Report** PDF.
+   - MobSF: report JSON or the **PDF Report**. A browser print of the MobSF web page is refused
+     because its tables are paginated and would drop findings.
+   - DefectDojo findings JSON, or SonarQube issues/hotspots JSON.
+
+   The XML/JSON exports carry the most detail, such as lookup IDs and exact certainty, so prefer
+   them when you have a choice.
 2. Leave **Scanner** on auto-detect or select it. Optionally select the matching workspace
    and supply the destination finding reference.
-3. Import and inspect the saved findings/report. At most **500 findings** are retained;
+3. Press **Triage findings** and inspect the saved findings/report. At most **500 findings** are retained;
    omissions are disclosed. Without a usable model, results are **NOT TRIAGED**, with
    AMBIGUOUS placeholders—not model verdicts.
 4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
