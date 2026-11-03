@@ -31,12 +31,12 @@
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span>Scan running app</button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>False positive review</button>
       <button class="nav-item" data-view="scanimport" aria-controls="view-scanimport"><span class="nav-icon" aria-hidden="true">↥</span>Import scan report</button>
-      <button class="nav-item" data-view="dojoreview" aria-controls="view-dojoreview"><span class="nav-icon" aria-hidden="true">◉</span>DefectDojo review</button>
       <button class="nav-item" data-view="sonarreview" aria-controls="view-sonarreview"><span class="nav-icon" aria-hidden="true">◎</span>SonarQube review</button>
       <div class="sidebar-label">2 · FIX</div>
       <button class="nav-item" data-view="reports"><span class="nav-icon" aria-hidden="true">▤</span>Findings<span class="nav-count" id="report-nav-count">0</span></button>
       <button class="nav-item" data-view="chat" aria-controls="view-chat"><span class="nav-icon" aria-hidden="true">✦</span>Ask Threatlint</button>
       <div class="sidebar-label">3 · TRACK</div>
+      <button class="nav-item" data-view="dojoreview" aria-controls="view-dojoreview"><span class="nav-icon" aria-hidden="true">◉</span>DefectDojo review</button>
       <button class="nav-item" data-view="metrics" aria-controls="view-metrics"><span class="nav-icon" aria-hidden="true">▦</span>Metrics</button>
       <div class="sidebar-label">SIDEKICK</div>
       <button class="nav-item" data-view="sk-vreports" aria-controls="view-sk-vreports"><span class="nav-icon" aria-hidden="true">▣</span>Generate vReports</button>
@@ -315,11 +315,11 @@
         <div id="fpreview-results" class="fpreview-results"></div>
       </section>
       <section class="view" id="view-dojoreview" aria-labelledby="dojoreview-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>DEFECTDOJO · API V2</div><h1 id="dojoreview-title">DefectDojo review</h1><p class="page-description">Review DefectDojo findings by id or by filter. Each finding is checked on its own repository and branch, gets its own report in Findings, and is posted back to DefectDojo only after you confirm.</p></div></div>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>FINDINGS MANAGEMENT · DEFECTDOJO API V2</div><h1 id="dojoreview-title">DefectDojo review</h1><p class="page-description">DefectDojo is your system of record for findings from many scanners. Review its findings by id or by filter. Each finding is checked on its own repository and branch, gets its own report in Findings, and is posted back to DefectDojo only after you confirm.</p></div></div>
         <div class="scanner-review" data-scanner-tool="dojo"></div>
       </section>
       <section class="view" id="view-sonarreview" aria-labelledby="sonarreview-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SONARQUBE · SONARCLOUD</div><h1 id="sonarreview-title">SonarQube review</h1><p class="page-description">Review SonarQube vulnerabilities and security hotspots by key or by project and branch. Each gets its own report in Findings and is posted back to SonarQube only after you confirm.</p></div></div>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SCANNING TOOL · SONARQUBE · SONARCLOUD</div><h1 id="sonarreview-title">SonarQube review</h1><p class="page-description">SonarQube scans your code and owns the issues it raises. Review SonarQube vulnerabilities and security hotspots by key or by project and branch. Each gets its own report in Findings and is posted back to SonarQube only after you confirm.</p></div></div>
         <div class="scanner-review" data-scanner-tool="sonar"></div>
       </section>
       <section class="view" id="view-scanimport" aria-labelledby="scanimport-title" hidden>
@@ -399,12 +399,12 @@
 <label for="github-api-url">API URL</label><input id="github-api-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.github.com">
 </div>
 <p id="github-status" class="field-note small subtle" aria-live="polite"></p><p class="form-error" id="github-error" role="alert"></p><div class="settings-actions"><span class="small subtle">Settings are checked by minting a token before they are saved. The key and tokens never reach this page.</span><button class="button secondary" type="button" id="github-remove" hidden>Remove</button><button class="button primary" type="submit">Save GitHub App</button></div></form>
-            <form id="dojo-form" class="settings-card scanner-settings" data-scanner-tool="dojo" aria-labelledby="settings-defectdojo-title"><span id="settings-defectdojo" class="settings-anchor"></span><h2 id="settings-defectdojo-title">DefectDojo <span class="subtle small">saved in the Threatlint config</span></h2>
+            <form id="dojo-form" class="settings-card scanner-settings" data-scanner-tool="dojo" aria-labelledby="settings-defectdojo-title"><span id="settings-defectdojo" class="settings-anchor"></span><h2 id="settings-defectdojo-title">DefectDojo <span class="subtle small">findings management · saved in the Threatlint config</span></h2>
 <p class="field-note small subtle">Used to fetch findings for DefectDojo review and to post verdicts back (report attached, note, and false-positive / verified status). Copy an API v2 key from DefectDojo → your profile → API v2 Key, or run <code>threatlint dojo login</code>. The token's user needs to view and edit findings in the products you review.</p>
 <label for="dojo-url">DefectDojo URL</label><input id="dojo-url" type="url" placeholder="https://defectdojo.example.test" autocomplete="off" spellcheck="false">
 <label for="dojo-token">API v2 token</label><input id="dojo-token" type="password" autocomplete="new-password" spellcheck="false"><p class="field-note small subtle">Shown masked. Leave it as is to keep the saved token, or type a new one to replace it.</p>
 <p id="dojo-status" class="field-note small subtle" aria-live="polite"></p><p class="form-error" id="dojo-error" role="alert"></p><div class="settings-actions"><span class="small subtle">The token is checked against DefectDojo before it is saved.</span><button class="button primary" type="submit">Save DefectDojo settings</button></div></form>
-            <form id="sonar-form" class="settings-card scanner-settings" data-scanner-tool="sonar" aria-labelledby="settings-sonarqube-title"><span id="settings-sonarqube" class="settings-anchor"></span><h2 id="settings-sonarqube-title">SonarQube / SonarCloud <span class="subtle small">saved in the Threatlint config</span></h2>
+            <form id="sonar-form" class="settings-card scanner-settings" data-scanner-tool="sonar" aria-labelledby="settings-sonarqube-title"><span id="settings-sonarqube" class="settings-anchor"></span><h2 id="settings-sonarqube-title">SonarQube / SonarCloud <span class="subtle small">scanning tool · saved in the Threatlint config</span></h2>
 <p class="field-note small subtle">Used to fetch issues and security hotspots for SonarQube review and to post verdicts back (comment, then False Positive / Confirm, or hotspot Safe). Create a user token in SonarQube → My Account → Security, or run <code>threatlint sonar login</code>. Changing status needs Administer Issues and Administer Security Hotspots on the project.</p>
 <label for="sonar-url">SonarQube URL</label><input id="sonar-url" type="url" placeholder="https://sonarqube.example.test" autocomplete="off" spellcheck="false">
 <label for="sonar-token">User token</label><input id="sonar-token" type="password" autocomplete="new-password" spellcheck="false"><p class="field-note small subtle">Shown masked. Leave it as is to keep the saved token, or type a new one to replace it.</p>

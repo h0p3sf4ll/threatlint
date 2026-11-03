@@ -4,6 +4,7 @@ import io
 import os
 import json
 import types
+import urllib.parse
 
 import pytest
 
@@ -19,7 +20,8 @@ ROW = {"sys_id": {"value": SYS_ID}, "number": {"value": AVIT}, "state": {"value"
        "u_project_name": {"display_value": "Platform"}, "u_repository": {"display_value": "infra-terraform"},
        "u_project_branch": {"display_value": "feature-branch"},
        "u_file_path": {"display_value": "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars"},
-       "u_security_finding_source": {"display_value": "Secret"}, "u_line_number": {"display_value": "12"}}
+       "u_security_finding_source": {"display_value": "Secret"}, "u_line_number": {"display_value": "12"},
+       "vulnerability": {"display_value": "generic.secrets.aws-access-key"}}
 LABELS = [{"name": sn.AVIT_TABLE, "element": element, "label": label} for element, label in [
     ("u_scm_tool", "SCM Tool"), ("u_organization_name", "Organization Name"), ("u_project_name", "Project Name"),
     ("u_repository", "Repository"), ("u_project_branch", "Project Branch"), ("u_file_path", "File Path"),
@@ -33,6 +35,11 @@ REPORT = f"""# FP Review
 **Severity**: INFO
 **Confidence**: CONFIRMED
 """
+
+
+@pytest.fixture(autouse=True)
+def isolate_operation_audits(monkeypatch, tmp_path):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path / "threatlint-home"))
 
 
 def test_avit_numbers_are_avit_plus_7_to_15_digits():
@@ -120,11 +127,47 @@ def _args(tmp_path, report, **extra):
     path.write_text(report, encoding="utf-8")
     docx.write_bytes(b"PK-docx")
     return types.SimpleNamespace(number=AVIT, report=str(path), docx=str(docx), snow_instance=INSTANCE, aws_profile=None,
-                                 semgrep_deployment=None, skip_semgrep=False, skip_rule_tuning=True, checkout=None, yes=True, **extra)
+                                 semgrep_deployment=None, semgrep_rule_hash_id="synthetic-hash", skip_semgrep=False,
+                                 skip_rule_tuning=True, checkout=None, yes=True, **extra)
+
+
+@pytest.mark.parametrize("command", ["resolve", "semgrep"])
+@pytest.mark.parametrize(
+    ("scm_context", "canonical"),
+    [
+        ({"scm_tool": "GitHub", "organization": "synthetic-owner", "repository": "repo"}, "synthetic-owner/repo"),
+        ({"scm_tool": "ADO", "organization": "synthetic-org", "project": "Project Name", "repository": "repo"}, "synthetic-org/Project Name/repo"),
+    ],
+)
+@pytest.mark.parametrize("matched", [False, True])
+def test_tuning_commands_pass_the_exact_project_name(monkeypatch, tmp_path, command, scm_context, canonical, matched):
+    from threatlint import semgrep_platform as sp
+
+    context = {**scm_context, "file_path": "file.py", "line": "12", "rule": "synthetic.rule", "finding_source": "SAST"}
+    record = {"sys_id": "a" * 32, "fields": {"state": "Closed", "work_notes": ar.CLOSING_COMMENT},
+              "context": context, "in_view": True}
+    matches = [{"id": 1, "rule": "synthetic.rule", "path": "file.py", "line": 12, "ref": "feature",
+                "project": canonical, "product": "sast"}] if matched else []
+    monkeypatch.setattr(ar, "_session", lambda args: (INSTANCE, "synthetic"))
+    monkeypatch.setattr(ar, "_record", lambda *args: record)
+    monkeypatch.setattr(ar, "attachment_names", lambda *args: set())
+    monkeypatch.setattr(ar, "attach", lambda *args: None)
+    monkeypatch.setattr(ar, "update", lambda *args: {"state": "3", "substate": "3"})
+    monkeypatch.setattr(ar, "semgrep_token", lambda *args: "synthetic")
+    monkeypatch.setattr(ar, "semgrep_matches", lambda *args: ({"id": 7, "slug": "synthetic"}, matches))
+    monkeypatch.setattr(ar, "semgrep_ignore", lambda *args, **kwargs: len(matches))
+    calls = []
+    monkeypatch.setattr(sp, "tune_rule", lambda *args, **kwargs: calls.append(kwargs) or [])
+    (tmp_path / "file.py").write_text("synthetic = True\n", encoding="utf-8")
+    args = _args(tmp_path, REPORT)
+    args.checkout, args.skip_rule_tuning, args.line = str(tmp_path), False, None
+    assert (ar.cmd_resolve(args) if command == "resolve" else ar.cmd_semgrep(args)) == 0
+    assert calls == [{"project": canonical}]
 
 
 def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ignores_semgrep(monkeypatch, tmp_path):
     fake, semgrep_calls = FakeServiceNow(), []
+    ignored = set()
     monkeypatch.setattr(sn, "_request_json", fake)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
     monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
@@ -135,11 +178,18 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
             return {"deployments": [{"id": 12345, "slug": "example_org"}]}
         if "/projects" in path:
             return {"projects": []}
+        if "/findings?" in path:
+            return {"findings": []}
         if "/secrets" in path:
-            assert path.startswith("/deployments/12345/secrets") and "repo=Platform%2Finfra-terraform" in path
-            return {"findings": [{"id": "55", "type": "AWS", "findingPath": "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "status": "FINDING_STATUS_OPEN"},
-                                 {"id": "56", "type": "AWS", "findingPath": "src/other.tfvars:12", "status": "FINDING_STATUS_OPEN"}]}
-        return {"num_triaged": len(body["issue_ids"])}
+            assert path.startswith("/deployments/12345/secrets") and "repo=contoso%2FPlatform%2Finfra-terraform" in path
+            common = {"type": "AWS", "ruleHashId": "synthetic-hash", "repository": {"name": "contoso/Platform/infra-terraform"},
+                      "ref": "feature-branch"}
+            return {"findings": [{"id": str(identifier), **common, "findingPath": path,
+                                 "status": "FINDING_STATUS_IGNORED" if identifier in ignored else "FINDING_STATUS_OPEN"}
+                                for identifier, path in [(55, "src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12"),
+                                                         (56, "src/other.tfvars:12")]]}
+        ignored.update(body["issue_ids"])
+        return {"num_triaged": len(body["issue_ids"]), "triaged_issues": body["issue_ids"]}
     monkeypatch.setattr(ar, "_semgrep", semgrep)
     monkeypatch.setattr("threatlint.semgrep_platform.deployment", lambda token, wanted="": {"id": 12345, "slug": "example_org"})
     out = io.StringIO()
@@ -154,7 +204,7 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     assert body["work_notes"] == "Closed by Threatlint as a false positive, see attached report."
     uploads = [u for m, u, _d in fake.calls if u.endswith("/attachment/file")]
     assert len(uploads) == 1, "only the Word report is attached"
-    triage = semgrep_calls[-1][1]
+    triage = next(body for _path, body in semgrep_calls if body is not None)
     assert triage["issue_type"] == "secrets" and triage["issue_ids"] == [55] and triage["new_triage_reason"] == "false_positive"
     assert "Closed as false positive" in out.getvalue()
 
@@ -215,13 +265,14 @@ def test_a_clone_that_times_out_retries_as_a_sparse_checkout(monkeypatch, tmp_pa
 
 def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_path):
     row = {key: value for key, value in ROW.items() if key != "u_line_number"}
-    row.update({"u_security_finding_source": {"display_value": "SCA"}, "u_file_path": {"display_value": "package-lock.json"}})
+    row.update({"u_security_finding_source": {"display_value": "SCA"}, "u_file_path": {"display_value": "package-lock.json"},
+                "vulnerability": {"display_value": "ssc-dc3aa06a"}})
     fake = FakeServiceNow()
     original = fake.__call__
     monkeypatch.setattr(sn, "_request_json", lambda url, **kw: {"result": [row]} if "sysparm_query=number%3D" in url else original(url, **kw))
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
     monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
-    calls = []
+    calls, ignored = [], set()
     def semgrep(path, token, *, body=None):
         calls.append((path, body))
         if path == "/deployments":
@@ -230,14 +281,19 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
             return {"projects": []}
         if "/findings?" in path:
             assert "issue_type=sca" in path and path.startswith("/deployments/example_org/findings") and "Platform%2Finfra-terraform" in path
-            return {"findings": [{"id": 91, "rule": {"name": "ssc-dc3aa06a"}, "location": {"file_path": "package-lock.json", "line": 40}}]}
-        return {"num_triaged": len(body["issue_ids"])}
+            page = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["page"][0]
+            return {"findings": [{"id": 91, "rule": {"name": "ssc-dc3aa06a"}, "repository": {"name": "contoso/Platform/infra-terraform"},
+                                  "ref": "feature-branch", "status": "ignored" if 91 in ignored else "open",
+                                  "location": {"file_path": "package-lock.json", "line": 40}}] if page == "0" else []}
+        ignored.update(body["issue_ids"])
+        return {"num_triaged": len(body["issue_ids"]), "triaged_issues": body["issue_ids"]}
     monkeypatch.setattr(ar, "_semgrep", semgrep)
     monkeypatch.setattr("threatlint.semgrep_platform.deployment", lambda token, wanted="": {"id": 12345, "slug": "example_org"})
     monkeypatch.setattr("sys.stdout", io.StringIO())
     report = REPORT.replace("src/aisp/nonprod/resources/ap-south-1/s3/kubecost-aps1-metricsbucket/terraform.tfvars:12", "package-lock.json:40")
     assert ar.cmd_resolve(_args(tmp_path, report)) == 0
-    assert calls[-1][1]["issue_type"] == "sca" and calls[-1][1]["issue_ids"] == [91]
+    triage = next(body for _path, body in calls if body is not None)
+    assert triage["issue_type"] == "sca" and triage["issue_ids"] == [91]
 
 
 def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path):
@@ -302,12 +358,16 @@ def test_semgrep_is_never_matched_without_a_line(monkeypatch):
     import threatlint.semgrep_platform as sp
     monkeypatch.setattr(sp, "deployment", lambda *_a: {"id": 12345, "slug": "example_org"})
     monkeypatch.setattr(ar, "_semgrep", lambda *a, **k: pytest.fail("no Semgrep query without a line"))
-    target = {"name": "r", "project": "P", "organization": "O"}
+    target = {"name": "r", "project": "P", "organization": "O", "branch": "feature"}
     with pytest.raises(ar.ResolveError, match="flagged line"):
         ar.semgrep_matches("t", "sast", target, {"file_path": "a.js", "rule": "x.y"})
     report = "**Original finding**: AVIT000000000000001; x.y; Semgrep Code; a.js:268\n"
-    monkeypatch.setattr(ar, "_semgrep", lambda path, token, **k: {"findings": [
-        {"id": 1, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 268}}, {"id": 2, "rule_name": "x.y", "location": {"file_path": "a.js", "line": 109}}]})
+    def findings(path, token, **kwargs):
+        page = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["page"][0]
+        return {"findings": [{"id": identifier, "rule_name": "x.y", "repository": {"name": "O/P/r"}, "ref": "feature",
+                              "status": "open", "location": {"file_path": "a.js", "line": line}}
+                             for identifier, line in [(1, 268), (2, 109)]] if page == "0" else []}
+    monkeypatch.setattr(ar, "_semgrep", findings)
     _dep, matches = ar.semgrep_matches("t", "sast", target, {"file_path": "a.js", "rule": "x.y", "avit": "AVIT000000000000001"}, report_text=report)
     assert [m["id"] for m in matches] == [1]
 

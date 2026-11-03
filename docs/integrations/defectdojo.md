@@ -1,5 +1,9 @@
 # DefectDojo integration
 
+**Integration type: findings management.** DefectDojo is a centralized system of record: it aggregates
+findings that many scanners produced and tracks their status. It does not scan code. Compare the
+[SonarQube scanning-tool integration](sonarqube.md) and the [integration types](README.md).
+
 Keep the decision and its source evidence with the finding. Threatlint fetches DefectDojo
 findings, locates their source, and runs findings triage. You approve posting and status changes.
 
@@ -12,7 +16,7 @@ confirmation. Semgrep-origin false positives can also trigger Semgrep writes; se
 | --- | --- |
 | HTTPS URL / token | Instance URL; profile → **API v2 Key**. Pasted `/api/v2/…` paths are trimmed |
 | Permissions | View findings/tests/engagements; edit findings/notes/files/status only for posting |
-| Repository / model | [GitHub App](github-app.md), GitHub token/CLI, or `threatlint ado login`; [model setup](setup.md) |
+| Repository / model | [GitHub App](../github-app.md), GitHub token/CLI, or `threatlint ado login`; [model setup](../setup.md) |
 | Direct CLI triage | Semgrep Community Edition on PATH (`semgrep --version`); `run fp-review` requires it |
 
 ## CLI
@@ -134,7 +138,7 @@ Under `/api/v2/`: `GET findings/{id}/`, `findings/`, `tests/{id}/`, `engagements
 
 ## Limits
 
-[Python](../tests/test_scanners.py) and [Workbench](../web/tests/scanners.test.cjs) tests use
+[Python](../../tests/test_integrations.py) and [Workbench](../../web/tests/scanners.test.cjs) tests use
 mocked HTTP, not live certification. Custom verification/deduplication policies can alter or reopen findings.
 
 ## Troubleshooting
@@ -147,4 +151,4 @@ mocked HTTP, not live certification. Custom verification/deduplication policies 
 | Attachment exists but status unchanged | Inspect server response/permissions; writes may have partially completed |
 | Semgrep unchanged | Check match metadata, token, warnings, and tuning prerequisites separately |
 
-Next: [review report evidence and acceptance criteria](reports.md) before approving closure.
+Next: [review report evidence and acceptance criteria](../reports.md) before approving closure.

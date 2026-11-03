@@ -40,6 +40,7 @@ def add_semgrep_parser(sub, *, products):
     base.add_argument("--kind", choices=sorted(products), required=True)
     base.add_argument("-o", "--output", required=True, help="File to write the rule YAML to")
     base.add_argument("--aws-profile")
+    base.add_argument("--project", help="Exact Semgrep project name (for project-scoped Unified exceptions)")
     actions.add_parser("logout", help="Remove the saved token")
 
 
@@ -59,7 +60,8 @@ def cmd_semgrep(args, *, login, resolve_token, rule_base, deployment, logout, er
             print(f"✓ Semgrep token validated and saved to {login('', args.deployment, args.token_stdin, args.aws_profile)}")
         elif args.semgrep_command == "rule-base":
             token = resolve_token(args.aws_profile)[0]
-            yaml_text, label = rule_base(args.rule, args.kind, token, deployment(token))
+            scope = {"project": args.project} if getattr(args, "project", None) else {}
+            yaml_text, label = rule_base(args.rule, args.kind, token, deployment(token), **scope)
             Path(args.output).write_text(f"# Tuning base: {label}\n{yaml_text}", encoding="utf-8")
             print(f"✓ Wrote the {label} to {args.output}")
         elif args.semgrep_command == "status":

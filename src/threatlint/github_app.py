@@ -73,10 +73,10 @@ def _openssl() -> str:
 
 
 def _read_parameter(name: str) -> str:
-    from threatlint.scanners.base import ScannerError, read_parameter  # noqa: PLC0415
+    from threatlint.integrations.common import IntegrationError, read_parameter  # noqa: PLC0415
     try:
         return read_parameter(name)
-    except ScannerError as exc:
+    except IntegrationError as exc:
         raise GitHubAppError(f"Could not read the GitHub App private key from Parameter Store: {exc}") from exc
 
 

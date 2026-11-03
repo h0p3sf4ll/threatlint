@@ -62,7 +62,7 @@ For each AVIT number:
 3. **Triage against that checkout.** Give the agent `$WORK/avit.md` as the findings source and `$WORK/repo` as the repository. Start at the AVIT's File Path (and line/rule, when given) on that branch.
    - **SAST:** trace source to sink.
    - **SCA:** confirm the vulnerable package and version are actually resolved in the lockfile or manifest on that branch, and whether the vulnerable function or feature is reachable. For example, whether fast-xml-parser parses untrusted XML with `processEntities` enabled.
-   - **Secrets:** decide whether the value is a real, usable credential, not a placeholder, test fixture, revoked key, or secret-store reference. **Never print the secret value.**
+   - **Secrets:** decide whether the value is a real, usable credential, not a placeholder, test fixture, revoked key, or secret-store reference. If a configured secret validator supplied evidence (see `threatlint integrations list --kind secret-validation`), give it to the agent: VALID means live, INVALID supports a false positive together with code context, and UNVERIFIED or missing evidence decides nothing. **Never print the secret value.**
    - Write *Original finding* as `<AVIT>; <rule or vulnerability>; <scanner>; <path:line>`, one AVIT per finding.
 4. **Write the report** as described under *Output*: the Markdown at `$WORK/fp_review.md` and the Word report at `$WORK/<AVIT>-threatlint-fp-review.docx`. **Do not save AVIT reports anywhere else on the local drive.** ServiceNow is where the report is kept.
 5. **Resolve the AVIT without asking.** Show the user the disposition, then run:

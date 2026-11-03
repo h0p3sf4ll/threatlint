@@ -194,8 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_sctask_parser(sub)
     from threatlint.sidekick.cli import add_sidekick_parser
     add_sidekick_parser(sub)
-    from threatlint.scanners.cli import add_parsers as add_scanner_parsers
-    add_scanner_parsers(sub)
+    from threatlint.integrations.cli import add_parsers as add_integration_parsers
+    add_integration_parsers(sub)
 
     return parser
 
@@ -230,11 +230,6 @@ def _cmd_github(args: argparse.Namespace) -> int:
     return cmd_github(args)
 
 
-def _cmd_scanner(args: argparse.Namespace) -> int:
-    from threatlint.scanners.cli import cmd_scanner
-    return cmd_scanner(args)
-
-
 def _cmd_aws(args: argparse.Namespace) -> int:
     from threatlint.aws_login import cmd_aws
     return cmd_aws(args)
@@ -262,9 +257,9 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator,
-                "dojo": _cmd_scanner, "sonar": _cmd_scanner}
-    handler = commands.get(args.command)
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator}
+    # Integration commands (built-in and plugin) register their own handler.
+    handler = commands.get(args.command) or getattr(args, "integration_handler", None)
     if handler is None:
         parser.print_help()
         sys.exit(0)

@@ -1,5 +1,9 @@
 # SonarQube integration
 
+**Integration type: scanning tool.** SonarQube and SonarCloud analyze code themselves and own the issues
+they raise, so verdicts go through SonarQube's own issue workflow. Compare the
+[DefectDojo findings-management integration](defectdojo.md) and the [integration types](README.md).
+
 Decide whether an issue or hotspot needs action, then record the evidence where your team works.
 Threatlint triages SonarQube/SonarCloud findings. Reviewing changes no server status; posting
 requires separate confirmation.
@@ -12,7 +16,7 @@ requires separate confirmation.
 | User token | **My Account → Security** |
 | Read permissions | **Browse** on the project |
 | Posting permissions | **Administer Issues** / **Administer Security Hotspots**, as applicable |
-| Source and model | SCM link or DevOps binding; GitHub/Azure DevOps access; [configured model](setup.md) |
+| Source and model | SCM link or DevOps binding; GitHub/Azure DevOps access; [configured model](../setup.md) |
 | Direct CLI triage | Semgrep Community Edition on PATH (`semgrep --version`); `run fp-review` requires it |
 
 ## CLI
@@ -105,7 +109,7 @@ For a status-neutral note, use
 **Import scan report** also accepts `/api/issues/search` and `/api/hotspots/search` JSON exports;
 posting maps each imported result back to its issue/hotspot.
 Workbench review batches allow at most 50 findings; narrow filters if more match.
-See [Workbench import limits](workbench.md#importing-a-scan-report).
+See [Workbench import limits](../workbench.md#importing-a-scan-report).
 
 ## API calls
 
@@ -119,11 +123,11 @@ Writes: `/api/issues/add_comment`, `/api/issues/do_transition`,
 Implement `threatlint.scanners.base.Adapter` connection, reference parsing, fetch/search,
 resolve/note, and token-validation methods; register it in `threatlint.scanners.registry()`.
 Add a matching `TOOLS` entry in `web/lib/scanners.cjs` for Workbench integration.
-See [Development](development.md) before changing adapters.
+See [Development](../development.md) and [Writing an integration](authoring.md) before changing this integration.
 
 ## Limits
 
-[Python](../tests/test_scanners.py) and [Workbench](../web/tests/scanners.test.cjs) tests use mocked
+[Python](../../tests/test_integrations.py) and [Workbench](../../web/tests/scanners.test.cjs) tests use mocked
 Web API responses, not live certification. Transitions vary by version/state; newer servers may
 omit Confirm. Verdicts do not establish suppression safety or runtime exploitability.
 
@@ -137,4 +141,4 @@ omit Confirm. Verdicts do not establish suppression safety or runtime exploitabi
 | Comment posted, no Confirm | Check the reported transition result and server version; do not infer closure |
 | Full report inaccessible | Publish it securely and use `--report-url`; local filenames are not uploads |
 
-Next: [check evidence, proposed fixes, and acceptance criteria](reports.md) before changing status.
+Next: [check evidence, proposed fixes, and acceptance criteria](../reports.md) before changing status.

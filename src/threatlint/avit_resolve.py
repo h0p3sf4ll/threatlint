@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 
 from threatlint import servicenow as sn
-from threatlint import avit_cli, avit_repositories, avit_semgrep
+from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_triage
 from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
 from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
 from threatlint.avit_report import ResolveError, report_line as _report_line, verdict_for
@@ -110,9 +110,23 @@ def semgrep_matches(token: str, kind: str, target: dict[str, str], context: dict
     )
 
 
-def semgrep_ignore(token: str, slug: str, kind: str, ids: list[int], note: str) -> int:
-    body = {"issue_type": kind, "issue_ids": sorted(set(ids)), "new_triage_state": "ignored", "new_triage_reason": "false_positive", "new_note": note[:3000]}
-    return int(_semgrep(f"/deployments/{urllib.parse.quote(slug)}/triage", token, body=body).get("num_triaged", 0))
+def semgrep_ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *,
+                   repository: str = "", ref: str = "", rule: str = "", deployment_id=None) -> int:
+    return avit_semgrep_triage.ignore(
+        token, slug, kind, ids, note, repository=repository, ref=ref, rule=rule,
+        deployment_id=deployment_id, query=_semgrep,
+    )
+
+
+def ignore_matches(token, dep, kind, matches, note) -> int:
+    scopes = {(match.get("project"), match.get("ref"), match.get("rule"), match.get("product")) for match in matches}
+    if len(scopes) != 1 or any(not part for part in next(iter(scopes))):
+        raise ResolveError("Semgrep matches do not share one verified repository, branch, rule, and product")
+    repository, ref, rule, product = next(iter(scopes))
+    if product != kind:
+        raise ResolveError("Semgrep triage product differs from the verified matches")
+    return semgrep_ignore(token, dep["slug"], product, [match["id"] for match in matches], note,
+                          repository=repository, ref=ref, rule=rule, deployment_id=dep["id"])
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -163,6 +177,8 @@ def cmd_resolve(args) -> int:
     ambiguous = verdict["disposition"] == "AMBIGUOUS"
     instance, token = _session(args)
     record = _record(instance, token, avit)
+    if getattr(args, "semgrep_rule_hash_id", None):
+        record["context"]["rule_hash_id"] = args.semgrep_rule_hash_id
     code_security = sn.in_code_security_view(record)
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
@@ -192,6 +208,8 @@ def cmd_resolve(args) -> int:
         closed = str(stored.get("state")) == str(values["state"])
         substate_note = "" if str(stored.get("substate")) == str(values["substate"]) else f" (ServiceNow stored substate {stored.get('substate') or 'blank'}, not {values['substate']})"
         print(f"  {'✓ Closed as false positive' + substate_note if closed else '! ServiceNow kept state ' + str(stored.get('state')) + ' / ' + str(stored.get('substate')) + ' (pending approval?)'}")
+        if not closed:
+            return 1
     else:
         print("  ✓ Work note added; AVIT left open")
     if false_positive and not code_security:
@@ -202,16 +220,17 @@ def cmd_resolve(args) -> int:
         try:
             dep, matches = semgrep_matches(sg_token, kind, target, {**record["context"], "avit": avit}, args.semgrep_deployment, markdown)
         except ResolveError as exc:
-            # The AVIT is already closed; a Semgrep gap is reported, not treated as a failure of the close.
+            # The AVIT stays closed; exit non-zero so callers (queue, CI) see that Semgrep was not updated.
             print(f"  ! Semgrep unchanged: {exc}. The token's deployment may not scan this repository; pass --semgrep-deployment.")
-            return 0
+            return 1
+        kind = dep.get("product", kind)
         if not matches:
             print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; Semgrep unchanged")
         else:
             for match in matches:
                 print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
-            count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}")
-            print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive (kept for this fingerprint on later scans and branches)")
+            count = ignore_matches(sg_token, dep, kind, matches, f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}")
+            print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
         # SAST and Secrets: replace the rule with the reviewer's tuned rule so the same false positive does not return.
         if kind in ("sast", "secrets") and not args.skip_rule_tuning:
             from threatlint import semgrep_platform as sp  # noqa: PLC0415
@@ -224,9 +243,11 @@ def cmd_resolve(args) -> int:
                 print("  ! Rule not tuned: pass --checkout <AVIT checkout> so the tuned rule can be validated against the flagged file")
             else:
                 try:
-                    sp.tune_rule(markdown, kind, rule, target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]})
+                    sp.tune_rule(markdown, kind, rule, target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]},
+                                 project=avit_semgrep.tuning_project(target, matches))
                 except sp.SemgrepError as exc:
                     print(f"  ! Rule not tuned: {exc}")
+                    return 1
     return 0
 
 
@@ -254,6 +275,8 @@ def cmd_semgrep(args) -> int:
         raise ResolveError(f"{avit} is not closed as a false positive by Threatlint; run `avit resolve` with a report instead")
     kind = sn.finding_kind(record)
     context = dict(record["context"])
+    if getattr(args, "semgrep_rule_hash_id", None):
+        context["rule_hash_id"] = args.semgrep_rule_hash_id
     if args.line:
         context["line"] = str(args.line)
     markdown = ""
@@ -261,21 +284,24 @@ def cmd_semgrep(args) -> int:
         with open(os.path.expanduser(args.report), encoding="utf-8") as handle:
             markdown = handle.read()
     sg_token = semgrep_token(args.aws_profile)
-    dep, matches = semgrep_matches(sg_token, kind, sn.repository_target(context), {**context, "avit": avit}, args.semgrep_deployment, markdown)
+    target = sn.repository_target(context)
+    dep, matches = semgrep_matches(sg_token, kind, target, {**context, "avit": avit}, args.semgrep_deployment, markdown)
+    kind = dep.get("product", kind)
     if not matches:
         print(f"  ! No open Semgrep finding matches {context.get('file_path')}{':' + context['line'] if context.get('line') else ''}; Semgrep triage unchanged")
     else:
         for match in matches:
             print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
-        count = semgrep_ignore(sg_token, dep["slug"], kind, [match["id"] for match in matches], f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT")
-        print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive (kept for this fingerprint on later scans and branches)")
+        count = ignore_matches(sg_token, dep, kind, matches, f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT")
+        print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
     if markdown and kind in ("sast", "secrets"):
         from threatlint import semgrep_platform as sp  # noqa: PLC0415
         path = context.get("file_path", "")
         target_file = os.path.join(args.checkout, path) if getattr(args, "checkout", None) and path else ""
         line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
         try:
-            sp.tune_rule(markdown, kind, context.get("rule", ""), target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]})
+            sp.tune_rule(markdown, kind, context.get("rule", ""), target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]},
+                         project=avit_semgrep.tuning_project(target, matches))
         except sp.SemgrepError as exc:
             print(f"  ! Rule not tuned: {exc}")
             return 1

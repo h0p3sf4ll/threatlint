@@ -25,12 +25,91 @@ def request(path, token, *, body=None, api):
 
 
 def tail(value: str) -> str:
-    return str(value or "").replace("\\", "/").lstrip("./")
+    return str(value or "").replace("\\", "/").removeprefix("./").lstrip("/")
 
 
 def same_path(found: str, wanted: str) -> bool:
     a, b = tail(found), tail(wanted)
-    return bool(a and b) and (a == b or a.endswith("/" + b) or b.endswith("/" + a))
+    return bool(a and b) and a == b
+
+
+def project_names(target: dict[str, str]) -> list[str]:
+    """Keep ADO's organization/project/repository identity intact."""
+    parts = [target.get("organization", ""), target.get("project", ""), target.get("name", "")]
+    if not parts[0] or not parts[-1]:
+        raise ResolveError("Semgrep matching requires the organization and repository")
+    return ["/".join(part for part in parts if part)]
+
+
+def tuning_project(target: dict[str, str], matches: list[dict]) -> str:
+    """Use the exact queried project when matched, otherwise the AVIT's canonical project name."""
+    if matches and matches[0].get("project"):
+        return matches[0]["project"]
+    names = project_names(target)
+    if not names:
+        raise ResolveError("The AVIT has no Semgrep project name, so its rule cannot be tuned narrowly")
+    return names[0]
+
+
+def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status=None):
+    """Yield normalized findings without truncating pagination or trusting ignored filters."""
+    seen, cursors, cursor, page = set(), set(), "", 0
+    while True:
+        if kind == "secrets":
+            params = {"limit": 1000, "repo": repository, **({"cursor": cursor} if cursor else {})}
+            endpoint = f"/deployments/{dep['id']}/secrets?"
+        else:
+            params = {"issue_type": kind, "repos": repository, "ref": branch, "dedup": "false",
+                      "page": page, "page_size": 1000}
+            if kind == "sast":
+                params["rules"] = rule
+            if status:
+                params["status"] = status
+            endpoint = f"/deployments/{urllib.parse.quote(dep['slug'])}/findings?"
+        data = query(endpoint + urllib.parse.urlencode(params), token)
+        rows = data.get("findings") if isinstance(data, dict) else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ResolveError("Semgrep returned an invalid findings page; partial results are not usable")
+        for row in rows:
+            if (row.get("repository") or {}).get("name") != repository:
+                raise ResolveError("Semgrep returned another repository or omitted its identity")
+            ref = str(row.get("ref", ""))
+            if kind != "secrets" and ref != branch:
+                raise ResolveError("Semgrep did not honor the requested branch")
+            if kind == "secrets":
+                path, separator, line = str(row.get("findingPath", "")).rpartition(":")
+                if not separator:
+                    path, line = str(row.get("findingPath", "")), ""
+                name = str(row.get("ruleHashId", ""))
+                stored_status = str(row.get("status", "")).removeprefix("FINDING_STATUS_").lower()
+            else:
+                location = row.get("location") or {}
+                path, line = location.get("file_path", ""), location.get("line")
+                name = str(row.get("rule_name") or (row.get("rule") or {}).get("name", ""))
+                stored_status = str(row.get("status", ""))
+            identifier = row.get("id")
+            if isinstance(identifier, bool) or not str(identifier).isdigit() or int(identifier) <= 0:
+                raise ResolveError("Semgrep returned an invalid finding ID")
+            identity = (int(identifier), ref)
+            if identity in seen:
+                raise ResolveError("Semgrep repeated a finding across pages; results are incomplete")
+            seen.add(identity)
+            if ref != branch or name != rule or (status and stored_status != status):
+                continue
+            yield {"id": int(identifier), "rule": name, "path": path, "line": line, "ref": ref,
+                   "project": repository, "product": kind, "status": stored_status}
+        if kind != "secrets":
+            if not rows:
+                return
+            page += 1
+            continue
+        following = data.get("cursor") or ""
+        if not following:
+            return
+        if not rows or following == cursor or following in cursors:
+            raise ResolveError("Semgrep Secrets returned a non-advancing continuation cursor")
+        cursors.add(following)
+        cursor = following
 
 
 def semgrep_matches(token, kind, target, context, deployment=None, report_text="", *,
@@ -43,46 +122,29 @@ def semgrep_matches(token, kind, target, context, deployment=None, report_text="
     path, line, rule = context.get("file_path", ""), context.get("line", ""), context.get("rule", "")
     if not path:
         raise ResolveError("The AVIT has no File Path, so its Semgrep finding cannot be matched narrowly")
-    named = list(dict.fromkeys(name for name in (f"{target.get('project')}/{target['name']}" if target.get("project") else "",
-                                                 f"{target.get('organization')}/{target['name']}") if name and not name.startswith("/")))
     if not line.isdigit():
         line = report_line(report_text, context.get("avit", "")) if report_text else None
         line = str(line) if line else ""
     if not line.isdigit():
         raise ResolveError("Neither the AVIT nor the report records the flagged line, so the Semgrep finding cannot be matched narrowly; pass --line")
-    near = lambda found: found is not None and abs(int(found) - int(line)) <= 3
-    matches = []
-    if kind in ("sast", "sca"):
-        for project in named:
-            for page in range(20):
-                params = urllib.parse.urlencode({"issue_type": kind, "repos": project, "status": "open", "dedup": "true", "page": page, "page_size": 100})
-                findings = query(f"/deployments/{urllib.parse.quote(dep['slug'])}/findings?{params}", token).get("findings", [])
-                for finding in findings:
-                    name = str(finding.get("rule_name") or (finding.get("rule") or {}).get("name", ""))
-                    location = finding.get("location") or {}
-                    if rule and not (name == rule or name.endswith("." + rule) or rule.endswith("." + name)):
-                        continue
-                    if same_path(location.get("file_path", ""), path) and near(location.get("line")):
-                        matches.append({"id": int(finding["id"]), "rule": name, "path": location.get("file_path"), "line": location.get("line"), "ref": finding.get("ref")})
-                if len(findings) < 100:
-                    break
-            if matches:
-                break
-    else:
-        cursor = ""
-        for _ in range(20):
-            params = urllib.parse.urlencode({"limit": 100, **({"cursor": cursor} if cursor else {}), **{"repo": named[0]}})
-            data = query(f"/deployments/{dep['id']}/secrets?{params}", token)
-            for finding in data.get("findings", []):
-                found_path, _, found_line = str(finding.get("findingPath", "")).rpartition(":")
-                if not found_path:
-                    found_path, found_line = finding.get("findingPath", ""), ""
-                status = str(finding.get("status", ""))
-                if any(word in status for word in ("FIXED", "IGNORED", "REMOVED")):
-                    continue
-                if same_path(found_path, path) and near(found_line or None):
-                    matches.append({"id": int(finding["id"]), "rule": finding.get("type"), "path": found_path, "line": found_line or None, "ref": finding.get("ref")})
-            cursor = data.get("cursor") or ""
-            if not cursor or not data.get("findings"):
-                break
-    return dep, matches
+    if int(line) <= 0:
+        raise ResolveError("The flagged line must be positive")
+    branch = context.get("branch") or target.get("branch", "")
+    if not branch or not rule:
+        raise ResolveError("Semgrep matching requires the exact branch and rule")
+    repository = project_names(target)[0]
+    near = lambda found: str(found).isdigit() and int(found) > 0 and abs(int(found) - int(line)) <= 3
+    product = "sast" if kind == "secrets" else kind
+    matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule, query=query, status="open")
+               if same_path(found["path"], path) and near(found["line"])]
+    if not matches:
+        matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule, query=query, status="ignored")
+                   if same_path(found["path"], path) and near(found["line"])]
+    if kind == "secrets" and not matches:
+        rule_hash = context.get("rule_hash_id", "")
+        if not rule_hash:
+            raise ResolveError("No matching Code finding; Secrets requires an authoritative rule_hash_id, not its service type")
+        product = "secrets"
+        matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule_hash, query=query, status="open")
+                   if same_path(found["path"], path) and near(found["line"])]
+    return {**dep, "project": repository, "product": product}, matches

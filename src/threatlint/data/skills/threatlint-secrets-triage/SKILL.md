@@ -13,7 +13,9 @@ description: "Use for secrets scanning and credential triage: source and history
    payload. Quote redacted evidence and precise location; use a non-reversible fingerprint
    only if one is already available from a trusted scanner.
 4. Assess scope, privileges, exposure audience, likely duration, and production applicability.
-   Label credential validity as unverified; do not call provider APIs or try authentication.
+   Never call provider APIs or try authentication yourself. If Threatlint secret-validation
+   evidence was supplied (VALID / INVALID / UNVERIFIED from a configured validator), cite it with
+   the masked value and fingerprint; otherwise label credential validity as unverified.
 5. Distinguish active exposure, historical exposure, intentionally public identifiers, and
    placeholders with verified usage context. A value named "test" is not automatically harmless.
 6. Prioritize revoke/rotate and dependent service continuity before source cleanup. Propose

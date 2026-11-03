@@ -212,7 +212,7 @@ records a denial for that request, not proof authorization holds everywhere.
 Parsing is local; model triage sends finding evidence to your configured provider.
 SARIF/Semgrep inputs belong in [Findings triage](#review-experience), not this importer.
 Use the destination guide for write behavior: [AVIT](avit-integration.md),
-[DefectDojo](defectdojo-integration.md), [SonarQube](sonarqube-integration.md).
+[DefectDojo](integrations/defectdojo.md) (findings management), [SonarQube](integrations/sonarqube.md) (scanning tool).
 
 ## Ask Threatlint
 

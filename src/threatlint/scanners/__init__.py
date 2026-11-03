@@ -1,19 +1,24 @@
-"""Scanner adapters: fetch a tool's findings for FP review and write the reviewer's verdict back.
+"""Deprecated alias for `threatlint.integrations`; kept so existing imports keep working.
 
-Implemented: DefectDojo (`threatlint dojo …`) and SonarQube / SonarCloud (`threatlint sonar …`). To add another
-tool (Checkmarx, Snyk, GitHub code scanning, …), subclass `base.Adapter`, implement its tool-specific methods,
-and register an instance here; `scanners.cli` then provides fetch / checkout / resolve / note / login for it.
-Pure FP-report syntax parsing lives in `scanners.verdicts`; `base.verdict_for` selects and validates a verdict.
+The scanner adapters were split by integration type:
+
+  threatlint.scanners.base        -> threatlint.integrations.common   (ScannerError -> IntegrationError,
+                                                                       Adapter -> ReviewableIntegration)
+  threatlint.scanners.verdicts    -> threatlint.integrations.verdicts
+  threatlint.scanners.defectdojo  -> threatlint.integrations.findings_management.defectdojo
+  threatlint.scanners.sonarqube   -> threatlint.integrations.scanning.sonarqube
+  threatlint.scanners.registry()  -> threatlint.integrations.reviewable()
+
+This package will be removed in a future release.
 """
 
-from __future__ import annotations
+import warnings
 
-from threatlint.scanners.base import Adapter, ScannerError
+from threatlint.integrations import reviewable as registry
+from threatlint.integrations.common import IntegrationError as ScannerError
+from threatlint.integrations.common import ReviewableIntegration as Adapter
 
-
-def registry() -> dict[str, Adapter]:
-    from threatlint.scanners import defectdojo, sonarqube  # noqa: PLC0415
-    return {adapter.command: adapter for adapter in (defectdojo.ADAPTER, sonarqube.ADAPTER)}
-
+warnings.warn("threatlint.scanners is deprecated; import from threatlint.integrations instead",
+              DeprecationWarning, stacklevel=2)
 
 __all__ = ["Adapter", "ScannerError", "registry"]

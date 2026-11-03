@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * DefectDojo and SonarQube connections for the Workbench, mirroring src/threatlint/scanners/. The Workbench reviews
+ * DefectDojo (findings management) and SonarQube (scanning tool) connections for the Workbench, mirroring
+ * src/threatlint/integrations/. The Workbench reviews
  * findings through the Python CLI (`threatlint dojo|sonar fetch/checkout/resolve`) so it behaves exactly like the CLI;
  * this module holds what Node needs itself: the saved connection (~/.threatlint/defectdojo.json and sonarqube.json,
  * mode 0600, shared with `threatlint dojo|sonar login`), URL validation, reference parsing, the token check, and the
@@ -21,8 +22,8 @@ const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 const DISPOSITIONS = ['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'];
 
 const TOOLS = {
-  dojo: { id: 'dojo', name: 'defectdojo', label: 'DefectDojo', file: 'defectdojo.json', urlEnv: 'THREATLINT_DOJO_URL', tokenEnv: 'THREATLINT_DOJO_TOKEN', example: 'DOJO-123', attachments: true },
-  sonar: { id: 'sonar', name: 'sonarqube', label: 'SonarQube', file: 'sonarqube.json', urlEnv: 'THREATLINT_SONAR_URL', tokenEnv: 'THREATLINT_SONAR_TOKEN', example: 'SONAR-AYxExampleKey01', attachments: false },
+  dojo: { id: 'dojo', name: 'defectdojo', kind: 'findings-management', label: 'DefectDojo', file: 'defectdojo.json', urlEnv: 'THREATLINT_DOJO_URL', tokenEnv: 'THREATLINT_DOJO_TOKEN', example: 'DOJO-123', attachments: true },
+  sonar: { id: 'sonar', name: 'sonarqube', kind: 'scanning', label: 'SonarQube', file: 'sonarqube.json', urlEnv: 'THREATLINT_SONAR_URL', tokenEnv: 'THREATLINT_SONAR_TOKEN', example: 'SONAR-AYxExampleKey01', attachments: false },
 };
 const SONAR_SUMMARY = { 'FALSE POSITIVE': 'Closed by Threatlint as a false positive.', 'TRUE POSITIVE': 'True positive per Threatlint review; left open.',
   AMBIGUOUS: 'Ambiguous per Threatlint review; left open pending the evidence the report names.' };
@@ -55,7 +56,7 @@ function clearConfig(id) { try { fs.unlinkSync(configPath(id)); return true; } c
 function publicConfig(id) {
   const { url, token } = readConfig(id);
   const spec = tool(id);
-  return { tool: spec.id, label: spec.label, url: url || process.env[spec.urlEnv] || '', hasToken: !!token || !!process.env[spec.tokenEnv],
+  return { tool: spec.id, kind: spec.kind, label: spec.label, url: url || process.env[spec.urlEnv] || '', hasToken: !!token || !!process.env[spec.tokenEnv],
     tokenSource: token ? 'saved' : process.env[spec.tokenEnv] ? 'environment' : null, path: configPath(id) };
 }
 

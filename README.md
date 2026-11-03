@@ -117,7 +117,7 @@ evidence/reporting workflows plus domain-specific skills—not just a role name.
 - **Before merge:** Workbench playbooks, branch/diff review, and warn-first CI
   templates. Adopt blocking gates deliberately.
 - **In the PR:** findings and `/threatlint` conversations where configured.
-- **During triage:** ServiceNow AVITs, Semgrep, DefectDojo, and SonarQube workflows.
+- **During triage:** ServiceNow AVITs, Semgrep, DefectDojo (findings management), SonarQube (scanning), and [community integrations](docs/integrations/README.md).
 - **Across the team:** redacted report exports, dashboards, and a Teams bot for
   supplied evidence.
 
@@ -167,7 +167,8 @@ engineering handoff without overstating what was verified.
 | Triage ServiceNow findings and resolve results | [AVIT integration](docs/avit-integration.md) |
 | Manage queues and validate a handler with a canary | [AVIT orchestrator](docs/avit-orchestrator.md) |
 | Bring portfolio data into a vReport | [Sidekick](docs/sidekick.md) |
-| Review imported scanner findings | [DefectDojo](docs/defectdojo-integration.md) · [SonarQube](docs/sonarqube-integration.md) |
+| Review findings from a findings platform or scanning tool | [Integrations](docs/integrations/README.md): [DefectDojo](docs/integrations/defectdojo.md) (findings management) · [SonarQube](docs/integrations/sonarqube.md) (scanning) |
+| Add your own integration | [Writing an integration](docs/integrations/authoring.md) |
 | Read trends and build dashboards | [Dashboards](docs/dashboards.md) |
 | Export a report or fix missing Word output | [Reports](docs/reports.md) |
 | Discuss supplied evidence in Teams | [Teams](docs/teams.md) |

@@ -1,10 +1,10 @@
-"""Pure report syntax and compatibility of the scanner base's verdict-selection seam."""
+"""Pure report syntax and compatibility of the integration base's verdict-selection seam."""
 
 import re
 
 import pytest
 
-from threatlint.scanners import base, verdicts
+from threatlint.integrations import common as base, verdicts
 
 
 def finding(reference="DOJO-123", disposition="FALSE POSITIVE", identifier="FP-001"):
@@ -32,13 +32,13 @@ def test_heading_fallback_and_verdict_alias(heading):
 
 def test_original_finding_takes_precedence_over_a_reference_in_the_title():
     report = finding().replace("Example", "DOJO-999")
-    with pytest.raises(base.ScannerError, match="no finding"):
+    with pytest.raises(base.IntegrationError, match="no finding"):
         base.verdict_for(report, "DOJO-999")
 
 
 def test_conflicting_dispositions_remain_an_actionable_error():
     report = finding() + "\n" + finding(disposition="TRUE POSITIVE", identifier="FP-002")
-    with pytest.raises(base.ScannerError, match="conflicting dispositions"):
+    with pytest.raises(base.IntegrationError, match="conflicting dispositions"):
         base.verdict_for(report, "DOJO-123")
 
 
@@ -48,7 +48,7 @@ def test_repeated_consistent_dispositions_keep_first_verdict():
 
 
 def test_missing_disposition_is_not_inferred():
-    with pytest.raises(base.ScannerError, match="has no TRUE POSITIVE"):
+    with pytest.raises(base.IntegrationError, match="has no TRUE POSITIVE"):
         base.verdict_for(finding(disposition="UNKNOWN"), "DOJO-123")
 
 
@@ -75,5 +75,5 @@ def test_base_reference_matcher_remains_patchable(monkeypatch):
 def test_base_disposition_pattern_remains_patchable(monkeypatch):
     monkeypatch.setattr(base, "_DISPOSITION", re.compile("AMBIGUOUS"))
     assert base.verdict_for(finding(disposition="AMBIGUOUS"), "DOJO-123")["disposition"] == "AMBIGUOUS"
-    with pytest.raises(base.ScannerError, match="has no TRUE POSITIVE"):
+    with pytest.raises(base.IntegrationError, match="has no TRUE POSITIVE"):
         base.verdict_for(finding(disposition="FALSE POSITIVE"), "DOJO-123")

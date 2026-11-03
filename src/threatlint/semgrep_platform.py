@@ -17,6 +17,8 @@ rule in place, so the tuned rule replaces the original in the policy:
   4. disable the original rule in those policies.
 Nothing is changed in Semgrep unless step 1 passes; no human approval is required. The rollback is printed
 (re-enable the original, disable the tuned rule).
+Unified deployments support project-scoped detection exceptions, not legacy policy modes. Reading existing
+tuning is supported; automatic publication/republishing is rejected (see docs/semgrep-policies.md).
 """
 
 from __future__ import annotations
@@ -60,6 +62,11 @@ _TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,200}")
 
 class SemgrepError(RuntimeError):
     """A user-actionable failure; messages never contain the token."""
+
+    def __init__(self, message, *, status=None, api_code=None):
+        super().__init__(message)
+        self.status = status
+        self.api_code = api_code
 
 
 # ── Token ─────────────────────────────────────────────────────────────────────
@@ -152,28 +159,33 @@ _HTTP_TIMEOUT_S = int(os.environ.get("THREATLINT_SEMGREP_TIMEOUT", "120"))
 _RETRIES = 3
 
 
-def call(path: str, token: str, *, method: str = "GET", body: dict | None = None) -> dict:
+def call(path: str, token: str, *, method: str = "GET", body: dict | None = None,
+         headers: dict | None = None) -> dict:
     """One Semgrep API call. Timeouts and 5xx/429 answers are retried with backoff: policy and publish calls on a
-    large deployment are slow, and a transient failure must not leave a proven tuning undeployed."""
+    large deployment are slow. Conditional Unified writes are never replayed after an uncertain result."""
     import time  # noqa: PLC0415
-    for attempt in range(1, _RETRIES + 1):
+    if headers and set(headers) != {"If-Match"}:
+        raise SemgrepError("Only the If-Match additional header is supported")
+    attempts = 1 if method == "PUT" and headers else _RETRIES
+    for attempt in range(1, attempts + 1):
         request = urllib.request.Request(f"{API}{path}", method=method, data=json.dumps(body).encode() if body is not None else None,
                                          headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
-                                                  **({"Content-Type": "application/json"} if body is not None else {})})
+                                                  **({"Content-Type": "application/json"} if body is not None else {}),
+                                                  **(headers or {})})
         try:
             with _OPENER.open(request, timeout=_HTTP_TIMEOUT_S) as response:  # noqa: S310 - fixed HTTPS host
                 raw = response.read()
                 return json.loads(raw) if raw.strip() else {}
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 502, 503, 504) and attempt < _RETRIES:
+            if exc.code in (429, 500, 502, 503, 504) and attempt < attempts:
                 time.sleep(2 ** attempt)
                 continue
             raise _http_error(exc, path) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            if attempt < _RETRIES:
+            if attempt < attempts:
                 time.sleep(2 ** attempt)
                 continue
-            raise SemgrepError(f"Semgrep request failed after {_RETRIES} attempts: {exc}") from exc
+            raise SemgrepError(f"Semgrep request failed after {attempts} attempts: {exc}") from exc
         except ValueError as exc:
             raise SemgrepError(f"Semgrep request failed: {exc}") from exc
     raise SemgrepError("Semgrep request failed")
@@ -182,7 +194,13 @@ def call(path: str, token: str, *, method: str = "GET", body: dict | None = None
 def _http_error(exc, path: str) -> SemgrepError:
     hint = {401: " Check the Semgrep token.", 403: " The token needs the Web API scope.", 404: " Not found.",
             410: " This deployment uses the newer policies model."}.get(exc.code, "")
-    return SemgrepError(f"Semgrep returned HTTP {exc.code} for {path.split('?')[0]}.{hint}")
+    try:
+        payload = json.loads(exc.read())
+        api_code = payload.get("code") if isinstance(payload, dict) else None
+    except (OSError, ValueError):
+        api_code = None
+    return SemgrepError(f"Semgrep returned HTTP {exc.code} for {path.split('?')[0]}.{hint}",
+                        status=exc.code, api_code=api_code)
 
 
 def deployment(token: str, wanted: str = "") -> dict:
@@ -243,27 +261,40 @@ def _policy_rules(dep_id: str, policy_id: str, token: str) -> list[dict]:
     return semgrep_policies.policy_rules(dep_id, policy_id, token, call=call)
 
 
-def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str) -> list[dict]:
-    """Add the tuned rule in monitor mode and disable the original, in every policy that runs it."""
+def policy_reads(token: str, dep: dict) -> list[dict]:
+    """Legacy policy records or complete Unified snapshots, selected only on legacy HTTP 410."""
+    return semgrep_policies.policy_reads(token, dep, call=call, error_type=SemgrepError)
+
+
+def replace_in_policies(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str, *,
+                        project: str | None = None, mode: str = TUNED_MODE) -> list[dict]:
+    """Replace a legacy rule, or explicitly opt into Unified project detection with mode='include'."""
     return semgrep_policies.replace_in_policies(
         token, dep, kind, original_rule, tuned_path, call=call, replace_in=_replace_in, error_type=SemgrepError,
+        project=project, mode=mode,
     )
 
 
-def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str, tuned_path: str) -> list[dict]:
+def _replace_in(token: str, dep: dict, policies: list[dict], original_rule: str, tuned_path: str, *,
+                project: str | None = None, mode: str = TUNED_MODE) -> list[dict]:
     return semgrep_policies.replace_in(
-        token, dep, policies, original_rule, tuned_path, call=call, policy_rules=_policy_rules, mode=TUNED_MODE,
+        token, dep, policies, original_rule, tuned_path, call=call, policy_rules=_policy_rules, mode=mode,
+        project=project, error_type=SemgrepError,
     )
 
 
-def disable_originals(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
+def disable_originals(token: str, dep: dict, kind: str, original_rule: str, *,
+                      project: str | None = None) -> list[dict]:
     """Disable the original wherever its tuned rule is enabled in the same policy (it can be re-enabled after tuning)."""
-    return semgrep_policies.disable_originals(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules)
+    return semgrep_policies.disable_originals(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules,
+                                             project=project, error_type=SemgrepError)
 
 
-def existing_tuning(token: str, dep: dict, kind: str, original_rule: str) -> list[dict]:
+def existing_tuning(token: str, dep: dict, kind: str, original_rule: str, *,
+                    project: str | None = None) -> list[dict]:
     """Policies already running a Threatlint-tuned version of this rule (`[<deployment>.]<rule id>.tuned`)."""
-    return semgrep_policies.existing_tuning(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules)
+    return semgrep_policies.existing_tuning(token, dep, kind, original_rule, call=call, policy_rules=_policy_rules,
+                                           project=project, error_type=SemgrepError)
 
 
 def _exclusions(rule_yaml: str) -> list[str]:
@@ -272,7 +303,7 @@ def _exclusions(rule_yaml: str) -> list[str]:
 
 
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
-              out=sys.stdout) -> list[dict]:
+              out=sys.stdout, *, project: str | None = None) -> list[dict]:
     """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
 
     - Not yet tuned: the reviewer's tuned rule (a clone of the original plus the narrowest exclusion) is proven,
@@ -280,7 +311,8 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     - Already tuned: if the live tuned rule no longer reports the flagged line, nothing changes. Otherwise the
       reviewer's rule must extend the live tuned rule (keep every exclusion it has), is proven the same way, and is
       republished under the same id, so the policies pick up the new version."""
-    already = existing_tuning(token, dep, kind, original_rule)
+    scope = {"project": project} if project is not None else {}
+    already = existing_tuning(token, dep, kind, original_rule, **scope)
     live_yaml = ""
     if already:
         live_path = already[0]["tuned"]
@@ -292,9 +324,13 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
         if not still:
             for item in already:
                 print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)
-            _report_disabled(disable_originals(token, dep, kind, original_rule), out)
-            return []
+            repairs = disable_originals(token, dep, kind, original_rule, **scope)
+            _report_disabled(repairs, out)
+            return [change for change in repairs if "rollback" in change]
         print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)
+    if any(item.get("unified") for item in already):
+        raise SemgrepError("Unified tuning publication is unsupported: detection policies cannot enforce MODE_MONITOR, "
+                           "and republishing a shared tuned rule is not project-scoped. No rule was published")
     rule_yaml = tuned_rule_from_report(report)
     if not rule_yaml:
         raise SemgrepError("The report has no `**Tuned rule**:` block, so the rule was not changed. Re-run the review: "
@@ -311,14 +347,17 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
                                "it must extend the live tuned rule, not replace it")
     fixtures = semgrep_rule_text.fixtures_from_report(report)
     checked = validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures, token)
+    if not already and any(item.get("unified") for item in policy_reads(token, dep)):
+        raise SemgrepError("Unified tuning publication is unsupported: detection policies cannot enforce MODE_MONITOR. "
+                           "No rule was published; use an explicitly reviewed project detection proposal instead")
     where = "and no longer reports the flagged line" if checked["dropped"] else "(the flagged line needs interfile analysis, so the fixtures are the proof)"
     print(f"  ✓ Tuned rule {checked['id']} is valid, keeps every true-positive fixture, drops the false-positive shape{', matches the original rule,' if checked['original_checked'] else ''} {where}", file=out)
     tuned_path = publish(checked["path"], token)
     print(f"  ✓ Published org-private rule {tuned_path}{' (new version of the live tuned rule)' if live_yaml else ''}", file=out)
     if live_yaml:
-        _report_disabled(disable_originals(token, dep, kind, original_rule), out)
+        _report_disabled(disable_originals(token, dep, kind, original_rule, **scope), out)
         return [{"policy": item["policy"], "tuned": tuned_path, "mode": item["mode"], "original": original_rule} for item in already]
-    changes = replace_in_policies(token, dep, kind, original_rule, tuned_path)
+    changes = replace_in_policies(token, dep, kind, original_rule, tuned_path, **scope)
     for change in changes:
         print(f"  ✓ {change['policy']}: {change['tuned']} enabled ({change['mode']}); {change['original']} disabled", file=out)
     for change in changes:
@@ -331,9 +370,10 @@ def _report_disabled(changes: list[dict], out) -> None:
         print(f"  ✓ {change['policy']}: {change['original']} was still enabled ({change['mode']}) beside its tuned rule; disabled", file=out)
 
 
-def rule_base(rule: str, kind: str, token: str, dep: dict) -> tuple[str, str]:
+def rule_base(rule: str, kind: str, token: str, dep: dict, *, project: str | None = None) -> tuple[str, str]:
     """(YAML, label) the reviewer should tune: the live tuned rule when one is deployed, else the original."""
-    live = existing_tuning(token, dep, kind, rule) if kind in PRODUCT_POLICY else []
+    scope = {"project": project} if project is not None else {}
+    live = existing_tuning(token, dep, kind, rule, **scope) if kind in PRODUCT_POLICY else []
     if live:
         return original_rule_yaml(live[0]["tuned"], token), f"live tuned rule {live[0]['tuned']} (extend it; keep every exclusion it has)"
     return original_rule_yaml(rule, token), f"original rule {rule}"

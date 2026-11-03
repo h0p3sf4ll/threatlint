@@ -76,8 +76,15 @@ Integration boundaries are similarly explicit:
 - `github_app_{config,payloads,cli}.py`, `ado_payloads.py`, `aws_profiles.py`.
 
 Sidekick keeps clients, storage, operations, reports, and workbook handling
-separate. Scanner adapters keep provider semantics together; shared verdict
-syntax lives in `scanners/verdicts.py`.
+separate. Integrations are grouped by type under `integrations/`
+(`findings_management/`, `scanning/`, `secret_validation/`); each type has its
+own base class and never imports another type. Shared plumbing lives in
+`integrations/common.py`, the review commands in `integrations/verbs.py`, and
+verdict syntax in `integrations/verdicts.py`. Community integrations register
+through the `threatlint.integrations` entry point; see
+[Writing an integration](integrations/authoring.md).
+`threatlint.scanners` is a deprecated alias kept for old imports; new code
+imports from `threatlint.integrations`.
 
 The bundled Python scripts have sibling helpers. Keep matching files in
 `src/threatlint/data/scripts/` and `.github/scripts/` synchronized.

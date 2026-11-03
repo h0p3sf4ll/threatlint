@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import urllib.parse
 
+from threatlint import semgrep_unified as unified
+
 PRODUCT_POLICY = {"sast": "PRODUCT_TYPE_SAST", "secrets": "PRODUCT_TYPE_SECRETS"}
 TUNED_MODE = "MODE_MONITOR"
 
@@ -37,18 +39,50 @@ def tunes(path: str, original_rule: str) -> bool:
     return stem == rule or stem.endswith("." + rule)
 
 
-def replace_in_policies(token, dep, kind, original_rule, tuned_path, *, call, replace_in, error_type):
-    all_policies = call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", [])
+def policy_reads(token, dep, *, call, error_type):
+    """Use legacy policies unless the server explicitly reports their retirement."""
+    try:
+        return call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", [])
+    except error_type as exc:
+        if getattr(exc, "status", None) != 410:
+            raise
+    return unified.policies(dep, token, call=call, error_type=error_type)
+
+
+def replace_in_policies(token, dep, kind, original_rule, tuned_path, *, call, replace_in, error_type,
+                        project=None, mode=TUNED_MODE):
+    all_policies = policy_reads(token, dep, call=call, error_type=error_type)
     for product in products(kind):
-        changes = replace_in(token, dep, [p for p in all_policies if p.get("productType") == product], original_rule, tuned_path)
+        options = {**({"project": project} if project is not None else {}),
+                   **({"mode": mode} if mode != TUNED_MODE else {})}
+        changes = replace_in(token, dep, [p for p in all_policies if p.get("productType") == product],
+                             original_rule, tuned_path, **options)
         if changes:
             return changes
-    raise error_type(f"No policy runs {original_rule}; nothing to replace (the tuned rule is published but not enabled)")
+    raise error_type(f"No directly selected policy rule runs {original_rule}; nothing to replace "
+                     "(Unified ruleset membership cannot be inferred)")
 
 
-def replace_in(token, dep, policies, original_rule, tuned_path, *, call, policy_rules, mode):
+def replace_in(token, dep, policies, original_rule, tuned_path, *, call, policy_rules, mode,
+               project=None, error_type=RuntimeError):
     changes = []
     for policy in policies:
+        if policy.get("unified"):
+            bundle = policy["snapshot"]["bundle"]
+            unified.check_scope(bundle, project, [original_rule, tuned_path], same_rule=same_rule, error_type=error_type)
+            if mode != "include":
+                raise error_type("Unified detection policies do not support legacy MODE_MONITOR; "
+                                 "explicit mode='include' opts into project-scoped detection only")
+            active = unified.enabled(bundle, project, same_rule=same_rule)
+            original = [rule for rule in active if same_rule(rule, original_rule)]
+            if len(original) > 1:
+                raise error_type("Several Unified rules match the original; use its unambiguous full registry path")
+            for rule in original:
+                changes += unified.apply(token, dep, policy, rule, tuned_path, project,
+                                         call=call, same_rule=same_rule, error_type=error_type)
+            continue
+        if mode not in ("MODE_MONITOR", "MODE_BLOCK", "MODE_COMMENT", "MODE_DISABLED"):
+            raise error_type("Legacy policy replacement requires a legacy policy mode, not a Unified include")
         rules = policy_rules(str(dep["id"]), str(policy["id"]), token)
         original = [rule for rule in rules if same_rule(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED"]
         for rule in original:
@@ -60,10 +94,31 @@ def replace_in(token, dep, policies, original_rule, tuned_path, *, call, policy_
     return changes
 
 
-def disable_originals(token, dep, kind, original_rule, *, call, policy_rules):
+def disable_originals(token, dep, kind, original_rule, *, call, policy_rules, project=None, error_type=RuntimeError):
     changes = []
-    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
+    for policy in policy_reads(token, dep, call=call, error_type=error_type):
         if policy.get("productType") not in products(kind):
+            continue
+        if policy.get("unified"):
+            bundle = policy["snapshot"]["bundle"]
+            unified.check_scope(bundle, project, [original_rule], same_rule=same_rule, error_type=error_type)
+            active = unified.enabled(bundle, project, same_rule=same_rule)
+            tuned = sorted(rule for rule in active if tunes(rule, original_rule))
+            if not tuned:
+                continue
+            unified.check_scope(bundle, project, [*tuned, original_rule], same_rule=same_rule, error_type=error_type)
+            originals = [rule for rule in active if same_rule(rule, original_rule)]
+            if len(originals) > 1 or len(tuned) > 1:
+                raise error_type("Several Unified rules match this tuning; resolve the ambiguity before mutation")
+            if not originals and bundle["rulesets"] and not any(same_rule(rule, original_rule) for rule in bundle["disabled"]) and not any(
+                item.get("project") == project and item.get("rule_type") == "rule" and
+                item.get("exception_type") == "exclude" and same_rule(item.get("rule", ""), original_rule)
+                for item in bundle["exceptions"]
+            ):
+                originals = [original_rule]
+            for rule in originals:
+                changes += unified.apply(token, dep, policy, rule, tuned[0], project,
+                                         call=call, same_rule=same_rule, error_type=error_type)
             continue
         rules = policy_rules(str(dep["id"]), str(policy["id"]), token)
         if not any(tunes(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED" for rule in rules):
@@ -77,10 +132,20 @@ def disable_originals(token, dep, kind, original_rule, *, call, policy_rules):
     return changes
 
 
-def existing_tuning(token, dep, kind, original_rule, *, call, policy_rules):
+def existing_tuning(token, dep, kind, original_rule, *, call, policy_rules, project=None, error_type=RuntimeError):
     found = []
-    for policy in call(f"/api/policies/v1/deployments/{dep['id']}", token).get("policies", []):
+    for policy in policy_reads(token, dep, call=call, error_type=error_type):
         if policy.get("productType") not in products(kind):
+            continue
+        if policy.get("unified"):
+            bundle = policy["snapshot"]["bundle"]
+            active = unified.enabled(bundle, project, same_rule=same_rule)
+            for rule in sorted(active):
+                if tunes(rule, original_rule):
+                    if project:
+                        unified.check_scope(bundle, project, [rule], same_rule=same_rule, error_type=error_type)
+                    found.append({"policy": policy["name"], "policy_id": policy["id"], "tuned": rule,
+                                  "mode": "include", "project": project, "unified": True})
             continue
         for rule in policy_rules(str(dep["id"]), str(policy["id"]), token):
             path = str(rule.get("path", ""))
