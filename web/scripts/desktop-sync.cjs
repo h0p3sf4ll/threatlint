@@ -5,7 +5,8 @@
  *
  *   node scripts/desktop-sync.cjs stamp    write build-assets/build-info.json (run before packaging)
  *   node scripts/desktop-sync.cjs verify   exit 1 if web/release holds a build of older code
- *   node scripts/desktop-sync.cjs ensure   repackage (electron-builder --dir) only when stale
+ *   node scripts/desktop-sync.cjs ensure   repackage only when stale: build into a staging folder, then swap the
+ *                                          new app in, so a failed build never removes the working one
  *   node scripts/desktop-sync.cjs current  print the source fingerprint as JSON (used by the app's launch updater)
  *   node scripts/desktop-sync.cjs stage D  build a fresh unpacked app into D and print `STAGED <bundle>`
  *
@@ -74,23 +75,67 @@ function stage(output) {
     .find(candidate => fs.existsSync(candidate));
   if (!bundle) throw new Error(`electron-builder produced no unpacked app in ${output}`);
   console.log(`STAGED ${bundle}`);
+  return bundle;
 }
 
-const command = process.argv[2];
-if (command === 'stamp') {
-  stamp();
-} else if (command === 'current') {
-  console.log(JSON.stringify({ fingerprint: fingerprint(), commit: commit() }));
-} else if (command === 'stage' && process.argv[3]) {
-  stage(path.resolve(process.argv[3]));
-} else if (command === 'verify' || command === 'ensure') {
-  const current = fingerprint(), packaged = packagedInfo();
-  const fresh = packaged?.fingerprint === current;
-  if (fresh) { console.log(`Packaged desktop app is current (${current}).`); process.exit(0); }
-  console.log(packaged ? `Packaged desktop app is stale: built ${packaged.fingerprint || 'without a stamp'}, code is ${current}.` : 'No packaged desktop app found in web/release.');
-  if (command === 'verify') process.exit(1);
-  execFileSync('npm', ['run', 'desktop:pack'], { cwd: WEB, stdio: 'inherit' });
-} else {
-  console.error('Usage: desktop-sync.cjs stamp | verify | ensure | current | stage <dir>');
-  process.exit(2);
+/** Replace `target` with `staged` by renames only; the old app is restored if the swap fails. */
+function swapInto(staged, target) {
+  const previous = `${target}.previous`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.rmSync(previous, { recursive: true, force: true });
+  if (fs.existsSync(target)) fs.renameSync(target, previous);
+  try { fs.renameSync(staged, target); } catch (error) { if (fs.existsSync(previous)) fs.renameSync(previous, target); throw error; }
+  fs.rmSync(previous, { recursive: true, force: true });
 }
+
+/** One sync at a time: git hooks start `ensure` in the background, so back-to-back commits can overlap. */
+function withLock(work, lock = path.join(WEB, 'release', '.desktop-sync.lock')) {
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  try {
+    fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+  } catch {
+    const owner = Number(fs.readFileSync(lock, 'utf8'));
+    let alive = false;
+    try { alive = owner > 0 && process.kill(owner, 0); } catch { /* no such process: the lock is stale */ }
+    if (alive) { console.log(`Another desktop sync (pid ${owner}) is running; run "npm run desktop:sync" afterwards if the app is still stale.`); return; }
+    fs.writeFileSync(lock, String(process.pid));
+  }
+  try { work(); } finally { fs.rmSync(lock, { force: true }); }
+}
+
+/** Rebuild into release/.staging, then swap each built app into release/ only once the build has succeeded. */
+function ensure() {
+  const staging = path.join(WEB, 'release', '.staging');
+  try {
+    const bundle = stage(staging);
+    const target = path.join(WEB, 'release', path.relative(staging, bundle));
+    swapInto(bundle, target);
+    console.log(`Desktop app updated: ${target}`);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+function main(command = process.argv[2]) {
+  if (command === 'stamp') {
+    stamp();
+  } else if (command === 'current') {
+    console.log(JSON.stringify({ fingerprint: fingerprint(), commit: commit() }));
+  } else if (command === 'stage' && process.argv[3]) {
+    stage(path.resolve(process.argv[3]));
+  } else if (command === 'verify' || command === 'ensure') {
+    const current = fingerprint(), packaged = packagedInfo();
+    const fresh = packaged?.fingerprint === current;
+    if (fresh) { console.log(`Packaged desktop app is current (${current}).`); process.exit(0); }
+    console.log(packaged ? `Packaged desktop app is stale: built ${packaged.fingerprint || 'without a stamp'}, code is ${current}.` : 'No packaged desktop app found in web/release.');
+    if (command === 'verify') process.exit(1);
+    withLock(ensure);
+  } else {
+    console.error('Usage: desktop-sync.cjs stamp | verify | ensure | current | stage <dir>');
+    process.exit(2);
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = { swapInto, withLock, fingerprint };
