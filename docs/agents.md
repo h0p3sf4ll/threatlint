@@ -71,6 +71,8 @@ add inventories, verdicts, or test plans; their canonical definitions remain aut
 
 ## appsec-threat-modeler
 
+> **Design inputs:** give it diagrams, design documents, OpenAPI specs, or whiteboard images (Workbench **Add design inputs**, or `threatlint run threat-model --design PATH`). It uses them to learn the intended architecture, verifies each claim against the code, and reports design drift. See [Design inputs](workbench.md#design-inputs).
+
 **Finding prefix**: `TM-NNN`  
 **Slash command**: `/threat-model`, `/threat-model-deep`, `/threat-model-local`, `/threat-model-deep-local`  
 **GitHub Copilot Chat**: `@AppSec Threat Modeler`  

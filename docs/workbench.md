@@ -70,14 +70,45 @@ and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands
    supply a findings path, or use a preceding report. Attachments are limited to **5 MB**;
    only the first **100,000 characters** enter the prompt. Truncation must be disclosed.
    Pipeline Findings triage also requires Semgrep Community Edition on PATH (`semgrep --version`).
-5. **Run and inspect.** Specialists use mapped skills and read-only inspection tools. Later
+5. **Add design inputs for a threat model (optional).** Press **Add design inputs** and choose
+   diagrams, design documents, specs, or images. See [Design inputs](#design-inputs) for what is read.
+6. **Run and inspect.** Specialists use mapped skills and read-only inspection tools. Later
    specialists receive bounded preceding-report context, which they must independently verify.
-6. **Use the report.** Filter findings by severity/disposition, inspect the full evidence and
+7. **Use the report.** Filter findings by severity/disposition, inspect the full evidence and
    proposed fix, then download Markdown or Word. Missing fields produce format warnings.
 
 **Expected result:** a saved advisory report—not applied code, a security approval, or proof every
 finding was reviewed. **Stop** cancels model requests; completed reports remain. A lost connection
 is labelled interrupted and does not silently rerun. Next: [read and act on reports](reports.md).
+
+### Design inputs
+
+A threat model is only as good as its picture of the system. Design inputs give the specialists the
+intended architecture, and the source code shows what was actually built. They report where the two
+disagree (**design drift**), such as an admin API drawn inside the authenticated zone whose route has no
+authentication check. Findings cite both sides, for example `context.drawio › Admin API` and `server.js:5`.
+
+| Input | What the agents receive |
+| --- | --- |
+| draw.io / diagrams.net (`.drawio`, plain or compressed) | Each page's trust boundaries and groups, components (with their container), and labelled flows |
+| OWASP Threat Dragon (`.json`) | Actors, processes, stores, flows, boundaries, and the threats and mitigations already recorded, which are re-verified rather than copied |
+| Microsoft Threat Modeling Tool (`.tm7`), Visio (`.vsdx`), SVG | The text labels in the model or drawing |
+| Mermaid, PlantUML, Graphviz, D2, Structurizr DSL, C4 | The diagram source |
+| OpenAPI / Swagger (`.json`) | Every operation with its security requirement; public operations are marked `none (public)`. YAML specs are passed as text |
+| PDF, Word (`.docx`), PowerPoint (`.pptx`), Markdown, AsciiDoc, reStructuredText, HTML, text | The document text |
+| PNG, JPEG, GIF, WebP | The image itself, for whiteboard photos and exported diagrams. With **Claude Code** the image is a file it opens with its Read tool |
+| Source code, Terraform, YAML, and other text | The file contents, alongside the repository |
+
+**Limits:** up to **20 files**, **25 MB** in total, **10 MB** per file, and **8 images** (5 MB each). Each
+document contributes up to **60,000 characters** and all documents up to **200,000**. Any truncation is
+stated in the prompt, so reports must not claim full coverage. Files are read when you add them, so the
+list shows what was understood from each one before you run. Bundles stay in memory for four hours and
+are never written to disk.
+
+Design inputs are **untrusted evidence**. XML is parsed without DTDs or entities, Office files are
+size-capped, nothing is executed, and the prompt fences each document as data, never instructions. Every
+specialist in the pipeline receives them, and the threat modeler also looks for design artifacts already
+in the repository (`docs/`, ADRs, `*.drawio`, `*.mmd`, `*.puml`, OpenAPI specs).
 
 ## Professional findings reports
 

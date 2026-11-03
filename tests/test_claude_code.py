@@ -86,3 +86,14 @@ def test_provider_needs_a_signed_in_claude_code_and_no_key(monkeypatch, capsys, 
     resolved = run_context._resolve_provider(types.SimpleNamespace(provider="claude-code", api_key=""))
     assert (resolved == ("claude-code", "", "")) is ok
     assert run_context._default_run_model("claude-code") == "claude-opus-5-5"
+
+
+def test_images_are_written_to_an_added_directory_and_listed(tmp_path):
+    from threatlint.design_inputs import Image
+    fake = FakeProcess([RESULT])
+    claude_code.run_agent("s", "Model this", str(tmp_path), claude="/bin/claude", progress=lambda _line: None, popen=fake,
+                          images=[Image("white board.png", "image/png", "cG5n")])
+    argv = fake.call["argv"]
+    directory = argv[argv.index("--add-dir") + 1]
+    assert "Image files (open each with the Read tool):\n1. " in fake.call["input"]
+    assert f"{directory}/1-white_board.png" in fake.call["input"]

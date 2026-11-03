@@ -158,6 +158,16 @@ review is untrusted, every run is locked down:
 Runs time out after an hour; set `THREATLINT_CLAUDE_CODE_TIMEOUT_S` to change that.
 
 For `claude` and `openai`, provide `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` through your shell or secret store.
+
+**Design inputs.** Give a threat model the intended architecture with `--design`, using files or folders:
+
+```bash
+threatlint run threat-model --provider claude-code --design docs/architecture/ payments.drawio api.json
+```
+
+The formats and limits match the Workbench's [design inputs](workbench.md#design-inputs). Reading PDFs
+from the CLI needs `pdftotext` (Poppler: `brew install poppler`); without it, export the PDF as text or
+add it in the Workbench. Images are attached for API providers and passed as files to Claude Code.
 Avoid putting keys in command history with `--api-key`. Source and supplied
 evidence sent to a cloud model leave your machine; choose a provider permitted
 for that repository.

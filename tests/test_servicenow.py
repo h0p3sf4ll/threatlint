@@ -128,7 +128,7 @@ def test_fp_review_with_avits_sends_one_artifact(monkeypatch, tmp_path):
     monkeypatch.setattr(servicenow, "load_avits", lambda instance, numbers, *_: ("## AVIT000000000000001\n", 1, numbers[1:], []))
     captured = {}
 
-    def fake_agent(_base, _model, _system, message, _root, api_key=""):
+    def fake_agent(_base, _model, _system, message, _root, api_key="", **_options):
         captured["message"] = message
         return "# Report\n"
 

@@ -15,6 +15,7 @@ const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
 const { defaultModel } = require('./model-policy.cjs');
+const { designContext } = require('./design-inputs.cjs');
 
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
@@ -78,8 +79,8 @@ function providerRequest(message, purpose = 'review') {
 }
 
 /** One model run with read-only repository tools. `override` replaces the provider in tests and recordings. */
-function runModel({ settings, systemPrompt, userMessage, history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
-  const args = { systemPrompt, userMessage, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
+function runModel({ settings, systemPrompt, userMessage, images = [], history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
+  const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
     execute: (name, input) => executeTool(name, input, repoPath) };
   if (override) return override({ ...args, provider: settings.provider, agentId, purpose });
   return ({ claude: runClaude, 'claude-code': runClaudeCode }[settings.provider] || runOpenAi)(args);
@@ -94,7 +95,13 @@ function validateAvitRequest(message) {
 }
 
 /** options.integrations: { semgrepVersion, fetchImpl } test seams; defaults call the real CLI and network. */
-function createPipeline({ sessions, reports, override, integrations = {} }) {
+/** How each image reaches the model: attached to the message, or (Claude Code) as a file it opens with Read. */
+const imageNote = provider => (index, image) => (provider === 'claude-code'
+  ? `[Image ${index + 1}: ${image.name} — provided as a file; its path is listed at the end of this message]`
+  : `[Image ${index + 1}: ${image.name} is attached to this message]`);
+
+/** options.designInputs: the store from design-inputs.cjs (bundles uploaded before a run, referenced by id). */
+function createPipeline({ sessions, reports, override, integrations = {}, designInputs = null }) {
   const active = new Map();
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
 
@@ -106,7 +113,8 @@ function createPipeline({ sessions, reports, override, integrations = {} }) {
     if (!Array.isArray(ids) || !ids.length || ids.length > total) throw new HttpError(`Choose between 1 and ${total} distinct known agents`);
     if (ids.some(id => typeof id !== 'string' || !Object.hasOwn(AGENTS, id)) || new Set(ids).size !== ids.length) throw new HttpError('Choose distinct known agents');
     if (message.target && (typeof message.target !== 'string' || message.target.length > MAX_SCOPE)) throw new HttpError('Review scope must be text shorter than 12,000 characters');
-    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings: providerRequest(message) };
+    const design = message.designInputsId ? (designInputs ? designInputs.get(message.designInputsId) : null) : null;
+    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings: providerRequest(message), design };
   }
 
   /** Semgrep is a prerequisite for agents whose proposals are validated with it. */
@@ -117,11 +125,12 @@ function createPipeline({ sessions, reports, override, integrations = {} }) {
     return version;
   }
 
-  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context }) {
+  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context, design }) {
     const agent = AGENTS[agentId];
     send({ type: 'agent_start', agentId, label: agent.label, color: agent.color, skills: agent.skills.map(skill => skill.id) });
     try {
-      const output = await runModel({ settings, systemPrompt: agent.systemPrompt, userMessage: buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context),
+      const userMessage = buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context) + designContext(design, imageNote(settings.provider));
+      const output = await runModel({ settings, systemPrompt: agent.systemPrompt, userMessage, images: design?.images || [],
         repoPath: session.repoPath, signal, onEvent: event => send({ ...event, agentId }), override, purpose: 'review', agentId });
       if (signal.aborted) throw new Error('Cancelled');
       const report = await reports.save(agentId, output, session.id);
@@ -138,7 +147,7 @@ function createPipeline({ sessions, reports, override, integrations = {} }) {
 
   /** Runs every requested agent in order; resolves with complete | error | cancelled. */
   async function run(message, send, controller) {
-    const { session, attachment: attached, avitRequest, settings } = validate(message);
+    const { session, attachment: attached, avitRequest, settings, design } = validate(message);
     active.set(session.id, controller);
     let attachment = attached, context;
     try {
@@ -160,7 +169,7 @@ function createPipeline({ sessions, reports, override, integrations = {} }) {
     try {
       for (const agentId of message.agentIds) {
         if (controller.signal.aborted) throw new Error('Cancelled');
-        const completed = await runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send, context });
+        const completed = await runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send, context, design });
         if (!completed) {
           result = 'error';
           if (!message.continueOnError) break;

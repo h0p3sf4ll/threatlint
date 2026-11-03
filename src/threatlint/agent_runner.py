@@ -110,13 +110,21 @@ def _run_tool_calls(turn: _StreamTurn, repo_root: str) -> list[dict]:
     return results
 
 
+def _user_content(text: str, images=()) -> str | list[dict]:
+    """OpenAI-compatible user content: text, or text plus data-URL image parts (design inputs)."""
+    if not images:
+        return text
+    return [{"type": "text", "text": text},
+            *({"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.data}"}} for image in images)]
+
+
 def _run_agent(base_url: str, model: str, system_prompt: str,
-               user_message: str, repo_root: str, api_key: str = "") -> str:
+               user_message: str, repo_root: str, api_key: str = "", images=()) -> str:
     """Stream a full tool-use agentic loop against an OpenAI-compatible server. Returns output text."""
     model = model or _lmstudio_auto_model(base_url)
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": _user_content(user_message, images)},
     ]
     full_text = ""
     for _iteration in range(_MAX_AGENT_ITERATIONS):

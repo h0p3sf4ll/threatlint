@@ -68,8 +68,16 @@ async function openAiTurn({ baseUrl, model, messages, key, signal, onEvent, head
 }
 
 // `history` holds prior plain-text turns ({ role, content }) for multi-turn conversations.
-async function runOpenAi({ systemPrompt, userMessage, history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, headers }) {
-  const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: userMessage }];
+/** OpenAI-compatible user content: plain text, or text plus data-URL image parts. */
+const openAiContent = (text, images = []) => (images.length
+  ? [{ type: 'text', text }, ...images.map(image => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } }))] : text);
+
+/** Anthropic user content: plain text, or text plus base64 image blocks. */
+const claudeContent = (text, images = []) => (images.length
+  ? [{ type: 'text', text }, ...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }))] : text);
+
+async function runOpenAi({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, headers }) {
+  const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: openAiContent(userMessage, images) }];
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
@@ -89,10 +97,10 @@ async function runOpenAi({ systemPrompt, userMessage, history = [], baseUrl, mod
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
 
-async function runClaude({ systemPrompt, userMessage, history = [], model, key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
+async function runClaude({ systemPrompt, userMessage, images = [], history = [], model, key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
   // ANTHROPIC_AUTH_TOKEN-style credentials are bearer tokens; baseUrl is ANTHROPIC_BASE_URL when a gateway is configured.
   const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key }), ...(baseUrl ? { baseURL: baseUrl } : {}) });
-  const messages = [...history, { role: 'user', content: userMessage }];
+  const messages = [...history, { role: 'user', content: claudeContent(userMessage, images) }];
   const partial = [];   // report text from turns cut off at the output limit, joined with the final turn
   let continuations = 0;
   for (let iteration = 1; iteration <= maxIterations; iteration++) {

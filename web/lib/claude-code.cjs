@@ -60,9 +60,9 @@ function status({ env = process.env, execFileImpl = execFile } = {}) {
 }
 
 /** argv for one locked-down headless run. */
-function command(model, systemPromptFile) {
+function command(model, systemPromptFile, extraDirs = []) {
   return ['-p', '--output-format', 'stream-json', '--verbose', '--restricted', '--tools', READ_ONLY_TOOLS.join(','), '--strict-mcp-config',
-    '--permission-mode', 'dontAsk', '--no-session-persistence', '--system-prompt-file', systemPromptFile, ...(model ? ['--model', model] : [])];
+    '--permission-mode', 'dontAsk', '--no-session-persistence', '--system-prompt-file', systemPromptFile, ...extraDirs.flatMap(dir => ['--add-dir', dir]), ...(model ? ['--model', model] : [])];
 }
 
 /** Earlier chat turns, folded into the prompt (each headless run is a fresh session). */
@@ -85,15 +85,24 @@ function handleEvent(event, onEvent) {
 }
 
 /** Runs one agent and resolves to its final report text. */
-async function runClaudeCode({ systemPrompt, userMessage, history = [], model, repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
+async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
   const file = claudePath;
   if (!file) throw new Error('Claude Code is not installed. Install it (https://claude.com/claude-code), run `claude` once to sign in, then retry.');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-claude-code-'));
   const promptFile = path.join(temp, 'system-prompt.md');
   fs.writeFileSync(promptFile, systemPrompt, { mode: 0o600 });
+  // Images become files in their own directory, added with --add-dir so the restricted Read tool may open them.
+  const imageDir = path.join(temp, 'images');
+  const imagePaths = images.map((image, index) => {
+    fs.mkdirSync(imageDir, { recursive: true, mode: 0o700 });
+    const file = path.join(imageDir, `${index + 1}-${path.basename(image.name).replace(/[^\w.-]/g, '_')}`);
+    fs.writeFileSync(file, Buffer.from(image.data, 'base64'), { mode: 0o600 });
+    return file;
+  });
+  const prompt = imagePaths.length ? `${userMessage}\n\nImage files (open each with the Read tool):\n${imagePaths.map((file, index) => `${index + 1}. ${file}`).join('\n')}` : userMessage;
   try {
     return await new Promise((resolve, reject) => {
-      const child = spawnImpl(file, command(model, promptFile), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : []), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
       let buffer = '', stderr = '', result = null, settled = false;
       const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener?.('abort', abort); error ? reject(error) : resolve(value); };
       const abort = () => { child.kill('SIGTERM'); finish(Object.assign(new Error('Run cancelled'), { name: 'AbortError' })); };
@@ -119,7 +128,7 @@ async function runClaudeCode({ systemPrompt, userMessage, history = [], model, r
         const login = /log ?in|auth|credential|unauthori[sz]ed/i.test(reason) ? ' Run `claude` in a terminal to sign in, then retry.' : '';
         finish(new Error(`Claude Code run failed: ${String(reason).slice(0, 300)}.${login}`));
       });
-      child.stdin.end(withHistory(history, userMessage));
+      child.stdin.end(withHistory(history, prompt));
     });
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

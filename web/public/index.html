@@ -19,6 +19,7 @@
   <script src="/chat.js" defer></script>
   <script src="/sidekick.js" defer></script>
   <script src="/scanners.js" defer></script>
+  <script src="/design-inputs.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to workspace</a>
@@ -99,6 +100,9 @@
               <label for="target">Review scope <span class="subtle">optional</span><span data-tip="scope"></span></label><textarea id="target" rows="3" placeholder="A component, path, commit range, or question. Leave blank for autonomous discovery."></textarea>
               <div class="attachment-row"><button class="button secondary small-button" id="attach-findings">↥ Attach findings</button><span data-tip="attach"></span><span class="small subtle" id="attachment-name">SARIF, JSON, Markdown, or text · up to 5 MB</span><button id="remove-attachment" class="icon-button hidden" aria-label="Remove findings attachment">×</button></div>
               <input type="file" id="findings-file" accept=".sarif,.json,.md,.txt" aria-label="Findings file" hidden>
+              <div class="attachment-row"><button class="button secondary small-button" id="add-design-inputs" type="button" title="Architecture or data-flow diagrams (draw.io, Mermaid, PlantUML, Visio, SVG, Threat Dragon, Threat Modeling Tool), design documents (PDF, Word, PowerPoint, Markdown), API specs (OpenAPI), images of whiteboards or exported diagrams, and code snippets. Agents treat them as evidence and verify every claim against the source.">↥ Add design inputs</button><span class="small subtle" id="design-inputs-note">Diagrams, design docs, specs, or images · up to 20 files, 25 MB</span></div>
+              <ul class="design-input-list" id="design-input-list" hidden></ul>
+              <input type="file" id="design-input-files" multiple aria-label="Design input files" hidden accept=".md,.markdown,.txt,.rst,.adoc,.asciidoc,.html,.htm,.pdf,.docx,.pptx,.vsdx,.drawio,.xml,.svg,.mmd,.mermaid,.puml,.plantuml,.pu,.iuml,.dot,.gv,.d2,.dsl,.c4,.tm7,.json,.yaml,.yml,.toml,.tf,.hcl,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.ts,.java,.go,.cs,.rb,.php,.kt,.swift,.rs,.c,.cpp,.h,.sql,.sh">
               <div id="avit-section" class="avit-section" hidden><label for="avit-list">ServiceNow AVITs <span class="subtle">optional · instead of a findings file</span></label><textarea id="avit-list" rows="2" placeholder="AVIT000000095938462, AVIT000000095938463 — commas, spaces, or one per line" spellcheck="false"></textarea><p class="field-note small subtle" id="avit-note">Only AVITs in the AVR CodeSecurity view are triaged (SAST, SCA, or Secrets); other views are skipped. Each AVIT is fetched from ServiceNow and triaged in one report. Configure ServiceNow access in Model &amp; settings.</p></div>
             </div>
             <div class="run-footer"><div class="run-summary"><span class="status-dot" id="run-status-dot"></span><span id="run-summary">Choose a repository to get started</span></div><div class="run-buttons"><button class="button danger hidden" id="cancel-run">Stop review</button><button class="button primary" id="start-run" disabled><span>▶</span> Run pipeline</button></div><p class="micro subtle">Analysis only. Proposed fixes are never applied automatically.</p></div>

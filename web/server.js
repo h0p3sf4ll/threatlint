@@ -28,6 +28,8 @@ const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 const { registerSidekickRoutes } = require('./lib/routes/sidekick.cjs');
 const { registerScanImportRoutes, scanImportBodyParsers } = require('./lib/routes/scan-import.cjs');
 const { createScanImports } = require('./lib/scan-import.cjs');
+const { createDesignInputs } = require('./lib/design-inputs.cjs');
+const { registerDesignInputRoutes, designInputBodyParsers } = require('./lib/routes/design-inputs.cjs');
 const { createScannerBatch } = require('./lib/scanner-batch.cjs');
 const { registerScannerRoutes } = require('./lib/routes/scanners.cjs');
 
@@ -64,14 +66,16 @@ function createWorkbench(options = {}) {
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
-  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations });
+  const designInputs = createDesignInputs();
+  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations, designInputs });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
 
   app.use(securityHeaders(server));
-  // Scan reports upload up to 25 MB; every other route keeps the 7 MB JSON limit.
+  // Scan reports and design inputs upload up to 25 MB; every other route keeps the 7 MB JSON limit.
   scanImportBodyParsers(app);
+  designInputBodyParsers(app);
   app.use(express.json({ limit: BODY_LIMIT }));
   app.get('/vendor/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
   app.get('/vendor/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.min.js')));
@@ -84,6 +88,7 @@ function createWorkbench(options = {}) {
   registerTriageRoutes(app, { reports, integrations: options.integrations });
   registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });
+  registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));

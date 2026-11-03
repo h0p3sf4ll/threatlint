@@ -165,6 +165,7 @@
     $('browse-agents').disabled = state.running;
     $('target').disabled = state.running;
     $('attach-findings').disabled = state.running;
+    if ($('add-design-inputs')) $('add-design-inputs').disabled = state.running;
     $('avit-list').disabled = state.running;
     $('avit-section').hidden = !state.pipeline.includes(FP_REVIEWER);
     $('remove-attachment').disabled = state.running;
@@ -853,7 +854,7 @@
     const payload = { action: 'run_pipeline', sessionId: state.session.id, agentIds: [...state.pipeline], target: $('target').value.trim(), provider,
       model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider),
-      attachment: state.attachment || undefined, continueOnError: false,
+      attachment: state.attachment || undefined, designInputsId: window.ThreatlintDesignInputs?.id() || undefined, continueOnError: false,
       ...(avits.length ? { avits, servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } } : {}) };
     try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
     renderPipeline(); renderPresets(); renderAgents();

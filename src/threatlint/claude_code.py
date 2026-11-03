@@ -16,8 +16,10 @@ The system prompt goes through a 0600 temp file and the user message through std
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -71,11 +73,12 @@ def login_status(claude: str | None = None) -> LoginStatus:
     return LoginStatus(installed=True, logged_in=payload.get("loggedIn") is True, auth_method=str(payload.get("authMethod") or ""))
 
 
-def command(claude: str, model: str, system_prompt_file: str) -> list[str]:
-    """argv for one locked-down headless run."""
+def command(claude: str, model: str, system_prompt_file: str, extra_dirs: Iterable[str] = ()) -> list[str]:
+    """argv for one locked-down headless run; ``extra_dirs`` are added read-only for the file tools."""
     return [claude, "-p", "--output-format", "stream-json", "--verbose", "--restricted", "--tools", ",".join(READ_ONLY_TOOLS),
             "--strict-mcp-config", "--permission-mode", "dontAsk", "--no-session-persistence",
-            "--system-prompt-file", system_prompt_file, *(["--model", model] if model else [])]
+            "--system-prompt-file", system_prompt_file, *(arg for directory in extra_dirs for arg in ("--add-dir", directory)),
+            *(["--model", model] if model else [])]
 
 
 def _describe(tool: dict) -> str:
@@ -92,7 +95,7 @@ def _events(lines: Iterable[str]):
             continue
 
 
-def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str = "", *,
+def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str = "", *, images=(),
               claude: str | None = None, progress: Callable[[str], None] = lambda line: print(line, flush=True),
               popen: Callable[..., subprocess.Popen] = subprocess.Popen) -> str:
     """Run one agent in ``repo_root`` and return its final report text."""
@@ -103,9 +106,20 @@ def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str 
         prompt_file = Path(temp, "system-prompt.md")
         prompt_file.touch(mode=0o600)
         prompt_file.write_text(system_prompt, encoding="utf-8")
+        # Images become files in their own directory, added with --add-dir so the restricted Read tool may open them.
+        image_dir = Path(temp, "images")
+        image_paths = []
+        for index, image in enumerate(images, start=1):
+            image_dir.mkdir(mode=0o700, exist_ok=True)
+            target = image_dir / f"{index}-{re.sub(r'[^\w.-]', '_', Path(image.name).name)}"
+            target.write_bytes(base64.b64decode(image.data))
+            target.chmod(0o600)
+            image_paths.append(target)
+        if image_paths:
+            user_message += "\n\nImage files (open each with the Read tool):\n" + "\n".join(f"{n}. {path}" for n, path in enumerate(image_paths, 1))
         # stderr goes to a file: a full stderr pipe would block the child while stdout is still being read.
         errors = Path(temp, "stderr.log").open("w+", encoding="utf-8")
-        process = popen(command(claude, model, str(prompt_file)), cwd=repo_root, env=child_env(), text=True,
+        process = popen(command(claude, model, str(prompt_file), [str(image_dir)] if image_paths else ()), cwd=repo_root, env=child_env(), text=True,
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors)
         process.stdin.write(user_message)
         process.stdin.close()

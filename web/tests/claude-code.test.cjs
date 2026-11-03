@@ -62,6 +62,16 @@ describe('Claude Code provider', () => {
     assert.ok(!fs.existsSync(call.args[call.args.indexOf('--system-prompt-file') + 1]), 'the prompt file is removed');
   });
 
+  it('hands images to Claude Code as files in an added directory', async () => {
+    const env = fakeInstall();
+    const { calls, spawnImpl } = fakeSpawn([RESULT]);
+    await claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'Model this', images: [{ name: 'board.png', mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], repoPath: os.tmpdir(), env, spawnImpl });
+    const [call] = calls;
+    const dir = call.args[call.args.indexOf('--add-dir') + 1];
+    assert.match(call.input, /Image files \(open each with the Read tool\):\n1\. .*1-board\.png/);
+    assert.ok(call.input.includes(dir), 'the listed path is inside the added directory');
+  });
+
   it('folds chat history into the prompt', () => {
     assert.equal(claudeCode.withHistory([{ role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hello' }], 'Next?'), 'Conversation so far:\n\nUser: Hi\n\nAssistant: Hello\n\nUser: Next?');
   });

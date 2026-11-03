@@ -90,15 +90,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(_red(f"ERROR: Cannot load findings: {exc}"))
         return 1
 
+    try:
+        from threatlint import design_inputs  # noqa: PLC0415
+        design = design_inputs.load(args.design) if getattr(args, "design", None) else design_inputs.Bundle()
+    except (design_inputs.DesignInputError, OSError) as exc:
+        print(_red(f"ERROR: Cannot load design inputs: {exc}"))
+        return 1
+    user_msg += design_inputs.context(design, images_as_files=provider == "claude-code")
+
     model = _default_run_model(provider, getattr(args, "model", ""))
     _print_run_header(mode, provider, base_url, model, getattr(args, "target", "") or "")
+    for document in design.documents:
+        print(f"  Design    : {document.name} ({document.kind}{f', {document.truncated:,} characters truncated' if document.truncated else ''})")
+    for image in design.images:
+        print(f"  Design    : {image.name} (image)")
 
     try:
         if provider == "claude-code":
             from threatlint.claude_code import run_agent as run_claude_code  # noqa: PLC0415
-            output = run_claude_code(system_prompt, user_msg, repo_root, model)
+            output = run_claude_code(system_prompt, user_msg, repo_root, model, images=design.images)
         else:
-            output = _run_agent(base_url, model, system_prompt, user_msg, repo_root, api_key=api_key)
+            output = _run_agent(base_url, model, system_prompt, user_msg, repo_root, api_key=api_key, images=design.images)
     except RuntimeError as exc:
         print(_red(f"\nERROR: {exc}"))
         return 1
@@ -143,6 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Analysis type: {{{', '.join(_MODES)}}}")
     p_run.add_argument("--target", metavar="TARGET",
         help="Component, path, or service name to analyze (default: auto-discover)")
+    p_run.add_argument("--design", metavar="PATH", nargs="+", action="extend",
+        help="Design inputs for the threat model: diagrams (draw.io, Mermaid, PlantUML, Visio, SVG, Threat Dragon, "
+             "Threat Modeling Tool), design docs (PDF, Word, PowerPoint, Markdown), OpenAPI specs, images, or folders of them")
     p_run.add_argument("--findings", metavar="PATH",
         help="SARIF, Semgrep JSON, Markdown, or text findings artifact (maximum 5 MB)")
     p_run.add_argument("--deep", action="store_true",
