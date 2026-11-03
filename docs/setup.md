@@ -132,14 +132,32 @@ complete repository coverage.
 
 ### Cloud providers
 
-The direct CLI supports `--provider claude` and `--provider openai`:
+The direct CLI supports `--provider claude-code`, `--provider claude`, and `--provider openai`:
 
 ```bash
+threatlint run threat-model --provider claude-code
 threatlint run security-review --provider claude --base main --head HEAD
 threatlint run threat-model --provider openai --output-dir ./reports
 ```
 
-Provide `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` through your shell or secret store.
+**`claude-code` uses your Claude Code login, so no API key is needed.** Install
+[Claude Code](https://claude.com/claude-code) and run `claude` once to sign in.
+Threatlint never reads the login itself. It runs the installed `claude` CLI in
+headless mode (`claude -p`), which signs itself in. Because the repository under
+review is untrusted, every run is locked down:
+
+- **Restricted mode** (`--restricted`) removes every command- or code-running
+  tool. It also ignores user, project, and local settings files, so a scanned
+  repository's `.claude/settings.json` hooks never run.
+- **Read-only tools:** only `Read`, `Grep`, and `Glob` are available, confined to
+  the repository, and nothing else is allowed.
+- **No extras:** no MCP servers and no saved session history.
+- **Login only:** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from
+  the run, so it bills your Claude Code plan rather than a key.
+
+Runs time out after an hour; set `THREATLINT_CLAUDE_CODE_TIMEOUT_S` to change that.
+
+For `claude` and `openai`, provide `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` through your shell or secret store.
 Avoid putting keys in command history with `--api-key`. Source and supplied
 evidence sent to a cloud model leave your machine; choose a provider permitted
 for that repository.

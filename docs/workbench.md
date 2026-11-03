@@ -36,11 +36,12 @@ tool-capable model; manual model IDs are also accepted.
 | --- | --- |
 | LM Studio / compatible | Load a model supporting OpenAI-compatible streamed tool calls and start the server; default URL `http://localhost:1234/v1`. Remote hosts require HTTPS; HTTP is loopback-only. |
 | Anthropic | Session key → `ANTHROPIC_API_KEY` → `env` in `~/.claude/settings.json` (`ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL`, from environment or settings, supports a gateway. |
+| Claude Code | Your Claude Code login: install Claude Code and run `claude` once to sign in. No key. Agents run through `claude -p` in restricted, read-only mode (see [setup](setup.md#cloud-providers)). |
 | OpenAI | Session key → `OPENAI_API_KEY` → API key in `~/.codex/auth.json`. A Codex ChatGPT-account sign-in is not used. |
 | GitHub Copilot | Session token → `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token`. Run `gh auth login` first if needed. |
 
-On Windows, `~` means `%USERPROFILE%`. Claude Code subscription OAuth credentials are never read
-by the Workbench. Copilot lists plan-enabled models supporting tool calls and `/chat/completions`;
+On Windows, `~` means `%USERPROFILE%`. The Workbench never reads Claude Code's OAuth credentials;
+the **Claude Code** provider runs the `claude` CLI, which signs itself in. Copilot lists plan-enabled models supporting tool calls and `/chat/completions`;
 account quotas still apply.
 
 With Anthropic, **Threatlint default** follows the runner's review/chat model policy. An explicit

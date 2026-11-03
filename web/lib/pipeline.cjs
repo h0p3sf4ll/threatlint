@@ -10,6 +10,7 @@ const path = require('node:path');
 const { AGENTS } = require('./agents.cjs');
 const { executeTool } = require('./tools.cjs');
 const { runClaude, runOpenAi, validateBaseUrl } = require('./providers.cjs');
+const { runClaudeCode } = require('./claude-code.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
@@ -19,7 +20,9 @@ const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
 const CONTEXT_BUDGET = 48_000;
 const MAX_SCOPE = 12_000;
-const PROVIDERS = ['claude', 'openai', 'copilot', 'lmstudio'];
+const PROVIDERS = ['claude', 'claude-code', 'openai', 'copilot', 'lmstudio'];
+// Providers that authenticate themselves (no key passes through Threatlint).
+const KEYLESS = new Set(['lmstudio', 'claude-code']);
 const SECRET_PATTERN = /(?:sk-|ghp_|github_pat_)[\w-]+/g;
 
 const redact = message => String(message).replace(SECRET_PATTERN, '[REDACTED]').slice(0, 500);
@@ -63,12 +66,12 @@ function providerRequest(message, purpose = 'review') {
   const provider = message.provider || 'claude';
   if (!PROVIDERS.includes(provider)) throw new HttpError('Unknown model provider');
   const sessionKey = { claude: message.apiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
-  const credential = provider === 'lmstudio' ? { key: null } : configuredKey(provider, sessionKey);
+  const credential = KEYLESS.has(provider) ? { key: null } : configuredKey(provider, sessionKey);
   const key = credential.key;
-  if (provider !== 'lmstudio' && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
+  if (!KEYLESS.has(provider) && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
   let model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
   // An explicit model always wins; otherwise Claude follows the policy (Sonnet for scanning, Opus for chat).
-  if (provider === 'claude' && (model == null || (typeof model === 'string' && !model.trim()))) model = defaultModel(purpose);
+  if ((provider === 'claude' || provider === 'claude-code') && (model == null || (typeof model === 'string' && !model.trim()))) model = defaultModel(purpose);
   if (typeof model !== 'string' || !model.trim() || model.length > 200) throw new HttpError('Choose a model in Settings before running');
   const baseUrl = { claude: credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
   return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl, headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
@@ -76,10 +79,10 @@ function providerRequest(message, purpose = 'review') {
 
 /** One model run with read-only repository tools. `override` replaces the provider in tests and recordings. */
 function runModel({ settings, systemPrompt, userMessage, history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
-  const args = { systemPrompt, userMessage, history, maxIterations, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
+  const args = { systemPrompt, userMessage, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
     execute: (name, input) => executeTool(name, input, repoPath) };
   if (override) return override({ ...args, provider: settings.provider, agentId, purpose });
-  return (settings.provider === 'claude' ? runClaude : runOpenAi)(args);
+  return ({ claude: runClaude, 'claude-code': runClaudeCode }[settings.provider] || runOpenAi)(args);
 }
 
 /** ServiceNow AVIT request: FP review only, with session credentials; null when no AVITs were entered. */

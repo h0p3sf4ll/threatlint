@@ -12,7 +12,7 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', openai: '', copilot: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', openai: '', copilot: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -68,11 +68,13 @@
   function selectedModel() { return state.preferences.models[state.preferences.provider] || ''; }
   // Model policy (from /api/config): with Claude and no model picked, the runner uses Sonnet for scanning and Opus for chat.
   const POLICY_FALLBACK = { scan: 'claude-opus-5-5', general: 'claude-opus-5-5' };
+  // Providers that follow the Claude model policy when no model is picked.
+  const CLAUDE_PROVIDERS = new Set(['claude', 'claude-code']);
   function modelPolicy() { return { ...POLICY_FALLBACK, ...(state.config.modelPolicy || {}) }; }
   function policyLabel() { const policy = modelPolicy(); return `Scanning: ${policy.scan} · Chat: ${policy.general}`; }
   function effectiveModel(purpose = 'review', provider = state.preferences.provider) {
     const chosen = state.preferences.models[provider] || '';
-    if (chosen || provider !== 'claude') return chosen;
+    if (chosen || !CLAUDE_PROVIDERS.has(provider)) return chosen;
     return purpose === 'chat' ? modelPolicy().general : modelPolicy().scan;
   }
   function modelReady() { return !!effectiveModel(); }
@@ -457,7 +459,7 @@
       copilotToken: provider === 'copilot' ? state.credentials.copilot || undefined : undefined };
   }
   function updateProviderDisplay() {
-    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', openai: 'OpenAI', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
+    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', 'claude-code': 'Claude Code', openai: 'OpenAI', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
     updateRunControls();
   }
   function showSettings() { showView('settings'); }
@@ -606,12 +608,14 @@
     finally { $('snow-read-parameters').disabled = false; }
   }
   function updateSettingsFields(provider) {
-    const local = provider === 'lmstudio';
+    const local = provider === 'lmstudio', login = provider === 'claude-code';
     $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
+    // Claude Code signs itself in; there is no key to enter.
+    $('api-key').classList.toggle('hidden', login); $('api-key-label').classList.toggle('hidden', login);
     $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : 'API key ';
     const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
-    $('model-policy-note').textContent = provider === 'claude' ? `Default when no model is picked · ${policyLabel()}. A model chosen here is used for every run.` : '';
-    $('environment-key-note').textContent = local ? '' : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
+    $('model-policy-note').textContent = CLAUDE_PROVIDERS.has(provider) ? `Default when no model is picked · ${policyLabel()}. A model chosen here is used for every run.` : '';
+    $('environment-key-note').textContent = local ? '' : login ? (source ? `Using your ${source}. Agents run through Claude Code in restricted, read-only mode.` : 'Claude Code is not installed or not signed in. Install it and run `claude` once in a terminal to sign in.') : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
     if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; }
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
     if (!local && !$('model-select').dataset.loaded) void discoverModels();
@@ -669,7 +673,7 @@
     const select = $('model-select');
     const options = models.map(model => { const option = el('option', '', model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id); option.value = model.id; return option; });
     if (selected && !models.some(model => model.id === selected)) { const option = el('option', '', `${selected} (current)`); option.value = selected; options.unshift(option); }
-    const claude = document.querySelector('input[name=provider]:checked')?.value === 'claude';
+    const claude = CLAUDE_PROVIDERS.has(document.querySelector('input[name=provider]:checked')?.value);
     if (claude) { const option = el('option', '', `Threatlint default (${policyLabel()})`); option.value = ''; options.unshift(option); }
     if (!options.length) { const option = el('option', '', 'Load models to choose'); option.value = ''; options.push(option); }
     select.replaceChildren(...options); select.value = selected || (claude ? '' : options[0].value); select.dataset.loaded = models.length ? '1' : '';
@@ -689,7 +693,7 @@
         if (!models.length) throw new Error('No models are available for this key. Check the account or plan.');
       }
       const current = $('model-id').value.trim() || state.preferences.models[provider];
-      fillModelSelect(models, models.some(model => model.id === current) ? current : provider === 'claude' ? '' : models[0].id);
+      fillModelSelect(models, models.some(model => model.id === current) ? current : CLAUDE_PROVIDERS.has(provider) ? '' : models[0].id);
       $('model-source').textContent = `${models.length} model${models.length > 1 ? 's' : ''} available · listed with ${source === 'session' ? 'the key entered here' : source}`;
     } catch (error) { $('model-source').textContent = ''; $('settings-error').textContent = error.message; }
     finally { $('discover-models').disabled = false; }
@@ -840,7 +844,7 @@
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     const provider = state.preferences.provider;
-    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : 'A provider API key is required for this review.', true); return; }
+    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : provider === 'claude-code' ? 'Install Claude Code and run `claude` once in a terminal to sign in.' : 'A provider API key is required for this review.', true); return; }
     if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
     if (!await requireSemgrep() || state.running || !state.connected) return;
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));

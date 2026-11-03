@@ -93,7 +93,8 @@ async function resolveKey(provider, sessionKey, { env = process.env, home = os.h
 /** Which providers have a credential outside the session, by source label, for the settings UI. */
 async function credentialSources(options = {}) {
   const entries = await Promise.all(['claude', 'openai', 'copilot'].map(async provider => [provider, (await resolveKey(provider, '', options)).source]));
-  return Object.fromEntries(entries);
+  const claudeCode = await (options.claudeCodeStatus || require('./claude-code.cjs').status)();
+  return { ...Object.fromEntries(entries), 'claude-code': claudeCode.source };
 }
 
 async function listJson(fetchImpl, url, headers) {
@@ -106,9 +107,10 @@ async function listJson(fetchImpl, url, headers) {
 
 /** [{ id, name }] the credential can use. */
 async function listModels(provider, credential, { fetchImpl = fetch } = {}) {
+  if (provider === 'claude-code') return require('./claude-code.cjs').MODELS;
   if (!credential.key) {
     const hints = {
-      claude: 'Set ANTHROPIC_API_KEY (or the env block of ~/.claude/settings.json), or enter a key. A Claude Code subscription login cannot be used by other apps.',
+      claude: 'Set ANTHROPIC_API_KEY (or the env block of ~/.claude/settings.json), or enter a key. To use your Claude Code login instead, choose the Claude Code provider.',
       openai: codexAuth().auth_mode === 'chatgpt'
         ? 'Codex is signed in with a ChatGPT account, which only works inside Codex. Run `codex login --with-api-key`, set OPENAI_API_KEY, or enter an API key here.'
         : 'Set OPENAI_API_KEY, sign Codex in with an API key, or enter a key here.',

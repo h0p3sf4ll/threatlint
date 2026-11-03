@@ -54,20 +54,20 @@ _OPENAI_DEFAULT_MODEL = "gpt-5.6"
 _ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 
 
-_RUN_PROVIDERS = ("lmstudio", "openai", "claude")
+_RUN_PROVIDERS = ("lmstudio", "openai", "claude", "claude-code")
 
 
 _API_KEY_ENV = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
 
 
-_PROVIDER_LABEL = {"openai": "OpenAI", "claude": "Anthropic (Claude)"}
+_PROVIDER_LABEL = {"openai": "OpenAI", "claude": "Anthropic (Claude)", "claude-code": "Claude Code (your login)"}
 
 
 def _default_run_model(provider: str, explicit: str | None = "") -> str:
     """Model for an analysis run: an explicit --model wins; Claude follows the scanning policy (threatlint.models)."""
     if explicit:
         return explicit
-    if provider == "claude":
+    if provider in ("claude", "claude-code"):
         return _models.scan_model()
     return _OPENAI_DEFAULT_MODEL if provider == "openai" else ""
 
@@ -140,6 +140,16 @@ def _resolve_provider(
     """(provider, base_url, api_key), or None after printing why the provider is unusable."""
     provider = getattr(args, "provider", "lmstudio") or "lmstudio"
     api_key = getattr(args, "api_key", "") or ""
+    if provider == "claude-code":
+        from . import claude_code  # noqa: PLC0415
+        status = claude_code.login_status()
+        if not status.installed:
+            print(_red("ERROR: Claude Code is not installed. Install it, run `claude` once to sign in, then retry."))
+            return None
+        if not status.logged_in:
+            print(_red("ERROR: Claude Code is not signed in. Run `claude` in a terminal and sign in, then retry."))
+            return None
+        return provider, "", ""
     if provider in _API_KEY_ENV:
         api_key = api_key or os.environ.get(_API_KEY_ENV[provider], "")
         if not api_key:

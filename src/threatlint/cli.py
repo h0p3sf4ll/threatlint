@@ -94,7 +94,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     _print_run_header(mode, provider, base_url, model, getattr(args, "target", "") or "")
 
     try:
-        output = _run_agent(base_url, model, system_prompt, user_msg, repo_root, api_key=api_key)
+        if provider == "claude-code":
+            from threatlint.claude_code import run_agent as run_claude_code  # noqa: PLC0415
+            output = run_claude_code(system_prompt, user_msg, repo_root, model)
+        else:
+            output = _run_agent(base_url, model, system_prompt, user_msg, repo_root, api_key=api_key)
     except RuntimeError as exc:
         print(_red(f"\nERROR: {exc}"))
         return 1
@@ -152,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
              f"{_models.SCAN_MODEL} for claude, or THREATLINT_SCAN_MODEL)")
     p_run.add_argument("--provider", metavar="PROVIDER", default="lmstudio",
         choices=list(_RUN_PROVIDERS),
-        help="LLM provider: lmstudio (default), openai, or claude")
+        help="LLM provider: lmstudio (default), openai, claude (API key), or claude-code (your Claude Code login)")
     p_run.add_argument("--api-key", metavar="KEY", dest="api_key",
         help="API key for the provider (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
     p_run.add_argument("--base-url", metavar="URL", default="http://localhost:1234/v1",
