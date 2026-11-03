@@ -4,6 +4,9 @@ Choose the decision you need to make, then ask the matching agent for evidence.
 “Can another tenant download this invoice?” gives a reviewer a sharper target than
 “check security.”
 
+For the architecture and data flow diagrams, a one-page sheet per agent, and a summary of
+every skill, see [Threatlint architecture](architecture.md).
+
 ## Choose by outcome
 
 | I need to… | Agent / reference |

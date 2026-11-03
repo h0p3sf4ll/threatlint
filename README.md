@@ -160,6 +160,7 @@ engineering handoff without overstating what was verified.
 | Install for Claude, Copilot, Codex, or terminal use | [Setup](docs/setup.md) |
 | Review code visually or inspect authorized runtime evidence | [Workbench](docs/workbench.md) |
 | Choose one of the 22 specialists | [Agent guide](docs/agents.md) |
+| See the architecture, data flows, and every agent and skill on one page | [Architecture](docs/architecture.md) |
 | Add instructions, guard hooks, or the VS Code extension | [IDE guide](docs/ide.md) |
 | Start warn-first reviews in GitHub or Azure Pipelines | [CI templates](docs/ci-templates.md) |
 | Configure this repository's GitHub workflows | [GitHub Actions](docs/github-actions.md) |

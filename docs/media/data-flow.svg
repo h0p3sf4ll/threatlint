@@ -1,0 +1,121 @@
+<svg width="1240" height="700" viewBox="0 0 1240 700" role="img" aria-labelledby="dfdT dfdD" xmlns="http://www.w3.org/2000/svg">
+<title id="dfdT">Threatlint data flow diagram</title>
+<desc id="dfdD">Requests are routed to a specialist that loads skills, inspects source through read-only tools, sends prompts to a model, and composes a report. Delivery to external systems is a separate approval-gated process. Red dashed lines are trust boundaries.</desc><style>svg { --fg:#1A2230; --muted:#5B6779; --line:#D4DCE7; --accent:#0F6CBD; --accent-soft:#E7F1FB;
+  --zone:#EEF3F9; --core:#E9F2FC; --warn:#B85A00; --warn-soft:#FFF5E8; --danger:#C4314B; --surface:#FFFFFF; --bg:#F5F7FA; --on-accent:#FFFFFF;
+  --sans:"Segoe UI","Source Sans 3",system-ui,-apple-system,sans-serif; --mono:"Cascadia Code",Consolas,ui-monospace,monospace; }
+@media (prefers-color-scheme: dark) { svg { --fg:#E5EBF2; --muted:#98A6B8; --line:#2A3544; --accent:#5AAEF5; --accent-soft:#13283E;
+  --zone:#121922; --core:#12233A; --warn:#F3A64D; --warn-soft:#2A1E0F; --danger:#F27D90; --surface:#151C26; --bg:#0E131A; --on-accent:#0E131A; } }
+.bgr { fill: var(--bg); }
+/* SVG styles */
+.zone { fill: var(--zone); stroke: var(--line); stroke-width: 1.2; }
+.zone.core { fill: var(--core); stroke: var(--accent); stroke-opacity: .45; }
+.zone.write { fill: var(--warn-soft); stroke: var(--warn); stroke-dasharray: 7 5; stroke-width: 1.5; }
+.zt { font: 600 12.5px var(--sans); fill: var(--muted); letter-spacing: .02em; }
+.lbl { font: 600 12.5px var(--sans); fill: var(--fg); }
+.sub { font: 11px var(--sans); fill: var(--muted); }
+.fl { font: 600 11px var(--sans); fill: var(--muted); paint-order: stroke; stroke: var(--zone); stroke-width: 4px; }
+.note { font: italic 11.5px var(--sans); fill: var(--warn); }
+.flow { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.flow.warn { stroke: var(--warn); stroke-width: 1.8; }
+.flow.untrusted { stroke: var(--danger); stroke-dasharray: 6 4; }
+.bus { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .7; }
+.arrowhead { fill: var(--muted); } .arrowhead-w { fill: var(--warn); }
+.tb { fill: none; stroke: var(--danger); stroke-width: 1.6; stroke-dasharray: 8 6; }
+.tbt { font: 600 12px var(--sans); fill: var(--danger); }
+.ent { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.proc { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
+.pn { font: 700 11px var(--mono); fill: var(--accent); }
+.store { fill: none; stroke: var(--fg); stroke-width: 1.4; }
+.badge { fill: var(--accent); }
+.bn { font: 700 10.5px var(--sans); fill: var(--on-accent); }
+
+</style><defs>
+<linearGradient id="gB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5EA0EF"/><stop offset="1" stop-color="#0063B1"/></linearGradient>
+<linearGradient id="gP" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B796F9"/><stop offset="1" stop-color="#6B2FCE"/></linearGradient>
+<linearGradient id="gT" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6BE9FF"/><stop offset="1" stop-color="#1C9DC0"/></linearGradient>
+<linearGradient id="gG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8FDB3E"/><stop offset="1" stop-color="#4E8A1E"/></linearGradient>
+<linearGradient id="gO" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFC266"/><stop offset="1" stop-color="#E8780C"/></linearGradient>
+<linearGradient id="gK" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7A8594"/><stop offset="1" stop-color="#3B4350"/></linearGradient>
+<linearGradient id="gR" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F26B74"/><stop offset="1" stop-color="#B8232F"/></linearGradient>
+<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrowhead"/></marker>
+<marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrowhead-w"/></marker>
+
+<symbol id="i-user" viewBox="0 0 48 48"><circle cx="24" cy="15" r="9" fill="url(#gB)"/><path d="M7 43c0-10 7.6-16 17-16s17 6 17 16z" fill="url(#gB)"/></symbol>
+<symbol id="i-ide" viewBox="0 0 48 48"><rect x="3" y="7" width="42" height="34" rx="3" fill="url(#gB)"/><rect x="3" y="7" width="42" height="7" rx="3" fill="#003A70" opacity=".55"/><g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21l-6 6 6 6M31 21l6 6-6 6M26.5 19l-5 16"/></g></symbol>
+<symbol id="i-assistant" viewBox="0 0 48 48"><path d="M5 10a5 5 0 0 1 5-5h28a5 5 0 0 1 5 5v20a5 5 0 0 1-5 5H21l-9 8v-8h-2a5 5 0 0 1-5-5z" fill="url(#gP)"/><path d="M24 10l2.4 6.3L33 19l-6.6 2.4L24 28l-2.4-6.6L15 19l6.6-2.7z" fill="#fff"/></symbol>
+<symbol id="i-cli" viewBox="0 0 48 48"><rect x="3" y="7" width="42" height="34" rx="3" fill="url(#gK)"/><g fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 18l7 6-7 6M22 32h14"/></g></symbol>
+<symbol id="i-web" viewBox="0 0 48 48"><rect x="3" y="6" width="42" height="36" rx="3" fill="url(#gB)"/><rect x="3" y="6" width="42" height="8" rx="3" fill="#003A70" opacity=".55"/><circle cx="8.5" cy="10" r="1.6" fill="#fff"/><circle cx="13.5" cy="10" r="1.6" fill="#fff"/><g fill="none" stroke="#fff" stroke-width="2"><circle cx="24" cy="28" r="9"/><path d="M15 28h18M24 19c-4 5-4 13 0 18M24 19c4 5 4 13 0 18"/></g></symbol>
+<symbol id="i-pipeline" viewBox="0 0 48 48"><path d="M10 34L24 14L38 34" fill="none" stroke="url(#gB)" stroke-width="4"/><path d="M10 34h28" stroke="#0063B1" stroke-width="4" stroke-dasharray="3 3"/><circle cx="10" cy="34" r="7" fill="url(#gT)"/><circle cx="24" cy="14" r="7" fill="url(#gB)"/><circle cx="38" cy="34" r="7" fill="url(#gG)"/></symbol>
+<symbol id="i-teams" viewBox="0 0 48 48"><circle cx="31" cy="13" r="6" fill="url(#gP)" opacity=".75"/><path d="M22 41c0-8 4-13 10-13s11 5 11 13z" fill="url(#gP)" opacity=".75"/><circle cx="18" cy="15" r="7.5" fill="url(#gP)"/><path d="M4 43c0-9 6-15 14-15s14 6 14 15z" fill="url(#gP)"/></symbol>
+<symbol id="i-router" viewBox="0 0 48 48"><rect x="10" y="10" width="28" height="28" rx="4" transform="rotate(45 24 24)" fill="url(#gT)"/><g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M24 15v18M15 24h18M20 19l4-4 4 4M20 29l4 4 4-4"/></g></symbol>
+<symbol id="i-agent" viewBox="0 0 48 48"><path d="M24 4v7" stroke="#0063B1" stroke-width="3"/><circle cx="24" cy="5" r="3" fill="url(#gP)"/><rect x="6" y="11" width="36" height="30" rx="8" fill="url(#gB)"/><rect x="11" y="18" width="26" height="13" rx="6.5" fill="#002B55" opacity=".6"/><circle cx="18" cy="24.5" r="3" fill="#6BE9FF"/><circle cx="30" cy="24.5" r="3" fill="#6BE9FF"/><path d="M18 36h12" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-skills" viewBox="0 0 48 48"><rect x="6" y="9" width="9" height="33" rx="1.5" fill="url(#gB)"/><rect x="17" y="6" width="9" height="36" rx="1.5" fill="url(#gT)"/><rect x="29" y="11" width="9" height="32" rx="1.5" transform="rotate(-14 33 27)" fill="url(#gP)"/><path d="M8.5 15h4M19.5 12h4M8.5 35h4M19.5 36h4" stroke="#fff" stroke-width="2"/></symbol>
+<symbol id="i-tools" viewBox="0 0 48 48"><circle cx="20" cy="20" r="12" fill="url(#gT)" opacity=".35"/><circle cx="20" cy="20" r="12" fill="none" stroke="url(#gB)" stroke-width="5"/><path d="M29 29l12 12" stroke="url(#gK)" stroke-width="7" stroke-linecap="round"/><path d="M15 19h10M15 23h7" stroke="#0063B1" stroke-width="2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-guard" viewBox="0 0 48 48"><path d="M24 3l17 6.5V22c0 10.5-7.3 19-17 23C14.3 41 7 32.5 7 22V9.5z" fill="url(#gG)"/><path d="M16 24l6 6 11-12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-policy" viewBox="0 0 48 48"><circle cx="24" cy="24" r="15" fill="none" stroke="url(#gK)" stroke-width="8" stroke-dasharray="6.2 5.6"/><circle cx="24" cy="24" r="12" fill="url(#gK)"/><circle cx="24" cy="24" r="6" fill="url(#gB)"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 48 48"><path d="M13 39a9.5 9.5 0 0 1-1.4-18.9A13 13 0 0 1 36.6 17 11 11 0 0 1 35 39z" fill="url(#gB)"/><path d="M18 30l4-6 4 4 5-7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-server" viewBox="0 0 48 48"><rect x="8" y="5" width="32" height="11" rx="2" fill="url(#gK)"/><rect x="8" y="18.5" width="32" height="11" rx="2" fill="url(#gK)"/><rect x="8" y="32" width="32" height="11" rx="2" fill="url(#gK)"/><circle cx="34" cy="10.5" r="2" fill="#8FDB3E"/><circle cx="34" cy="24" r="2" fill="#8FDB3E"/><circle cx="34" cy="37.5" r="2" fill="#8FDB3E"/><path d="M13 10.5h12M13 24h12M13 37.5h12" stroke="#C8D1DC" stroke-width="2"/></symbol>
+<symbol id="i-repo" viewBox="0 0 48 48"><path d="M4 12a3 3 0 0 1 3-3h11l4 4h19a3 3 0 0 1 3 3v22a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z" fill="url(#gO)"/><g fill="none" stroke="#fff" stroke-width="2.4"><circle cx="18" cy="21" r="2.6"/><circle cx="18" cy="35" r="2.6"/><circle cx="30" cy="24" r="2.6"/><path d="M18 23.6v8.8M30 26.6c0 5-12 2-12 5.8"/></g></symbol>
+<symbol id="i-scanner" viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="url(#gT)"/><g fill="none" stroke="#fff" stroke-width="1.8" opacity=".85"><circle cx="24" cy="24" r="13"/><circle cx="24" cy="24" r="6.5"/></g><path d="M24 24L37 13" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="31" cy="30" r="2.6" fill="#F26B74"/><circle cx="16" cy="17" r="2.2" fill="#FFC266"/></symbol>
+<symbol id="i-ticket" viewBox="0 0 48 48"><path d="M5 12a3 3 0 0 1 3-3h32a3 3 0 0 1 3 3v6a6 6 0 0 0 0 12v6a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-6a6 6 0 0 0 0-12z" fill="url(#gG)"/><path d="M15 18h18M15 24h14M15 30h10" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-db" viewBox="0 0 48 48"><path d="M8 11v26c0 3.3 7.2 6 16 6s16-2.7 16-6V11z" fill="url(#gB)"/><ellipse cx="24" cy="11" rx="16" ry="6" fill="#9CC8F5"/><path d="M8 20c0 3.3 7.2 6 16 6s16-2.7 16-6M8 29c0 3.3 7.2 6 16 6s16-2.7 16-6" fill="none" stroke="#fff" stroke-width="1.6" opacity=".7"/></symbol>
+<symbol id="i-doc" viewBox="0 0 48 48"><path d="M10 4h20l10 10v28a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="url(#gB)"/><path d="M30 4v8a2 2 0 0 0 2 2h8z" fill="#9CC8F5"/><path d="M14 22h20M14 28h20M14 34h13" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-chart" viewBox="0 0 48 48"><rect x="4" y="5" width="40" height="38" rx="3" fill="url(#gK)" opacity=".18"/><rect x="9" y="26" width="7" height="13" rx="1" fill="url(#gT)"/><rect x="20.5" y="16" width="7" height="23" rx="1" fill="url(#gB)"/><rect x="32" y="10" width="7" height="29" rx="1" fill="url(#gP)"/></symbol>
+<symbol id="i-queue" viewBox="0 0 48 48"><rect x="5" y="8" width="30" height="8" rx="2" fill="url(#gB)"/><rect x="5" y="20" width="30" height="8" rx="2" fill="url(#gB)" opacity=".8"/><rect x="5" y="32" width="30" height="8" rx="2" fill="url(#gB)" opacity=".6"/><path d="M40 10v26m-4-4l4 4 4-4" fill="none" stroke="url(#gT)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-container" viewBox="0 0 48 48"><path d="M24 4l18 9v22l-18 9-18-9V13z" fill="url(#gB)"/><path d="M24 24L6 13M24 24l18-11M24 24v20" stroke="#fff" stroke-width="1.6" opacity=".75"/><path d="M24 4l18 9-18 11L6 13z" fill="#9CC8F5" opacity=".9"/></symbol>
+<symbol id="i-key" viewBox="0 0 48 48"><rect x="4" y="6" width="40" height="36" rx="4" fill="url(#gO)" opacity=".22"/><circle cx="17" cy="24" r="8" fill="none" stroke="url(#gO)" stroke-width="5"/><path d="M25 24h16M35 24v6M40 24v4" stroke="#E8780C" stroke-width="4" stroke-linecap="round"/></symbol>
+<symbol id="i-comment" viewBox="0 0 48 48"><path d="M5 9a4 4 0 0 1 4-4h30a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H22l-9 8v-8H9a4 4 0 0 1-4-4z" fill="url(#gB)"/><path d="M13 15h22M13 21h22M13 27h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-capture" viewBox="0 0 48 48"><rect x="4" y="9" width="40" height="30" rx="3" fill="url(#gK)"/><path d="M8 32l9-10 7 7 6-5 10 8" fill="none" stroke="#6BE9FF" stroke-width="2.6" stroke-linejoin="round"/><circle cx="35" cy="17" r="3" fill="#FFC266"/></symbol>
+<symbol id="i-rules" viewBox="0 0 48 48"><path d="M10 4h28a2 2 0 0 1 2 2v36a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="url(#gT)"/><path d="M14 14l3 3 5-6M14 26l3 3 5-6M26 14h9M26 27h9M14 37h21" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</defs><rect class="bgr" width="1240" height="700"/>
+<rect class="tb" x="196" y="36" width="732" height="640" rx="12"/>
+<text class="tbt" x="212" y="58">TB1 · Workstation or CI runner (Threatlint executes here)</text>
+<rect class="tb" x="958" y="44" width="266" height="190" rx="12"/>
+<text class="tbt" x="972" y="66">TB2 · Cloud model provider</text>
+<rect class="tb" x="958" y="448" width="266" height="228" rx="12"/>
+<text class="tbt" x="972" y="470">TB3 · Enterprise SaaS</text>
+<rect class="tb" x="6" y="420" width="184" height="186" rx="12"/>
+<text class="tbt" x="20" y="442">TB3 · Enterprise SaaS</text>
+<rect class="ent" x="16" y="250" width="164" height="70" rx="4"/><use href="#i-user" x="26" y="268.0" width="34" height="34"/><text class="lbl" x="68" y="282.0">Developer</text><text class="sub" x="68" y="297.0">or CI trigger</text>
+<rect class="ent" x="14" y="460" width="170" height="120" rx="4"/><use href="#i-scanner" x="24" y="503.0" width="34" height="34"/><text class="lbl" x="66" y="517.0">Evidence systems</text><text class="sub" x="66" y="532.0">scanners, AVITs</text>
+<text class="sub" x="68" y="566">runtime captures</text>
+<path class="store" d="M650 78H420V118H650"/><path class="store" d="M460 78V118"/><text class="pn" x="440" y="103" text-anchor="middle">D1</text><use href="#i-skills" x="466" y="85" width="26" height="26"/><text class="lbl" x="498" y="103">Agent + skill registry</text>
+<path class="store" d="M690 610H470V650H690"/><path class="store" d="M510 610V650"/><text class="pn" x="490" y="635" text-anchor="middle">D2</text><use href="#i-repo" x="516" y="617" width="26" height="26"/><text class="lbl" x="548" y="635">Repository source</text>
+<path class="store" d="M910 420H690V460H910"/><path class="store" d="M730 420V460"/><text class="pn" x="710" y="445" text-anchor="middle">D3</text><use href="#i-db" x="736" y="427" width="26" height="26"/><text class="lbl" x="768" y="445">Report store (MD/Word)</text>
+<rect class="ent" x="720" y="92" width="186" height="64" rx="4"/><use href="#i-server" x="730" y="107.0" width="34" height="34"/><text class="lbl" x="772" y="121.0">Local model</text><text class="sub" x="772" y="136.0">LM Studio, on box</text>
+<rect class="ent" x="978" y="104" width="228" height="74" rx="4"/><use href="#i-cloud" x="988" y="124.0" width="34" height="34"/><text class="lbl" x="1030" y="138.0">Cloud model</text><text class="sub" x="1030" y="153.0">Claude · OpenAI · Copilot</text>
+<rect class="ent" x="978" y="520" width="228" height="120" rx="4"/><use href="#i-comment" x="988" y="563.0" width="34" height="34"/><text class="lbl" x="1030" y="577.0">Systems of record</text><text class="sub" x="1030" y="592.0">PR, ServiceNow, Semgrep</text>
+<text class="sub" x="1030" y="626">Teams, dashboards</text>
+<circle class="proc" cx="300" cy="285" r="56"/><text class="pn" x="300" y="273" text-anchor="middle">P1</text><text class="lbl" x="300" y="291" text-anchor="middle">Route</text><text class="sub" x="300" y="306" text-anchor="middle">pick specialist</text>
+<circle class="proc" cx="540" cy="285" r="66"/><text class="pn" x="540" y="273" text-anchor="middle">P2</text><text class="lbl" x="540" y="291" text-anchor="middle">Analyze</text><text class="sub" x="540" y="306" text-anchor="middle">agent + skills</text>
+<circle class="proc" cx="540" cy="490" r="56"/><text class="pn" x="540" y="478" text-anchor="middle">P3</text><text class="lbl" x="540" y="496" text-anchor="middle">Inspect</text><text class="sub" x="540" y="511" text-anchor="middle">read-only tools</text>
+<circle class="proc" cx="800" cy="285" r="56"/><text class="pn" x="800" y="273" text-anchor="middle">P4</text><text class="lbl" x="800" y="291" text-anchor="middle">Compose</text><text class="sub" x="800" y="306" text-anchor="middle">evidence report</text>
+<circle class="proc" cx="800" cy="570" r="52"/><text class="pn" x="800" y="558" text-anchor="middle">P5</text><text class="lbl" x="800" y="576" text-anchor="middle">Deliver</text><text class="sub" x="800" y="591" text-anchor="middle">approval-gated</text>
+<path class="flow" d="M180 285H240" marker-end="url(#arr)"/>
+<circle class="badge" cx="210" cy="270" r="11"/><text class="bn" x="210" y="274" text-anchor="middle">1</text>
+<path class="flow" d="M356 285H470" marker-end="url(#arr)"/>
+<circle class="badge" cx="413" cy="270" r="11"/><text class="bn" x="413" y="274" text-anchor="middle">2</text>
+<path class="flow" d="M540 118V215" marker-end="url(#arr)"/>
+<circle class="badge" cx="556" cy="170" r="11"/><text class="bn" x="556" y="174" text-anchor="middle">3</text>
+<path class="flow untrusted" d="M184 505L482 330" marker-end="url(#arr)"/>
+<circle class="badge" cx="330" cy="418" r="11"/><text class="bn" x="330" y="422" text-anchor="middle">4</text>
+<path class="flow" d="M520 351V433" marker-end="url(#arr)"/>
+<path class="flow" d="M560 433V351" marker-end="url(#arr)"/>
+<circle class="badge" cx="540" cy="392" r="11"/><text class="bn" x="540" y="396" text-anchor="middle">5</text>
+<path class="flow" d="M565 610V546" marker-end="url(#arr)"/>
+<circle class="badge" cx="582" cy="580" r="11"/><text class="bn" x="582" y="584" text-anchor="middle">6</text>
+<path class="flow" d="M597 250C700 230 860 190 974 150" marker-end="url(#arr)" marker-start="url(#arr)"/>
+<circle class="badge" cx="880" cy="186" r="11"/><text class="bn" x="880" y="190" text-anchor="middle">7</text>
+<path class="flow" d="M590 243L716 156" marker-end="url(#arr)" marker-start="url(#arr)"/>
+<circle class="badge" cx="650" cy="205" r="11"/><text class="bn" x="650" y="209" text-anchor="middle">7b</text>
+<path class="flow" d="M606 285H744" marker-end="url(#arr)"/>
+<circle class="badge" cx="675" cy="270" r="11"/><text class="bn" x="675" y="274" text-anchor="middle">8</text>
+<path class="flow" d="M800 341V418" marker-end="url(#arr)"/>
+<circle class="badge" cx="816" cy="382" r="11"/><text class="bn" x="816" y="386" text-anchor="middle">9</text>
+<path class="flow" d="M776 232V214H98V250" marker-end="url(#arr)"/>
+<circle class="badge" cx="440" cy="214" r="11"/><text class="bn" x="440" y="218" text-anchor="middle">10</text>
+<path class="flow" d="M800 460V518" marker-end="url(#arr)"/>
+<circle class="badge" cx="816" cy="490" r="11"/><text class="bn" x="816" y="494" text-anchor="middle">11</text>
+<path class="flow warn" d="M852 575H974" marker-end="url(#arrW)"/>
+<circle class="badge" cx="912" cy="560" r="11"/><text class="bn" x="912" y="564" text-anchor="middle">12</text>
+</svg>
