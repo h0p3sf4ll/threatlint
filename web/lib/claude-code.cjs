@@ -11,7 +11,8 @@
  *   --strict-mcp-config       no MCP servers
  *   --permission-mode dontAsk anything not allowed is denied instead of prompting
  *   --no-session-persistence  nothing is saved to Claude Code's session history
- * ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are removed from the child environment so the login, not a key, is used.
+ * API keys, provider-selection flags, and endpoint overrides are removed from the child environment so the
+ * Claude Code login is used even when the parent process also has Bedrock or another cloud provider configured.
  * The system prompt goes through a 0600 temp file and the user message through stdin, so neither appears in argv.
  */
 
@@ -23,7 +24,11 @@ const path = require('node:path');
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const STATUS_TIMEOUT_MS = 15_000;
 const RUN_TIMEOUT_MS = Number(process.env.THREATLINT_CLAUDE_CODE_TIMEOUT_MS) || 60 * 60_000;
-const STRIPPED_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+const STRIPPED_ENV = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'AWS_BEARER_TOKEN_BEDROCK', 'BEDROCK_API_KEY', 'AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'AWS_ENDPOINT_URL_BEDROCK_MANTLE',
+];
 // Models offered in Settings; Claude Code also accepts any model ID it supports.
 const MODELS = [
   { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
@@ -42,6 +47,8 @@ function executable({ env = process.env, home = os.homedir() } = {}) {
 function childEnv(env = process.env) {
   const copy = { ...env };
   for (const name of STRIPPED_ENV) delete copy[name];
+  // `auth status` also reads user settings. Prevent their env block from restoring provider/auth overrides.
+  copy.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1';
   return copy;
 }
 

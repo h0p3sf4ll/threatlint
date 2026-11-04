@@ -31,7 +31,7 @@ function isoWeek(timestamp) {
   return date.toISOString().slice(0, 10);
 }
 
-function collectFacts({ sessions, runtimeScans = [], agents = {} }) {
+function collectFacts({ sessions, runtimeScans = [], agents = {}, trackerFacts = [] }) {
   const facts = [];
   for (const session of sessions.values()) {
     const workspace = session.repoPath.split(/[\\/]/).filter(Boolean).at(-1) || session.repoPath;
@@ -55,7 +55,7 @@ function collectFacts({ sessions, runtimeScans = [], agents = {} }) {
         fingerprint: `${scan.target}|${finding.rule}|${finding.path}`, hasEvidence: true });
     }
   }
-  return facts;
+  return [...facts, ...trackerFacts];
 }
 
 function matches(fact, filters = {}) {
@@ -87,7 +87,7 @@ function aggregate(facts, { metric = 'findings', groupBy = 'severity', filters =
     const findings = items.filter(fact => !fact.empty);
     switch (metric) {
       case 'findings': return findings.length;
-      case 'reports': return new Set(items.map(fact => fact.reportId)).size;
+      case 'reports': return new Set(items.filter(fact => fact.reportId && ['report', 'runtime'].includes(fact.source)).map(fact => fact.reportId)).size;
       case 'riskScore': return findings.filter(fact => fact.disposition !== 'FALSE POSITIVE' && fact.disposition !== 'REMEDIATED' && fact.disposition !== 'RESOLVED').reduce((sum, fact) => sum + SEVERITY_WEIGHT[fact.severity], 0);
       case 'uniqueFindings': return new Set(findings.map(fact => fact.fingerprint)).size;
       case 'evidenceCoverage': return findings.length ? Math.round(100 * findings.filter(fact => fact.hasEvidence).length / findings.length) : 0;
@@ -143,8 +143,8 @@ const DEFAULT_DASHBOARD = Object.freeze({
     { id: 'w4', title: 'Reports & scans', chart: 'kpi', metric: 'reports', groupBy: null, size: 1 },
     { id: 'w5', title: 'Findings by severity', chart: 'donut', metric: 'findings', groupBy: 'severity', size: 2 },
     { id: 'w6', title: 'Findings over time', chart: 'line', metric: 'findings', groupBy: 'day', size: 2 },
-    { id: 'w7', title: 'Risk by specialist', chart: 'hbar', metric: 'riskScore', groupBy: 'agent', size: 2 },
-    { id: 'w8', title: 'Specialist × severity', chart: 'heatmap', metric: 'findings', groupBy: 'agent', columns: 'severity', size: 2 },
+    { id: 'w7', title: 'Risk by specialist or tracker', chart: 'hbar', metric: 'riskScore', groupBy: 'agent', size: 2 },
+    { id: 'w8', title: 'Specialist / tracker × severity', chart: 'heatmap', metric: 'findings', groupBy: 'agent', columns: 'severity', size: 2 },
     { id: 'w9', title: 'Risk by workspace', chart: 'table', metric: 'riskScore', groupBy: 'workspace', size: 4 },
   ],
 });

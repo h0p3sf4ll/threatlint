@@ -8,10 +8,10 @@ from threatlint import avit_resolve
 AVIT = "AVIT000000000000001"
 
 
-def finding(disposition="FALSE POSITIVE", identifier="FP-001"):
+def finding(disposition="FALSE POSITIVE", identifier="FP-001", avit=AVIT):
     return (
         f"#### [{identifier}] — Synthetic finding\n"
-        f"**Original finding**: {AVIT}; rule; src/a.py:42\n"
+        f"**Original finding**: {avit}; rule; src/a.py:42\n"
         f"**Disposition**: {disposition}\n"
         "**Confidence**: HIGH (source traced)\n"
     )
@@ -41,6 +41,28 @@ def test_duplicate_consistent_findings_keep_the_first_but_conflicts_fail():
     assert avit_report.verdict_for(finding() + finding(identifier="FP-002"), AVIT)["id"] == "FP-001"
     with pytest.raises(avit_report.ResolveError, match="conflicting dispositions"):
         avit_report.verdict_for(finding() + finding("TRUE POSITIVE", "FP-002"), AVIT)
+    with pytest.raises(avit_report.ResolveError, match="conflicting dispositions"):
+        avit_report.verdict_for(finding() + "**Verdict**: TRUE POSITIVE\n", AVIT)
+
+
+def test_prefix_avit_numbers_are_distinct_in_numbered_and_plain_reports():
+    short, long = "AVIT1234567", "AVIT12345678"
+    numbered = finding("TRUE POSITIVE", "FP-001", long) + finding("FALSE POSITIVE", "FP-002", short)
+    assert avit_report.verdict_for(numbered, short)["disposition"] == "FALSE POSITIVE"
+    assert avit_report.verdict_for(numbered, long)["disposition"] == "TRUE POSITIVE"
+
+    plain = f"# Review\n**Original finding**: {long}; rule\n**Disposition**: TRUE POSITIVE\n"
+    with pytest.raises(avit_report.ResolveError, match="no finding"):
+        avit_report.verdict_for(plain, short)
+
+
+def test_avit_embedded_in_another_identifier_is_not_selected():
+    target = "AVIT1234567"
+    for source in (f"X{target}", f"{target}X"):
+        with pytest.raises(avit_report.ResolveError, match="no finding"):
+            avit_report.verdict_for(finding(avit=source), target)
+        with pytest.raises(avit_report.ResolveError, match="no finding"):
+            avit_report.verdict_for(f"## FP-001 — {source}\nDisposition: FALSE POSITIVE\n", target)
 
 
 @pytest.mark.parametrize(

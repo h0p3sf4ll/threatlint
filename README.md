@@ -74,6 +74,8 @@ npm --prefix web start
 
 Open `http://127.0.0.1:3000`. View the bundled sample report before configuring a
 model, or connect a provider and review a repository.
+Claude supports your Claude Code login, an Anthropic API key, or an Amazon Bedrock API key.
+Choose the method in Settings; see [credential setup](docs/setup.md#cloud-providers).
 
 The desktop app uses the same Workbench:
 
@@ -170,7 +172,7 @@ engineering handoff without overstating what was verified.
 | Bring portfolio data into a vReport | [Sidekick](docs/sidekick.md) |
 | Review findings from a findings platform or scanning tool | [Integrations](docs/integrations/README.md): [DefectDojo](docs/integrations/defectdojo.md) (findings management) · [SonarQube](docs/integrations/sonarqube.md) (scanning) |
 | Add your own integration | [Writing an integration](docs/integrations/authoring.md) |
-| Read trends and build dashboards | [Dashboards](docs/dashboards.md) |
+| Read trends from reports and synced ServiceNow AVIT or DefectDojo findings | [Dashboards](docs/dashboards.md) |
 | Export a report or fix missing Word output | [Reports](docs/reports.md) |
 | Discuss supplied evidence in Teams | [Teams](docs/teams.md) |
 | Test, extend, or understand the Python modules | [Development](docs/development.md) |

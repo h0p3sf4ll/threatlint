@@ -7,13 +7,23 @@ const os = require('node:os');
 const path = require('node:path');
 const { WebSocket } = require('ws');
 const { createWorkbench } = require('../server.js');
-const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResult, outcomeActions } = require('../lib/avit-batch.cjs');
+const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResult, outcomeActions, errorOf } = require('../lib/avit-batch.cjs');
 const { convertToWord } = require('./helpers/docx.cjs');
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
 let storage;
 const SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x.y; Semgrep Code; app.yaml:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: app.yaml:2 — value ${SECRET}\nBlast radius: one rule. Acceptance criteria: x. Proposed fix: y.\n`;
+
+it('reports the resolve failure instead of a successful checkout cleanup line', () => {
+  const cleanup = '  ✓ Deleted the local checkout /tmp/threatlint-avit-example/repo\n';
+  assert.equal(errorOf({ code: 1, stdout: `  ✓ Attached report.docx\n  ! Rule not tuned: Semgrep validation failed\n${cleanup}`, stderr: '' }),
+    'Rule not tuned: Semgrep validation failed');
+  assert.equal(errorOf({ code: 1, stdout: cleanup, stderr: 'ERROR: ServiceNow denied the update\n' }),
+    'ServiceNow denied the update');
+  assert.equal(errorOf({ code: 1, stdout: cleanup, stderr: '' }), 'Command failed (exit code 1)');
+  assert.equal(errorOf({ code: 1, stdout: `  ✓ Attached report.docx\n${cleanup}`, stderr: '' }), 'Command failed (exit code 1)');
+});
 
 describe('False positive review batch', () => {
   let wb, base;

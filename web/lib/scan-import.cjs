@@ -751,7 +751,7 @@ function groupTargets(mapping, findings) {
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
-const PROVIDER_FIELDS = ['provider', 'model', 'apiKey', 'openaiApiKey', 'copilotToken', 'lmstudioUrl', 'lmstudioModel'];
+const PROVIDER_FIELDS = ['provider', 'model', 'apiKey', 'bedrockApiKey', 'bedrockRegion', 'openaiApiKey', 'copilotToken', 'lmstudioUrl', 'lmstudioModel'];
 
 /**
  * Upload jobs. options.override replaces model calls (tests); integrations.fetchImpl is the ServiceNow transport.

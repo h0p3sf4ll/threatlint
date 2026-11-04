@@ -70,6 +70,12 @@ describe('Model lists for the settings dropdown', () => {
     assert.deepEqual(await resolveKey('openai', '', { env: {}, home: dir }), { key: 'sk-codex', source: '~/.codex/auth.json (Codex API key)' });
     fs.writeFileSync(path.join(dir, '.codex/auth.json'), JSON.stringify({ auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: { access_token: 'subscription' } }));
     assert.equal((await resolveKey('openai', '', { env: {}, home: dir })).key, '', 'ChatGPT-account Codex tokens are never used');
+    const codexHome = path.join(dir, 'custom-codex'); fs.mkdirSync(codexHome);
+    fs.writeFileSync(path.join(codexHome, 'auth.json'), JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'custom-api-key' }));
+    assert.deepEqual(await resolveKey('openai', '', { env: { CODEX_HOME: codexHome }, home: dir }),
+      { key: 'custom-api-key', source: '$CODEX_HOME/auth.json (Codex API key)' });
+    fs.writeFileSync(path.join(codexHome, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'subscription' } }));
+    assert.equal((await resolveKey('openai', '', { env: { CODEX_HOME: codexHome }, home: dir })).key, '');
   });
 });
 

@@ -21,9 +21,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from threatlint import servicenow as sn
 from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_triage
@@ -73,11 +75,10 @@ def attach(instance: str, token: str, sys_id: str, name: str, content: bytes, co
 
 def attachment_names(instance: str, token: str, sys_id: str) -> set[str]:
     query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
-    try:
-        rows = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"}).get("result", [])
-    except sn.ServiceNowError:
-        return set()
-    return {str(row.get("file_name", "")) for row in rows if isinstance(row, dict)}
+    rows = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"}).get("result")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not sn._field_value(row.get("file_name")) for row in rows):
+        raise ResolveError("ServiceNow did not return a readable AVIT attachment list")
+    return {sn._field_value(row["file_name"]) for row in rows}
 
 
 def update(instance: str, token: str, sys_id: str, values: dict[str, str]) -> dict:
@@ -127,6 +128,46 @@ def ignore_matches(token, dep, kind, matches, note) -> int:
         raise ResolveError("Semgrep triage product differs from the verified matches")
     return semgrep_ignore(token, dep["slug"], product, [match["id"] for match in matches], note,
                           repository=repository, ref=ref, rule=rule, deployment_id=dep["id"])
+
+
+def _verified_tuning_match(target: dict[str, str], context: dict[str, str], kind: str,
+                           line: int, matches: list[dict]) -> bool:
+    """Require a current exact Semgrep finding before inferring Unified ruleset membership."""
+    project = avit_semgrep.project_names(target)[0]
+    return any(match.get("status") == "open" and match.get("product") == kind
+               and match.get("project") == project and match.get("ref") == target.get("branch")
+               and match.get("rule") == context.get("rule")
+               and _same_path(str(match.get("path", "")), context.get("file_path", ""))
+               and str(match.get("line", "")).isdigit() and int(match["line"]) == line
+               for match in matches)
+
+
+def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict[str, str],
+                        token: str, dep: dict, target: dict[str, str], matches: list[dict]) -> None:
+    """Use the supplied checkout or fetch the exact AVIT branch before tuning."""
+    from threatlint import semgrep_platform as sp  # noqa: PLC0415
+
+    rule, path = context.get("rule", ""), context.get("file_path", "")
+    if not rule or not path or Path(path).is_absolute():
+        raise ResolveError("Rule tuning needs the AVIT rule and a repository-relative flagged file")
+    line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
+    if not line or line < 1:
+        raise ResolveError("Rule tuning needs the flagged line from the AVIT or report")
+    with tempfile.TemporaryDirectory(prefix="threatlint-tune-") as temporary:
+        checkout = Path(getattr(args, "checkout", "") or temporary).expanduser().resolve()
+        flagged = (checkout / path).resolve()
+        if not flagged.is_relative_to(checkout):
+            raise ResolveError("The AVIT flagged path escapes the repository checkout")
+        if not flagged.is_file():
+            checkout = Path(temporary) / "repo"
+            sn.checkout_repository(target, str(checkout), path)
+            flagged = (checkout / path).resolve()
+            if not flagged.is_relative_to(checkout.resolve()) or not flagged.is_file():
+                raise ResolveError("The flagged file is unavailable on the AVIT branch after checkout")
+            print(f"  ✓ Checked out the AVIT branch for Semgrep rule validation: {target.get('branch') or '(default)'}")
+        sp.tune_rule(markdown, kind, rule, str(flagged), line, token, {"id": dep["id"], "slug": dep["slug"]},
+                     project=avit_semgrep.tuning_project(target, matches),
+                     verified_finding=_verified_tuning_match(target, context, kind, line, matches))
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -182,9 +223,13 @@ def cmd_resolve(args) -> int:
     code_security = sn.in_code_security_view(record)
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
-    # One attachment: the Word report. The Markdown is only read here for the verdict.
+    # One attachment: the Word report. A headless repeat review uses a unique
+    # timestamped name so the new evidence is kept alongside the earlier review.
+    name = getattr(args, "attachment_name", None) or f"{avit}-threatlint-fp-review.docx"
+    if not re.fullmatch(rf"{re.escape(avit)}-threatlint-fp-review(?:-\d{{8}}T\d{{12}}Z)?\.docx", name):
+        raise ResolveError("The AVIT report attachment name is invalid")
     with open(os.path.expanduser(args.docx), "rb") as handle:
-        files = [(f"{avit}-threatlint-fp-review.docx", handle.read(), _DOCX)]
+        files = [(name, handle.read(), _DOCX)]
     action = ("attach the report and close it as Closed / False Positive" if false_positive
               else "attach the report and add an AMBIGUOUS work note (it stays open)" if ambiguous
               else "attach the report and add a TRUE POSITIVE work note (it stays open)")
@@ -211,6 +256,14 @@ def cmd_resolve(args) -> int:
         if not closed:
             return 1
     else:
+        state = sn._field_value(stored.get("state"))
+        previous = record["fields"].get("state", "")
+        closed_state = _false_positive_choices()[0]
+        closed = lambda value: value == closed_state or value.lower().startswith("closed")
+        if not state or closed(state):
+            print(f"  ! Work note added and report attached, but AVIT open state could not be confirmed"
+                  f" (previous {previous or 'unknown'}, stored {state or 'unknown'}); verify or reopen it")
+            return 1
         print("  ✓ Work note added; AVIT left open")
     if false_positive and not code_security:
         print("  Semgrep not applicable: this AVIT is not a CodeSecurity finding")
@@ -224,8 +277,9 @@ def cmd_resolve(args) -> int:
             print(f"  ! Semgrep unchanged: {exc}. The token's deployment may not scan this repository; pass --semgrep-deployment.")
             return 1
         kind = dep.get("product", kind)
+        unmatched = not matches
         if not matches:
-            print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; Semgrep unchanged")
+            print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; finding triage unchanged")
         else:
             for match in matches:
                 print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
@@ -234,20 +288,13 @@ def cmd_resolve(args) -> int:
         # SAST and Secrets: replace the rule with the reviewer's tuned rule so the same false positive does not return.
         if kind in ("sast", "secrets") and not args.skip_rule_tuning:
             from threatlint import semgrep_platform as sp  # noqa: PLC0415
-            path = record["context"].get("file_path", "")
-            checkout = getattr(args, "checkout", None)
-            target_file = os.path.join(checkout, path) if checkout and path else ""
-            line = int(record["context"]["line"]) if record["context"].get("line", "").isdigit() else _report_line(markdown, avit)
-            rule = record["context"].get("rule", "")
-            if not (rule and target_file and os.path.exists(target_file)):
-                print("  ! Rule not tuned: pass --checkout <AVIT checkout> so the tuned rule can be validated against the flagged file")
-            else:
-                try:
-                    sp.tune_rule(markdown, kind, rule, target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]},
-                                 project=avit_semgrep.tuning_project(target, matches))
-                except sp.SemgrepError as exc:
-                    print(f"  ! Rule not tuned: {exc}")
-                    return 1
+            try:
+                _tune_verified_rule(args, markdown, avit, kind, record["context"], sg_token, dep, target, matches)
+            except (sp.SemgrepError, sn.ServiceNowError, ResolveError) as exc:
+                print(f"  ! Rule not tuned: {exc}")
+                return 1
+        if unmatched and getattr(args, "require_complete_semgrep", False):
+            return 1
     return 0
 
 
@@ -296,13 +343,9 @@ def cmd_semgrep(args) -> int:
         print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
     if markdown and kind in ("sast", "secrets"):
         from threatlint import semgrep_platform as sp  # noqa: PLC0415
-        path = context.get("file_path", "")
-        target_file = os.path.join(args.checkout, path) if getattr(args, "checkout", None) and path else ""
-        line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
         try:
-            sp.tune_rule(markdown, kind, context.get("rule", ""), target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]},
-                         project=avit_semgrep.tuning_project(target, matches))
-        except sp.SemgrepError as exc:
+            _tune_verified_rule(args, markdown, avit, kind, context, sg_token, dep, target, matches)
+        except (sp.SemgrepError, sn.ServiceNowError, ResolveError) as exc:
             print(f"  ! Rule not tuned: {exc}")
             return 1
     return 0

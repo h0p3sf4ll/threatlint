@@ -30,6 +30,8 @@ from .agent_tools import (
     _tool_read as _tool_read,
     _validate_bash as _validate_bash,
 )
+from .claude_api import run_agent as _run_claude_api
+from .responses_api import run_agent as _run_responses_agent
 from .installation import (
     cmd_install as cmd_install,
     cmd_list as cmd_list,
@@ -59,6 +61,28 @@ def _resolve_provider(args: argparse.Namespace) -> tuple[str, str, str] | None:
 def cmd_run(args: argparse.Namespace) -> int:
     """Run an AppSec analysis via a local or cloud LLM."""
     mode = args.mode
+    if getattr(args, "resolve_avits", False):
+        if mode != "fp-review" or args.provider not in ("claude", "claude-code", "codex", "copilot"):
+            print(_red("ERROR: --resolve-avits requires `run fp-review` with --provider claude, claude-code, codex, or copilot."))
+            return 1
+        if not getattr(args, "yes", False):
+            print(_red("ERROR: --resolve-avits requires --yes for headless ServiceNow and Semgrep updates."))
+            return 1
+        if getattr(args, "isst", None) and (getattr(args, "avit", None) or getattr(args, "avit_file", None)):
+            print(_red("ERROR: --isst discovers associated AVITs; omit --avit and --avit-file."))
+            return 1
+        if getattr(args, "findings", None) or getattr(args, "design", None) or getattr(args, "output_dir", None):
+            print(_red("ERROR: --resolve-avits uses ServiceNow AVITs and temporary reports; omit --findings, --design, and --output-dir."))
+            return 1
+    elif getattr(args, "isst", None):
+        print(_red("ERROR: --isst requires --resolve-avits --yes."))
+        return 1
+    elif getattr(args, "yes", False):
+        print(_red("ERROR: --yes is only used with --resolve-avits on this command."))
+        return 1
+    elif getattr(args, "semgrep_deployment", None) or getattr(args, "semgrep_rule_hash_id", None):
+        print(_red("ERROR: --semgrep-deployment and --semgrep-rule-hash-id require --resolve-avits."))
+        return 1
     resolved_provider = _resolve_provider(args)
     if resolved_provider is None:
         return 1
@@ -79,6 +103,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(_SEMGREP_INSTALL)
             return 1
 
+    if getattr(args, "resolve_avits", False):
+        from .avit_headless import run as run_avit_headless  # noqa: PLC0415
+        model = _default_run_model(provider, getattr(args, "model", ""))
+        if getattr(args, "daybreak_blue", False) and not model:
+            model = "gpt-6-sol"
+        return run_avit_headless(args, system_prompt, model, args.semgrep_version,
+                                 provider=provider, base_url=base_url, api_key=api_key)
+
     repo_root = _git_output("rev-parse", "--show-toplevel") or str(Path.cwd())
     try:
         avits = _load_requested_avits(args, mode)
@@ -96,9 +128,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     except (design_inputs.DesignInputError, OSError) as exc:
         print(_red(f"ERROR: Cannot load design inputs: {exc}"))
         return 1
-    user_msg += design_inputs.context(design, images_as_files=provider == "claude-code")
+    user_msg += design_inputs.context(design, images_as_files=provider in ("claude-code", "codex", "copilot"))
 
     model = _default_run_model(provider, getattr(args, "model", ""))
+    if provider == "codex" and getattr(args, "daybreak_blue", False) and not model:
+        model = "gpt-6-sol"
     _print_run_header(mode, provider, base_url, model, getattr(args, "target", "") or "")
     for document in design.documents:
         print(f"  Design    : {document.name} ({document.kind}{f', {document.truncated:,} characters truncated' if document.truncated else ''})")
@@ -109,6 +143,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         if provider == "claude-code":
             from threatlint.claude_code import run_agent as run_claude_code  # noqa: PLC0415
             output = run_claude_code(system_prompt, user_msg, repo_root, model, images=design.images)
+        elif provider == "codex":
+            from threatlint.codex_cli import run_agent as run_codex  # noqa: PLC0415
+            output = run_codex(system_prompt, user_msg, repo_root, model, images=design.images,
+                               daybreak_blue=getattr(args, "daybreak_blue", False))
+        elif provider == "copilot":
+            from threatlint.copilot_cli import run_agent as run_copilot  # noqa: PLC0415
+            output = run_copilot(system_prompt, user_msg, repo_root, model, images=design.images)
+        elif provider == "daybreak":
+            output = _run_responses_agent(f"{base_url}/responses", model, system_prompt, user_msg,
+                                          repo_root, api_key=api_key, images=design.images,
+                                          access_program="daybreak_blue")
+        elif provider == "daybreak-bedrock":
+            output = _run_responses_agent(f"{base_url}/responses", model, system_prompt, user_msg,
+                                          repo_root, api_key=api_key, images=design.images)
+        elif provider in ("claude", "bedrock"):
+            endpoint = f"{base_url}/messages" if provider == "claude" else base_url
+            output = _run_claude_api(endpoint, model, system_prompt, user_msg, repo_root, api_key=api_key, images=design.images)
         else:
             output = _run_agent(base_url, model, system_prompt, user_msg, repo_root, api_key=api_key, images=design.images)
     except RuntimeError as exc:
@@ -129,28 +180,31 @@ def cmd_run(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="threatlint",
-        description="Manage threatlint AppSec agents for Claude Code",
+        description="Manage threatlint AppSec agents and security workflows",
     )
     parser.add_argument("--version", action="version", version=f"threatlint {__version__}")
 
     sub = parser.add_subparsers(dest="command")
 
     # install
-    p_install = sub.add_parser("install", help="Install agents and commands into .claude/")
+    p_install = sub.add_parser("install", help="Install agents and workflows for Claude Code, Codex, Copilot, or LM Studio")
     p_install.add_argument("--local", action="store_true",
-        help="Install into .claude/ in the current directory instead of ~/.claude/")
+        help="Install into the target repository instead of the user directory")
     p_install.add_argument("--directory", metavar="DIR",
         help="Target repo directory when using --local (default: current directory)")
-    p_install.add_argument("--lmstudio", action="store_true",
+    p_install_client = p_install.add_mutually_exclusive_group()
+    p_install_client.add_argument("--lmstudio", action="store_true",
         help="Install agents to ~/.lmstudio/agents/ for use in Bionic / LM Studio")
-    p_install.add_argument("--copilot", action="store_true",
+    p_install_client.add_argument("--copilot", action="store_true",
         help="Install Copilot agents and skills (.github/ with --local; ~/.copilot/ otherwise)")
+    p_install_client.add_argument("--codex", action="store_true",
+        help="Install Codex agent skills (.codex/skills/ with --local; ~/.codex/skills/ otherwise)")
     p_install.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     p_install.add_argument("-q", "--quiet", action="store_true", help="Suppress file-by-file output")
 
     # run
     _MODES = list(_MODE_TO_AGENT)
-    p_run = sub.add_parser("run", help="Run an AppSec analysis via LM Studio (no Claude required)")
+    p_run = sub.add_parser("run", help="Run an AppSec analysis with a local model or selected cloud provider")
     p_run.add_argument("mode", choices=_MODES, metavar="MODE",
         help=f"Analysis type: {{{', '.join(_MODES)}}}")
     p_run.add_argument("--target", metavar="TARGET",
@@ -168,16 +222,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Head commit SHA (security-review only)")
     p_run.add_argument("--model", metavar="MODEL",
         help="Model ID (default: auto-detect for lmstudio; gpt-5.6 for openai; "
-             f"{_models.SCAN_MODEL} for claude, or THREATLINT_SCAN_MODEL)")
+             f"{_models.SCAN_MODEL} for claude, or THREATLINT_SCAN_MODEL; exact Bedrock ID for bedrock; "
+             "gpt-6-sol for daybreak; fixed Bedrock Daybreak Blue ID for daybreak-bedrock)")
     p_run.add_argument("--provider", metavar="PROVIDER", default="lmstudio",
         choices=list(_RUN_PROVIDERS),
-        help="LLM provider: lmstudio (default), openai, claude (API key), or claude-code (your Claude Code login)")
+        help="LLM provider: lmstudio (default), openai, claude, claude-code, codex, copilot (signed-in CLI), bedrock (Claude), "
+             "daybreak (OpenAI API), or daybreak-bedrock (Amazon Bedrock)")
+    p_run.add_argument("--daybreak-blue", action="store_true",
+        help="Enable approved Daybreak Blue access for --provider codex (uses gpt-6-sol unless --model is set)")
     p_run.add_argument("--api-key", metavar="KEY", dest="api_key",
-        help="API key for the provider (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
+        help="API key for the provider (or set OPENAI_API_KEY / ANTHROPIC_API_KEY / AWS_BEARER_TOKEN_BEDROCK / BEDROCK_API_KEY)")
+    p_run.add_argument("--bedrock-region", metavar="REGION",
+        help="Bedrock AWS region (default: AWS_REGION / AWS_DEFAULT_REGION, then ~/.claude/settings.json env, then us-east-1)")
     p_run.add_argument("--base-url", metavar="URL", default="http://localhost:1234/v1",
         help="LM Studio API base URL (default: http://localhost:1234/v1)")
     p_run.add_argument("--output-dir", metavar="DIR",
         help="Directory for the output report (default: repository root)")
+    p_run.add_argument("--resolve-avits", action="store_true",
+        help="Headlessly review --avit or --isst findings, attach Word reports, and apply verdicts (Claude, Codex, Copilot; requires --yes)")
+    p_run.add_argument("--isst", metavar="ISST", action="append", default=[],
+        help="ServiceNow ISST record whose repository and branch identify associated AVITs (repeatable; with --resolve-avits)")
+    p_run.add_argument("--yes", action="store_true",
+        help="Apply --resolve-avits without prompting after each verified verdict")
+    p_run.add_argument("--semgrep-deployment", metavar="SLUG",
+        help="Semgrep deployment slug or ID when the token can access several (with --resolve-avits)")
+    p_run.add_argument("--semgrep-rule-hash-id", metavar="HASH",
+        help="Authoritative Secrets ruleHashId for Semgrep correlation (with --resolve-avits)")
     add_avit_arguments(p_run)
 
     # list
@@ -185,9 +255,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # uninstall
     p_un = sub.add_parser("uninstall", help="Remove installed agents and commands")
-    p_un.add_argument("--local", action="store_true", help="Target .claude/ in the current directory")
+    p_un.add_argument("--local", action="store_true", help="Target the repository install")
     p_un.add_argument("--directory", metavar="DIR", help="Target repo directory when using --local")
-    p_un.add_argument("--copilot", action="store_true", help="Remove owned Copilot agents and skills")
+    p_un_client = p_un.add_mutually_exclusive_group()
+    p_un_client.add_argument("--copilot", action="store_true", help="Remove owned Copilot agents and skills")
+    p_un_client.add_argument("--codex", action="store_true", help="Remove owned Codex agent skills and workflows")
     p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     p_un.add_argument("-q", "--quiet", action="store_true", help="Suppress file-by-file output")
 

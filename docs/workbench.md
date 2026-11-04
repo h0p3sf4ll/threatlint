@@ -29,19 +29,27 @@ report preview. Word export also needs Python **3.9+** with `python-docx`.
 
 ### Models and credentials
 
-Open **Settings → Model provider**, select a provider, and **Load models**. Choose an available
-tool-capable model; manual model IDs are also accepted.
+Open **Settings → Model provider**, select a provider, and **Load models** where available. Choose an available
+tool-capable model; manual model IDs are also accepted. Codex uses its built-in default model unless you enter an override.
+For **Amazon Bedrock**, enter the exact Claude model or inference profile ID manually and
+choose the AWS region; the model picker does not query Bedrock for available models.
 
 | Provider | Setup and credential lookup |
 | --- | --- |
 | LM Studio / compatible | Load a model supporting OpenAI-compatible streamed tool calls and start the server; default URL `http://localhost:1234/v1`. Remote hosts require HTTPS; HTTP is loopback-only. |
 | Anthropic | Session key → `ANTHROPIC_API_KEY` → `env` in `~/.claude/settings.json` (`ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`) → `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL`, from environment or settings, supports a gateway. |
 | Claude Code | Your Claude Code login: install Claude Code and run `claude` once to sign in. No key. Agents run through `claude -p` in restricted, read-only mode (see [setup](setup.md#cloud-providers)). |
-| OpenAI | Session key → `OPENAI_API_KEY` → API key in `~/.codex/auth.json`. A Codex ChatGPT-account sign-in is not used. |
+| Amazon Bedrock | Session key → `AWS_BEARER_TOKEN_BEDROCK` → `BEDROCK_API_KEY` → those names in `env` in `~/.claude/settings.json`. Uses a Bedrock API key with the regional Messages endpoint. Enter the exact Claude model/profile ID; no Anthropic model default is applied. Region: Settings → `AWS_REGION` → `AWS_DEFAULT_REGION` → Claude settings → `us-east-1`. IAM access keys and AWS SSO are not used by this provider. |
+| Daybreak Blue · OpenAI API | Session key → `OPENAI_API_KEY` → API key in Codex's API-key login file. Requires an approved OpenAI organization and enabled project. Uses `gpt-6-sol` with the `daybreak_blue` access program through the Responses API. |
+| Daybreak Blue · Amazon Bedrock | Session key → `AWS_BEARER_TOKEN_BEDROCK` → `BEDROCK_API_KEY` → those names in `env` in `~/.claude/settings.json`. Requires approved model access in `us-east-2`. Uses `openai.gpt-daybreak-blue-5.6-sol` through Bedrock Mantle's Responses API. |
+| OpenAI | Session key → `OPENAI_API_KEY` → API key in Codex's API-key login file (`$CODEX_HOME/auth.json` or `~/.codex/auth.json`). A ChatGPT-account sign-in does not supply an OpenAI API key. |
+| Codex | Your signed-in Codex CLI: run `codex login` first. No API key or explicit model is required. Agents use an ephemeral `codex exec` run with a read-only sandbox and isolated user config, so an unset model uses Codex's built-in default. Threatlint does not read Codex OAuth tokens. Select **Use Daybreak Blue** only if your account has approved access; this selects `gpt-6-sol` by default for that run. |
 | GitHub Copilot | Session token → `COPILOT_GITHUB_TOKEN` → `GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token`. Run `gh auth login` first if needed. |
 
-On Windows, `~` means `%USERPROFILE%`. The Workbench never reads Claude Code's OAuth credentials;
-the **Claude Code** provider runs the `claude` CLI, which signs itself in. Copilot lists plan-enabled models supporting tool calls and `/chat/completions`;
+On Windows, `~` means `%USERPROFILE%`. The Workbench never reads Claude Code's or Codex's OAuth credentials;
+those CLI providers sign themselves in. Codex receives only its login location and basic operating-system/network environment,
+so other Threatlint integration secrets are not inherited by its subprocess. Its sandbox keeps repository inspection read-only.
+Copilot lists plan-enabled models supporting tool calls and `/chat/completions`;
 account quotas still apply.
 
 With Anthropic, **Threatlint default** follows the runner's review/chat model policy. An explicit
@@ -265,8 +273,12 @@ Context is delimited as untrusted evidence. Threads retain the last 20 turns wit
 
 ## Metrics
 
-Use [Metrics and dashboards](dashboards.md) to group saved findings by workspace, severity,
-specialist, or time. Scores describe reported evidence, not certified security posture.
+Use [Metrics and dashboards](dashboards.md) to group saved findings and synced ServiceNow AVIT
+or DefectDojo records by workspace, severity, specialist, or time. The separate all-AVIT summary
+uses ServiceNow's Aggregate API to count every readable AVIT and apply filters server-side;
+it does not download individual records. Choose a detailed source when tracker and local reports
+may contain the same issue. Tracker refreshes are read-only and start only when you request one.
+Scores describe reported evidence, not certified security posture.
 
 ## In-app help
 

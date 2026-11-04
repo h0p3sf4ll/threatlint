@@ -43,3 +43,10 @@ def test_true_positive_comment_keeps_remediation_on_the_avit():
     assert "AVIT0042599 is a confirmed finding" in comment
     assert "must be fixed in the AVIT itself" in comment
     assert sctask.closing_comment is text.closing_comment
+
+
+def test_ambiguous_without_report_is_described_as_pending_without_claiming_attachment():
+    comment = text.closing_comment([{"avit": "AVIT0042599", "disposition": "AMBIGUOUS", "report": None}], leave_open=True)
+    assert "Available AVIT reports are attached" in comment
+    assert "report unavailable" in comment
+    assert "its report is attached" not in comment

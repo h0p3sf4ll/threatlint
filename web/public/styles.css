@@ -335,6 +335,49 @@
 .metrics-select{margin:0;display:flex;flex-direction:column;gap:4px;min-width:200px}
 .metrics-select select{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:14px}
 .metrics-actions{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto;align-items:center}
+.metrics-connections{padding:16px 18px;margin-bottom:18px}
+.metrics-connections-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+.metrics-connections-heading h2{font-size:18px;margin:4px 0 5px}
+.metrics-connections-heading p{margin:0;max-width:680px}
+.metrics-tracker-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.metrics-tracker-card{border:1px solid var(--border);border-radius:8px;padding:13px 14px;background:#111a17}
+.metrics-tracker-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.metrics-tracker-heading h3{margin:0;font-size:14px}
+.metrics-tracker-badge{border:1px solid var(--border);border-radius:99px;padding:3px 7px;font:10px var(--mono);white-space:nowrap;color:var(--subtle)}
+.metrics-tracker-badge.connected{border-color:#49785b;color:#a6d7b3;background:#1d3225}
+.metrics-tracker-card p{margin:9px 0 12px;min-height:18px}
+.metrics-tracker-actions{display:flex;flex-wrap:wrap;gap:7px}
+.metrics-avit-scope{display:flex;flex-direction:column;gap:7px;margin:12px 0;padding:11px;border:1px solid var(--border-soft);border-radius:7px;background:#0e1715}
+.metrics-avit-scope label{font-weight:600;color:var(--text)}
+.metrics-avit-scope select,.metrics-avit-scope textarea{width:100%;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:13px}
+.metrics-avit-scope textarea{font-family:var(--mono);resize:vertical;overflow-wrap:anywhere}
+.metrics-avit-scope p{margin:0;min-height:0}
+.metrics-saved-scope summary{cursor:pointer;color:var(--accent)}
+.metrics-saved-scope code{display:block;margin-top:5px;padding:7px;border-radius:5px;background:#111c18;font:11px var(--mono);overflow-wrap:anywhere;white-space:pre-wrap}
+.avit-aggregate{padding:16px 18px;margin-bottom:18px}
+.avit-aggregate-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px 12px}
+.avit-aggregate-filters label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--subtle)}
+.avit-aggregate-filters input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:13px}
+.avit-aggregate-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+.avit-aggregate-actions span{margin-right:auto}
+.avit-aggregate-result{margin-top:16px}
+.avit-aggregate-meta{font-size:12px;color:var(--subtle);margin:0 0 10px;overflow-wrap:anywhere}
+.avit-aggregate-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.avit-aggregate-kpi{border:1px solid var(--border-soft);border-radius:7px;padding:11px 12px;background:#111a17}
+.avit-aggregate-kpi strong{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text)}
+.avit-aggregate-kpi span{display:block;margin-top:3px;font-size:11px;color:var(--subtle)}
+.avit-aggregate-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.avit-aggregate-breakdown h3{font-size:13px;margin:0 0 8px}
+.avit-aggregate-breakdown table{width:100%;border-collapse:collapse;font-size:12px}
+.avit-aggregate-breakdown th,.avit-aggregate-breakdown td{padding:5px 7px;border-bottom:1px solid var(--border-soft);text-align:left}
+.avit-aggregate-breakdown td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+@media(max-width:740px){.avit-aggregate-kpis,.avit-aggregate-breakdown{grid-template-columns:1fr}}
+.metrics-other-trackers{margin-top:13px;font-size:13px}
+.metrics-other-trackers summary{color:var(--accent);cursor:pointer}
+.metrics-other-tracker-list{display:grid;gap:8px;margin-top:10px}
+.metrics-other-tracker{display:flex;flex-wrap:wrap;gap:7px 12px;align-items:baseline;padding:8px 10px;border:1px solid var(--border-soft);border-radius:6px}
+.metrics-other-tracker strong{font-weight:500;min-width:130px}
+#metrics-tracker-error:not(:empty){margin:12px 0 0}
 .dashboard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
 .dashboard-widget{padding:16px 18px;display:flex;flex-direction:column;min-height:120px}
 .dashboard-widget.size-2{grid-column:span 2}.dashboard-widget.size-4{grid-column:1/-1}
@@ -403,6 +446,7 @@
 .video-dialog video{width:100%;border-radius:8px;background:#000}
 @media(max-width:1000px){.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-widget.size-4{grid-column:1/-1}.runtime-role{grid-template-columns:1fr 1fr}}
 @media(max-width:740px){.dashboard-grid{grid-template-columns:1fr}.dashboard-widget.size-2{grid-column:auto}.help-glossary{grid-template-columns:1fr}}
+@media(max-width:740px){.metrics-connections-heading{flex-direction:column}.metrics-tracker-cards{grid-template-columns:1fr}}
 .chart-heat-cell.on-light{color:#0d1714}
 
 /* Developer flow: grouped navigation and get-started checklist. */
@@ -559,3 +603,10 @@ output.operations-status,output.field-note,output.toast{display:block}
 
 /* Design inputs on the Review code page. */
 .design-input-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}.design-input-item{display:flex;align-items:center;gap:9px;border:1px solid var(--border);border-radius:6px;background:#111a18;padding:6px 9px}.design-input-item strong{font-size:12px;font-weight:500;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.design-input-item .small{flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.settings-card .provider-group{border:0;min-width:0;padding:0;margin:20px 0 0}
+.settings-card .provider-group legend{padding:0;color:var(--text);font-size:13px;font-weight:600}
+.settings-card .provider-group .provider-options{grid-template-columns:repeat(3,minmax(0,1fr));margin:10px 0 0}
+.settings-card .daybreak-group .provider-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:900px){.settings-card .provider-group .provider-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:500px){.settings-card .provider-group .provider-options{grid-template-columns:minmax(0,1fr)}}

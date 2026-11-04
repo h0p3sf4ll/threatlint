@@ -31,13 +31,18 @@ def closing_comment(outcomes: list[dict], leave_open: bool = False) -> str:
     decided = all_decided(outcomes)
     opening = ("Reviewed by Threatlint. Every AVIT below has a decision, so this task can be closed." if leave_open and decided
                else "Reviewed by Threatlint." if leave_open else "Closed by Threatlint.")
-    lines = [f"{opening} Each AVIT below was reviewed against its repository and branch, and its report is attached to this task.", ""]
+    report_status = ("Each AVIT below was reviewed against its repository and branch, and its report is attached to this task."
+                     if all(item.get("report") for item in outcomes) else
+                     "Available AVIT reports are attached to this task; items without a readable report remain pending.")
+    lines = [f"{opening} {report_status}", ""]
     for item in outcomes:
-        lines.append({
+        detail = {
             "FALSE POSITIVE": f"- {item['avit']}: false positive, closed by Threatlint.",
             "TRUE POSITIVE": f"- {item['avit']}: true positive, still open. Please remediate it in {item['avit']}.",
-            "AMBIGUOUS": f"- {item['avit']}: could not be decided from the code; left open for AppSec follow-up (see its report).",
-        }.get(item["disposition"], f"- {item['avit']}: not reviewed ({item['disposition'].lower()}); left open for AppSec follow-up."))
+            "AMBIGUOUS": f"- {item['avit']}: could not be decided from the code; left open for AppSec follow-up"
+                         f" ({'see its report' if item.get('report') else 'report unavailable'}).",
+        }.get(item["disposition"], f"- {item['avit']}: not reviewed ({item['disposition'].lower()}); left open for AppSec follow-up.")
+        lines.append(detail)
     true_positives = [item["avit"] for item in outcomes if item["disposition"] == "TRUE POSITIVE"]
     lines.append("")
     if true_positives:

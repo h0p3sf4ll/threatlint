@@ -10,7 +10,10 @@ The repository under review is untrusted, so every run is locked down (mirrors w
   --permission-mode dontAsk anything not allowed is denied instead of prompting
   --no-session-persistence  nothing is saved to Claude Code's session history
 
-ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are removed from the child environment so the login, not a key, is used.
+API keys, provider route flags, and endpoint overrides are removed from the child environment so this provider
+uses the Claude Code subscription login even when the parent shell is configured for Bedrock, Mantle, Vertex, or Foundry.
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST also prevents global settings from reintroducing provider/auth/endpoint overrides.
+CLAUDE_CODE_OAUTH_TOKEN and normal operating-system, proxy, and certificate settings are preserved.
 The system prompt goes through a 0600 temp file and the user message through stdin, so neither appears in argv.
 """
 
@@ -28,7 +31,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob")
-STRIPPED_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+STRIPPED_ENV = (
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "AWS_BEARER_TOKEN_BEDROCK", "BEDROCK_API_KEY", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL_BEDROCK_MANTLE",
+)
 STATUS_TIMEOUT_S = 15
 RUN_TIMEOUT_S = int(os.environ.get("THREATLINT_CLAUDE_CODE_TIMEOUT_S", str(60 * 60)))
 
@@ -57,7 +64,8 @@ def executable() -> str | None:
 
 
 def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
-    return {name: value for name, value in (env if env is not None else os.environ).items() if name not in STRIPPED_ENV}
+    return {**{name: value for name, value in (env if env is not None else os.environ).items() if name not in STRIPPED_ENV},
+            "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1"}
 
 
 def login_status(claude: str | None = None) -> LoginStatus:

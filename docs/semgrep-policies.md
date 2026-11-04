@@ -25,16 +25,21 @@ not inferred; relevant ambiguous exceptions fail closed.
 ## Unified mutation limits
 
 V2 detection selection is **not** legacy `MODE_MONITOR`, `MODE_COMMENT`, or
-`MODE_BLOCK`. Automatic `tune_rule` publication and shared-rule republishing are
-unsupported on Unified deployments and fail before publication. Existing live
-tuning can still supply the rule base and satisfy the no-op path without
-republishing. A shared rule is never republished as a project-scoped change.
+`MODE_BLOCK`. A new, locally proven `tune_rule` proposal can be published and
+selected for one exact project when the original is directly selected in that
+project's detection policy. A current, exact Semgrep finding for the same
+project, branch, rule, file, line, and product can also establish a ruleset
+original. The policy change excludes the original and includes the tuned rule
+for that project only. Shared-rule republishing remains unsupported:
+changing its body would affect other projects. Existing live tuning can still
+supply the rule base and satisfy the no-op path without republishing. A shared
+rule is never republished as a project-scoped change.
 If the live tuning already covers the false positive but the original still
 runs, `tune_rule` can repair the project exception and returns that change with
 its rollback data; an already-correct policy produces no writes.
 
 For an already published, independently validated rule, an explicitly reviewed
-detection-only replacement can use:
+detection-only replacement can also use:
 
 ```python
 changes = semgrep_platform.replace_in_policies(
@@ -45,8 +50,9 @@ changes = semgrep_platform.replace_in_policies(
 
 This opts into detection selection only, not a remediation or blocking mode.
 Without that explicit mode, the legacy monitor default is rejected on V2.
-Replacement requires a directly selected original rule; ruleset-only membership
-cannot establish which product to replace. `disable_originals(..., project=...)`
+Replacement requires a directly selected original rule unless the resolver
+supplies an exact open finding that proves the product for a ruleset original.
+`disable_originals(..., project=...)`
 can add a project exclusion for a ruleset original when an enabled tuned rule
 already identifies the product. It never disables the original deployment-wide.
 Unified mutations without an explicit project name fail closed.

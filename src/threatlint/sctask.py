@@ -20,7 +20,7 @@ import urllib.parse
 
 from threatlint import servicenow as sn
 from threatlint import sctask_cli, sctask_text
-from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, ResolveError, _confirm, _session
+from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, ResolveError, _confirm, _false_positive_choices, _session
 from threatlint.sctask_text import _SCTASK, closing_comment, parse_sctask_numbers
 from threatlint.sctask_cli import add_sctask_parser
 
@@ -28,6 +28,7 @@ TABLE = "sc_task"
 # Closed Complete; override for instances with a different choice list.
 CLOSED_STATE = os.environ.get("THREATLINT_SNOW_SCTASK_CLOSED_STATE", "3")
 REPORT_SUFFIX = "-threatlint-fp-review.docx"
+REPORT_STEM = "-threatlint-fp-review"
 ACCESS_HELP = ("The OAuth client needs read and write access to the sc_task table (and to sys_attachment for it). "
                "Ask the ServiceNow team to add sc_task to the client's ACLs.")
 
@@ -67,11 +68,21 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
         (TRUE_POSITIVE_COMMENT, "TRUE POSITIVE"),
         (AMBIGUOUS_COMMENT.split(".")[0], "AMBIGUOUS"),
     ))
-    query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={row['sys_id']}^file_name={avit}{REPORT_SUFFIX}",
-                                    "sysparm_fields": "sys_id,file_name", "sysparm_limit": "1"})
-    attachments = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result", [])
+    # A repeated headless review retains each report with a timestamped name.
+    # Read the newest matching attachment, including the original fixed name.
+    query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={row['sys_id']}^ORDERBYDESCsys_created_on",
+                                    "sysparm_fields": "sys_id,file_name,sys_created_on", "sysparm_limit": "200"})
+    attachments = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result")
+    if not isinstance(attachments, list):
+        raise ResolveError(f"ServiceNow did not return a readable report attachment list for {avit}")
+    valid_name = re.compile(rf"{re.escape(avit)}{re.escape(REPORT_STEM)}(?:-(\d{{8}}T\d{{12}}Z))?\.docx")
+    reports = [(match.group(1) or "", item) for item in attachments if isinstance(item, dict)
+               if (match := valid_name.fullmatch(str(item.get("file_name", ""))))
+               and re.fullmatch(r"[0-9a-f]{32}", str(item.get("sys_id", "")))]
+    latest = max(reports, key=lambda pair: pair[0])[1] if reports else None
     return {"avit": avit, "disposition": disposition, "state": row.get("state", ""),
-            "report": attachments[0]["sys_id"] if attachments else None}
+            "report": latest["sys_id"] if latest else None,
+            "report_name": latest["file_name"] if latest else None}
 
 
 def _download(instance: str, token: str, attachment_id: str) -> bytes:
@@ -87,7 +98,18 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, lea
     if not avits:
         raise ResolveError(f"{number} names no AVIT numbers in its description")
     outcomes = [avit_outcome(instance, token, avit) for avit in avits]
+    closed_positives = [item["avit"] for item in outcomes if item["disposition"] == "TRUE POSITIVE"
+                        and (str(item.get("state", "")).strip().lower().startswith("closed")
+                             or str(item.get("state", "")).strip() == _false_positive_choices()[0])]
+    if closed_positives:
+        raise ResolveError(f"Cannot update {number}: true-positive AVITs {', '.join(closed_positives)} "
+                           "remain closed in ServiceNow; verify or reopen them before updating the task")
     decided = sctask_text.all_decided(outcomes)
+    missing_decided = [item["avit"] for item in outcomes
+                       if item["disposition"] in ("TRUE POSITIVE", "FALSE POSITIVE") and not item["report"]]
+    if missing_decided:
+        raise ResolveError(f"Cannot update {number}: no readable Threatlint report is attached to "
+                           f"{', '.join(missing_decided)}; attach the AVIT report before closing the task")
     closing = decided and not leave_open
     for item in outcomes:
         print(f"  {item['avit']} : {item['disposition']}{' · report attached' if item['report'] else ' · no Threatlint report'}", file=out)
@@ -95,9 +117,12 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, lea
              f"{' and close the task' if closing else ' (the task stays open)'}?", yes)
     from threatlint.avit_resolve import _DOCX  # noqa: PLC0415
     query = urllib.parse.urlencode({"sysparm_query": f"table_name={TABLE}^table_sys_id={task['sys_id']}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
-    existing = {row.get("file_name") for row in sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result", [])}
+    attached = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result")
+    if not isinstance(attached, list) or any(not isinstance(row, dict) for row in attached):
+        raise ResolveError(f"ServiceNow did not return a readable attachment list for {number}")
+    existing = {sn._field_value(row.get("file_name")) for row in attached}
     for item in outcomes:
-        name = f"{item['avit']}{REPORT_SUFFIX}"
+        name = item.get("report_name") or f"{item['avit']}{REPORT_SUFFIX}"
         if not item["report"] or name in existing:
             continue
         upload = urllib.parse.urlencode({"table_name": TABLE, "table_sys_id": task["sys_id"], "file_name": name})

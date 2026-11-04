@@ -97,9 +97,91 @@ async function runOpenAi({ systemPrompt, userMessage, images = [], history = [],
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
 
+/** OpenAI's Daybreak access selector is a Responses API field, not a Chat Completions field.
+ * Bedrock Daybreak uses the same API shape but must omit the OpenAI selector. */
+async function responsesTurn({ baseUrl, model, input, systemPrompt, key, signal, onEvent, accessProgram = 'daybreak_blue' }) {
+  checkAbort(signal);
+  const response = await fetch(`${baseUrl}/responses`, {
+    method: 'POST', signal, redirect: 'error',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, instructions: systemPrompt, input, store: false, stream: true,
+      ...(accessProgram ? { access_programs: { cyber: accessProgram } } : {}), max_output_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
+      tools: TOOL_SCHEMAS.map(tool => ({ type: 'function', name: tool.name, description: tool.description,
+        parameters: tool.input_schema, strict: false })) }),
+  });
+  if (response.status === 429) throw new Error('The model provider rate-limited this request or the plan quota is used up (HTTP 429). Wait, or choose another model or provider.');
+  if (!response.ok) throw new Error(`Model request failed (HTTP ${response.status}). ${accessProgram
+    ? 'Check Daybreak Blue access, the OpenAI project API key, and model availability.'
+    : 'Check Bedrock Daybreak Blue access, the Bedrock API key, and region availability.'}`);
+  if (!response.body) throw new Error('The model returned no response stream');
+  const decoder = new TextDecoder();
+  let buffer = '', completed = null;
+  function consume(frame) {
+    const raw = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+    if (!raw || raw === '[DONE]') return;
+    let event;
+    try { event = JSON.parse(raw); } catch { throw new Error('The model returned an invalid streaming response'); }
+    if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') onEvent({ type: 'text_chunk', text: event.delta });
+    if (event.type === 'response.completed') completed = event.response;
+    if (event.type === 'response.failed' || event.type === 'response.incomplete' || event.type === 'error') {
+      throw new Error('The model stopped before completing the report. Check Daybreak Blue access and the selected model.');
+    }
+  }
+  for await (const chunk of response.body) {
+    checkAbort(signal);
+    buffer += decoder.decode(chunk, { stream: true });
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop();
+    for (const frame of frames) consume(frame);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consume(buffer);
+  if (!completed || completed.status !== 'completed' || !Array.isArray(completed.output)) {
+    throw new Error('The model stream ended before a complete response was received');
+  }
+  return completed;
+}
+
+function responseText(output) {
+  return output.filter(item => item.type === 'message').flatMap(item => item.content || [])
+    .filter(part => part.type === 'output_text').map(part => part.text || '').join('');
+}
+
+async function runResponses({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, accessProgram = 'daybreak_blue' }) {
+  const content = images.length ? [{ type: 'input_text', text: userMessage },
+    ...images.map(image => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` }))] : userMessage;
+  const input = [...history, { role: 'user', content }];
+  for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    checkAbort(signal);
+    onEvent({ type: 'iteration', n: iteration });
+    const turn = await responsesTurn({ baseUrl, model, input, systemPrompt, key, signal, onEvent, accessProgram });
+    // In stateless mode, replay every output item, including encrypted reasoning state.
+    input.push(...turn.output);
+    const calls = turn.output.filter(item => item.type === 'function_call');
+    if (!calls.length) {
+      const final = responseText(turn.output);
+      if (final.trim()) return final;
+      // A reasoning-only response can complete without a final message. Replay
+      // its reasoning items and let the model finish within the iteration cap.
+      continue;
+    }
+    for (const call of calls) {
+      checkAbort(signal);
+      let args;
+      try { args = JSON.parse(call.arguments || '{}'); } catch { throw new Error(`Invalid ${call.name} tool arguments from the model`); }
+      onEvent({ type: 'tool_executing', tool: call.name, input: args, id: call.call_id });
+      const result = await execute(call.name, args);
+      onEvent({ type: 'tool_result', tool: call.name, id: call.call_id, preview: 'Inspection completed' });
+      input.push({ type: 'function_call_output', call_id: call.call_id, output: result });
+    }
+  }
+  throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
+}
+
 async function runClaude({ systemPrompt, userMessage, images = [], history = [], model, key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
   // ANTHROPIC_AUTH_TOKEN-style credentials are bearer tokens; baseUrl is ANTHROPIC_BASE_URL when a gateway is configured.
-  const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key }), ...(baseUrl ? { baseURL: baseUrl } : {}) });
+  const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key, authToken: null }),
+    ...(baseUrl ? { baseURL: baseUrl } : {}), fetchOptions: { redirect: 'error' } });
   const messages = [...history, { role: 'user', content: claudeContent(userMessage, images) }];
   const partial = [];   // report text from turns cut off at the output limit, joined with the final turn
   let continuations = 0;
@@ -107,11 +189,23 @@ async function runClaude({ systemPrompt, userMessage, images = [], history = [],
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
     const stream = client.messages.stream({ model, max_tokens: CLAUDE_MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
-    for await (const event of stream) {
-      checkAbort(signal);
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') onEvent({ type: 'text_chunk', text: event.delta.text });
+    let final;
+    try {
+      for await (const event of stream) {
+        checkAbort(signal);
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') onEvent({ type: 'text_chunk', text: event.delta.text });
+      }
+      final = await stream.finalMessage();
+    } catch (error) {
+      if (signal?.aborted) throw new Error('Cancelled');
+      // Provider error bodies may echo request headers or context. Keep them out of reports and UI events.
+      if (error.status === 429) throw new Error('The model provider rate-limited this request or the plan quota is used up (HTTP 429). Wait, or choose another model or provider.');
+      const status = Number.isInteger(error.status) ? ` (HTTP ${error.status})` : '';
+      throw new Error(`Model request failed${status}. Check the model, credentials, region, and provider availability.`);
     }
-    const final = await stream.finalMessage();
+    if (!['end_turn', 'stop_sequence', 'tool_use', 'max_tokens'].includes(final.stop_reason)) {
+      throw new Error('The model stopped before completing the report. Check the selected model and provider.');
+    }
     const text = final.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
     if (final.stop_reason === 'max_tokens') {
       // A long report ran past the cap: keep what was written and ask for the rest, rather than discarding it.
@@ -137,4 +231,4 @@ async function runClaude({ systemPrompt, userMessage, images = [], history = [],
   throw new Error('Inspection budget reached; analysis remains incomplete');
 }
 
-module.exports = { runClaude, runOpenAi, validateBaseUrl, openAiTurn, TOOL_SCHEMAS };
+module.exports = { runClaude, runOpenAi, runResponses, validateBaseUrl, openAiTurn, responsesTurn, TOOL_SCHEMAS };

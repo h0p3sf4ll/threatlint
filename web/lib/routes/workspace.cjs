@@ -108,15 +108,22 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   // Models the configured (or session) credential can use, for the settings dropdown. POST keeps a typed key out of URLs and logs.
   app.post('/api/models', handle(async req => {
     const provider = String(req.body?.provider || '');
-    if (!['claude', 'claude-code', 'openai', 'copilot'].includes(provider)) throw new HttpError('Unknown model provider');
+    if (!['claude', 'claude-code', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'copilot', 'codex'].includes(provider)) throw new HttpError('Unknown model provider');
     if (provider === 'claude-code') {
       const status = await (integrations.claudeCodeStatus || require('../claude-code.cjs').status)();
       if (!status.installed) throw new HttpError('Claude Code is not installed. Install it, run `claude` once to sign in, then reload.', 401);
       if (!status.loggedIn) throw new HttpError('Claude Code is not signed in. Run `claude` in a terminal and sign in, then reload.', 401);
       return { source: status.source, models: await catalog.listModels(provider, {}) };
     }
-    const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key);
-    return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }) };
+    if (provider === 'codex') {
+      const status = await (integrations.codexStatus || require('../codex.cjs').status)();
+      if (!status.installed) throw new HttpError('Codex CLI is not installed. Install it, run `codex login`, then retry.', 401);
+      if (!status.loggedIn) throw new HttpError('Codex CLI is not signed in. Run `codex login` in a terminal and retry.', 401);
+      return { source: status.source, models: [] };
+    }
+    const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key, { region: req.body?.bedrockRegion });
+    return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }),
+      ...(['bedrock', 'daybreak-bedrock'].includes(provider) ? { manual: provider === 'bedrock', region: credential.region } : {}) };
   }));
   app.get('/api/lmstudio/models', handle(async req => {
     const baseUrl = validateBaseUrl(typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined);

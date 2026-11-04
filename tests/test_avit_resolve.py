@@ -162,7 +162,53 @@ def test_tuning_commands_pass_the_exact_project_name(monkeypatch, tmp_path, comm
     args = _args(tmp_path, REPORT)
     args.checkout, args.skip_rule_tuning, args.line = str(tmp_path), False, None
     assert (ar.cmd_resolve(args) if command == "resolve" else ar.cmd_semgrep(args)) == 0
-    assert calls == [{"project": canonical}]
+    assert calls == [{"project": canonical, "verified_finding": False}]
+
+
+def test_rule_tuning_fetches_the_exact_avit_branch_when_checkout_is_missing(monkeypatch):
+    from pathlib import Path
+    from threatlint import semgrep_platform as sp
+
+    target = {"organization": "synthetic-org", "project": "P", "name": "repo", "branch": "develop"}
+    context = {"rule": "synthetic.rule", "file_path": "src/flagged.py", "line": "2"}
+    checked_out = []
+    tuned = []
+
+    def checkout(requested, directory, path):
+        checked_out.append((requested.copy(), path))
+        flagged = Path(directory) / path
+        flagged.parent.mkdir(parents=True)
+        flagged.write_text("first\nflagged()\n", encoding="utf-8")
+
+    monkeypatch.setattr(sn, "checkout_repository", checkout)
+    monkeypatch.setattr(sp, "tune_rule", lambda _report, _kind, _rule, file, line, *_rest, **_kw:
+                        tuned.append((file, line, Path(file).read_text(encoding="utf-8"))))
+    ar._tune_verified_rule(types.SimpleNamespace(checkout=None), REPORT, AVIT, "sast", context,
+                           "synthetic-token", {"id": 7, "slug": "synthetic"}, target,
+                           [{"project": "synthetic-org/P/repo"}])
+    assert checked_out == [(target, "src/flagged.py")]
+    assert tuned[0][1:] == (2, "first\nflagged()\n")
+    assert not Path(tuned[0][0]).exists(), "temporary repository must be removed"
+
+
+def test_rule_tuning_rejects_flagged_path_escape_before_checkout(monkeypatch):
+    monkeypatch.setattr(sn, "checkout_repository", lambda *_args: pytest.fail("unsafe path must not be checked out"))
+    with pytest.raises(ar.ResolveError, match="escapes"):
+        ar._tune_verified_rule(types.SimpleNamespace(checkout=None), REPORT, AVIT, "sast",
+                               {"rule": "synthetic.rule", "file_path": "../outside.py", "line": "2"},
+                               "synthetic-token", {"id": 7, "slug": "synthetic"},
+                               {"branch": "develop"}, [])
+
+
+def test_ruleset_tuning_requires_an_exact_open_semgrep_finding():
+    target = {"organization": "synthetic-org", "project": "P", "name": "repo", "branch": "develop"}
+    context = {"rule": "synthetic.rule", "file_path": "src/flagged.py"}
+    found = {"status": "open", "product": "sast", "project": "synthetic-org/P/repo",
+             "ref": "develop", "rule": "synthetic.rule", "path": "src/flagged.py", "line": 2}
+    assert ar._verified_tuning_match(target, context, "sast", 2, [found])
+    for change in ({"ref": "main"}, {"line": 3}, {"path": "src/other.py"},
+                   {"status": "ignored"}, {"project": "another/P/repo"}, {"rule": "other.rule"}):
+        assert not ar._verified_tuning_match(target, context, "sast", 2, [{**found, **change}])
 
 
 def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ignores_semgrep(monkeypatch, tmp_path):
@@ -207,6 +253,28 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     triage = next(body for _path, body in semgrep_calls if body is not None)
     assert triage["issue_type"] == "secrets" and triage["issue_ids"] == [55] and triage["new_triage_reason"] == "false_positive"
     assert "Closed as false positive" in out.getvalue()
+
+
+def test_headless_false_positive_still_tunes_rule_without_semgrep_match_and_reports_partial_completion(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
+    monkeypatch.setattr(ar, "semgrep_matches", lambda *_args: ({"id": 7, "slug": "synthetic"}, []))
+    tuned = []
+    monkeypatch.setattr("threatlint.semgrep_platform.tune_rule", lambda *_args, **_kwargs: tuned.append(True))
+    args = _args(tmp_path, REPORT)
+    args.require_complete_semgrep = True
+    args.skip_rule_tuning = False
+    path = sn._flatten(ROW)["u_file_path"]
+    flagged = tmp_path / path
+    flagged.parent.mkdir(parents=True)
+    flagged.write_text("flagged\n", encoding="utf-8")
+    args.checkout = str(tmp_path)
+    assert ar.cmd_resolve(args) == 1
+    assert tuned == [True], "missing triage match must not suppress a proven rule update"
+    assert any(method == "PATCH" for method, _url, _data in fake.calls)
+    assert any("/attachment/file" in url for _method, url, _data in fake.calls)
 
 
 def test_true_positive_attaches_the_report_and_leaves_the_avit_open(monkeypatch, tmp_path):
@@ -309,6 +377,103 @@ def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path)
     args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
     assert ar.cmd_resolve(args) == 0
     assert not any(u.endswith("/attachment/file") for _m, u, _d in fake.calls)
+
+
+def test_headless_repeat_attaches_new_version_beside_existing_report(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    original = fake.__call__
+
+    def existing(url, **kwargs):
+        if url.split("?")[0].endswith("/api/now/attachment"):
+            return {"result": [{"file_name": f"{AVIT}-threatlint-fp-review.docx"}]}
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", existing)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
+    args.attachment_name = f"{AVIT}-threatlint-fp-review-20261104T180000123456Z.docx"
+    assert ar.cmd_resolve(args) == 0
+    uploads = [u for _m, u, _d in fake.calls if u.endswith("/attachment/file")]
+    assert len(uploads) == 1
+
+    args.attachment_name = f"{AVIT}-other.docx"
+    with pytest.raises(ar.ResolveError, match="attachment name is invalid"):
+        ar.cmd_resolve(args)
+
+
+def test_attachment_listing_failure_prevents_avit_update(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    original = fake.__call__
+
+    def failing(url, **kwargs):
+        if url.split("?")[0].endswith("/api/now/attachment"):
+            raise sn.ServiceNowError("Attachment list unavailable")
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", failing)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
+    with pytest.raises(sn.ServiceNowError, match="Attachment list unavailable"):
+        ar.cmd_resolve(args)
+    assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
+
+
+def test_malformed_attachment_listing_prevents_avit_update(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    original = fake.__call__
+
+    def malformed(url, **kwargs):
+        if url.split("?")[0].endswith("/api/now/attachment"):
+            return {"result": {"file_name": "not a list"}}
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", malformed)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    with pytest.raises(ar.ResolveError, match="readable AVIT attachment list"):
+        ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE")))
+    assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
+
+
+def test_true_positive_on_previously_closed_avit_attaches_but_reports_not_open(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    old_row = {**ROW, "state": {"display_value": "Closed", "value": "3"}}
+    original = fake.__call__
+
+    def previously_closed(url, **kwargs):
+        if "sysparm_query=number%3D" in url:
+            return {"result": [old_row]}
+        if kwargs.get("method") == "PATCH":
+            fake.calls.append(("PATCH", url.split("?")[0], kwargs.get("data")))
+            return {"result": {"state": "3", "substate": "3"}}
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", previously_closed)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stdout", output)
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 1
+    assert any("/attachment/file" in url for _m, url, _d in fake.calls)
+    assert "could not be confirmed" in output.getvalue()
+    assert "AVIT left open" not in output.getvalue()
+
+
+def test_true_positive_uses_stored_open_state_when_business_rule_reopens_avit(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    old_row = {**ROW, "state": {"display_value": "Closed", "value": "3"}}
+    original = fake.__call__
+
+    def reopened(url, **kwargs):
+        if "sysparm_query=number%3D" in url:
+            return {"result": [old_row]}
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", reopened)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stdout", output)
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
+    assert "AVIT left open" in output.getvalue()
 
 
 def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypatch):

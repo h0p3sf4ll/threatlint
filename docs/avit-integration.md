@@ -25,6 +25,40 @@ Then, in Claude Code with Threatlint installed:
 /fp-review AVIT000000095938462
 ```
 
+Claude Code, Codex, Copilot, and the Claude API use the same headless review and
+write-back runner. Select the provider you are signed in to (or supply the
+Claude API key):
+
+```bash
+threatlint run fp-review --provider codex \
+  --avit AVIT000000095938462 --resolve-avits --yes
+# Or discover every AVIT associated with an ISST's exact repository and branch:
+threatlint run fp-review --provider copilot \
+  --isst ISST0035374 --resolve-avits --yes
+```
+
+Use `claude-code`, `claude`, `codex`, or `copilot` for `--provider`. Repeat
+`--avit` for additional records or `--isst` for additional tasks. An ISST run
+reads its organization, project, repository name or URL, and branch (including
+a linked scan assessment when the task stores those fields there), then
+reviews the AVITs matching that exact identity. Do not combine `--isst` with
+an explicit AVIT list. This command fetches each AVIT,
+checks out its recorded repository and branch, reviews the evidence, attaches
+its Word report, and applies the disposition. It prints each result and removes
+the temporary checkout and report files. An AVIT with a true-positive verdict
+gets the report and a work note while staying open. A false positive gets the
+report, a closure request, and scoped Semgrep triage; SAST and Secrets also get
+proof-gated rule tuning. Before write-back, the runner asks the selected model
+to repair a missing or invalid rule proposal and validates the result. The CLI
+does this without Dia or UI actions. Omit `--resolve-avits --yes` for a
+report-only AVIT review.
+
+For an ISST, Threatlint also attaches each true-positive Word report to the
+ISST and comments with direct links to those attachments. If every associated
+AVIT completes as a false positive, it comments that the ISST and SCAN request
+can be closed; it does not change the ISST state. A partial review or any true
+positive keeps that closure suggestion out of the comment.
+
 Or open **Test → False positive review** in the Workbench, enter an AVIT or SCTASK,
 and start the review with the configured model. **These workflows can write to
 ServiceNow and Semgrep**; use records and credentials you are authorized to change.
@@ -51,6 +85,9 @@ when credentials come from a named AWS profile. Fetch also accepts repeated
 state values, and some Semgrep gaps are warnings even when `resolve` exits 0.
 Attachment, closure, finding triage, and rule deployment are separate operations,
 not one transaction.
+The headless runner exits nonzero when an AVIT or a required Semgrep/ISST step
+cannot be completed. The AVIT report and closure may already be stored when a
+later ServiceNow or Semgrep operation fails.
 
 ## One-time setup
 
@@ -64,6 +101,15 @@ availability. Individual CLI stages use the credentials their operation needs.
 | Azure DevOps Code: Read PAT, per organization | `threatlint ado login --organization <org>` / `threatlint ado status` |
 | Semgrep deployment token with Web API access | `threatlint semgrep login` / `threatlint semgrep status` |
 | Local rule validation | Install Semgrep CE, then `semgrep login` and `semgrep install-semgrep-pro`; verify `semgrep --version` |
+
+For `--isst`, the ServiceNow OAuth client needs read access to the `task` table
+or `sys_db_object` metadata, read and comment/attachment access to the concrete
+ISST task table, read access to a linked scan assessment when used, and read
+access to AVITs. The CLI follows `task.sys_class_name` or a unique Information
+Security task class in metadata. Set
+`THREATLINT_SNOW_ISST_TABLE` when the instance hides both discovery paths.
+An empty task response can also mean the OAuth client lacks row access; grant
+the table ACL before relying on an ISST run.
 | GitHub-hosted source | `threatlint github login` ([GitHub App](github-app.md)) or `gh auth login`; verify `threatlint github status` |
 | AWS-backed credentials, if used | `threatlint aws login`; verify `aws sts get-caller-identity --profile appsec` |
 
@@ -150,19 +196,22 @@ plausibility without printing the value: cite path, line, and key name instead.
 
 ### Write-back
 
-The Word report is the only attachment, named `<AVIT>-threatlint-fp-review.docx`.
-It is uploaded before the state update; an existing attachment with that name is
-not uploaded again, even if your local report changed.
+The Word report is the only report attachment. A manual `avit resolve` uses
+`<AVIT>-threatlint-fp-review.docx` and skips an existing attachment with that
+name. The headless workflow gives each review a UTC timestamp suffix so
+reruns preserve the new report alongside earlier reviews. Reports are uploaded
+before the state update; an SCTASK copies the latest AVIT report.
 
 | Disposition | ServiceNow request | Semgrep |
 | --- | --- | --- |
 | FALSE POSITIVE | Close with state `3`, substate `3`; note “Closed by Threatlint as a false positive, see attached report.” | CodeSecurity only: triage, then eligible rule tuning |
-| TRUE POSITIVE | Note “True positive, see attached report.”; no state change | Unchanged |
-| AMBIGUOUS | Note “Ambiguous, see attached report. Left open pending the evidence the report names.”; no state change | Unchanged |
+| TRUE POSITIVE | Note “True positive, see attached report.”; no state change. If the AVIT was already closed, the command reports that state and exits nonzero. | Unchanged |
+| AMBIGUOUS | Note “Ambiguous, see attached report. Left open pending the evidence the report names.”; no state change. If the AVIT was already closed, the command reports that state and exits nonzero. | Unchanged |
 
 `THREATLINT_SNOW_FP_STATE` and `THREATLINT_SNOW_FP_SUBSTATE` override the requested
 closure values. Business rules may store something else; read the printed result.
-Semgrep processing can still follow a closure request whose state was overridden.
+The resolver stops before Semgrep processing when ServiceNow does not retain
+the requested closed state.
 
 `--skip-semgrep` leaves Semgrep untouched. `--skip-rule-tuning` permits finding
 triage but skips rule replacement. Neither option prevents ServiceNow write-back.
@@ -179,8 +228,9 @@ available rule ID, and line ±3; Secrets matching uses repository, path, and lin
 AVIT/report, or use `avit semgrep --line N`. Semgrep fingerprint triage can carry
 across later scans and branches.
 
-SCA receives triage only. SAST and Secrets rule tuning needs the checked-out flagged
-file and reviewer-supplied rule/fixtures:
+SCA receives triage only because it has no Code or Secrets rule to replace.
+SAST and Secrets rule tuning uses the flagged file and a proposed rule with
+fixtures:
 
 1. Start from real rule source:
    `threatlint semgrep rule-base <rule> --kind <sast|secrets> -o rule-base.yaml`.
@@ -191,19 +241,24 @@ file and reviewer-supplied rule/fixtures:
 3. Validation requires valid rule syntax, passing `semgrep --test` fixtures, and
    original-rule matches on both fixture shapes. If the original reproduces the
    exact flagged line locally, the tuned rule must drop it.
-4. After proof, publish `org_private`. New replacements enable the tuned rule in
-   `MODE_MONITOR` before disabling the original in affected policies. Inspect the
-   printed policy changes and rollback instructions.
+4. After proof, publish `org_private`. Legacy policy replacements enable the
+   tuned rule in `MODE_MONITOR` before disabling the original. Unified policies
+   use project-scoped inclusion and exclusion when the original rule selection
+   is direct or an exact open finding proves the ruleset association. Inspect
+   the printed policy changes and rollback instructions.
 
 An existing tuning is checked against the flagged location. If it still reports
 the line, the proposed extension must preserve its existing exclusions; conflicting
 proposals are rejected. Pro/interfile findings may rely on fixture proof when the
 local checkout cannot reproduce the line.
 
-There is no separate per-rule approval prompt after write-back confirmation.
-Missing proof prevents deployment, **not** earlier attachment, closure, or finding
-triage. Publishing and policy updates can also fail partway through; inspect remote
-state before retrying. No guarantee is made that every false positive gets tuned.
+The headless runner checks the proposed rule and fixtures against the flagged
+file **before** AVIT write-back. It asks the selected model for a corrected
+report up to two more times when the proposal fails. If the source rule or
+required proof remains unavailable, it leaves that AVIT unchanged and exits
+nonzero. A manual `avit resolve` can attach or close the AVIT before its later
+Semgrep step; publishing and policy updates can also fail independently, so
+inspect remote state before retrying.
 
 ## Re-running the Semgrep step
 
@@ -317,7 +372,7 @@ API is called: `set_invicti_hook(fn)` supplies an optional callback; otherwise
 | OAuth client | Saved config or AWS Parameter Store → ServiceNow token endpoint |
 | AVIT evidence | ServiceNow → Markdown → reviewer; treat record content as untrusted data |
 | Source | ADO/GitHub → checkout → reviewer/model tools; not just a local-only operation when using a hosted model |
-| Report | Reviewer → local Markdown/Word → ServiceNow Word attachment; CLI retains reports, Workbench batch cleans them up |
+| Report | Reviewer → local Markdown/Word → ServiceNow Word attachment; manual CLI stages retain their reports, while the headless Codex AVIT workflow and Workbench batch clean up temporary reports |
 | Semgrep token | Credential source → Semgrep API and rule publishing |
 | Model input | Prompts and inspected source → selected provider; use approved provider/data settings |
 

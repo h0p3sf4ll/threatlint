@@ -19,6 +19,11 @@ const PARAMETER_STORE_URL = 'https://us-west-2.console.aws.amazon.com/systems-ma
 const AWS_REGION = 'us-west-2';
 const AVIT_TABLE = 'sn_vul_app_vulnerable_item';
 const MAX_AVITS = 50;
+const METRICS_PAGE_SIZE = 100;
+const MAX_METRICS_AVITS = 10000;
+const MAX_METRICS_SCOPE_AVITS = 500;
+const METRICS_PAGE_MAX_BYTES = 8 * 1024 * 1024;
+const METRICS_CREATION_LAG_MS = 60_000;
 // AVIT plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
 const AVIT_PATTERN = /^AVIT\d{7,15}$/;
 const SERVICENOW_DOMAINS = ['.service-now.com', '.servicenowservices.com'];
@@ -113,7 +118,7 @@ async function readParameterStore({ profile } = {}) {
   return { clientId: values[idName], clientSecret: values[secretName] };
 }
 
-async function requestJson(fetchImpl, url, options, signal) {
+async function requestJson(fetchImpl, url, options, signal, withHeaders = false, maxBytes = Infinity) {
   let response;
   try {
     // redirect: 'error' keeps the bearer token and client secret on the validated instance.
@@ -125,9 +130,32 @@ async function requestJson(fetchImpl, url, options, signal) {
   }
   if (!response.ok) {
     const hint = { 401: ' Check the client ID and secret.', 403: ' The OAuth client lacks access to this AVIT table operation.' }[response.status] || '';
-    throw new HttpError(`ServiceNow returned HTTP ${response.status}.${hint}`, 502);
+    throw Object.assign(new HttpError(`ServiceNow returned HTTP ${response.status}.${hint}`, 502), { upstreamStatus: response.status });
   }
-  try { return await response.json(); } catch { throw new HttpError('ServiceNow returned a non-JSON response', 502); }
+  try {
+    let data;
+    if (Number.isFinite(maxBytes)) {
+      if (Number(response.headers?.get?.('content-length') || 0) > maxBytes) throw new HttpError('ServiceNow AVIT metrics page is too large', 502);
+      if (response.body && Symbol.asyncIterator in response.body) {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.length;
+          if (size > maxBytes) throw new HttpError('ServiceNow AVIT metrics page is too large', 502);
+          chunks.push(Buffer.from(chunk));
+        }
+        data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } else if (typeof response.text === 'function') {
+        const body = await response.text();
+        if (Buffer.byteLength(body) > maxBytes) throw new HttpError('ServiceNow AVIT metrics page is too large', 502);
+        data = JSON.parse(body);
+      } else data = await response.json(); // test transports may only expose json().
+    } else data = await response.json();
+    return withHeaders ? { data, headers: response.headers } : data;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError('ServiceNow returned a non-JSON response', 502);
+  }
 }
 
 function fieldValue(raw) {
@@ -184,6 +212,215 @@ async function fetchAvits(credentials, numbers, { fetchImpl = fetch, signal } = 
   // Every AVIT is triaged; the CodeSecurity view only decides whether Semgrep is involved.
   for (const item of items) item.view = isCodeSecurity(item) ? 'CodeSecurity' : 'Other';
   return { items, missing: numbers.filter(number => !found.has(number)), excluded: [] };
+}
+
+const METRICS_QUERY_FIELDS = new Set(['number', 'u_repository', 'repository', 'u_scm_tool', 'scanner', 'source',
+  'u_security_finding_source', 'assignment_group', 'cmdb_ci', 'application_release', 'state', 'severity']);
+const METRICS_NARROW_FIELDS = new Set(['number', 'u_repository', 'repository', 'u_scm_tool', 'scanner', 'source',
+  'u_security_finding_source', 'assignment_group', 'cmdb_ci', 'application_release']);
+
+/** A deliberately small, literal subset of encoded queries; arbitrary ServiceNow script expressions are excluded. */
+function validateMetricsScope(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new HttpError('Choose AVIT numbers or a scoped ServiceNow filter before syncing metrics');
+  }
+  if (input.type === 'avits') {
+    const value = Array.isArray(input.avits) ? input.avits.join(' ') : String(input.avits || '');
+    if (value.length > 16 * 1024) throw new HttpError('The AVIT number list is too long');
+    const tokens = [...new Set(value.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
+    if (!tokens.length) throw new HttpError('Enter at least one AVIT number for metrics sync');
+    if (tokens.length > MAX_METRICS_SCOPE_AVITS) throw new HttpError(`Sync at most ${MAX_METRICS_SCOPE_AVITS} AVIT numbers at a time`);
+    if (tokens.some(number => !AVIT_PATTERN.test(number))) throw new HttpError('Every metrics scope number must be AVIT followed by 7 to 15 digits');
+    return { type: 'avits', avits: tokens };
+  }
+  if (input.type === 'query') {
+    const query = typeof input.query === 'string' ? input.query.trim() : '';
+    if (!query || query.length > 2000) throw new HttpError('Enter a scoped ServiceNow filter of at most 2000 characters');
+    const clauses = query.split('^');
+    if (clauses.length > 8) throw new HttpError('Use at most eight AND clauses in the ServiceNow filter');
+    let narrow = false;
+    const normalized = [];
+    for (const clause of clauses) {
+      if (/^sys_created_on>=\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(clause)) {
+        const date = clause.slice('sys_created_on>='.length);
+        if (!Number.isFinite(Date.parse(`${date.replace(' ', 'T')}Z`))) throw new HttpError('Use a valid UTC date and time in the ServiceNow filter');
+        normalized.push(clause);
+        continue;
+      }
+      const match = /^([a-z][a-z0-9_]*)(=|IN)([A-Za-z0-9._/ ,@+-]{1,300})$/i.exec(clause);
+      if (!match || !METRICS_QUERY_FIELDS.has(match[1].toLowerCase())) throw new HttpError('Use literal AND filters on supported AVIT fields; scripts, OR, and functions are not allowed');
+      const field = match[1].toLowerCase(), operator = match[2].toUpperCase(), value = match[3];
+      if (operator === 'IN' && (value.split(',').length > 30 || value.split(',').some(item => !item.trim()))) {
+        throw new HttpError('A ServiceNow IN filter may contain at most 30 nonempty values');
+      }
+      normalized.push(`${field}${operator}${value}`);
+      if (METRICS_NARROW_FIELDS.has(field)) narrow = true;
+    }
+    if (!narrow) throw new HttpError('Add a repository, scanner, source, group, application, or AVIT number clause to narrow this filter');
+    return { type: 'query', query: normalized.join('^') };
+  }
+  throw new HttpError('Choose AVIT numbers or a scoped ServiceNow filter before syncing metrics');
+}
+
+/** Scoped read-only snapshot for metrics. A failed or oversized sync never replaces the previous snapshot. */
+async function fetchAvitMetrics(credentials, { scope, fetchImpl = fetch, signal, now = Date.now() } = {}) {
+  const validScope = validateMetricsScope(scope);
+  const { instance } = credentials;
+  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  // Exclude records created while pagination runs. The one-minute lag also absorbs clock skew.
+  const cutoff = new Date(now - METRICS_CREATION_LAG_MS);
+  cutoff.setUTCMilliseconds(0);
+  const cutoffDate = cutoff.toISOString().slice(0, 10);
+  const cutoffTime = cutoff.toISOString().slice(11, 19);
+  const scopeQuery = validScope.type === 'avits' ? `numberIN${validScope.avits.join(',')}` : validScope.query;
+  const cutoffQuery = `${scopeQuery}^sys_created_on<=javascript:gs.dateGenerate('${cutoffDate}','${cutoffTime}')^ORDERBYsys_id`;
+  const fields = ['sys_id', 'number', 'short_description', 'severity', 'risk_rating', 'priority', 'state', 'substate',
+    'source', 'scanner', 'rule', 'sys_created_on', 'sys_updated_on', 'first_found', 'last_found', 'location',
+    'source_file', 'line_number', 'application_release', 'cmdb_ci', 'u_repository', 'repository', 'u_security_finding_source'];
+  const items = new Map();
+  const numbers = new Set();
+  let firstTotal = null;
+  for (let offset = 0; offset <= MAX_METRICS_AVITS; offset += METRICS_PAGE_SIZE) {
+    const query = new URLSearchParams({ sysparm_query: cutoffQuery, sysparm_fields: fields.join(','),
+      sysparm_display_value: 'all', sysparm_exclude_reference_link: 'true', sysparm_suppress_pagination_header: 'false',
+      sysparm_limit: String(METRICS_PAGE_SIZE), sysparm_offset: String(offset) });
+    const { data, headers: responseHeaders } = await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal, true, METRICS_PAGE_MAX_BYTES);
+    if (!Array.isArray(data?.result)) throw new HttpError('ServiceNow returned an invalid AVIT list', 502);
+    const rows = data.result;
+    for (const row of rows) {
+      const number = fieldValue(row?.number).toUpperCase();
+      const sysId = fieldValue(row?.sys_id?.value ?? row?.sys_id);
+      if (!AVIT_PATTERN.test(number) || !/^[0-9a-f]{32}$/i.test(sysId)) {
+        throw new HttpError('ServiceNow did not return a readable AVIT number and sys_id for every row. Check table field access.', 502);
+      }
+      const created = fieldValue(row?.sys_created_on?.value ?? row?.sys_created_on);
+      const createdAt = Date.parse(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(created) ? `${created.replace(' ', 'T')}Z` : created);
+      if (!Number.isFinite(createdAt) || createdAt > cutoff.getTime()) {
+        throw new HttpError('ServiceNow did not apply the AVIT creation cutoff or hid sys_created_on; metrics were not updated.', 502);
+      }
+      if (items.has(sysId) || numbers.has(number)) throw new HttpError('ServiceNow AVIT pages changed during metrics sync; retry', 409);
+      numbers.add(number);
+      items.set(sysId, { id: number, sysId, fields: Object.fromEntries(fields.filter(name => row?.[name] !== undefined)
+        .map(name => [name, row[name]])) });
+    }
+    // The Table API applies page limits before ACL filtering. A short visible page is not the end.
+    const link = responseHeaders?.get?.('link') || '';
+    const totalHeader = responseHeaders?.get?.('x-total-count') || '';
+    const total = /^\d+$/.test(totalHeader) ? Number(totalHeader) : null;
+    if (!link && total === null) throw new HttpError('ServiceNow did not return AVIT pagination headers; metrics were not updated.', 502);
+    if (total !== null && total > MAX_METRICS_AVITS) throw new HttpError(`The ServiceNow filter matches more than ${MAX_METRICS_AVITS} AVIT rows. Narrow it before syncing metrics.`, 413);
+    if (total !== null && firstTotal !== null && total !== firstTotal) throw new HttpError('ServiceNow AVIT count changed during metrics sync; retry', 409);
+    if (total !== null) firstTotal = total;
+    const hasNext = /<[^>]+>\s*;\s*rel="?next"?/i.test(link) || (total !== null && offset + METRICS_PAGE_SIZE < total);
+    if (items.size > MAX_METRICS_AVITS || (offset >= MAX_METRICS_AVITS && (hasNext || rows.length))) {
+      throw new HttpError(`ServiceNow has more than ${MAX_METRICS_AVITS} AVIT rows. Narrow the integration scope before syncing metrics.`, 413);
+    }
+    if (!hasNext) {
+      if (validScope.type === 'avits' && !items.size) throw new HttpError('No scoped AVITs were readable. Check the numbers and ServiceNow table access.', 404);
+      return { items: [...items.values()], createdThrough: cutoff.toISOString(), scope: validScope };
+    }
+  }
+  throw new HttpError(`ServiceNow has more than ${MAX_METRICS_AVITS} AVIT rows. Narrow the integration scope before syncing metrics.`, 413);
+}
+
+/** Count the complete credential-visible AVIT population without downloading individual records. */
+function validateAggregateFilters(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError('AVIT filters must be an object');
+  const allowed = new Set(['riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo']);
+  for (const key of Object.keys(input)) if (!allowed.has(key)) throw new HttpError(`Unsupported AVIT filter: ${key}`);
+  const filters = {};
+  for (const key of ['riskRating', 'state', 'substate']) {
+    const value = String(input[key] ?? '').trim();
+    if (value && !/^\d{1,3}$/.test(value)) throw new HttpError(`${key} must be a ServiceNow numeric choice value`);
+    if (value) filters[key] = value;
+  }
+  const group = String(input.assignmentGroup ?? '').trim();
+  if (group && !/^[0-9a-f]{32}$/i.test(group)) throw new HttpError('Assignment group must be a 32-character ServiceNow sys_id');
+  if (group) filters.assignmentGroup = group.toLowerCase();
+  const source = String(input.source ?? '').trim();
+  if (source && (source.length > 100 || !/^[\w .()/+-]+$/.test(source))) throw new HttpError('Finding source contains unsupported characters');
+  if (source) filters.source = source;
+  for (const key of ['createdFrom', 'createdTo']) {
+    const value = String(input[key] ?? '').trim();
+    const parsed = Date.parse(`${value}T00:00:00Z`);
+    if (value && (!/^\d{4}-\d\d-\d\d$/.test(value) || !Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value)) {
+      throw new HttpError(`${key} must be a valid YYYY-MM-DD date`);
+    }
+    if (value) filters[key] = value;
+  }
+  if (filters.createdFrom && filters.createdTo && filters.createdFrom > filters.createdTo) {
+    throw new HttpError('Created from must be on or before Created to');
+  }
+  return filters;
+}
+
+function aggregateQuery(filters) {
+  const terms = [];
+  for (const [key, field] of [['riskRating', 'risk_rating'], ['state', 'state'], ['substate', 'substate'],
+    ['assignmentGroup', 'assignment_group'], ['source', 'source']]) {
+    if (filters[key]) terms.push(`${field}=${filters[key]}`);
+  }
+  if (filters.createdFrom) terms.push(`sys_created_on>=javascript:gs.dateGenerate('${filters.createdFrom}','00:00:00')`);
+  if (filters.createdTo) terms.push(`sys_created_on<=javascript:gs.dateGenerate('${filters.createdTo}','23:59:59')`);
+  return terms.join('^');
+}
+
+function statsCount(result) {
+  const count = Number(result?.stats?.count);
+  if (!Number.isSafeInteger(count) || count < 0) throw new HttpError('ServiceNow returned an invalid AVIT count', 502);
+  return count;
+}
+
+function statsGroups(result, field) {
+  if (!Array.isArray(result)) throw new HttpError(`ServiceNow returned invalid AVIT ${field} groups`, 502);
+  return result.map(row => {
+    const group = row?.groupby_fields?.find(item => item?.field === field) || row?.groupby_fields?.[0];
+    if (!group) throw new HttpError(`ServiceNow omitted an AVIT ${field} group value`, 502);
+    const value = String(group.value ?? '').slice(0, 100);
+    return { key: String(group.display_value || value || '(blank)').slice(0, 100), value, count: statsCount(row) };
+  });
+}
+
+async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch, signal } = {}) {
+  const selected = validateAggregateFilters(filters);
+  const { instance } = credentials;
+  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  const baseQuery = aggregateQuery(selected);
+  async function stats(groupBy = '', extra = '') {
+    const query = new URLSearchParams({ sysparm_count: 'true', sysparm_display_value: 'all' });
+    const encoded = [baseQuery, extra].filter(Boolean).join('^');
+    if (encoded) query.set('sysparm_query', encoded);
+    if (groupBy) query.set('sysparm_group_by', groupBy);
+    const data = await requestJson(fetchImpl, `${instance}/api/now/stats/${AVIT_TABLE}?${query}`, { headers }, signal, false, METRICS_PAGE_MAX_BYTES);
+    return data?.result;
+  }
+  const total = statsCount(await stats());
+  const unavailable = [];
+  async function groups(field, label) {
+    try { return statsGroups(await stats(field), field); }
+    catch (error) {
+      if (error.upstreamStatus === 403) { unavailable.push(label); return null; }
+      throw error;
+    }
+  }
+  const riskRating = await groups('risk_rating', 'Risk rating');
+  const state = await groups('state', 'State');
+  const substate = await groups('substate', 'Substate');
+  let falsePositive = null;
+  try {
+    falsePositive = statsCount(await stats('', `state=${process.env.THREATLINT_SNOW_FP_STATE || '3'}^substate=${process.env.THREATLINT_SNOW_FP_SUBSTATE || '3'}`));
+  } catch (error) {
+    if (error.upstreamStatus === 403) unavailable.push('False positive');
+    else throw error;
+  }
+  return {
+    source: 'servicenow-avit', mode: 'aggregate', scope: 'all-readable-avits', filters: selected,
+    asOf: new Date().toISOString(), total, falsePositive, riskRating, state, substate,
+    limitations: [
+      unavailable.length ? `${unavailable.join(', ')} unavailable with this ServiceNow account's field permissions.` : '',
+      'The stored false-positive count uses the configured Closed / False Positive state and substate codes; ServiceNow business rules may clear the substate.',
+    ].filter(Boolean).join(' '),
+  };
 }
 
 /** AVIT numbers selected by the CodeSecurity view rule; null when no rule is readable. */
@@ -358,4 +595,6 @@ async function semgrepVersion() {
 
 module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
-  CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };
+  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, validateAggregateFilters,
+  METRICS_PAGE_SIZE, MAX_METRICS_AVITS, MAX_METRICS_SCOPE_AVITS,
+  METRICS_CREATION_LAG_MS, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };

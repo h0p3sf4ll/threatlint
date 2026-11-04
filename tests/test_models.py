@@ -79,13 +79,13 @@ def test_cli_claude_provider_uses_anthropic_key(monkeypatch, capsys):
 def test_cli_run_with_claude_sends_scan_model_and_model_flag_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     seen = []
-    monkeypatch.setattr(cli, "_run_agent", lambda base_url, model, *a, **k: seen.append((base_url, model)) or "# Report\n")
+    monkeypatch.setattr(cli, "_run_claude_api", lambda endpoint, model, *a, **k: seen.append((endpoint, model)) or "# Report\n")
     monkeypatch.setattr(cli, "_save_report", lambda output, directory, base, mode: tmp_path / "report.md")
     parser = cli.build_parser()
     assert cli.cmd_run(parser.parse_args(["run", "secrets-scan", "--provider", "claude", "--output-dir", str(tmp_path)])) == 0
     assert cli.cmd_run(parser.parse_args(["run", "secrets-scan", "--provider", "claude", "--model", "claude-opus-5-5",
                                           "--output-dir", str(tmp_path)])) == 0
-    assert seen == [("https://api.anthropic.com/v1", models.SCAN_MODEL), ("https://api.anthropic.com/v1", "claude-opus-5-5")]
+    assert seen == [("https://api.anthropic.com/v1/messages", models.SCAN_MODEL), ("https://api.anthropic.com/v1/messages", "claude-opus-5-5")]
 
 
 # ── Bundled agents and slash commands ─────────────────────────────────────────

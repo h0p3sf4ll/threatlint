@@ -13,6 +13,8 @@ const { createStore } = require('./lib/store.cjs');
 const { createSourceManagers } = require('./lib/scm.cjs');
 const { createRuntimeScanner } = require('./lib/runtime.cjs');
 const { createDashboardStore } = require('./lib/metrics.cjs');
+const { createTrackerMetrics } = require('./lib/tracker-metrics.cjs');
+const { createAvitAggregateStore } = require('./lib/avit-aggregate-store.cjs');
 const { createReportWriter } = require('./lib/report-writer.cjs');
 const { createPipeline, buildUserMessage, validateAttachment } = require('./lib/pipeline.cjs');
 const { createConversations } = require('./lib/chat.cjs');
@@ -66,6 +68,8 @@ function createWorkbench(options = {}) {
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
+  const trackerMetrics = createTrackerMetrics(store.directory);
+  const avitAggregate = createAvitAggregateStore(store.directory);
   const designInputs = createDesignInputs();
   const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations, designInputs });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
@@ -84,7 +88,7 @@ function createWorkbench(options = {}) {
   registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
   registerSourceRoutes(app, { store, scm, integrations: options.integrations });
   registerRuntimeRoutes(app, { runtime, history });
-  registerInsightRoutes(app, { store, history, dashboards, conversations });
+  registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
   registerTriageRoutes(app, { reports, integrations: options.integrations });
   registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });

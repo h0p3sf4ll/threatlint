@@ -11,6 +11,110 @@ for (const name of ['THREATLINT_GITHUB_APP_ID', 'THREATLINT_GITHUB_APP_INSTALLAT
 const { createWorkbench } = require('../server.js');
 const { SKILL_MAP } = require('../lib/agents.cjs');
 
+async function trackerMetrics(page) {
+  const counts = { 'servicenow-avit': 0, defectdojo: 0 };
+  const stamp = '2026-11-04T12:00:00.000Z';
+  let refreshFails = false;
+  let serviceNowConfigured = true;
+  let savedScope = null;
+  const scopeRequests = [];
+  const aggregateRequests = [];
+  let aggregateSummary = null;
+  let aggregateFails = false;
+  const sources = [
+    { id: 'all', label: 'All sources', available: true },
+    { id: 'report', label: 'Threatlint reports', available: true },
+    { id: 'runtime', label: 'Runtime scans', available: true },
+    { id: 'servicenow-avit', label: 'ServiceNow AVIT', available: true },
+    { id: 'defectdojo', label: 'DefectDojo', available: true },
+  ];
+  const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route(/\/api\/metrics\/sources$/, route => refreshFails ? json(route, { error: 'Temporary failure' }, 503) : json(route, { sources, selected: 'all' }));
+  await page.route(/\/api\/trackers$/, route => refreshFails ? json(route, { error: 'Temporary failure' }, 503) : json(route, { trackers: [
+    { id: 'servicenow-avit', label: 'ServiceNow AVIT', available: true, connected: serviceNowConfigured, count: counts['servicenow-avit'], lastSyncedAt: counts['servicenow-avit'] ? stamp : null,
+      scope: savedScope, createdThrough: counts['servicenow-avit'] ? stamp : null },
+    { id: 'defectdojo', label: 'DefectDojo', available: true, connected: true, count: counts.defectdojo, lastSyncedAt: counts.defectdojo ? stamp : null },
+    { id: 'jira', label: 'Jira', available: false, connected: false, description: 'Metrics connection not available yet.' },
+  ] }));
+  await page.route(/\/api\/trackers\/(servicenow-avit|defectdojo)\/sync$/, route => {
+    const id = /\/api\/trackers\/([^/]+)\/sync$/.exec(new URL(route.request().url()).pathname)[1];
+    assert.equal(route.request().method(), 'POST');
+    if (id === 'servicenow-avit') {
+      const { scope } = route.request().postDataJSON();
+      scopeRequests.push(scope);
+      savedScope = scope.type === 'avits' ? { type: 'avits', avits: scope.avits.split(/[\s,]+/).filter(Boolean) } : scope;
+    }
+    counts[id] = id === 'servicenow-avit' ? 3 : 5;
+    return json(route, { source: id, count: counts[id], lastSyncedAt: stamp });
+  });
+  await page.route(/\/api\/trackers\/servicenow-avit\/aggregate$/, route => {
+    if (route.request().method() === 'GET') return json(route, { summary: aggregateSummary });
+    const { filters } = route.request().postDataJSON();
+    aggregateRequests.push(filters);
+    if (aggregateFails) return json(route, { error: 'ServiceNow summary unavailable' }, 502);
+    aggregateSummary = { source: 'servicenow-avit', mode: 'aggregate', scope: 'all-readable-avits', asOf: stamp,
+      filters, total: 67513188, falsePositive: 0,
+      riskRating: [{ key: '2 - High', value: '2', count: 5792762 }],
+      state: [{ key: 'Open', value: '1', count: 9979485 }],
+      substate: [{ key: '(blank)', value: '', count: 67459057 }],
+      limitations: 'The stored false-positive count uses configured state and substate codes.' };
+    return json(route, aggregateSummary);
+  });
+  await page.locator('[data-view="metrics"]').click();
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().waitFor();
+  await page.locator('#avit-aggregate-form [name="state"]').fill('1');
+  await page.locator('#avit-aggregate-submit').click();
+  await page.locator('#avit-aggregate-result', { hasText: '67,513,188' }).waitFor();
+  assert.deepEqual(aggregateRequests[0], { state: '1' });
+  assert.match(await page.locator('#avit-aggregate-result').innerText(), /Risk rating.*State.*Substate/s);
+  aggregateFails = true;
+  await page.locator('#avit-aggregate-form [name="riskRating"]').fill('2');
+  await page.locator('#avit-aggregate-submit').click();
+  await page.locator('#avit-aggregate-error', { hasText: 'previous summary remains visible' }).waitFor();
+  assert.match(await page.locator('#avit-aggregate-result').innerText(), /67,513,188/, 'a failed aggregate refresh preserves the prior count');
+  assert.equal(await page.locator('#metrics-tracker-cards .metrics-tracker-card').count(), 2);
+  assert.match(await page.locator('#metrics-tracker-cards').innerText(), /ServiceNow AVIT/);
+  assert.match(await page.locator('#metrics-tracker-cards').innerText(), /DefectDojo/);
+  await page.locator('.metrics-other-trackers summary').click();
+  assert.match(await page.locator('#metrics-other-tracker-list').innerText(), /Jira\s+Metrics connection not available/i);
+  assert.equal(await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByRole('button', { name: 'Sync now' }).isDisabled(), true, 'AVIT sync requires a scope');
+  await page.locator('#metrics-avit-scope-input').fill('AVIT0000001, AVIT0000002');
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByRole('button', { name: 'Sync now' }).click();
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByText('3 saved findings').waitFor();
+  assert.match(await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().innerText(), /Last synced/);
+  assert.deepEqual(scopeRequests[0], { type: 'avits', avits: 'AVIT0000001, AVIT0000002' });
+  assert.match(await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().innerText(), /Includes AVITs created through/);
+  await page.locator('#metrics-avit-scope-type').selectOption('query');
+  await page.locator('#metrics-avit-scope-input').fill('u_repository=team/repo^state=1');
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByRole('button', { name: 'Sync now' }).click();
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByText(/Last successful scope/).waitFor();
+  assert.deepEqual(scopeRequests[1], { type: 'query', query: 'u_repository=team/repo^state=1' });
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').nth(1).getByRole('button', { name: 'Sync now' }).click();
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').nth(1).getByText('5 saved findings').waitFor();
+  const filtered = new Promise(resolve => page.route(/\/api\/metrics\/query$/, route => {
+    const body = route.request().postDataJSON();
+    if (body.filters?.source === 'defectdojo') resolve(body);
+    route.continue();
+  }));
+  await page.locator('#metrics-source').selectOption('defectdojo');
+  assert.equal((await filtered).filters.source, 'defectdojo');
+  assert.equal(await page.locator('#metrics-export').getAttribute('href'), '/api/metrics/export?source=defectdojo');
+  serviceNowConfigured = false;
+  await page.locator('#metrics-refresh-connections').click();
+  await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByText('Configure in Settings to refresh this snapshot.').waitFor();
+  assert.match(await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().innerText(), /3 saved findings.*Last synced/s);
+  assert.equal(await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().getByRole('button', { name: 'Sync now' }).isDisabled(), true);
+  refreshFails = true;
+  await page.locator('#metrics-refresh-connections').click();
+  await page.locator('#metrics-tracker-error', { hasText: 'Showing the last loaded status' }).waitFor();
+  assert.match(await page.locator('#metrics-tracker-cards').innerText(), /5 saved findings/, 'a failed refresh preserves the last snapshot');
+  await page.unroute(/\/api\/metrics\/query$/);
+  await page.unroute(/\/api\/metrics\/sources$/);
+  await page.unroute(/\/api\/trackers$/);
+  await page.unroute(/\/api\/trackers\/(servicenow-avit|defectdojo)\/sync$/);
+  await page.unroute(/\/api\/trackers\/servicenow-avit\/aggregate$/);
+}
+
 /**
  * Triage a scan report against stubbed /api/scan-import endpoints. The finished import points at the report the
  * smoke run already saved, so Open report and the downloads use the real Findings routes.
@@ -316,6 +420,12 @@ async function fpReviewRun(page) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 
   // The history survives a reload for this browser session.
+  // Persistence is debounced; the completed DOM can precede the sessionStorage write.
+  await page.waitForFunction(() => {
+    const events = JSON.parse(sessionStorage.getItem('threatlint.fpreview.run.v1') || '[]');
+    return events.at(-1)?.type === 'avit_batch_complete'
+      && new Set(events.filter(event => event.type === 'avit_item' && event.done).map(event => event.avit)).size === 4;
+  });
   await page.reload(); await page.locator('#connection-status.online').waitFor(); await page.locator('#view-fpreview:not([hidden])').waitFor();
   assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
   assert.equal(await page.locator('#fpreview-run-log .fp-history-entry').count(), runLog);
@@ -395,6 +505,7 @@ async function fpReviewRun(page) {
     await githubSettings(page);
     await claudeDefaults(page);
     await fpReviewRun(page);
+    await trackerMetrics(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);

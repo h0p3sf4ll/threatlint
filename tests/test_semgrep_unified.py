@@ -258,23 +258,28 @@ def test_post_apply_concurrency_cannot_generate_an_unsafe_rollback(platform, mon
     assert len(platform.writes) == 1
 
 
-def test_existing_unified_tuning_noop_never_republishes_or_changes_policy(platform, monkeypatch):
+def test_existing_unified_tuning_noop_never_republishes_or_changes_policy(platform, monkeypatch, tmp_path):
     data = platform.state["code"]["bundle"]
     data["rules"].append("org.r.tuned")
     data["exceptions"].append({"project": "org/repo", "rule": "r", "rule_type": "rule", "exception_type": "exclude"})
     monkeypatch.setattr(sp, "original_rule_yaml", lambda *args: "synthetic live YAML")
     monkeypatch.setattr(sp, "_matches", lambda *args, **kwargs: [])
     monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("must not republish a covered false positive"))
-    assert sp.tune_rule("unused", "secrets", "r", "", None, "synthetic", {"id": 7},
+    source = tmp_path / "flagged.py"
+    source.write_text("flagged()\n", encoding="utf-8")
+    assert sp.tune_rule("unused", "secrets", "r", str(source), 1, "synthetic", {"id": 7},
                         out=io.StringIO(), project="org/repo") == []
     assert all(item[1] == "GET" for item in platform.calls)
 
 
-def test_tuning_noop_returns_rollback_data_when_project_original_needs_repair(platform, monkeypatch):
+def test_tuning_noop_returns_rollback_data_when_project_original_needs_repair(platform, monkeypatch, tmp_path):
     platform.state["code"]["bundle"]["rules"].append("org.r.tuned")
     monkeypatch.setattr(sp, "original_rule_yaml", lambda *args: "synthetic live YAML")
+    monkeypatch.setattr(sp, "_matches", lambda *args, **kwargs: [])
     monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("must not republish"))
-    changes = sp.tune_rule("unused", "secrets", "r", "", None, "synthetic", {"id": 7},
+    source = tmp_path / "flagged.py"
+    source.write_text("flagged()\n", encoding="utf-8")
+    changes = sp.tune_rule("unused", "secrets", "r", str(source), 1, "synthetic", {"id": 7},
                            out=io.StringIO(), project="org/repo")
     assert len(changes) == 1
     assert changes[0]["rollback"]["if_match"] == "v2"
@@ -292,13 +297,76 @@ def test_shared_unified_rule_extension_fails_before_publication(platform, monkey
     assert platform.writes == []
 
 
-def test_new_unified_tuning_fails_before_publication(platform, monkeypatch):
+def test_new_unified_tuning_publishes_after_proof_and_selects_only_target_project(platform, monkeypatch):
     monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
-    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {"path": "unused"})
-    monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("must not publish without monitor-mode support"))
-    with pytest.raises(sp.SemgrepError, match="cannot enforce MODE_MONITOR"):
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
+        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
+    })
+    published = []
+    monkeypatch.setattr(sp, "publish", lambda *args: published.append(args) or "org.r.tuned")
+    before = deepcopy(platform.state["code"]["bundle"])
+    changes = sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
+                           out=io.StringIO(), project="org/repo")
+    assert len(published) == len(platform.writes) == len(changes) == 1
+    after = platform.state["code"]["bundle"]
+    assert {key: value for key, value in after.items() if key != "exceptions"} == {
+        key: value for key, value in before.items() if key != "exceptions"}
+    assert after["exceptions"][-2:] == [
+        {"project": "org/repo", "rule": "r", "rule_type": "rule", "exception_type": "exclude"},
+        {"project": "org/repo", "rule": "org.r.tuned", "rule_type": "rule", "exception_type": "include"},
+    ]
+
+
+def test_unified_tuning_without_direct_original_fails_before_publication(platform, monkeypatch):
+    platform.state["code"]["bundle"]["rules"] = []
+    platform.state["code"]["bundle"]["rulesets"] = ["p/synthetic"]
+    monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
+        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
+    })
+    monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("unverified policy scope must not publish"))
+    with pytest.raises(sp.SemgrepError, match="No directly selected Unified rule"):
         sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
                      out=io.StringIO(), project="org/repo")
+    assert platform.writes == []
+
+
+def test_verified_ruleset_finding_can_tune_only_its_project(platform, monkeypatch):
+    data = platform.state["code"]["bundle"]
+    data["rules"] = []
+    data["rulesets"] = ["p/synthetic"]
+    before = deepcopy(data)
+    monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
+        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
+    })
+    monkeypatch.setattr(sp, "publish", lambda *args: "org.r.tuned")
+    changes = sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
+                           out=io.StringIO(), project="org/repo", verified_finding=True)
+    assert len(changes) == len(platform.writes) == 1
+    after = platform.state["code"]["bundle"]
+    assert {key: value for key, value in after.items() if key != "exceptions"} == {
+        key: value for key, value in before.items() if key != "exceptions"}
+    assert after["exceptions"][-2:] == [
+        {"project": "org/repo", "rule": "r", "rule_type": "rule", "exception_type": "exclude"},
+        {"project": "org/repo", "rule": "org.r.tuned", "rule_type": "rule", "exception_type": "include"},
+    ]
+
+
+def test_ruleset_tuning_with_ambiguous_pack_exception_fails_before_publication(platform, monkeypatch):
+    data = platform.state["code"]["bundle"]
+    data["rules"] = []
+    data["rulesets"] = ["p/synthetic"]
+    data["exceptions"].append({"project_tag_name": "ambiguous", "rule": "p/synthetic",
+                               "rule_type": "pack", "exception_type": "exclude"})
+    monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
+        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
+    })
+    monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("ambiguous policy must not publish"))
+    with pytest.raises(sp.SemgrepError, match="precedence"):
+        sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
+                     out=io.StringIO(), project="org/repo", verified_finding=True)
     assert platform.writes == []
 
 

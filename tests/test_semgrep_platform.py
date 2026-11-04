@@ -97,6 +97,16 @@ def test_tuning_requires_fixtures(monkeypatch, tmp_path):
     with pytest.raises(sp.SemgrepError, match="fixtures"):
         sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1})
 
+
+def test_rule_is_not_published_when_no_policy_selects_the_original(monkeypatch, tmp_path):
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *_a: {
+        "id": "js.rule.tuned", "path": "validated.yaml", "dropped": True, "original_checked": True,
+    })
+    monkeypatch.setattr(sp, "policy_reads", lambda *_a: [])
+    monkeypatch.setattr(sp, "publish", lambda *_a: pytest.fail("an unselected rule must not be published"))
+    with pytest.raises(sp.SemgrepError, match="No directly selected rule"):
+        sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1})
+
 def test_a_rule_whose_live_tuning_covers_the_line_is_not_tuned_again(monkeypatch, tmp_path):
     monkeypatch.undo()
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
@@ -109,7 +119,17 @@ def test_a_rule_whose_live_tuning_covers_the_line_is_not_tuned_again(monkeypatch
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: example_org.js.rule.tuned\n")
     monkeypatch.setattr(sp, "_matches", lambda *a, **k: [])
     monkeypatch.setattr(sp, "validate_tuned_rule", lambda *a: pytest.fail("must not re-validate or publish"))
+    (tmp_path / "a.js").write_text("eval(x)\n", encoding="utf-8")
     assert sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1}, out=open(os.devnull, "w", encoding="utf-8")) == []
+
+
+def test_missing_flagged_source_does_not_claim_live_tuning_covers_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(sp, "existing_tuning", lambda *a, **k: [{"policy": "Global", "tuned": "org.js.rule.tuned", "mode": "MODE_MONITOR"}])
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *a: "rules:\n  - id: org.js.rule.tuned\n")
+    monkeypatch.setattr(sp, "disable_originals", lambda *a, **k: pytest.fail("coverage cannot be established"))
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *_a: (_ for _ in ()).throw(sp.SemgrepError("fixtures required")))
+    with pytest.raises(sp.SemgrepError, match="fixtures"):
+        sp.tune_rule(REPORT, "sast", "js.rule", str(tmp_path / "missing.js"), 10, "t", {"id": 1})
 
 
 def test_an_already_tuned_rule_that_still_reports_the_line_is_extended_not_skipped(monkeypatch, tmp_path):

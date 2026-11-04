@@ -56,6 +56,28 @@ def test_every_agent_has_a_specialist_skill_and_injected_content():
             assert markdown_body(raw) in prompt
 
 
+def test_shared_investigation_loop_reaches_all_agents_and_standalone_runner(snapshot_runner):
+    checkpoints = (
+        "Reachability checkpoint",
+        "Disconfirming and variant paths",
+        "Validation provenance",
+        "Prioritized root-cause fix",
+        "Bypass regression acceptance",
+    )
+    for agent in skill_map():
+        prompt = agent_prompt(agent)
+        assert all(checkpoint in prompt for checkpoint in checkpoints), agent
+        assert prompt.index("Reachability checkpoint") < prompt.index("Prioritized root-cause fix")
+        assert "Analysis only" in prompt
+        assert "**NOT RUN**" in prompt
+
+    for mode in ("pr-review", "threat-model", "fp-review", "verify-fix"):
+        prompt = snapshot_runner.required_workflows(mode)
+        assert all(checkpoint in prompt for checkpoint in checkpoints), mode
+        assert "Analysis only" in prompt
+        assert "**NOT RUN**" in prompt
+
+
 @pytest.mark.parametrize("mode", list(SPECIALISTS))
 def test_specialist_routing_and_ordered_workflows(mode):
     agent, skills = SPECIALISTS[mode]

@@ -7,9 +7,10 @@
  *   Anthropic: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (and ANTHROPIC_BASE_URL for a gateway), then the `env` block of ~/.claude/settings.json
  *              (%USERPROFILE%\.claude\settings.json on Windows). Claude Code's subscription OAuth login
  *              (macOS Keychain / ~/.claude/.credentials.json) is never read.
- *   OpenAI:    OPENAI_API_KEY, then an API key saved by the Codex CLI in ~/.codex/auth.json (API-key sign-in only;
- *              a ChatGPT-account Codex sign-in is a subscription credential for Codex itself and is never used).
+ *   OpenAI:    OPENAI_API_KEY, then an API key saved by the Codex CLI in ~/.codex/auth.json (API-key sign-in only).
+ *   Codex:     the signed-in Codex CLI authenticates itself; Threatlint never reads its login tokens.
  *   Copilot:   COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, then `gh auth token` (the GitHub CLI sign-in).
+ *   Bedrock:   AWS_BEARER_TOKEN_BEDROCK / BEDROCK_API_KEY, then the env block of ~/.claude/settings.json.
  * Keys never leave this process except to the provider's own API; the UI only learns which source exists.
  */
 
@@ -19,6 +20,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { HttpError } = require('./http.cjs');
+const { bedrockCredential, daybreakBedrockCredential } = require('./bedrock.cjs');
 
 const execFileAsync = promisify(execFile);
 const LIST_TIMEOUT_MS = 8000;
@@ -46,8 +48,15 @@ function anthropicBaseUrl({ env = process.env, home = os.homedir() } = {}) {
   return url.toString().replace(/\/$/, '');
 }
 
-function codexAuth(home = os.homedir()) {
-  try { return JSON.parse(fs.readFileSync(path.join(home, '.codex', 'auth.json'), 'utf8')) || {}; } catch { return {}; }
+function codexAuth(home = os.homedir(), env = process.env) {
+  const directory = env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(home, '.codex');
+  try {
+    const auth = JSON.parse(fs.readFileSync(path.join(directory, 'auth.json'), 'utf8')) || {};
+    // API-key sign-in can supply a project key. A ChatGPT login supplies OAuth
+    // credentials for Codex itself; use the Codex provider for that account.
+    return { auth_mode: auth.auth_mode,
+      OPENAI_API_KEY: auth.auth_mode === 'apikey' && typeof auth.OPENAI_API_KEY === 'string' ? auth.OPENAI_API_KEY : '' };
+  } catch { return {}; }
 }
 
 async function ghToken(run = execFileAsync) {
@@ -58,7 +67,10 @@ async function ghToken(run = execFileAsync) {
 let cachedGhToken = '';
 
 /** Keys known without running a process: session, environment, ~/.claude/settings.json, and the cached gh token. */
-function configuredKey(provider, sessionKey, { env = process.env, home = os.homedir() } = {}) {
+function configuredKey(provider, sessionKey, { env = process.env, home = os.homedir(), region } = {}) {
+  if (provider === 'bedrock') return bedrockCredential(sessionKey, { env, home, region });
+  if (provider === 'daybreak-bedrock') return daybreakBedrockCredential(sessionKey, { env, home, region });
+  if (provider === 'daybreak') provider = 'openai';
   if (typeof sessionKey === 'string' && sessionKey.trim()) return { key: sessionKey.trim(), source: 'session', ...(provider === 'claude' ? { baseUrl: anthropicBaseUrl({ env, home }) } : {}) };
   if (provider === 'claude') {
     const baseUrl = anthropicBaseUrl({ env, home });
@@ -72,8 +84,9 @@ function configuredKey(provider, sessionKey, { env = process.env, home = os.home
   }
   if (provider === 'openai') {
     if (env.OPENAI_API_KEY) return { key: env.OPENAI_API_KEY, source: 'OPENAI_API_KEY' };
-    const codex = codexAuth(home);
-    if (typeof codex.OPENAI_API_KEY === 'string' && codex.OPENAI_API_KEY) return { key: codex.OPENAI_API_KEY, source: '~/.codex/auth.json (Codex API key)' };
+    const codex = codexAuth(home, env);
+    if (typeof codex.OPENAI_API_KEY === 'string' && codex.OPENAI_API_KEY) return { key: codex.OPENAI_API_KEY,
+      source: `${env.CODEX_HOME ? '$CODEX_HOME' : '~/.codex'}/auth.json (Codex API key)` };
   }
   if (provider === 'copilot') {
     for (const name of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']) if (env[name]) return { key: env[name], source: name };
@@ -83,8 +96,8 @@ function configuredKey(provider, sessionKey, { env = process.env, home = os.home
 }
 
 /** { key, source } for a provider; key is '' when nothing is configured. */
-async function resolveKey(provider, sessionKey, { env = process.env, home = os.homedir(), run } = {}) {
-  const known = configuredKey(provider, sessionKey, { env, home });
+async function resolveKey(provider, sessionKey, { env = process.env, home = os.homedir(), run, region } = {}) {
+  const known = configuredKey(provider, sessionKey, { env, home, region });
   if (known.key || provider !== 'copilot') return known;
   cachedGhToken = await ghToken(run);
   return cachedGhToken ? { key: cachedGhToken, source: 'GitHub CLI (gh auth token)' } : known;
@@ -92,9 +105,10 @@ async function resolveKey(provider, sessionKey, { env = process.env, home = os.h
 
 /** Which providers have a credential outside the session, by source label, for the settings UI. */
 async function credentialSources(options = {}) {
-  const entries = await Promise.all(['claude', 'openai', 'copilot'].map(async provider => [provider, (await resolveKey(provider, '', options)).source]));
+  const entries = await Promise.all(['claude', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'copilot'].map(async provider => [provider, (await resolveKey(provider, '', options)).source]));
   const claudeCode = await (options.claudeCodeStatus || require('./claude-code.cjs').status)();
-  return { ...Object.fromEntries(entries), 'claude-code': claudeCode.source };
+  const codex = await (options.codexStatus || require('./codex.cjs').status)();
+  return { ...Object.fromEntries(entries), 'claude-code': claudeCode.source, codex: codex.source };
 }
 
 async function listJson(fetchImpl, url, headers) {
@@ -108,16 +122,24 @@ async function listJson(fetchImpl, url, headers) {
 /** [{ id, name }] the credential can use. */
 async function listModels(provider, credential, { fetchImpl = fetch } = {}) {
   if (provider === 'claude-code') return require('./claude-code.cjs').MODELS;
+  if (provider === 'codex') return [];
   if (!credential.key) {
     const hints = {
       claude: 'Set ANTHROPIC_API_KEY (or the env block of ~/.claude/settings.json), or enter a key. To use your Claude Code login instead, choose the Claude Code provider.',
+      bedrock: 'Set AWS_BEARER_TOKEN_BEDROCK or BEDROCK_API_KEY, or enter a Bedrock API key in Settings.',
+      'daybreak-bedrock': 'Set AWS_BEARER_TOKEN_BEDROCK or BEDROCK_API_KEY, or enter a Bedrock API key with Daybreak Blue access.',
+      daybreak: 'Use an API key from an OpenAI project with Daybreak Blue enabled, or enter one in Settings.',
       openai: codexAuth().auth_mode === 'chatgpt'
-        ? 'Codex is signed in with a ChatGPT account, which only works inside Codex. Run `codex login --with-api-key`, set OPENAI_API_KEY, or enter an API key here.'
+        ? 'Codex is signed in with ChatGPT. Choose the Codex provider to use that login, or set OPENAI_API_KEY for direct OpenAI API access.'
         : 'Set OPENAI_API_KEY, sign Codex in with an API key, or enter a key here.',
       copilot: 'Run `gh auth login` (GitHub CLI) with an account that has Copilot, set GH_TOKEN, or enter a token here.',
     };
     throw new HttpError(hints[provider] || 'No credential is configured.', 401);
   }
+  // The runtime endpoint has no native model-list route. An exact model or inference profile ID is required.
+  if (provider === 'bedrock') return [];
+  if (provider === 'daybreak-bedrock') return [{ id: 'openai.gpt-daybreak-blue-5.6-sol', name: 'Daybreak Blue · GPT-5.6 Sol' }];
+  if (provider === 'daybreak') return [{ id: 'gpt-6-sol', name: 'GPT-6 Sol · Daybreak Blue' }];
   if (provider === 'claude') {
     const headers = { 'anthropic-version': '2023-06-01', ...(credential.bearer ? { Authorization: `Bearer ${credential.key}` } : { 'x-api-key': credential.key }) };
     const models = [];

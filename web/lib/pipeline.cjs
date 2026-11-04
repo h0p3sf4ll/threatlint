@@ -9,8 +9,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AGENTS } = require('./agents.cjs');
 const { executeTool } = require('./tools.cjs');
-const { runClaude, runOpenAi, validateBaseUrl } = require('./providers.cjs');
+const { runClaude, runOpenAi, runResponses, validateBaseUrl } = require('./providers.cjs');
 const { runClaudeCode } = require('./claude-code.cjs');
+const { runCodex } = require('./codex.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
@@ -21,9 +22,9 @@ const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
 const CONTEXT_BUDGET = 48_000;
 const MAX_SCOPE = 12_000;
-const PROVIDERS = ['claude', 'claude-code', 'openai', 'copilot', 'lmstudio'];
+const PROVIDERS = ['claude', 'claude-code', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'copilot', 'codex', 'lmstudio'];
 // Providers that authenticate themselves (no key passes through Threatlint).
-const KEYLESS = new Set(['lmstudio', 'claude-code']);
+const KEYLESS = new Set(['lmstudio', 'claude-code', 'codex']);
 const SECRET_PATTERN = /(?:sk-|ghp_|github_pat_)[\w-]+/g;
 
 const redact = message => String(message).replace(SECRET_PATTERN, '[REDACTED]').slice(0, 500);
@@ -66,24 +67,33 @@ function buildUserMessage(repoPath, target = '', chainContexts = [], attachment 
 function providerRequest(message, purpose = 'review') {
   const provider = message.provider || 'claude';
   if (!PROVIDERS.includes(provider)) throw new HttpError('Unknown model provider');
-  const sessionKey = { claude: message.apiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
-  const credential = KEYLESS.has(provider) ? { key: null } : configuredKey(provider, sessionKey);
+  const sessionKey = { claude: message.apiKey, bedrock: message.bedrockApiKey, daybreak: message.openaiApiKey, 'daybreak-bedrock': message.bedrockApiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
+  const credential = KEYLESS.has(provider) ? { key: null } : configuredKey(provider, sessionKey, { region: message.bedrockRegion });
   const key = credential.key;
   if (!KEYLESS.has(provider) && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
   let model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
   // An explicit model always wins; otherwise Claude follows the policy (Sonnet for scanning, Opus for chat).
   if ((provider === 'claude' || provider === 'claude-code') && (model == null || (typeof model === 'string' && !model.trim()))) model = defaultModel(purpose);
-  if (typeof model !== 'string' || !model.trim() || model.length > 200) throw new HttpError('Choose a model in Settings before running');
-  const baseUrl = { claude: credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
-  return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl, headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
+  if (provider === 'daybreak' && !model) model = 'gpt-6-sol';
+  if (provider === 'daybreak-bedrock' && !model) model = 'openai.gpt-daybreak-blue-5.6-sol';
+  if (provider === 'codex' && !model) model = message.codexDaybreak === true ? 'gpt-6-sol' : '';
+  if (typeof model !== 'string' || (provider !== 'codex' && !model.trim()) || model.length > 200) throw new HttpError('Choose a model in Settings before running');
+  if (provider === 'daybreak' && model.trim() !== 'gpt-6-sol') throw new HttpError('Daybreak Blue through OpenAI uses gpt-6-sol');
+  if (provider === 'daybreak-bedrock' && model.trim() !== 'openai.gpt-daybreak-blue-5.6-sol') throw new HttpError('Choose the Daybreak Blue Bedrock model');
+  if (provider === 'bedrock' && /^openai\./.test(model.trim())) throw new HttpError('Choose Daybreak Blue on Bedrock for OpenAI models');
+  const baseUrl = { claude: credential.baseUrl, bedrock: credential.baseUrl, daybreak: 'https://api.openai.com/v1', 'daybreak-bedrock': credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
+  return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl,
+    daybreakBlue: provider === 'codex' && message.codexDaybreak === true,
+    headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
 }
 
 /** One model run with read-only repository tools. `override` replaces the provider in tests and recordings. */
 function runModel({ settings, systemPrompt, userMessage, images = [], history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
-  const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent,
+  const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent, daybreakBlue: settings.daybreakBlue,
+    accessProgram: settings.provider === 'daybreak-bedrock' ? '' : 'daybreak_blue',
     execute: (name, input) => executeTool(name, input, repoPath) };
   if (override) return override({ ...args, provider: settings.provider, agentId, purpose });
-  return ({ claude: runClaude, 'claude-code': runClaudeCode }[settings.provider] || runOpenAi)(args);
+  return ({ claude: runClaude, bedrock: runClaude, 'claude-code': runClaudeCode, codex: runCodex, daybreak: runResponses, 'daybreak-bedrock': runResponses }[settings.provider] || runOpenAi)(args);
 }
 
 /** ServiceNow AVIT request: FP review only, with session credentials; null when no AVITs were entered. */

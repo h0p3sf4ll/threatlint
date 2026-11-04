@@ -54,13 +54,16 @@ _OPENAI_DEFAULT_MODEL = "gpt-5.6"
 _ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 
 
-_RUN_PROVIDERS = ("lmstudio", "openai", "claude", "claude-code")
+_RUN_PROVIDERS = ("lmstudio", "openai", "claude", "claude-code", "codex", "copilot", "bedrock", "daybreak", "daybreak-bedrock")
 
 
-_API_KEY_ENV = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+_API_KEY_ENV = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "daybreak": "OPENAI_API_KEY"}
 
 
-_PROVIDER_LABEL = {"openai": "OpenAI", "claude": "Anthropic (Claude)", "claude-code": "Claude Code (your login)"}
+_PROVIDER_LABEL = {"openai": "OpenAI", "claude": "Anthropic (Claude)", "claude-code": "Claude Code (your login)",
+                   "codex": "Codex (your login)", "copilot": "GitHub Copilot CLI (your login)",
+                   "bedrock": "Amazon Bedrock (Claude API key)", "daybreak": "Daybreak Blue (OpenAI API)",
+                   "daybreak-bedrock": "Daybreak Blue (Amazon Bedrock API key)"}
 
 
 def _default_run_model(provider: str, explicit: str | None = "") -> str:
@@ -69,6 +72,11 @@ def _default_run_model(provider: str, explicit: str | None = "") -> str:
         return explicit
     if provider in ("claude", "claude-code"):
         return _models.scan_model()
+    if provider == "daybreak":
+        return "gpt-6-sol"
+    if provider == "daybreak-bedrock":
+        from .bedrock import DAYBREAK_BLUE_MODEL  # noqa: PLC0415
+        return DAYBREAK_BLUE_MODEL
     return _OPENAI_DEFAULT_MODEL if provider == "openai" else ""
 
 
@@ -140,6 +148,43 @@ def _resolve_provider(
     """(provider, base_url, api_key), or None after printing why the provider is unusable."""
     provider = getattr(args, "provider", "lmstudio") or "lmstudio"
     api_key = getattr(args, "api_key", "") or ""
+    if getattr(args, "daybreak_blue", False) and provider != "codex":
+        print(_red("ERROR: --daybreak-blue is only supported with --provider codex."))
+        return None
+    if provider == "daybreak-bedrock":
+        from . import bedrock  # noqa: PLC0415
+        model = _default_run_model(provider, getattr(args, "model", ""))
+        if model != bedrock.DAYBREAK_BLUE_MODEL:
+            print(_red(f"ERROR: Daybreak Blue on Bedrock requires model {bedrock.DAYBREAK_BLUE_MODEL}."))
+            return None
+        region = (getattr(args, "bedrock_region", "") or bedrock.DAYBREAK_BLUE_REGION).strip()
+        try:
+            selected = bedrock.configuration(api_key, region)
+            base_url = bedrock.daybreak_blue_endpoint(selected.region)
+        except ValueError as exc:
+            print(_red(f"ERROR: {exc}"))
+            return None
+        return provider, base_url, selected.api_key
+    if provider == "daybreak" and _default_run_model(provider, getattr(args, "model", "")) != "gpt-6-sol":
+        print(_red("ERROR: Daybreak Blue via OpenAI currently uses gpt-6-sol. "
+                   "Choose --model gpt-6-sol or omit --model."))
+        return None
+    if provider == "bedrock":
+        from . import bedrock  # noqa: PLC0415
+        if not (getattr(args, "model", "") or "").strip():
+            print(_red("ERROR: Bedrock requires --model with the exact Bedrock model or inference profile ID. "
+                       "Choose one available to your AWS account and region."))
+            return None
+        if (getattr(args, "model", "") or "").strip().startswith("openai."):
+            print(_red("ERROR: Use --provider daybreak-bedrock for the Daybreak Blue OpenAI model; "
+                       "--provider bedrock uses the Claude Messages API."))
+            return None
+        try:
+            selected = bedrock.configuration(api_key, getattr(args, "bedrock_region", "") or "")
+        except ValueError as exc:
+            print(_red(f"ERROR: {exc}"))
+            return None
+        return provider, selected.messages_url, selected.api_key
     if provider == "claude-code":
         from . import claude_code  # noqa: PLC0415
         status = claude_code.login_status()
@@ -150,12 +195,34 @@ def _resolve_provider(
             print(_red("ERROR: Claude Code is not signed in. Run `claude` in a terminal and sign in, then retry."))
             return None
         return provider, "", ""
+    if provider == "codex":
+        from . import codex_cli  # noqa: PLC0415
+        if api_key:
+            print(_red("ERROR: --provider codex uses your Codex login and does not accept --api-key."))
+            return None
+        status = codex_cli.login_status()
+        if not status.installed:
+            print(_red("ERROR: Codex CLI is not installed. Install Codex and sign in, then retry."))
+            return None
+        if not status.logged_in:
+            print(_red("ERROR: Codex is not signed in. Run `codex login` or open Codex and sign in, then retry."))
+            return None
+        return provider, "", ""
+    if provider == "copilot":
+        from . import copilot_cli  # noqa: PLC0415
+        if api_key:
+            print(_red("ERROR: --provider copilot uses the Copilot CLI login and does not accept --api-key."))
+            return None
+        if not copilot_cli.login_status().installed:
+            print(_red("ERROR: Copilot CLI is not installed. Install it and run `copilot login`, then retry."))
+            return None
+        return provider, "", ""
     if provider in _API_KEY_ENV:
         api_key = api_key or os.environ.get(_API_KEY_ENV[provider], "")
         if not api_key:
             print(_red(f"ERROR: {_PROVIDER_LABEL[provider]} API key required. Pass --api-key or set {_API_KEY_ENV[provider]}."))
             return None
-        return provider, _OPENAI_BASE_URL if provider == "openai" else _ANTHROPIC_BASE_URL, api_key
+        return provider, _OPENAI_BASE_URL if provider in ("openai", "daybreak") else _ANTHROPIC_BASE_URL, api_key
     base_url = args.base_url.rstrip("/")
     if not (list_models or _lmstudio_models)(base_url):
         print(_red("ERROR: LM Studio (Bionic) is not running or no model is loaded."))

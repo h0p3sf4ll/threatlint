@@ -37,10 +37,23 @@ function fakeSpawn(lines, { code = 0, stderr = '' } = {}) {
 }
 
 const RESULT = { type: 'result', subtype: 'success', is_error: false, result: '# Threat model\n\nTM-001 …' };
+const CLOUD_ENV = {
+  CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_MANTLE: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_USE_FOUNDRY: '1', CLAUDE_CODE_USE_ANTHROPIC_AWS: '1',
+  ANTHROPIC_BASE_URL: 'https://different-provider.example', AWS_BEARER_TOKEN_BEDROCK: 'bedrock-key', BEDROCK_API_KEY: 'other-bedrock-key',
+  AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime-override.example', AWS_ENDPOINT_URL_BEDROCK_MANTLE: 'https://mantle-override.example',
+};
+const LOGIN_ENV = { CLAUDE_CODE_OAUTH_TOKEN: 'subscription-token', NODE_EXTRA_CA_CERTS: '/company/ca.pem', HTTPS_PROXY: 'http://company-proxy:8080' };
+
+function assertLoginEnvironment(actual, original) {
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', ...Object.keys(CLOUD_ENV)]) assert.equal(actual[name], undefined, name);
+  for (const name of ['PATH', 'HOME', ...Object.keys(LOGIN_ENV)]) assert.equal(actual[name], original[name], name);
+  assert.equal(actual.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, '1', 'settings cannot restore provider or auth overrides');
+  assert.equal(original.CLAUDE_CODE_USE_BEDROCK, '1', 'the parent environment is not modified');
+}
 
 describe('Claude Code provider', () => {
   it('runs claude -p locked down to read-only tools, without API keys, and returns the report', async () => {
-    const env = fakeInstall();
+    const env = { ...fakeInstall(), ...CLOUD_ENV, ...LOGIN_ENV };
     const { calls, spawnImpl } = fakeSpawn([
       { type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at the routes.' }, { type: 'tool_use', id: 't1', name: 'Grep', input: { pattern: 'app.get' } }] } },
       { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'src/app.js:4' }] } },
@@ -57,9 +70,23 @@ describe('Claude Code provider', () => {
     assert.ok(!call.args.some(arg => arg.includes('threat modeler') || arg.includes('Analyze')), 'prompts never appear in argv');
     assert.equal(call.systemPrompt, 'You are the threat modeler.'); assert.equal(call.input, 'Analyze /repo');
     assert.equal(call.options.env.ANTHROPIC_API_KEY, undefined); assert.equal(call.options.env.ANTHROPIC_AUTH_TOKEN, undefined);
+    assertLoginEnvironment(call.options.env, env);
     assert.equal(call.options.cwd, os.tmpdir());
     assert.deepEqual(events.map(event => event.type), ['text_chunk', 'tool_executing', 'tool_result']);
     assert.ok(!fs.existsSync(call.args[call.args.indexOf('--system-prompt-file') + 1]), 'the prompt file is removed');
+  });
+
+  it('checks login status with the same provider isolation as agent runs', async () => {
+    const env = { ...fakeInstall(), ...CLOUD_ENV, ...LOGIN_ENV };
+    let captured;
+    const status = await claudeCode.status({ env, execFileImpl: (file, args, options, callback) => {
+      captured = { file, args, options };
+      callback(null, JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }));
+    } });
+    assert.deepEqual(captured.args, ['auth', 'status']);
+    assertLoginEnvironment(captured.options.env, env);
+    assert.equal(status.loggedIn, true);
+    assert.equal(status.source, 'Claude Code login (claude.ai)');
   });
 
   it('hands images to Claude Code as files in an added directory', async () => {

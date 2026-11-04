@@ -26,7 +26,7 @@ is not on your path, try `python3 -m threatlint --help`.
 | Browser or desktop | [Workbench guide](workbench.md) | Open a repository and run a review playbook |
 | Claude Code | Install below, then `/security-review` | A scoped report; commands also handle report export |
 | GitHub Copilot | Install below, then choose an AppSec agent | Findings in chat, grounded in available source |
-| Codex or another AGENTS.md client | Follow the AGENTS.md setup below | Repository discovery or a focused review |
+| Codex | Install below, then invoke an AppSec skill | Repository discovery or a focused review |
 | Terminal with local models | Start LM Studio, then `threatlint run` | A report without a cloud model provider |
 | Pull requests | [CI templates](ci-templates.md) | A warn-first review on a test PR |
 | Microsoft Teams | [Teams setup](teams.md) | Review supplied, redacted evidence in a conversation |
@@ -82,25 +82,75 @@ The checkout also contains `.github/prompts/` for threat-model discovery and
 report prompts. The Copilot installer installs agents and skills, not those
 prompt files. Copy the specific prompts separately if you need them.
 
+For headless AVIT or ISST write-back, install and sign in to the Copilot CLI,
+then run `threatlint run fp-review --provider copilot --isst ISST0035374
+--resolve-avits --yes`. This uses the same reviewer and resolver as Claude Code
+and Codex; see the [AVIT workflow](avit-integration.md).
+
 **Export is client-dependent.** Do not assume a chat response created a Word file.
 Use the [converter](reports.md#convert-an-existing-report) when needed.
 
-### Codex and other AGENTS.md clients
+### Codex
+
+This Threatlint checkout already includes repo-local Codex skill entry points.
+For another repository, run from the repository you want to review:
+
+```bash
+threatlint install --codex --local -y
+```
+
+This installs the 22 AppSec agents as native Codex skills under
+`.codex/skills/`. Each agent skill contains its required shared workflows and
+the complete evidence and reporting instructions, so it works in a
+target repository without a Threatlint source checkout. Omit `--local` to
+install for your user under `~/.codex/skills/` (or `$CODEX_HOME/skills/` when
+that variable is set).
+
+Open a new Codex chat, then name the skill you want:
+
+```text
+Use $appsec-threat-modeler to threat model this repository. Discover the
+highest-risk starting scope and cite the evidence.
+```
+
+Codex also uses each skill's description to decide when to load it for a
+matching request. The repository's [AGENTS.md](../AGENTS.md) remains the routing
+and protocol reference when working in this checkout. See the official
+[Codex skill format and locations](https://developers.openai.com/blog/eval-skills)
+and [AGENTS.md loading guidance](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide).
+
+For an authorized, headless ServiceNow false-positive review, use the shared
+CLI with your Codex login:
+
+```bash
+threatlint setup --check
+threatlint run fp-review --provider codex \
+  --avit AVIT000000095938462 --resolve-avits --yes
+```
+
+Repeat `--avit` for more records. Threatlint reviews each AVIT against the
+repository and branch in its record. It attaches a Word report for every
+decided finding: true positives remain open; false positives close, with
+Semgrep triage and proven SAST/Secrets rule tuning. SCA false positives
+receive Supply Chain finding triage without rule tuning. The command uses
+temporary files and prints each outcome; ServiceNow and Semgrep writes can
+succeed or fail separately. Without `--resolve-avits --yes`, `--avit` produces
+a report only. See the [AVIT workflow](avit-integration.md) for setup and
+recovery details.
+
+If your Codex workspace has approved Daybreak Blue access, enable the Daybreak
+toggle in Codex's Advanced model picker for the request. Installing Threatlint
+skills does not grant or enable that access. See [OpenAI's Daybreak overview](https://help.openai.com/en/articles/20001258-openai-daybreak-trusted-access-for-cyber-overview).
+
+To remove this integration, run `threatlint uninstall --codex --local -y`
+from the same repository (or omit `--local` for the user-level install).
+
+### Other AGENTS.md clients
 
 Use this repository's [AGENTS.md](../AGENTS.md) as the routing/protocol reference.
 Merge the relevant instructions into your target repository's existing instructions;
-do not overwrite team rules blindly.
-
-The instructions reference packaged workflows. Keep Threatlint installed and make
-the referenced skills available to your client; copying only AGENTS.md does not
-copy its dependencies. Use your client's supported instruction and skill locations.
-
-Then ask:
-
-```text
-Threat model this repository. Discover the highest-risk starting scope,
-cite the evidence, and separate verified behavior from assumptions.
-```
+make the referenced packaged workflows available through that client's supported
+instruction and skill locations.
 
 ### Terminal with LM Studio
 
@@ -132,12 +182,17 @@ complete repository coverage.
 
 ### Cloud providers
 
-The direct CLI supports `--provider claude-code`, `--provider claude`, and `--provider openai`:
+Choose the Claude authentication method you use: `claude-code` for your login,
+`claude` for an Anthropic API key, or `bedrock` for an Amazon Bedrock API key.
+The direct CLI also supports a signed-in Codex session, `openai`, and local models.
 
 ```bash
 threatlint run threat-model --provider claude-code
+threatlint run threat-model --provider codex
+threatlint run threat-model --provider codex --daybreak-blue
 threatlint run security-review --provider claude --base main --head HEAD
 threatlint run threat-model --provider openai --output-dir ./reports
+threatlint run threat-model --provider bedrock --bedrock-region us-east-1 --model YOUR_BEDROCK_MODEL_ID
 ```
 
 **`claude-code` uses your Claude Code login, so no API key is needed.** Install
@@ -153,11 +208,47 @@ review is untrusted, every run is locked down:
   the repository, and nothing else is allowed.
 - **No extras:** no MCP servers and no saved session history.
 - **Login only:** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from
-  the run, so it bills your Claude Code plan rather than a key.
+  the run, along with Bedrock keys, custom Anthropic endpoints, and third-party
+  provider routing flags. Settings-file provider overrides are ignored, keeping this
+  option on your Claude Code login when Bedrock is also configured.
 
 Runs time out after an hour; set `THREATLINT_CLAUDE_CODE_TIMEOUT_S` to change that.
 
+**`codex` uses your Codex login without an API key.** Install the Codex CLI and
+sign in with `codex login` or the Codex app. Threatlint checks `codex login status`,
+then runs `codex exec` in a read-only, ephemeral session. It does not read
+`auth.json`, extract OAuth credentials, or copy a key into the model request.
+The CLI run ignores user-level configuration to reduce exposure to configured
+MCP tools or hooks; its default model is Codex's built-in default unless `--model` is set.
+The target repository's `AGENTS.md` is still loaded by Codex. Source and
+supplied evidence remain untrusted, and Codex's read-only sandbox is the
+filesystem boundary. The direct Threatlint API providers use their own
+credentials; a ChatGPT-based Codex login does not expose an OpenAI API key.
+
+For an approved Daybreak Blue account, `--daybreak-blue` adds the documented
+`-c daybreak=true` setting to this headless Codex run and selects `gpt-6-sol`
+unless you set `--model`. It does not grant Daybreak access. See
+[OpenAI's headless Codex guide](https://help.openai.com/en/articles/20001607-using-daybreak-in-codex-cli).
+
 For `claude` and `openai`, provide `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` through your shell or secret store.
+
+**Amazon Bedrock:** set `AWS_BEARER_TOKEN_BEDROCK` (or `BEDROCK_API_KEY`), then use
+`--provider bedrock` with the exact Claude model or inference profile ID from your AWS console.
+`--api-key` overrides the configured key. The CLI and Workbench also read these two Bedrock key
+names from the `env` block in `~/.claude/settings.json`; Anthropic API keys and Claude Code
+subscription credentials are never used for Bedrock.
+
+Choose the region with `--bedrock-region` or the Workbench **AWS region** field. An empty region
+uses `AWS_REGION`, then `AWS_DEFAULT_REGION`, then those names in Claude settings, then
+`us-east-1`. Use the region where the key was created. The Bedrock provider calls the regional
+`bedrock-runtime` Anthropic Messages endpoint with `x-api-key`, streamed responses, read-only
+repository tools, and image attachments. It uses the Bedrock API key directly; it does not sign
+requests with IAM access keys or use your AWS SSO session. See the
+[AWS Messages API guide](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-messages-api.html).
+
+In the Workbench, select **Settings → Amazon Bedrock**, enter the region and model ID, and
+provide a session key or leave it empty to use a configured Bedrock key. Session keys remain in
+memory. Model IDs are entered manually; Threatlint does not verify model access until a run.
 
 **Design inputs.** Give a threat model the intended architecture with `--design`, using files or folders:
 
@@ -167,7 +258,7 @@ threatlint run threat-model --provider claude-code --design docs/architecture/ p
 
 The formats and limits match the Workbench's [design inputs](workbench.md#design-inputs). Reading PDFs
 from the CLI needs `pdftotext` (Poppler: `brew install poppler`); without it, export the PDF as text or
-add it in the Workbench. Images are attached for API providers and passed as files to Claude Code.
+add it in the Workbench. Images are attached for API providers and passed as files to Claude Code or Codex.
 Avoid putting keys in command history with `--api-key`. Source and supplied
 evidence sent to a cloud model leave your machine; choose a provider permitted
 for that repository.
@@ -177,6 +268,8 @@ for that repository.
 For Claude, the current scanning and general-assistance defaults are both
 `claude-opus-5-5`. The policy lives in [models.py](../src/threatlint/models.py)
 and [model-policy.cjs](../web/lib/model-policy.cjs).
+Bedrock requires an explicit model ID because its model and inference profile IDs differ from
+the direct Anthropic API.
 
 Override with an explicit run setting, or configure:
 

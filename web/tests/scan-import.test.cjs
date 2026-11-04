@@ -299,6 +299,18 @@ describe('Scan import routes', () => {
     assert.match(md, /not triaged: no model configured/); assert.doesNotMatch(md, /AIzaSyD-synthetic|Pa55-synthetic-word/);
   });
 
+  it('forwards Bedrock credentials and region for scan triage without persisting the key', async () => {
+    const created = await upload('invicti.xml', { workspaceId, provider: 'bedrock', model: 'global.anthropic.claude-sonnet-5', bedrockApiKey: 'bedrock-session-secret', bedrockRegion: 'eu-west-1' });
+    assert.equal(created.status, 201);
+    const job = await finished(created.body.id);
+    assert.equal(job.status, 'done', job.error);
+    assert.equal(prompts.at(-1).provider, 'bedrock');
+    assert.equal(prompts.at(-1).key, 'bedrock-session-secret');
+    assert.equal(prompts.at(-1).baseUrl, 'https://bedrock-runtime.eu-west-1.amazonaws.com/anthropic');
+    assert.doesNotMatch(JSON.stringify(job), /bedrock-session-secret/);
+    assert.doesNotMatch(fs.readFileSync(path.join(storage, 'scan-imports.json'), 'utf8'), /bedrock-session-secret/);
+  });
+
   it('supports multipart uploads and the JSON export', async () => {
     const boundary = 'threatlintboundary';
     const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="source"\r\n\r\ninvicti\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="export.dat"\r\nContent-Type: application/octet-stream\r\n\r\n`), fixture('invicti.json'), Buffer.from(`\r\n--${boundary}--\r\n`)]);

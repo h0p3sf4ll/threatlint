@@ -12,7 +12,8 @@
     { id: 'codegen', title: 'Check AI-generated code', icon: '✦', description: 'Catch insecure defaults in code your assistant just wrote, before you commit.', agents: ['appsec-secure-codegen-reviewer', 'appsec-code-reviewer'], label: 'GENERATE SAFELY' },
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', openai: '', copilot: '' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
+  const DAYBREAK_MODELS = { daybreak: 'gpt-6-sol', 'daybreak-bedrock': 'openai.gpt-daybreak-blue-5.6-sol' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', bedrock: '', daybreak: DAYBREAK_MODELS.daybreak, 'daybreak-bedrock': DAYBREAK_MODELS['daybreak-bedrock'], openai: '', codex: '', copilot: '' }, codexDaybreak: false, bedrockRegion: '', lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -20,7 +21,7 @@
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
-    credentials: { claude: '', openai: '', copilot: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
+    credentials: { claude: '', bedrock: '', daybreak: '', 'daybreak-bedrock': '', openai: '', copilot: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
@@ -72,12 +73,13 @@
   const CLAUDE_PROVIDERS = new Set(['claude', 'claude-code']);
   function modelPolicy() { return { ...POLICY_FALLBACK, ...(state.config.modelPolicy || {}) }; }
   function policyLabel() { const policy = modelPolicy(); return `Scanning: ${policy.scan} · Chat: ${policy.general}`; }
-  function effectiveModel(purpose = 'review', provider = state.preferences.provider) {
+  function displayModel(purpose = 'review', provider = state.preferences.provider) {
     const chosen = state.preferences.models[provider] || '';
+    if (provider === 'codex') return chosen || (state.preferences.codexDaybreak ? 'gpt-6-sol' : 'Codex default');
     if (chosen || !CLAUDE_PROVIDERS.has(provider)) return chosen;
     return purpose === 'chat' ? modelPolicy().general : modelPolicy().scan;
   }
-  function modelReady() { return !!effectiveModel(); }
+  function modelReady() { return state.preferences.provider === 'codex' || !!displayModel(); }
   function cloudProvider() {
     if (state.preferences.provider !== 'lmstudio') return true;
     try { return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(state.preferences.lmstudioUrl).hostname); } catch { return true; }
@@ -150,7 +152,7 @@
       socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
         ...providerKeys(provider) },
       // Display only: the model each kind of run uses (an explicit choice, else the Claude policy default).
-      models: { review: effectiveModel('review'), chat: effectiveModel('chat') },
+      models: { review: displayModel('review'), chat: displayModel('chat') },
     }) }));
     for (const [step, done] of [['repo', !!state.session], ['model', modelReady()], ['run', state.reports.length > 0], ['fix', state.reports.length > 0 && state.asked]]) {
       document.querySelector(`#onboarding [data-step="${step}"]`)?.classList.toggle('done', done);
@@ -172,7 +174,7 @@
     $('choose-repo').disabled = state.running;
     $('settings-button').disabled = state.running;
     $('configure-provider').disabled = state.running;
-    let summary = `${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} ready · ${effectiveModel() || 'configure a model'}`;
+    let summary = `${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} ready · ${displayModel() || 'configure a model'}`;
     if (!state.pipeline.length) summary = 'Add at least one specialist';
     if (!state.session) summary = 'Choose a repository to get started';
     if (!state.connected) summary = 'Connecting to the local runner…';
@@ -456,11 +458,14 @@
   }
 
   function providerKeys(provider) {
-    return { apiKey: provider === 'claude' ? state.credentials.claude || undefined : undefined, openaiApiKey: provider === 'openai' ? state.credentials.openai || undefined : undefined,
-      copilotToken: provider === 'copilot' ? state.credentials.copilot || undefined : undefined };
+    return { apiKey: provider === 'claude' ? state.credentials.claude || undefined : undefined, openaiApiKey: ['openai', 'daybreak'].includes(provider) ? state.credentials[provider] || undefined : undefined,
+      copilotToken: provider === 'copilot' ? state.credentials.copilot || undefined : undefined,
+      bedrockApiKey: ['bedrock', 'daybreak-bedrock'].includes(provider) ? state.credentials[provider] || undefined : undefined,
+      bedrockRegion: provider === 'bedrock' ? state.preferences.bedrockRegion || undefined : provider === 'daybreak-bedrock' ? 'us-east-2' : undefined,
+      codexDaybreak: provider === 'codex' ? state.preferences.codexDaybreak === true : undefined };
   }
   function updateProviderDisplay() {
-    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', 'claude-code': 'Claude Code', openai: 'OpenAI', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
+    $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', 'claude-code': 'Claude Code', bedrock: 'Claude Bedrock', daybreak: 'Daybreak Blue', 'daybreak-bedrock': 'Daybreak Blue Bedrock', openai: 'OpenAI', codex: 'Codex', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
     updateRunControls();
   }
   function showSettings() { showView('settings'); }
@@ -482,8 +487,10 @@
     const provider = state.preferences.provider;
     document.querySelector(`input[name=provider][value="${provider}"]`).checked = true;
     $('model-url').value = state.preferences.lmstudioUrl;
+    $('bedrock-region').value = state.preferences.bedrockRegion;
     $('model-id').value = selectedModel(); state.modelListProvider = null;
     $('api-key').value = state.credentials[provider] || '';
+    $('codex-daybreak').checked = state.preferences.codexDaybreak === true;
     $('settings-error').textContent = '';
     $('cloud-consent').checked = state.consent.has(consentKey());
     renderAccessNotes(); fillServiceNowForm(); void loadSemgrepSettings(); void loadAdoSettings(); void loadGithubSettings();
@@ -609,17 +616,32 @@
     finally { $('snow-read-parameters').disabled = false; }
   }
   function updateSettingsFields(provider) {
-    const local = provider === 'lmstudio', login = provider === 'claude-code';
+    const local = provider === 'lmstudio', codex = provider === 'codex', login = provider === 'claude-code' || codex, bedrock = provider === 'bedrock', daybreakBedrock = provider === 'daybreak-bedrock', fixedModel = DAYBREAK_MODELS[provider];
     $('local-settings').classList.toggle('hidden', !local); $('cloud-settings').classList.toggle('hidden', local);
+    $('bedrock-settings').classList.toggle('hidden', !(bedrock || daybreakBedrock));
+    $('bedrock-region').readOnly = daybreakBedrock;
+    $('bedrock-region').value = daybreakBedrock ? 'us-east-2' : state.preferences.bedrockRegion;
+    $('bedrock-region-note').textContent = daybreakBedrock ? 'AWS currently offers Daybreak Blue on Bedrock in us-east-2. Your AWS account also needs approved model access.' : 'Use the region where your Bedrock key was created. Leave empty to use your configured AWS region, or us-east-1 when none is configured.';
+    $('model-picker').classList.toggle('hidden', bedrock || !!fixedModel || codex);
+    document.querySelector('.model-manual').classList.toggle('hidden', !!fixedModel);
+    document.querySelector('.model-manual summary').textContent = codex ? 'Codex model ID (optional)' : bedrock ? 'Bedrock model or inference profile ID' : 'Enter a model ID manually';
+    if (bedrock || codex) document.querySelector('.model-manual').open = true;
+    $('model-id').placeholder = codex ? 'Leave empty for your Codex default' : bedrock ? 'Exact Bedrock model or inference profile ID' : 'Exact provider model ID';
+    $('codex-daybreak-label').classList.toggle('hidden', !codex);
     // Claude Code signs itself in; there is no key to enter.
     $('api-key').classList.toggle('hidden', login); $('api-key-label').classList.toggle('hidden', login);
-    $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : 'API key ';
-    const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
+    $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : (bedrock || daybreakBedrock) ? 'Bedrock API key ' : provider === 'daybreak' ? 'OpenAI project API key ' : 'API key ';
+    const source = state.config.providers[provider], where = { claude: 'ANTHROPIC_API_KEY or ~/.claude/settings.json', bedrock: 'AWS_BEARER_TOKEN_BEDROCK, BEDROCK_API_KEY, or ~/.claude/settings.json', daybreak: 'OPENAI_API_KEY from an approved Daybreak Blue project', 'daybreak-bedrock': 'AWS_BEARER_TOKEN_BEDROCK or BEDROCK_API_KEY with Daybreak Blue model access', openai: 'OPENAI_API_KEY', copilot: 'GH_TOKEN/GITHUB_TOKEN or `gh auth login`' }[provider];
     $('model-policy-note').textContent = CLAUDE_PROVIDERS.has(provider) ? `Default when no model is picked · ${policyLabel()}. A model chosen here is used for every run.` : '';
-    $('environment-key-note').textContent = local ? '' : login ? (source ? `Using your ${source}. Agents run through Claude Code in restricted, read-only mode.` : 'Claude Code is not installed or not signed in. Install it and run `claude` once in a terminal to sign in.') : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
-    if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; }
+    $('environment-key-note').textContent = local ? '' : codex ? (source ? `Using your ${source}. Agents run through Codex CLI in a read-only sandbox; no API key is copied into Threatlint.` : 'Codex CLI is not installed or not signed in. Run `codex login` in a terminal, then reload Settings.') : login ? (source ? `Using your ${source}. Agents run through Claude Code in restricted, read-only mode.` : 'Claude Code is not installed or not signed in. Install it and run `claude` once in a terminal to sign in.') : source ? `Using ${source}. Leave this empty, or enter a key for this session only.` : `No key found in ${where}. Enter one for this session.`;
+    if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; $('settings-error').textContent = ''; }
+    if (fixedModel) $('model-id').value = fixedModel;
+    if (bedrock) $('model-source').textContent = 'Enter the exact Claude model or inference profile ID from your AWS Bedrock console. Model availability depends on your AWS account and region.';
+    if (provider === 'daybreak') $('model-source').textContent = 'GPT-6 Sol with Daybreak Blue requires an approved OpenAI organization and enabled API project. Selecting this option does not grant access.';
+    if (daybreakBedrock) $('model-source').textContent = 'GPT-5.6 Sol Daybreak Blue on Bedrock requires approved AWS model access in us-east-2. Selecting this option does not grant access.';
+    if (codex) $('model-source').textContent = 'Uses the Codex built-in default model. Enter an exact model ID only to override it.';
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
-    if (!local && !$('model-select').dataset.loaded) void discoverModels();
+    if (!local && !bedrock && !fixedModel && !codex && !$('model-select').dataset.loaded) void discoverModels();
     // Remote LM Studio-compatible servers also require explicit data-sharing consent.
     let remote = !local;
     if (local) { try { remote = !['localhost', '127.0.0.1', '[::1]'].includes(new URL($('model-url').value).hostname); } catch { remote = true; } }
@@ -628,9 +650,12 @@
   function saveSettings(event) {
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
-    const model = $('model-id').value.trim();
+    const model = DAYBREAK_MODELS[provider] || $('model-id').value.trim();
     // Empty means "Threatlint default" for Claude (Sonnet for scanning, Opus for chat); other providers need a model.
-    if (!model && provider !== 'claude') { $('settings-error').textContent = 'Load models and choose one, or enter a model ID.'; return; }
+    if (!model && !CLAUDE_PROVIDERS.has(provider) && provider !== 'codex') { $('settings-error').textContent = provider === 'bedrock' ? 'Enter a Bedrock model or inference profile ID.' : 'Load models and choose one, or enter a model ID.'; return; }
+    const bedrockRegion = $('bedrock-region').value.trim();
+    if (provider === 'bedrock' && bedrockRegion && !/^[a-z]{2,5}(?:-[a-z0-9]+)+-\d{1,2}$/.test(bedrockRegion)) { $('settings-error').textContent = 'Enter an AWS region such as us-east-1, or leave it empty to use the configured region.'; return; }
+    if (provider === 'daybreak-bedrock' && bedrockRegion !== 'us-east-2') { $('settings-error').textContent = 'Daybreak Blue on Bedrock is currently available in us-east-2.'; return; }
     let url;
     try {
       url = new URL($('model-url').value || DEFAULTS.lmstudioUrl);
@@ -641,15 +666,17 @@
     state.preferences.provider = provider;
     state.preferences.models[provider] = model;
     state.preferences.model = model;
+    if (provider === 'codex') state.preferences.codexDaybreak = $('codex-daybreak').checked;
     state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
-    if (provider !== 'lmstudio') state.credentials[provider] = $('api-key').value.trim();
+    if (provider === 'bedrock') state.preferences.bedrockRegion = bedrockRegion;
+    if (provider !== 'lmstudio' && provider !== 'codex' && provider !== 'claude-code') state.credentials[provider] = $('api-key').value.trim();
     if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
     savePreferences();
     updateProviderDisplay(); toast('Model settings saved. Credentials remain in memory only.');
   }
   function savePreferences() {
-    const { provider, models, lmstudioUrl, snowInstance } = state.preferences;
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+    const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
+    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
   }
   async function saveServiceNow(event) {
     event.preventDefault();
@@ -682,6 +709,7 @@
   }
   async function discoverModels() {
     const provider = document.querySelector('input[name=provider]:checked').value;
+    if (provider === 'bedrock' || provider === 'codex' || DAYBREAK_MODELS[provider]) return;
     $('discover-models').disabled = true; $('settings-error').textContent = ''; $('model-source').textContent = 'Loading models…';
     try {
       let models, source;
@@ -693,10 +721,11 @@
         ({ models, source } = await request('/api/models', { method: 'POST', body: JSON.stringify({ provider, key: $('api-key').value.trim() || state.credentials[provider] || undefined }) }));
         if (!models.length) throw new Error('No models are available for this key. Check the account or plan.');
       }
+      if (document.querySelector('input[name=provider]:checked').value !== provider) return;
       const current = $('model-id').value.trim() || state.preferences.models[provider];
       fillModelSelect(models, models.some(model => model.id === current) ? current : CLAUDE_PROVIDERS.has(provider) ? '' : models[0].id);
       $('model-source').textContent = `${models.length} model${models.length > 1 ? 's' : ''} available · listed with ${source === 'session' ? 'the key entered here' : source}`;
-    } catch (error) { $('model-source').textContent = ''; $('settings-error').textContent = error.message; }
+    } catch (error) { if (document.querySelector('input[name=provider]:checked').value === provider) { $('model-source').textContent = ''; $('settings-error').textContent = error.message; } }
     finally { $('discover-models').disabled = false; }
   }
 
@@ -755,7 +784,7 @@
     }
     box.append(heading, list);
     box.className = `field-note small ${state.setupMissing.length ? 'fp-status-warn' : 'subtle'}`;
-    $('fpreview-model').textContent = effectiveModel() ? `Model: ${effectiveModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
+    $('fpreview-model').textContent = displayModel() ? `Model: ${displayModel()} (${state.preferences.provider}).` : 'Choose a model in Settings first.';
   }
   async function startAvitBatch(event) {
     event.preventDefault(); $('fpreview-error').textContent = '';
@@ -773,7 +802,7 @@
     if (!await requireSemgrep()) return;
     await updateFpreviewSetup();
     if (state.setupMissing.length) { $('fpreview-error').textContent = `Finish the required setup first: ${state.setupMissing.join(', ')}.`; return; }
-    fpRun().start({ avits, sctasks, model: effectiveModel() });
+    fpRun().start({ avits, sctasks, model: displayModel() });
     fpreviewRunning(true);
     const provider = state.preferences.provider;
     state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
@@ -788,7 +817,7 @@
       case 'avit_batch_error': fpRun()?.handle(event); fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
-      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${effectiveModel()}`); break;
+      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${displayModel()}`); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
       case 'text_chunk': logText(event.text); break;
@@ -845,7 +874,7 @@
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     const provider = state.preferences.provider;
-    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : provider === 'claude-code' ? 'Install Claude Code and run `claude` once in a terminal to sign in.' : 'A provider API key is required for this review.', true); return; }
+    if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : provider === 'claude-code' ? 'Install Claude Code and run `claude` once in a terminal to sign in.' : provider === 'codex' ? 'Install Codex CLI and run `codex login` in a terminal, then reload Settings.' : 'A provider API key is required for this review.', true); return; }
     if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
     if (!await requireSemgrep() || state.running || !state.connected) return;
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
@@ -883,7 +912,7 @@
     let settingsProvider = state.preferences.provider;
     for (const radio of document.querySelectorAll('input[name=provider]')) radio.addEventListener('change', () => {
       if (settingsProvider !== 'lmstudio') state.credentials[settingsProvider] = $('api-key').value.trim();
-      settingsProvider = radio.value; $('model-id').value = state.preferences.models[settingsProvider] || '';
+      settingsProvider = radio.value; $('model-id').value = DAYBREAK_MODELS[settingsProvider] || state.preferences.models[settingsProvider] || '';
       $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
       updateSettingsFields(settingsProvider);
     });
@@ -892,6 +921,7 @@
     $('fp-ignore-semgrep').addEventListener('click', ignoreSemgrepFalsePositive); $('fp-action-form').addEventListener('submit', event => event.preventDefault());
     for (const id of ['fp-semgrep-rule', 'fp-semgrep-repo', 'fp-semgrep-path', 'fp-semgrep-line', 'fp-semgrep-deployment']) $(id).addEventListener('input', () => { $('fp-ignore-semgrep').disabled = true; });
     $('model-url').addEventListener('input', () => { updateSettingsFields('lmstudio'); $('cloud-consent').checked = false; });
+    $('bedrock-region').addEventListener('input', () => { $('cloud-consent').checked = false; });
     $('attach-findings').addEventListener('click', chooseFindings);
     $('findings-file').addEventListener('change', async event => {
       const file = event.target.files[0];

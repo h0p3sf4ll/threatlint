@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
+_AVIT_TOKEN = re.compile(r"(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", re.IGNORECASE)
 
 
 class ResolveError(RuntimeError):
@@ -17,14 +18,22 @@ def _field(body: str, name: str) -> str:
 
 
 def _verdict(body: str, identifier: str, title: str) -> dict[str, str]:
-    disposition = _DISPOSITION.search(_field(body, "Disposition|Verdict"))
+    stated = re.findall(r"(?im)^\**(?:Disposition|Verdict)\**\s*:\s*(.+)$", body)
+    dispositions = [match.group(0).upper() if (match := _DISPOSITION.search(value)) else "" for value in stated]
+    if len(set(dispositions)) > 1:
+        raise ResolveError(f"{identifier or title} has conflicting dispositions; resolve it manually")
     confidence = _field(body, "Confidence").split()
     return {
         "id": identifier,
         "title": title,
-        "disposition": disposition.group(0).upper() if disposition else "",
+        "disposition": dispositions[0] if dispositions else "",
         "confidence": confidence[0] if confidence else "",
     }
+
+
+def _mentions_avit(text: str, avit: str) -> bool:
+    """Match a complete AVIT number, never a prefix of another record number."""
+    return any(match.group(0).upper() == avit.upper() for match in _AVIT_TOKEN.finditer(text))
 
 
 def verdict_for(report: str, avit: str) -> dict[str, str]:
@@ -34,7 +43,7 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
     for section in sections[1:]:
         header, _, body = section.partition("\n")
         original = re.search(r"(?im)^\**Original finding\**\s*:\s*(.+)$", body)
-        if avit not in (original.group(1) if original else header).upper():
+        if not _mentions_avit(original.group(1) if original else header, avit):
             continue
         identifier = re.match(r"\[?([A-Z][A-Z0-9]*-\d+)\]?", header)
         title = re.sub(r"^\[?[A-Z][A-Z0-9]*-\d+\]?\s*[—–:-]?\s*", "", header).strip()
@@ -43,7 +52,7 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
         # A plain single-finding heading has no FP identifier; its original-finding line decides.
         originals = [
             match for match in re.finditer(r"(?im)^\**Original finding\**\s*:\s*(.+)$", report)
-            if avit in match.group(1).upper()
+            if _mentions_avit(match.group(1), avit)
         ]
         if len(originals) == 1 and len(re.findall(r"(?im)^\**Original finding\**\s*:", report)) == 1:
             title = re.search(r"(?m)^#\s+(.+)$", report)

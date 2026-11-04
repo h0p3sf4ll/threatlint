@@ -37,8 +37,10 @@ RESULT = {"type": "result", "subtype": "success", "is_error": False, "result": "
 
 
 def test_run_is_read_only_keyless_and_returns_the_report(monkeypatch, tmp_path):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-pass")
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "token-should-not-pass")
+    for name in claude_code.STRIPPED_ENV:
+        monkeypatch.setenv(name, "provider-setting-should-not-pass")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "subscription-token")
+    monkeypatch.setenv("HTTPS_PROXY", "https://proxy.invalid")
     fake = FakeProcess([{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Grep", "input": {"pattern": "app.get"}}]}}, RESULT])
     progress = []
     report = claude_code.run_agent("You are the threat modeler.", "Analyze the repo", str(tmp_path), "claude-opus-5-5",
@@ -53,7 +55,9 @@ def test_run_is_read_only_keyless_and_returns_the_report(monkeypatch, tmp_path):
     assert not any("threat modeler" in arg or "Analyze" in arg for arg in argv), "prompts never appear in argv"
     assert fake.call["system_prompt"] == "You are the threat modeler." and fake.call["input"] == "Analyze the repo"
     env = fake.call["options"]["env"]
-    assert "ANTHROPIC_API_KEY" not in env and "ANTHROPIC_AUTH_TOKEN" not in env
+    assert not set(claude_code.STRIPPED_ENV).intersection(env)
+    assert env["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] == "1"
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "subscription-token" and env["HTTPS_PROXY"] == "https://proxy.invalid"
     assert fake.call["options"]["cwd"] == str(tmp_path)
     assert progress == ["  → Grep(pattern='app.get')"]
 
@@ -74,7 +78,18 @@ def test_missing_install_is_explained(monkeypatch, tmp_path):
 
 
 def test_login_status_reads_claude_auth_status(monkeypatch):
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout='{"loggedIn": true, "authMethod": "claude.ai"}'))
+    for name in claude_code.STRIPPED_ENV:
+        monkeypatch.setenv(name, "provider-setting-should-not-pass")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "subscription-token")
+    monkeypatch.setenv("SSL_CERT_FILE", "/synthetic/cert.pem")
+    def run(argv, **options):
+        assert argv == ["/bin/claude", "auth", "status"]
+        assert not set(claude_code.STRIPPED_ENV).intersection(options["env"])
+        assert options["env"]["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] == "1"
+        assert options["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "subscription-token"
+        assert options["env"]["SSL_CERT_FILE"] == "/synthetic/cert.pem"
+        return types.SimpleNamespace(stdout='{"loggedIn": true, "authMethod": "claude.ai"}')
+    monkeypatch.setattr(subprocess, "run", run)
     status = claude_code.login_status("/bin/claude")
     assert status.logged_in and status.label == "Claude Code login (claude.ai)"
 

@@ -199,8 +199,10 @@ def step_review(args, state: dict, env: rt.EnvironmentProvider | None = None) ->
     provider, base_url, api_key = resolved
     with open(path, encoding="utf-8") as handle:
         message = f"The repository to analyze is located at: {state['checkout']}\n" + findings_text(f"DAST evidence for {state['avit']}", handle.read())
-    output = cli._run_agent(base_url, cli._default_run_model(provider, args.model), agent_prompt("appsec-fp-reviewer"),
-                            message + "\nBegin your analysis now and produce the complete report as specified.", state["checkout"], api_key=api_key)
+    runner = cli._run_claude_api if provider == "claude" else cli._run_agent
+    endpoint = f"{base_url}/messages" if provider == "claude" else base_url
+    output = runner(endpoint, cli._default_run_model(provider, args.model), agent_prompt("appsec-fp-reviewer"),
+                    message + "\nBegin your analysis now and produce the complete report as specified.", state["checkout"], api_key=api_key)
     if not output.strip():
         raise ResolveError("The reviewer produced no report")
     with open(report, "w", encoding="utf-8") as handle:

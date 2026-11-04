@@ -6,6 +6,12 @@ __pycache__/
 *.tmp
 /tmp/
 
+# Generated review and presentation exports at the repository root
+/threatlint-*-fp-review-*.md
+/threatlint-avit-review-*.pdf
+/Threatlint-architecture.pdf
+/~$*
+
 # Web UI
 web/node_modules/
 web/npm-debug.log*

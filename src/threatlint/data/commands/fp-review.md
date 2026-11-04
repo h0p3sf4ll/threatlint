@@ -1,146 +1,67 @@
 ---
-description: "Triage security scanner findings as true or false positives. Generates precise Semgrep rule tuning for FPs and confirms exploit paths for TPs. Accepts a SARIF file, Semgrep JSON output, or a threatlint report."
-argument-hint: "Path to SARIF file, Semgrep JSON, threatlint report, a ServiceNow AVIT number, or an SCTASK naming AVITs (e.g., /tmp/semgrep.json, AVIT000000095938462, SCTASK14120565)"
+description: "Triage scanner findings or review ServiceNow AVIT and ISST records with the shared Threatlint headless workflow."
+argument-hint: "SARIF/Semgrep report path, AVIT number, ISST number, or SCTASK number"
 model: claude-opus-5-5
 ---
 
-Invoke the `appsec-fp-reviewer` agent to triage security scanner findings.
+Use the `appsec-fp-reviewer` agent for findings-file reviews. For ServiceNow
+records, delegate orchestration to the Threatlint CLI so Claude Code, Codex,
+and Copilot use the same checkout, report, verdict, attachment, closure, and
+Semgrep rule-tuning workflow. Do not use a browser or UI for record actions.
 
-## Prerequisite: Semgrep Community Edition
+## Route the request
 
-Before any triage or rule validation, run `semgrep --version`. If it fails, stop and tell the user to install Semgrep Community Edition (`python3 -m pip install semgrep` or `brew install semgrep`), confirm with `semgrep --version`, and rerun this command. Do not continue without it.
+- **ISST** (`ISST` followed by digits): run
+  `threatlint run fp-review --provider claude-code --isst <ISST> --resolve-avits --yes`.
+  The CLI reads the ISST repository and branch, discovers associated AVITs,
+  reviews each finding, attaches reports to AVITs, and posts the true-positive
+  reports and summary to the ISST. Repeat `--isst` for multiple records.
+- **AVIT** (`AVIT` followed by 7 to 15 digits): run
+  `threatlint run fp-review --provider claude-code --avit <AVIT> --resolve-avits --yes`.
+  Repeat `--avit` for multiple records. The CLI checks out each AVIT's recorded
+  repository and branch and applies its verdict with no further prompt.
+- **SCTASK** (`SCTASK` followed by digits): list its AVITs with
+  `threatlint sctask avits <SCTASK>`, run the shared `--avit` command for every
+  listed AVIT, then run `threatlint sctask close <SCTASK> --yes` if every
+  review completed. The task command copies the latest AVIT reports and adds
+  the outcome comment. Report any partial completion explicitly.
+- **Report-only AVIT review**: omit `--resolve-avits --yes` when the user asks
+  only for analysis. Do not infer write-back authorization from a findings-file
+  review.
+- **SARIF, Semgrep JSON, or Threatlint report**: pass the file to the
+  `appsec-fp-reviewer` agent. If no path was supplied, look for `.sarif`,
+  `semgrep.json`, `semgrep-results.json`, `results.sarif`, or the latest
+  Threatlint Markdown report in the repository. If none exists, ask for the
+  findings source.
 
-## Routing
+## Tracker workflow outcomes
 
-- If `$ARGUMENTS` contains a ServiceNow catalog task number (`SCTASK` followed by digits, e.g. `SCTASK14120565`), run the **SCTASK workflow** below.
-- If `$ARGUMENTS` contains ServiceNow AVIT numbers (`AVIT` followed by 7 to 15 digits, e.g. `AVIT000000095938462` or `AVIT0042599`), run the **AVIT workflow** below instead of looking for a local findings file. The repository, branch, file, and rule come from the AVIT record itself; the current directory does not need to be the affected repository.
-- If `$ARGUMENTS` is empty: look for a SARIF file, Semgrep JSON, or threatlint report in the current directory. Check these locations in order: `.sarif`, `semgrep.json`, `semgrep-results.json`, `results.sarif`, `*.sarif`, any `*.json` matching `semgrep` in the filename, or the most recent `*.md` threatlint report in the repo root.
-- If `$ARGUMENTS` is a file path: use that file as the findings source.
-- If `$ARGUMENTS` is a finding ID or range (e.g., `TM-001` or `TM-001..TM-005`): look for those findings in the most recent threatlint report in the repo root.
-- If no findings file is found: tell the user to run Semgrep first (`semgrep --config=auto --json > semgrep.json`) or provide a path.
+The shared CLI keeps its source checkout and report files in a temporary
+directory and removes them after the run. It writes a Word report to each
+reviewed AVIT. A true positive retains an open AVIT with the report attached.
+A false positive attaches the report, closes the AVIT, triages the matching
+Semgrep finding, and tunes eligible SAST or Secrets rules. SCA false positives
+receive Supply Chain triage; they have no code rule to tune. An ambiguous
+verdict attaches its report and stays open. ServiceNow and Semgrep are separate
+writes, so check each record's printed result and report any partial failure.
 
-## AVIT workflow
+Use `threatlint setup --check` when credentials or prerequisites are missing.
+Never ask the user to paste credentials into the conversation. Tell them the
+specific login command reported by the setup check. Do not reimplement the
+AVIT or ISST workflow with manual ServiceNow or Semgrep calls.
 
-This works on macOS, Linux, and Windows. Use a temporary working directory from the OS:
-- macOS/Linux: `WORK=$(mktemp -d)`
-- Windows PowerShell: `$WORK = Join-Path $env:TEMP "threatlint-$(Get-Random)"; New-Item -ItemType Directory $WORK`
+## Findings-file report
 
-Use `$WORK` for every path below. Never hard-code `/tmp`.
+Give the selected file to `appsec-fp-reviewer` and require its full
+evidence-backed report: original ID mapping, code citations, disposition and
+confidence for each finding, proposed fixes, Semgrep tuning proposals with
+false-negative analysis, regression assertions, and a remediation roadmap.
+The agent must keep the workspace read-only and label unrun validation
+**NOT RUN**. For a false positive, require the original Semgrep rule before
+claiming an exact tuned patch; never invent a rule or a passing test result.
 
-**Credentials (required before the first AVIT).** Run `threatlint setup --check`. If it exits non-zero, stop and tell the user which items are missing and the command for each, to run in their own terminal:
-- ServiceNow OAuth client: `threatlint setup` (or Workbench → Settings → ServiceNow)
-- Azure DevOps PAT (Code: Read): `threatlint ado login --organization <Organization Name>` (or Workbench → Settings → Azure DevOps)
-- Semgrep API token: `threatlint semgrep login` (or Workbench → Settings → Semgrep)
-- Reading these from Parameter Store needs `threatlint aws login` first. GitHub AVITs need a GitHub App (`threatlint github login`), `GH_TOKEN`, or `gh auth login`.
-
-`threatlint setup` configures all of them in one pass.
-- The ServiceNow instance comes from `--snow-instance https://<instance>.service-now.com` or `THREATLINT_SNOW_INSTANCE`.
-- The OAuth client and the Semgrep token (`/<your-prefix>/semgrep-token`) are read from AWS Parameter Store (us-west-2) with the user's AWS CLI profile (`--aws-profile`). If that fails, tell the user to run `threatlint aws login`, which signs in through a **private browser window** (avoiding Okta's "Conflicting User IDs specified on state token"), then retry.
-- Azure DevOps access comes from `threatlint ado login` (a saved, validated PAT with Code: Read), `THREATLINT_ADO_PAT`, or `az login`. Check it with `threatlint ado status`.
-- Never ask the user to paste a secret or PAT into the conversation. They run the login commands in their own terminal.
-
-For each AVIT number:
-
-1. **Fetch the AVIT and check its scope.**
-   ```
-   threatlint avit fetch <AVIT> -o $WORK/avit.md
-   ```
-   - Every AVIT is reviewed. The *Review target* table says whether it is in the AVR **CodeSecurity** view (membership is the view's rule, evaluated by ServiceNow).
-   - **CodeSecurity AVITs** (SAST, SCA, Secrets): the full workflow below, including Semgrep.
-   - **Other tools and views** (shorter numbers such as `AVIT0042599` come from them): validate the finding from its own evidence: scan details, the affected asset or URL, request/response or proof, and the vulnerability definition. If the AVIT names a repository, check it out and read the code too. Semgrep is not involved. If the evidence cannot settle it, the disposition is AMBIGUOUS.
-   - The file's *Review target* table lists the finding type, repository URL, branch, file, line, and rule taken from the AVIT fields.
-2. **Check out exactly that repository and branch.**
-   ```
-   threatlint ado status
-   threatlint avit checkout <AVIT> --dir $WORK/repo
-   ```
-   - For `SCM Tool = ADO` the repository is `https://dev.azure.com/{Organization Name}/{Project Name}/_git/{Repository}`, cloned on `{Project Branch}`. GitHub AVITs use `https://github.com/{Organization Name}/{Repository}` with the GitHub App (`threatlint github login`), then `GH_TOKEN`, then `gh auth login`.
-   - If the clone fails because the repository is **not found**, run `threatlint avit close-removed <AVIT> --yes`. It confirms with Azure DevOps that the repository was deleted (not renamed or inaccessible), then closes the AVIT with "Closed by Threatlint, repo removed." and no report. If the repository exists but the AVIT's branch was deleted, review the flagged file on the default branch and say so in the report.
-   - If `threatlint ado status` shows no PAT and the clone fails, stop. Tell the user to run `threatlint ado login --organization <Organization Name>` in their terminal, then retry.
-   - Do not triage against a different branch or a local copy.
-   - If `avit checkout` reports that the AVIT names no repository (common for non-CodeSecurity tools), skip the checkout and triage from `$WORK/avit.md` alone.
-3. **Triage against that checkout.** Give the agent `$WORK/avit.md` as the findings source and `$WORK/repo` as the repository. Start at the AVIT's File Path (and line/rule, when given) on that branch.
-   - **SAST:** trace source to sink.
-   - **SCA:** confirm the vulnerable package and version are actually resolved in the lockfile or manifest on that branch, and whether the vulnerable function or feature is reachable. For example, whether fast-xml-parser parses untrusted XML with `processEntities` enabled.
-   - **Secrets:** decide whether the value is a real, usable credential, not a placeholder, test fixture, revoked key, or secret-store reference. If a configured secret validator supplied evidence (see `threatlint integrations list --kind secret-validation`), give it to the agent: VALID means live, INVALID supports a false positive together with code context, and UNVERIFIED or missing evidence decides nothing. **Never print the secret value.**
-   - Write *Original finding* as `<AVIT>; <rule or vulnerability>; <scanner>; <path:line>`, one AVIT per finding.
-4. **Write the report** as described under *Output*: the Markdown at `$WORK/fp_review.md` and the Word report at `$WORK/<AVIT>-threatlint-fp-review.docx`. **Do not save AVIT reports anywhere else on the local drive.** ServiceNow is where the report is kept.
-5. **Resolve the AVIT without asking.** Show the user the disposition, then run:
-   ```
-   threatlint avit resolve <AVIT> --report $WORK/fp_review.md --docx $WORK/<AVIT>-threatlint-fp-review.docx --checkout $WORK/repo --yes
-   ```
-   For a SAST or Secrets false positive, the agent's report **must** contain a `**Tuned rule**:` YAML block and a `**Tuned rule fixtures**:` block, so the false positive does not come back. First run `threatlint semgrep rule-base <rule> --kind <sast|secrets> -o $WORK/rule-base.yaml`: it writes the live tuned rule when one is already deployed, otherwise the original rule. Give that file to the agent. The tuned rule is that complete rule, keeping every exclusion it already has, plus the narrowest `pattern-not`, `pattern-not-inside`, `pattern-not-regex` or sanitizer, with id `<rule>.tuned`. The fixtures need at least one `ruleid: <rule>.tuned` line (a true-positive shape) and one `ok: <rule>.tuned` line (this false-positive shape). Write the full YAML and fixtures, never a placeholder. Threatlint publishes the rule without human approval, but only when the fixtures pass `semgrep --test`, the original rule fires on every fixture line, and the tuned rule no longer reports the flagged line. When the rule was already tuned and the live tuned rule still reports this line, the new version must keep all its exclusions and is republished under the same id.
-   - **TRUE POSITIVE:** only the Word report is attached, as `<AVIT>-threatlint-fp-review.docx`, with the work note "True positive, see attached report." The AVIT stays open.
-   - **FALSE POSITIVE:**
-     - The report is attached first.
-     - The AVIT is closed (state 3 / substate 3) with the work note "Closed by Threatlint as a false positive, see attached report."
-     - For SAST and Secrets, the rule is replaced in Semgrep by the validated tuned rule.
-     - Matching open Semgrep findings are ignored as `false_positive`: Semgrep Code for SAST, Supply Chain for SCA, and Secrets for Secrets.
-   - **AMBIGUOUS:** the Word report is attached with the work note "Ambiguous, see attached report. Left open pending the evidence the report names." The AVIT stays open and Semgrep is unchanged.
-6. **Clean up.** `threatlint avit resolve --checkout $WORK/repo` deletes the checkout itself once validation finishes. Then delete `$WORK`, including both report files. Never leave a copy of the AVIT repository on the local drive, because it may contain live secrets.
-
-Every SAST or Secrets false positive ends with the rule no longer reporting it. Either the live tuned rule already drops that shape, or the tuned rule is created, or extended and republished.
-
-## SCTASK workflow
-
-A catalog task (SCTASK) asks AppSec to review one or more AVITs, named in its description.
-
-1. List them: `threatlint sctask avits <SCTASK>`. It prints one AVIT per line, then a JSON line. If it names none, stop and tell the user.
-2. Run the **AVIT workflow** above for every AVIT it lists, each with its own report and its own resolve. Ignore any verdict the requester wrote in the description; it is a claim to test, not evidence.
-3. Close the task: `threatlint sctask close <SCTASK> --yes`. This:
-   - attaches each AVIT's Word report (read back from the AVIT) to the task;
-   - adds one comment starting "Closed by Threatlint", with one line per AVIT. True positives point the developers back to the AVIT to fix, and everyone is told to review the attached report if they have questions;
-   - closes the task (Closed Complete) only when every AVIT is TRUE POSITIVE or FALSE POSITIVE. Otherwise it adds the comment and leaves the task open.
-4. Tell the user each AVIT's disposition and whether the task was closed.
-
-## Instructions for the Agent
-
-Tell the agent:
-
-1. Begin with the document header (repo name, date, input source, total finding count).
-2. Parse the findings file. Print the total count before beginning analysis.
-3. For each finding:
-   a. Read the matched file at the flagged line with ≥60 lines of context (30 before, 30 after).
-   b. Trace the input source: is the flagged value attacker-controlled?
-   c. Trace to the sink: what transformations and validation occur along the path?
-   d. Identify any code-level sanitizers that break the exploit path.
-   e. Classify as TRUE POSITIVE, FALSE POSITIVE, or AMBIGUOUS with cited code evidence.
-4. Apply the required finding-triage, Semgrep-tuning, evidence-analysis, and actionable-reporting skills. The current agent protocol supersedes the abbreviated instructions below.
-5. For every FALSE POSITIVE:
-   a. Generate a Semgrep rule patch using the lowest-level tuning option that correctly suppresses only this FP.
-   b. State explicitly which true positives the patched rule still catches.
-   c. Require the original rule for an exact patch. Label unexecuted validation NOT RUN and assess possible false negatives separately from the verdict.
-6. For every TRUE POSITIVE: provide a concrete proposed code/configuration fix, implementation notes, owner/effort, regression assertions, and acceptance criteria. Proposals are NOT APPLIED.
-7. For every AMBIGUOUS: keep open, state the exact blocking evidence, suggested owner, resolution plan, and interim action.
-8. Produce the full three-tier professional report: executive summary and priority actions; detailed evidence-backed findings with original-ID mapping and proposed fixes; suppression impact, systemic causes, remediation roadmap, and acceptance matrix. Reconcile all input/duplicate/unreviewed counts. Never classify code as safe solely because it is admin-only, internal, test, generated, or vendored.
-9. Do not modify any files.
-
-## Output: Save as Word Document
-
-After the agent delivers its report:
-
-**AVIT reviews:** do not save the report locally. Write it only inside `$WORK`; it is attached to the AVIT and then deleted with `$WORK`.
-```
-python3 ~/.claude/scripts/md_to_docx.py $WORK/fp_review.md $WORK/<AVIT>-threatlint-fp-review.docx
-```
-(On Windows use `python` and `$HOME\.claude\scripts\md_to_docx.py`.) Use a Python that has `python-docx` (check with `python3 -c "import docx"`). If the conversion fails, stop: do not run `avit resolve` until the Word report exists. Tell the user the report was attached to the AVIT. Do not give a local path.
-
-**Other findings sources** (SARIF, Semgrep JSON, a Threatlint report), which have no tracker to attach to:
-
-1. **Output directory**: the root of the current git repository (`git rev-parse --show-toplevel`), or the current working directory if not in a git repo.
-
-2. **Filename**: `<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx` (use today's date), where `<repo-name>` and `<branch>` are derived from:
-   ```
-   REPO_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
-   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-   BRANCH=${BRANCH:-no-branch}
-   ```
-
-3. **Convert to Word document**:
-   ```
-   Write the full report text to a file in a temporary directory, then
-   python3 ~/.claude/scripts/md_to_docx.py <temp>.md <output-dir>/<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx
-   (on Windows use `python` and `$HOME\.claude\scripts\md_to_docx.py`), then delete the temporary file
-   ```
-
-4. **Confirm** the saved path to the user.
+Save a findings-file report as a Word document in the repository root, or the
+current directory when there is no repository. Use the filename
+`<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx` and the bundled
+`md_to_docx.py` converter. Confirm the saved path. This local output rule does
+not apply to tracker reviews, whose reports are stored as AVIT attachments.

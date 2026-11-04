@@ -64,7 +64,18 @@ function runCli(args, { env = {}, signal, input } = {}) {
 }
 
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
-const errorOf = result => (lastLine(result.stderr) || lastLine(result.stdout)).replace(/^ERROR:\s*/, '');
+function errorOf(result) {
+  const lines = value => String(value || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const stderr = lines(result.stderr);
+  // The Python CLI cleans up its temporary checkout in finally, even after a failed resolve.
+  // That successful cleanup line must not replace the failure reason in the Workbench.
+  const stdout = lines(result.stdout).filter(line => !/^✓ Deleted the local checkout\b/.test(line));
+  const all = [...stdout, ...stderr];
+  const diagnostic = all.filter(line => /^ERROR:\s*|^!\s+/.test(line)).at(-1)
+    || stderr.at(-1) || stdout.filter(line => !/^✓\s+/.test(line)).at(-1)
+    || `Command failed (exit code ${result.code ?? 'unknown'})`;
+  return diagnostic.replace(/^(?:ERROR:|!)\s*/, '');
+}
 
 /**
  * Replace any long, credential-like value from the flagged file (and its directory) that appears in the
@@ -347,4 +358,4 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   return { run };
 }
 
-module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, MAX_BATCH, runCli, setupStatus, pythonPath, python };
+module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, MAX_BATCH, runCli, setupStatus, pythonPath, python };

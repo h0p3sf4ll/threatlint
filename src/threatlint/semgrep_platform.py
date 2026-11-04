@@ -17,8 +17,10 @@ rule in place, so the tuned rule replaces the original in the policy:
   4. disable the original rule in those policies.
 Nothing is changed in Semgrep unless step 1 passes; no human approval is required. The rollback is printed
 (re-enable the original, disable the tuned rule).
-Unified deployments support project-scoped detection exceptions, not legacy policy modes. Reading existing
-tuning is supported; automatic publication/republishing is rejected (see docs/semgrep-policies.md).
+Unified deployments support project-scoped detection exceptions, not legacy policy modes. A proven new rule
+can replace a directly selected original for the exact project; a verified open Semgrep finding can also
+identify a ruleset-supplied original. Shared-rule republishing remains rejected
+(see docs/semgrep-policies.md).
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from pathlib import Path
 from threatlint import org_config
 from threatlint import servicenow as sn
 from threatlint import semgrep_rule_text
-from threatlint import semgrep_policies
+from threatlint import semgrep_policies, semgrep_unified
 from threatlint import semgrep_engine
 from threatlint import semgrep_cli
 from threatlint.semgrep_engine import merge_exclusions
@@ -302,8 +304,73 @@ def _exclusions(rule_yaml: str) -> list[str]:
     return semgrep_rule_text.exclusions(rule_yaml, _EXCLUSION)
 
 
+def _tuning_mode(token: str, dep: dict, kind: str, original_rule: str, project: str | None,
+                 verified_finding: bool = False) -> str:
+    """Choose a verified legacy or project-scoped Unified replacement before publishing."""
+    if kind not in PRODUCT_POLICY:
+        raise SemgrepError(f"Semgrep {kind} findings do not have a tunable Code or Secrets rule")
+    policies = policy_reads(token, dep)
+    unified = any(policy.get("unified") for policy in policies)
+    if unified and not project:
+        raise SemgrepError("Unified rule tuning requires the exact Semgrep project name")
+    ruleset_candidate = False
+    for product in _products(kind):
+        for policy in policies:
+            if policy.get("productType") != product:
+                continue
+            if not policy.get("unified"):
+                rules = _policy_rules(str(dep["id"]), str(policy["id"]), token)
+                if any(_same_rule(str(rule.get("path", "")), original_rule) and rule.get("policyMode") != "MODE_DISABLED"
+                       for rule in rules):
+                    return TUNED_MODE
+                continue
+            bundle = policy["snapshot"]["bundle"]
+            selected = [rule for rule in semgrep_unified.enabled(bundle, project, same_rule=_same_rule)
+                        if _same_rule(rule, original_rule)]
+            if len(selected) > 1:
+                raise SemgrepError("Several Unified rules match the original; use its unambiguous registry path")
+            candidate = product == PRODUCT_POLICY[kind] and verified_finding and bool(bundle["rulesets"])
+            if selected or candidate:
+                semgrep_unified.check_scope(bundle, project, [original_rule], same_rule=_same_rule, error_type=SemgrepError)
+            if selected:
+                return "include"
+            if candidate:
+                disabled = any(_same_rule(rule, original_rule) for rule in bundle["disabled"])
+                excluded = any(item.get("project") == project and item.get("rule_type") == "rule"
+                               and item.get("exception_type") == "exclude" and _same_rule(item.get("rule", ""), original_rule)
+                               for item in bundle["exceptions"])
+                if not disabled and not excluded:
+                    ruleset_candidate = True
+    if ruleset_candidate:
+        return "include-ruleset"
+    label = f" for {project}" if unified else ""
+    raise SemgrepError(f"No directly selected {'Unified ' if unified else ''}rule runs {original_rule}{label}; "
+                       "the rule was not published")
+
+
+def _replace_ruleset_tuning(token: str, dep: dict, kind: str, original_rule: str, tuned_path: str,
+                            project: str) -> list[dict]:
+    """Use a verified Code/Secrets finding to scope a ruleset rule to one project."""
+    candidates = [policy for policy in policy_reads(token, dep)
+                  if policy.get("unified") and policy.get("productType") == PRODUCT_POLICY[kind]
+                  and policy["snapshot"]["bundle"]["rulesets"]]
+    if len(candidates) != 1:
+        raise SemgrepError("The verified finding does not identify one Unified ruleset policy")
+    policy = candidates[0]
+    bundle = policy["snapshot"]["bundle"]
+    semgrep_unified.check_scope(bundle, project, [original_rule, tuned_path], same_rule=_same_rule, error_type=SemgrepError)
+    if any(_same_rule(rule, original_rule) for rule in bundle["disabled"]):
+        raise SemgrepError("The original rule is now disabled; re-check the finding before changing the policy")
+    if any(item.get("project") == project and item.get("rule_type") == "rule"
+           and item.get("exception_type") == "exclude" and _same_rule(item.get("rule", ""), original_rule)
+           for item in bundle["exceptions"]):
+        raise SemgrepError("The original rule is now excluded for this project; re-check the finding before changing the policy")
+    return semgrep_unified.apply(token, dep, policy, original_rule, tuned_path, project,
+                                call=call, same_rule=_same_rule, error_type=SemgrepError)
+
+
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
-              out=sys.stdout, *, project: str | None = None) -> list[dict]:
+              out=sys.stdout, *, project: str | None = None, verified_finding: bool = False) -> list[dict]:
     """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
 
     - Not yet tuned: the reviewer's tuned rule (a clone of the original plus the narrowest exclusion) is proven,
@@ -319,15 +386,19 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
         live_yaml = original_rule_yaml(live_path, token)
         work = Path(tempfile.mkdtemp(prefix="threatlint-live-"))
         (work / "live.yaml").write_text(live_yaml, encoding="utf-8")
-        still = target_file and os.path.exists(target_file) and line and _matches(str(work / "live.yaml"), target_file, line, exact=True)
+        can_check = bool(target_file and os.path.exists(target_file) and line)
+        still = _matches(str(work / "live.yaml"), target_file, line, exact=True) if can_check else None
         shutil.rmtree(work, ignore_errors=True)
-        if not still:
+        if can_check and not still:
             for item in already:
                 print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)
             repairs = disable_originals(token, dep, kind, original_rule, **scope)
             _report_disabled(repairs, out)
             return [change for change in repairs if "rollback" in change]
-        print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)
+        if not can_check:
+            print(f"  ! The live tuned rule {live_path} cannot be checked against the flagged line; validating an extension", file=out)
+        else:
+            print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)
     if any(item.get("unified") for item in already):
         raise SemgrepError("Unified tuning publication is unsupported: detection policies cannot enforce MODE_MONITOR, "
                            "and republishing a shared tuned rule is not project-scoped. No rule was published")
@@ -347,17 +418,20 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
                                "it must extend the live tuned rule, not replace it")
     fixtures = semgrep_rule_text.fixtures_from_report(report)
     checked = validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures, token)
-    if not already and any(item.get("unified") for item in policy_reads(token, dep)):
-        raise SemgrepError("Unified tuning publication is unsupported: detection policies cannot enforce MODE_MONITOR. "
-                           "No rule was published; use an explicitly reviewed project detection proposal instead")
+    mode = _tuning_mode(token, dep, kind, original_rule, project, verified_finding) if not already else TUNED_MODE
     where = "and no longer reports the flagged line" if checked["dropped"] else "(the flagged line needs interfile analysis, so the fixtures are the proof)"
     print(f"  ✓ Tuned rule {checked['id']} is valid, keeps every true-positive fixture, drops the false-positive shape{', matches the original rule,' if checked['original_checked'] else ''} {where}", file=out)
     tuned_path = publish(checked["path"], token)
+    if not _tunes(tuned_path, original_rule):
+        raise SemgrepError("Semgrep published a rule path that does not identify the expected tuned rule; no policy was changed")
     print(f"  ✓ Published org-private rule {tuned_path}{' (new version of the live tuned rule)' if live_yaml else ''}", file=out)
     if live_yaml:
         _report_disabled(disable_originals(token, dep, kind, original_rule, **scope), out)
         return [{"policy": item["policy"], "tuned": tuned_path, "mode": item["mode"], "original": original_rule} for item in already]
-    changes = replace_in_policies(token, dep, kind, original_rule, tuned_path, **scope)
+    if mode == "include-ruleset":
+        changes = _replace_ruleset_tuning(token, dep, kind, original_rule, tuned_path, project)
+    else:
+        changes = replace_in_policies(token, dep, kind, original_rule, tuned_path, mode=mode, **scope)
     for change in changes:
         print(f"  ✓ {change['policy']}: {change['tuned']} enabled ({change['mode']}); {change['original']} disabled", file=out)
     for change in changes:
