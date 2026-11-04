@@ -5,14 +5,21 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 const claudeCode = require('../lib/claude-code.cjs');
 const { providerRequest } = require('../lib/pipeline.cjs');
+const CLAUDE_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude';
+const fixtureDirs = [];
+
+after(() => {
+  for (const dir of fixtureDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 /** A PATH holding an executable `claude` stub, so executable() resolves without a real install. */
 function fakeInstall() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-claude-bin-'));
-  fs.writeFileSync(path.join(dir, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+  fixtureDirs.push(dir);
+  fs.writeFileSync(path.join(dir, CLAUDE_NAME), '#!/bin/sh\n', { mode: 0o755 });
   return { PATH: dir, ANTHROPIC_API_KEY: 'sk-ant-should-not-pass', ANTHROPIC_AUTH_TOKEN: 'token-should-not-pass', HOME: dir };
 }
 
@@ -105,7 +112,7 @@ describe('Claude Code provider', () => {
 
   it('finds claude on PATH', () => {
     const env = fakeInstall();
-    assert.equal(claudeCode.executable({ env, home: env.HOME }), path.join(env.PATH, 'claude'));
+    assert.equal(claudeCode.executable({ env, home: env.HOME }), path.join(env.PATH, CLAUDE_NAME));
   });
 
   it('explains a missing install, a failed run, and a sign-in problem', async () => {

@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import types
+from pathlib import Path
 
 import pytest
 
@@ -111,4 +112,4 @@ def test_images_are_written_to_an_added_directory_and_listed(tmp_path):
     argv = fake.call["argv"]
     directory = argv[argv.index("--add-dir") + 1]
     assert "Image files (open each with the Read tool):\n1. " in fake.call["input"]
-    assert f"{directory}/1-white_board.png" in fake.call["input"]
+    assert str(Path(directory) / "1-white_board.png") in fake.call["input"]

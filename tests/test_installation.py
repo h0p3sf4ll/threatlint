@@ -55,7 +55,7 @@ def test_codex_install_writes_complete_native_agent_skills(tmp_path):
         header = re.match(r"^---\nname: ([^\n]+)\ndescription: (\"[^\n]+\")\n---\n", text)
         assert header, source.stem
         assert header.group(1) == source.stem
-        assert header.group(2) == installation._frontmatter(source.read_text())["description"]
+        assert header.group(2) == installation._frontmatter(source.read_text(encoding="utf-8"))["description"]
         assert "tools:" not in header.group(0)
         assert agent_prompt(source.stem, source) in text
         for skill in skill_map()[source.stem]:
@@ -179,7 +179,7 @@ def test_repo_local_codex_entry_points_resolve_to_canonical_protocols():
         text = entry.read_text(encoding="utf-8")
         header = re.match(r"^---\nname: ([^\n]+)\ndescription: (\"[^\n]+\")\n---\n", text)
         assert header and header.group(1) == source.stem
-        assert header.group(2) == installation._frontmatter(source.read_text())["description"]
+        assert header.group(2) == installation._frontmatter(source.read_text(encoding="utf-8"))["description"]
         links = re.findall(r"\]\(([^)]+)\)", text)
         assert len(links) == 1 + len(skill_map()[source.stem])
         assert (entry.parent / links[0]).resolve() == source.resolve()
