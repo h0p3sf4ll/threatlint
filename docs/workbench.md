@@ -307,7 +307,7 @@ For an offline pack using the already installed Electron distribution, from `web
 
 ```bash
 npm run desktop:pack -- --mac --arm64 -c.mac.identity=null \
-  -c.electronDist=node_modules/electron/dist -c.electronVersion=40.10.2
+  -c.electronDist=node_modules/electron/dist -c.electronVersion=44.10.1
 ```
 
 This command disables macOS signing. Do not equate packaging with signing, notarization, or

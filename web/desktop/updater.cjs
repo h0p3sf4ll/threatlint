@@ -7,7 +7,8 @@
  */
 
 const { app, BrowserWindow } = require('electron');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
+const { userPath } = require('./user-path.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -25,15 +26,9 @@ function createSplash() {
   return { window: splash, status, close: () => { if (!splash.isDestroyed()) splash.close(); } };
 }
 
-// Apps opened from Finder or a desktop launcher get a minimal PATH; the build needs the user's node/npm.
+// The rebuild needs the user's node/npm; user-path.cjs supplies the PATH a terminal would have.
 function userEnvironment() {
-  const env = { ...process.env };
-  if (process.platform !== 'win32') {
-    const shell = process.env.SHELL || '/bin/zsh';
-    const probe = spawnSync(shell, ['-ilc', 'printf "__PATH__%s" "$PATH"'], { encoding: 'utf8', timeout: 8000 });
-    const found = /__PATH__(.*)$/s.exec(probe.stdout || '')?.[1]?.trim();
-    env.PATH = [found, env.PATH, '/opt/homebrew/bin', '/usr/local/bin'].filter(Boolean).join(path.delimiter);
-  }
+  const env = { ...process.env, PATH: userPath() };
   const node = env.PATH.split(path.delimiter).map(dir => path.join(dir, process.platform === 'win32' ? 'node.exe' : 'node')).find(file => fs.existsSync(file));
   if (node) { delete env.ELECTRON_RUN_AS_NODE; return { env, node }; }
   // No system Node: Electron's bundled Node runs the build scripts instead.

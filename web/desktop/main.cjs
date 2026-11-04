@@ -5,6 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { watch, readFileSync, appendFileSync } = require('node:fs');
 const { createSplash, updateOnLaunch } = require('./updater.cjs');
+const { adoptUserPath } = require('./user-path.cjs');
 
 let mainWindow;
 let workbench;
@@ -69,6 +70,9 @@ else {
   });
   app.whenReady().then(async () => {
     splash = createSplash();
+    // Launched from Finder or the Dock, the app has a bare PATH; take the user's so Python, Semgrep, git, and node resolve.
+    adoptUserPath();
+    log(`PATH adopted for tools (${process.env.PATH.split(path.delimiter).length} entries).`);
     if (app.isPackaged) {
       await updateOnLaunch(buildInfo(), splash, log).catch(error => {
         log(`Update failed: ${error.stack || error.message}`);
