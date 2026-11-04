@@ -287,6 +287,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_sidekick_parser(sub)
     from threatlint.integrations.cli import add_parsers as add_integration_parsers
     add_integration_parsers(sub)
+    from threatlint.redteam.cli import add_redteam_parser
+    add_redteam_parser(sub)
 
     return parser
 
@@ -326,6 +328,11 @@ def _cmd_aws(args: argparse.Namespace) -> int:
     return cmd_aws(args)
 
 
+def _cmd_redteam(args: argparse.Namespace) -> int:
+    from threatlint.redteam.cli import cmd_redteam
+    return cmd_redteam(args)
+
+
 def _cmd_orchestrator(args: argparse.Namespace) -> int:
     from threatlint.avit_orchestrator import cmd_orchestrator
     return cmd_orchestrator(args)
@@ -348,7 +355,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam}
     # Integration commands (built-in and plugin) register their own handler.
     handler = commands.get(args.command) or getattr(args, "integration_handler", None)
     if handler is None:
