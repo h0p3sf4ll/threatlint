@@ -1,0 +1,92 @@
+<!doctype html>
+<!--
+  Source for the installer artwork in this folder, themed to match desktop/splash.html.
+  Regenerate the images (needs a local Chrome) with:
+    #dmg     -> dmg-background.png (540x380) and dmg-background@2x.png (1080x760)
+    #sidebar -> installer-sidebar.bmp (164x314, 24-bit)   [NSIS welcome/finish]
+    #header  -> installer-header.bmp  (150x57,  24-bit)   [NSIS header]
+  Render with Playwright+Chrome at the sizes above, then `sips -s format bmp -s formatOptions 24`
+  for the two NSIS BMPs. Referenced from package.json build.dmg / build.nsis.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#0c1213; --bg2:#101617; --accent:#3fb8a5; --bright:#7af0dd; --grid:rgba(63,184,165,.10); --text:#e6eeee; --muted:#8aa0a2; }
+  * { box-sizing:border-box; margin:0; }
+  html,body { height:100%; }
+  body { font:16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--text); overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% 34%, rgba(63,184,165,.09), transparent 60%),
+      radial-gradient(140% 120% at 50% 125%, #000 0%, transparent 55%),
+      linear-gradient(160deg, var(--bg2), var(--bg)); }
+  .grid { position:fixed; inset:-40px; opacity:.6;
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:26px 26px; -webkit-mask-image:radial-gradient(95% 90% at 50% 40%,#000 30%,transparent 80%); }
+  .stage { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; }
+
+  .radar { position:relative; border-radius:50%; flex:none;
+    background:radial-gradient(circle, rgba(63,184,165,.10), transparent 70%);
+    box-shadow: inset 0 0 0 1px rgba(63,184,165,.30), 0 0 26px rgba(63,184,165,.14); }
+  .radar::before { content:""; position:absolute; inset:16%; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(63,184,165,.22); }
+  .radar::after { content:""; position:absolute; inset:34%; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(63,184,165,.20); }
+  .cross,.cross::before { position:absolute; background:rgba(63,184,165,.16); }
+  .cross { left:50%; top:6%; bottom:6%; width:1px; transform:translateX(-.5px); }
+  .cross::before { content:""; top:50%; left:-44%; right:-44%; height:1px; transform:translateY(-.5px); }
+  .sweep { position:absolute; inset:2%; border-radius:50%; overflow:hidden; transform:rotate(38deg); }
+  .sweep::before { content:""; position:absolute; inset:0;
+    background:conic-gradient(from 0deg, rgba(122,240,221,.58) 0deg, rgba(63,184,165,.18) 26deg, transparent 72deg); }
+  .blip { position:absolute; border-radius:50%; background:var(--bright); box-shadow:0 0 8px var(--bright); }
+  .core { position:absolute; inset:50%; width:4px; height:4px; margin:-2px; border-radius:50%; background:var(--bright); box-shadow:0 0 9px var(--bright); }
+
+  .wordmark { font-weight:700; letter-spacing:.18em; padding-left:.18em; color:var(--text); }
+  .wordmark b { color:var(--bright); }
+  .tagline { color:var(--muted); font-size:12px; letter-spacing:.06em; }
+
+  /* ── DMG: radar + wordmark in the top third; electron-builder overlays the real app and Applications
+     icons on the icon row, so the background only draws the arrow between them and a hint at the bottom. ── */
+  body.dmg .stage { justify-content:flex-start; padding-top:30px; gap:8px; }
+  body.dmg .radar { width:104px; height:104px; }
+  body.dmg .wordmark { font-size:32px; }
+  body.dmg .arrow { position:fixed; left:50%; top:235px; transform:translate(-50%,-50%); color:var(--accent); font-size:44px; font-weight:300; opacity:.7; }
+  body.dmg .hint { position:fixed; left:0; right:0; bottom:30px; text-align:center; color:var(--muted); font-size:13px; letter-spacing:.04em; }
+
+  /* ── NSIS sidebar (164×314): vertical panel ── */
+  body.sidebar .stage { gap:16px; }
+  body.sidebar .radar { width:92px; height:92px; }
+  body.sidebar .wordmark { font-size:15px; letter-spacing:.14em; }
+
+  /* ── NSIS header (150×57): compact emblem only — NSIS draws the page title text itself on the left,
+     so a radar-only mark on the right avoids any cramped/clipped wordmark. ── */
+  body.header .stage { justify-content:center; }
+  body.header .radar { width:44px; height:44px; }
+  body.header .wordmark { display:none; }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="stage">
+    <div class="radar">
+      <span class="cross"></span><span class="sweep"></span>
+      <span class="blip" style="width:5px;height:5px;top:30%;left:64%"></span>
+      <span class="blip" style="width:4px;height:4px;top:62%;left:36%"></span>
+      <span class="core"></span>
+    </div>
+    <div class="wordmark">THREAT<b>LINT</b></div>
+    <div class="tagline" id="tag">Application security, in one workbench</div>
+  </div>
+  <script>
+    const mode = location.hash.slice(1) || 'dmg';
+    document.body.className = mode;
+    if (mode !== 'dmg') document.getElementById('tag').remove();
+    if (mode === 'header') document.querySelector('.wordmark').insertAdjacentText('afterend', '');
+    if (mode === 'dmg') {
+      const arrow = document.createElement('div'); arrow.className = 'arrow'; arrow.textContent = '→';
+      document.body.appendChild(arrow);
+      const hint = document.createElement('div'); hint.className = 'hint';
+      hint.textContent = 'Drag Threatlint onto the Applications folder to install';
+      document.body.appendChild(hint);
+    }
+  </script>
+</body>
+</html>

@@ -64,6 +64,7 @@
     },
     "files": [
       "desktop/**/*",
+      "!desktop/installer-assets/**",
       "lib/**/*",
       "public/**/*",
       "server.js",
@@ -124,7 +125,32 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerSidebar": "desktop/installer-assets/installer-sidebar.bmp",
+      "uninstallerSidebar": "desktop/installer-assets/installer-sidebar.bmp",
+      "installerHeader": "desktop/installer-assets/installer-header.bmp"
+    },
+    "dmg": {
+      "background": "desktop/installer-assets/dmg-background.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "iconSize": 100,
+      "iconTextSize": 12,
+      "contents": [
+        {
+          "x": 140,
+          "y": 230,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 230,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   },
   "license": "MIT"
