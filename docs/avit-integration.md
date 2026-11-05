@@ -294,12 +294,36 @@ by `THREATLINT_SNOW_SCTASK_CLOSED_STATE`) only when every outcome is TRUE POSITI
 or FALSE POSITIVE; otherwise it comments and leaves the task open. True-positive
 AVITs still need remediation. OAuth access must include `sc_task` and attachments.
 
+## Information Security tasks (ISST)
+
+An ISST identifies its AVITs by its exact repository and branch rather than by a
+list in a description. List and summarize them the same way as a catalog task:
+
+```bash
+threatlint isst avits ISST0012345
+# Review and resolve each returned AVIT.
+threatlint isst summarize ISST0012345 --yes
+```
+
+`/fp-review ISST0012345` and the Workbench also accept ISSTs, as does
+`threatlint run --resolve-avits --isst ISST0012345 --yes`. Summarizing attaches
+each **true-positive** AVIT's Word report to the ISST and adds a comment that lists
+the attached reports (and, when every reviewed AVIT was a false positive, notes the
+ISST and SCAN request can be closed). **Threatlint never closes an ISST**: true
+positives need remediation, so closure stays with the owner. False-positive reports
+are not attached to the ISST — they stay on their own AVIT, which is closed and whose
+Semgrep rule is tuned. The ISST's concrete task table is resolved through
+`task.sys_class_name` (override with `THREATLINT_SNOW_ISST_TABLE`); OAuth access must
+include that table and its attachments.
+
 ## Workbench: False positive review
 
 The Workbench processes up to 50 AVITs sequentially, including AVITs expanded from
-SCTASKs. Each card shows fetch, checkout, model review, report, and write-back.
-One failure does not stop the remaining AVITs. Missing repositories trigger an
-ADO removal check before a no-report closure is attempted.
+SCTASKs and ISSTs. Each card shows fetch, checkout, model review, report, and
+write-back. One failure does not stop the remaining AVITs. Missing repositories
+trigger an ADO removal check before a no-report closure is attempted. A SCTASK is
+closed once its AVITs are decided; an ISST gets its true-positive reports attached
+and a comment and is left open (Threatlint never closes an ISST).
 
 **Stop is not rollback.** Review/fetch stages can be cancelled; the resolver is
 started without the cancellation signal. Network or API failures can still leave
@@ -335,7 +359,9 @@ It builds the app and detected backing services, uses synthetic configuration,
 runs repository tests, and sends at most eight planned vulnerability probes plus
 passive response checks. Evidence is written to `evidence.md`; state is
 `dast-state.json`. Builds and pulls can use the network; runtime containers use an
-internal Docker network with no published ports or checkout mounts.
+internal Docker network with no published ports or checkout mounts. The repository
+is cloned under the configurable repo store (see
+[Where scanned repositories are cloned](setup.md#where-scanned-repositories-are-cloned)).
 
 Review is a handoff through `review-request.md` unless you explicitly select
 `--review-provider lmstudio|openai|claude` (`--model` overrides the model).

@@ -138,10 +138,14 @@ Format checks assess structure, not citation accuracy, exploitability, rule sema
 success. Human review is required. See the [synthetic example](../web/examples/fp-review.md) and
 [canonical reviewer](../src/threatlint/data/agents/appsec-fp-reviewer.md).
 
-For ServiceNow items, **Test → False positive review** accepts AVITs or SCTASKs and reviews AVITs
-one at a time. Its setup checklist requires ServiceNow OAuth, Semgrep, and Azure DevOps credentials.
-Configure them in Settings before starting; use the [AVIT guide](avit-integration.md) for closure
-and external-write behavior.
+For ServiceNow items, **Test → False positive review** accepts AVITs, SCTASKs, and ISSTs in any mix
+and reviews AVITs one at a time. A SCTASK expands into the AVITs named in its description; an ISST
+expands into the AVITs on its exact repository and branch. A false positive is closed on its AVIT
+only (with the Semgrep rule tuned); a true-positive report is attached to its AVIT and, when the
+AVIT came from an ISST, to the ISST as well. A SCTASK is closed once all its AVITs are decided;
+Threatlint never closes an ISST — true positives are left open for remediation. Its setup checklist
+requires ServiceNow OAuth, Semgrep, and Azure DevOps credentials. Configure them in Settings before
+starting; use the [AVIT guide](avit-integration.md) for closure and external-write behavior.
 
 ## Storage and security boundary
 
@@ -288,7 +292,7 @@ are in `web/scripts/build-videos.cjs`.
 
 ## Developer flow
 
-The sidebar groups **Test** (review, sources, runtime, triage/import), **Fix** (Findings and Ask
+The sidebar groups **Test** (review, sources, runtime, false positive review of AVITs/SCTASKs/ISSTs, triage/import), **Fix** (Findings and Ask
 Threatlint), **Track** (Metrics), and **Reference** (Agents, Skills, help). The Skills view shows
 the packaged workflow bodies and assignments from the [registry](../src/threatlint/data/agent-skills.json).
 

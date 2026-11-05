@@ -26,6 +26,7 @@ is not proof that an application is secure.
 | Claude Code slash commands | The command coordinates export after the analysis |
 | Native agent/chat invocation | Client-dependent; a response in chat is not a saved file |
 | Workbench | Review results and the export controls described in the [guide](workbench.md) |
+| Workbench → Triage a scan report | A findings report (Markdown and Word) saved in Findings from an Invicti, MobSF, DefectDojo, or SonarQube export; see [the guide](workbench.md) |
 | CI snapshot runner | The configured Markdown report/artifacts; see [CI templates](ci-templates.md) |
 | Teams | A conversation response, split into messages when needed |
 

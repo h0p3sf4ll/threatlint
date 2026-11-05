@@ -9,6 +9,8 @@ threatlint redteam run --repo https://github.com/acme/web.git --branch main
 ```
 
 Output lands in a run directory: `redteam-report.md`, `avits.json` (AVIT drafts), and `redteam-state.json`.
+The repository is cloned into the configurable repo store, and the checkout is deleted after the run unless you
+pass `--keep-checkout` (see [Where scanned repositories are cloned](setup.md#where-scanned-repositories-are-cloned)).
 
 ## What it does
 

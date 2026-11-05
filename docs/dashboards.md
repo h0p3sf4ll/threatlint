@@ -28,10 +28,21 @@ an explicit list of AVIT numbers or a bounded ServiceNow filter and run the sepa
 sync. The AVIT table can contain millions of records, so a full detailed download is not
 supported. DefectDojo uses its existing **Settings → DefectDojo** connection for a detailed sync.
 
-The all-AVIT filters are risk rating, state, substate, assignment group sys_id, finding source,
-and creation date range. Empty fields mean all readable records. Risk rating and state use
-ServiceNow's stored choice values (for example, risk rating `2` means High in the tested
-instance). The **Stored false-positive state** count matches the configured Closed / False
+The all-AVIT filters are:
+
+- **Source code manager** — GitHub Enterprise or Azure DevOps. Choosing Azure DevOps reveals a
+  **Project** field; GitHub Enterprise shows **Organization**, **Repository**, and **Branch**.
+- **Organization**, **Project**, **Repository**, **Branch** — the AVIT's source-control context.
+  These resolve to your instance's own AVIT columns through the form labels in `sys_documentation`
+  (Organization Name, Project Name, Repository, Project Branch); if your instance does not expose a
+  column for one of them, the summary says so instead of filtering on a guessed field.
+- **Finding type** — Static (SAST), SCA, or Secret, matched against the Security Finding Source.
+- **Risk rating** and **State** — plain-English dropdowns (Critical / High / Medium / Low / None,
+  and Open / Resolved / Closed); you no longer type ServiceNow's numeric choice values.
+
+Secondary fields — **Substate**, **Assignment group** sys_id, exact **Finding source**, and the
+**Created** date range — are under a collapsible **More filters** section. Empty fields mean all
+readable records. The **Stored false-positive state** count matches the configured Closed / False
 Positive state and substate codes; ServiceNow business rules can clear the substate, so that
 count can understate triaged false positives.
 
