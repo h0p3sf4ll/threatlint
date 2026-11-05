@@ -119,3 +119,30 @@ def test_collect_probe_keeps_raw_responses_out_of_persistable_evidence():
     assert evidence["target"].startswith("http://synthetic-app:8000 (sandbox only;")
     assert len(evidence["passive"]) == len({(item["rule"], item["observation"]) for item in evidence["passive"]})
     assert state == original
+
+
+# ── Repo store base (where scanned repos are cloned) ────────────────────────────
+
+def test_scratch_dir_uses_configured_repo_store(tmp_path, monkeypatch):
+    from threatlint import runtime_env as rt
+    store = tmp_path / "Repo Store"
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(store))
+    assert not store.exists()
+    base = rt.repo_store_base()
+    assert base == str(store) and store.is_dir()  # created on demand
+    created = rt.scratch_dir()
+    import os
+    assert os.path.dirname(created) == str(store)  # clone workspace lands on the configured drive
+    os.rmdir(created)
+
+
+def test_scratch_dir_falls_back_to_system_temp_when_unset(monkeypatch):
+    from threatlint import runtime_env as rt
+    from threatlint import org_config
+    monkeypatch.delenv("THREATLINT_REPO_STORE", raising=False)
+    monkeypatch.setattr(org_config, "value", lambda key: "")
+    assert rt.repo_store_base() is None
+    created = rt.scratch_dir()
+    import os, tempfile
+    assert os.path.dirname(created) == os.path.realpath(tempfile.gettempdir()) or os.path.dirname(created) == tempfile.gettempdir()
+    os.rmdir(created)

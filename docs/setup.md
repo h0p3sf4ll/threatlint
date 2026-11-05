@@ -283,6 +283,22 @@ environment values take precedence over file values. Other providers retain
 their own defaults. Check model access with your provider rather than assuming
 an example model is available to every account.
 
+### Where scanned repositories are cloned
+
+The dynamic scans that clone a repository into a throwaway workspace — DAST,
+the runtime red team, and AVIT triage/rule-tuning — clone under the system
+temporary directory by default. To send every such clone to a specific disk
+instead, set a base directory:
+
+| Setting | Environment variable | `org.json` key |
+| --- | --- | --- |
+| Clone base directory | `THREATLINT_REPO_STORE` | `repoStore` |
+
+For example, `{"repoStore": "/Volumes/Repo Store/threatlint"}`. The directory is
+created on demand, each run gets its own subdirectory under it, and the workspace
+is deleted after the run (use `--keep-checkout` to keep a red-team checkout). Keep
+this path in your local `org.json` or environment, not in the repository.
+
 ## Troubleshooting
 
 | Symptom | Do this next |

@@ -39,6 +39,9 @@ ENV = {
     # Claude model policy (threatlint/models.py): scanning runs and chat/assistance defaults.
     "scanModel": "THREATLINT_SCAN_MODEL",
     "generalModel": "THREATLINT_GENERAL_MODEL",
+    # Base directory for repositories cloned during scans (DAST, runtime red team, AVIT triage, rule tuning).
+    # Unset means the system temporary location. See runtime_env.repo_store_base().
+    "repoStore": "THREATLINT_REPO_STORE",
 }
 
 

@@ -146,6 +146,7 @@ def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict
                         token: str, dep: dict, target: dict[str, str], matches: list[dict]) -> None:
     """Use the supplied checkout or fetch the exact AVIT branch before tuning."""
     from threatlint import semgrep_platform as sp  # noqa: PLC0415
+    from threatlint import runtime_env as rt  # noqa: PLC0415
 
     rule, path = context.get("rule", ""), context.get("file_path", "")
     if not rule or not path or Path(path).is_absolute():
@@ -153,7 +154,7 @@ def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict
     line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
     if not line or line < 1:
         raise ResolveError("Rule tuning needs the flagged line from the AVIT or report")
-    with tempfile.TemporaryDirectory(prefix="threatlint-tune-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="threatlint-tune-", dir=rt.repo_store_base()) as temporary:
         checkout = Path(getattr(args, "checkout", "") or temporary).expanduser().resolve()
         flagged = (checkout / path).resolve()
         if not flagged.is_relative_to(checkout):

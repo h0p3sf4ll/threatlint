@@ -219,10 +219,11 @@ def _repairable_rule_error(error: Exception) -> bool:
 def _review_one(args, item: dict, instance: str, system_prompt: str, model: str, semgrep_version: str,
                 *, provider: str = "codex", base_url: str = "", api_key: str = "") -> dict:
     from . import dast
+    from . import runtime_env as rt
 
     avit = item["fields"]["number"]
     print(f"\n{avit}: fetching evidence and checking out the AVIT branch", flush=True)
-    with tempfile.TemporaryDirectory(prefix="threatlint-avit-") as work:
+    with tempfile.TemporaryDirectory(prefix="threatlint-avit-", dir=rt.repo_store_base()) as work:
         repo = Path(work) / "repo"
         target = _checkout(item, args, repo)
         kind = sn.finding_kind(item)

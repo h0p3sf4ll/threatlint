@@ -279,5 +279,21 @@ def provider(name: str = "docker", **kwargs) -> EnvironmentProvider:
     return PROVIDERS[name](**kwargs)
 
 
+def repo_store_base() -> str | None:
+    """Base directory to clone scanned repositories under.
+
+    Resolved from the ``repoStore`` setting (``THREATLINT_REPO_STORE`` env var, then ``~/.threatlint/org.json``).
+    When set, the directory is created if missing and returned; when unset, returns ``None`` so callers fall back to
+    the system temporary location. Keeping the actual path in local config, not in code, honours the no-org-paths rule.
+    """
+    from threatlint import org_config  # noqa: PLC0415 - lazy to avoid an import cycle
+
+    base = os.path.expanduser(org_config.value("repoStore"))
+    if not base:
+        return None
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
 def scratch_dir(prefix: str = "threatlint-dast-") -> str:
-    return tempfile.mkdtemp(prefix=prefix)
+    return tempfile.mkdtemp(prefix=prefix, dir=repo_store_base())
