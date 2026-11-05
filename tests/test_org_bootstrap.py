@@ -34,7 +34,7 @@ def test_fresh_bootstrap_persists_only_metadata_and_selected_reference(monkeypat
     monkeypatch.setattr(parameter_store, "read_parameter", read)
     destination = org_config.bootstrap("/example/org", "appsec", "eu-central-1")
     assert calls == [("/example/org", "appsec", "eu-central-1")]
-    assert json.loads(destination.read_text()) == {**payload, "orgParameter": "/example/org", "awsRegion": "eu-central-1"}
+    assert json.loads(destination.read_text()) == {**payload, "orgParameter": "/example/org", "awsRegion": "eu-central-1", "awsProfile": "appsec"}
     if os.name != "nt":
         assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
@@ -71,6 +71,7 @@ def test_region_uses_app_environment_then_saved_then_legacy_default(monkeypatch)
     {"snowInstance": "https://example.service-now.com/#fragment"}, {"awsRegion": "--debug"},
     {"snowInstance": "https://example.service-now.com:invalid"}, {"ssoUrl": "https://exa mple.com"},
     {"snowClientSecretParameter": "--debug"},
+    {"awsProfile": "--debug"},
     "malformed-synthetic-secret",
 ])
 def test_invalid_metadata_is_never_saved_or_echoed(monkeypatch, payload):
@@ -115,5 +116,27 @@ def test_atomic_write_failure_preserves_config_and_removes_temporary_file(monkey
     with pytest.raises(parameter_store.ParameterStoreError) as caught:
         org_config.bootstrap("/example/org")
     assert "synthetic-private-path" not in str(caught.value)
+    assert org_config.path().read_text() == original
+    assert list(org_config.path().parent.glob(".org-*.tmp")) == []
+
+
+def test_profile_uses_environment_then_saved_then_aws_default_chain(monkeypatch):
+    assert org_config.aws_profile() is None
+    org_config.path().write_text('{"awsProfile":"saved-profile"}')
+    assert org_config.aws_profile() == "saved-profile"
+    monkeypatch.setenv("THREATLINT_AWS_PROFILE", "explicit-profile")
+    assert org_config.aws_profile() == "explicit-profile"
+
+
+def test_metadata_update_preserves_unrelated_settings_on_atomic_failure(monkeypatch):
+    original = '{"snowInstance":"https://example.service-now.com","awsProfile":"existing"}'
+    org_config.path().write_text(original)
+
+    def fail_replace(*args):
+        raise OSError("private-path")
+
+    monkeypatch.setattr(org_config.os, "replace", fail_replace)
+    with pytest.raises(parameter_store.ParameterStoreError, match="could not be saved"):
+        org_config.update_metadata({"adoPatParameter": "/example/pat", "adoOrganizations": ["contoso"]})
     assert org_config.path().read_text() == original
     assert list(org_config.path().parent.glob(".org-*.tmp")) == []

@@ -1,13 +1,15 @@
 """threatlint ado login: PAT validation, storage, and precedence for AVIT checkouts."""
 
 import io
+import json
 import os
 import stat
+import types
 import urllib.error
 
 import pytest
 
-from threatlint import ado_login, servicenow
+from threatlint import ado_login, cli, org_config, parameter_store, servicenow
 
 PAT = "a" * 52
 
@@ -27,7 +29,7 @@ class Response(io.BytesIO):
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path / "home"))
-    for name in ado_login.ENV_NAMES:
+    for name in (*ado_login.ENV_NAMES, *org_config.ENV.values()):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(ado_login, "_keyring", lambda: None)
 
@@ -138,3 +140,141 @@ def test_token_prints_a_saved_pat_only_to_a_pipe(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="token", organization="contoso")) == 1
     assert "p" * 20 not in capsys.readouterr().out
+
+
+def _shared(monkeypatch):
+    monkeypatch.setenv("THREATLINT_ADO_PAT_PARAMETER", "/example/service-account/pat")
+    monkeypatch.setenv("THREATLINT_ADO_ORGANIZATIONS", "Contoso,Fabrikam")
+    monkeypatch.setenv("THREATLINT_AWS_PROFILE", "service-account-reader")
+    monkeypatch.setenv("THREATLINT_AWS_REGION", "eu-west-1")
+
+
+def test_shared_pat_is_authoritative_and_rotation_never_changes_local_secret_storage(monkeypatch):
+    ado_login.save("contoso", PAT)
+    original = ado_login.store_path().read_bytes()
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "e" * 52)
+    _shared(monkeypatch)
+    values, reads = iter(["s" * 52, "r" * 52]), []
+
+    def read(name, profile=None, region=None):
+        reads.append((name, profile, region))
+        return next(values)
+
+    monkeypatch.setattr(parameter_store, "read_parameter", read)
+    assert ado_login.load("contoso") == ("s" * 52, ado_login.SERVICE_ACCOUNT_SOURCE)
+    assert ado_login.load("Fabrikam", profile="explicit-profile") == ("r" * 52, ado_login.SERVICE_ACCOUNT_SOURCE)
+    assert reads == [("/example/service-account/pat", "service-account-reader", "eu-west-1"),
+                     ("/example/service-account/pat", "explicit-profile", "eu-west-1")]
+    assert ado_login.store_path().read_bytes() == original
+
+
+def test_service_account_uses_aws_default_chain_when_no_profile_is_configured(monkeypatch):
+    _shared(monkeypatch)
+    monkeypatch.delenv("THREATLINT_AWS_PROFILE")
+    monkeypatch.setenv("AWS_PROFILE", "ambient-profile")
+    reads = []
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda name, **kwargs: reads.append(kwargs) or PAT)
+    ado_login.service_account_pat("Contoso")
+    assert reads == [{"profile": None, "region": "eu-west-1"}], "None lets the AWS CLI honor its own credential chain"
+
+
+def test_service_account_refuses_unlisted_organizations_before_any_secret_lookup(monkeypatch):
+    ado_login.save("other", PAT)
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "e" * 52)
+    _shared(monkeypatch)
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: pytest.fail("Disallowed organization must not read the service account"))
+    monkeypatch.setattr(servicenow, "_run_tool", lambda *a, **k: pytest.fail("Disallowed organization must not fall back to az login"))
+    with pytest.raises(ado_login.AdoLoginError, match="not allowed"):
+        ado_login.load("other")
+
+
+def test_service_account_lookup_failure_never_uses_existing_personal_pat(monkeypatch):
+    ado_login.save("contoso", PAT)
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "e" * 52)
+    _shared(monkeypatch)
+
+    def denied(*args, **kwargs):
+        raise parameter_store.ParameterStoreError("AccessDeniedException: check permissions")
+
+    monkeypatch.setattr(parameter_store, "read_parameter", denied)
+    with pytest.raises(ado_login.AdoLoginError, match="AccessDeniedException"):
+        ado_login.load("Contoso")
+
+
+def test_service_account_helper_requires_ssm_even_when_personal_credentials_exist(monkeypatch):
+    monkeypatch.setenv("THREATLINT_ADO_PAT", PAT)
+    with pytest.raises(ado_login.AdoLoginError, match="adoPatParameter"):
+        ado_login.service_account_pat("contoso")
+
+
+@pytest.mark.parametrize("organizations", ["", "https://dev.azure.com/contoso", "contoso,invalid/org"])
+def test_invalid_service_account_scope_cannot_fall_back_to_personal_credentials(monkeypatch, organizations):
+    _shared(monkeypatch)
+    monkeypatch.setenv("THREATLINT_ADO_ORGANIZATIONS", organizations)
+    monkeypatch.setenv("THREATLINT_ADO_PAT", PAT)
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: pytest.fail("Validate scope before reading secrets"))
+    assert ado_login.public_status()["hasPat"] is False
+    with pytest.raises(ado_login.AdoLoginError, match="adoOrganizations"):
+        ado_login.load("contoso")
+
+
+def test_status_exposes_only_service_account_metadata_without_reading_secrets(monkeypatch, capsys):
+    _shared(monkeypatch)
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: pytest.fail("Status must not retrieve secrets"))
+    monkeypatch.setattr(ado_login, "_read_store", lambda: pytest.fail("Service account status must not inspect personal PATs"))
+    assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="status", json=True)) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status == {"hasPat": True, "source": ado_login.SERVICE_ACCOUNT_SOURCE,
+                      "organizations": [{"name": name, "source": ado_login.SERVICE_ACCOUNT_SOURCE} for name in ("Contoso", "Fabrikam")],
+                      "serviceAccount": {"configured": True, "parameter": "/example/service-account/pat",
+                                         "organizations": ["Contoso", "Fabrikam"], "profile": "service-account-reader", "region": "eu-west-1"}}
+    assert ado_login.organizations() == ["Contoso", "Fabrikam"]
+    assert ado_login.cmd_ado(types.SimpleNamespace(ado_command="status", json=False)) == 0
+    assert capsys.readouterr().out.splitlines() == [f"Azure DevOps PAT: {ado_login.SERVICE_ACCOUNT_SOURCE} · {name}" for name in ("Contoso", "Fabrikam")]
+
+
+def test_service_account_command_validates_every_org_and_saves_only_metadata(monkeypatch, capsys):
+    org_config.path().parent.mkdir(parents=True)
+    org_config.path().write_text(json.dumps({"snowInstance": "https://example.service-now.com", "semgrepDeployment": "retained"}))
+    calls = []
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda name, **kwargs: calls.append(("read", name, kwargs)) or PAT)
+    monkeypatch.setattr(ado_login, "validate", lambda org, pat: calls.append(("validate", org, pat)))
+    monkeypatch.setattr(ado_login, "save", lambda *a, **k: pytest.fail("Service account PAT must not be saved"))
+    args = cli.build_parser().parse_args(["ado", "service-account", "--parameter", "/example/pat",
+                                         "--organization", "first", "--organization", "Second", "--organization", "first",
+                                         "--aws-profile", "appsec", "--region", "eu-central-1"])
+    assert ado_login.cmd_ado(args) == 0
+    assert calls == [("read", "/example/pat", {"profile": "appsec", "region": "eu-central-1"}),
+                     ("validate", "first", PAT), ("validate", "Second", PAT)]
+    saved = org_config.path().read_text()
+    assert json.loads(saved) == {"snowInstance": "https://example.service-now.com", "semgrepDeployment": "retained",
+                                "adoPatParameter": "/example/pat", "adoOrganizations": ["first", "Second"],
+                                "awsProfile": "appsec", "awsRegion": "eu-central-1"}
+    assert not ado_login.store_path().exists()
+    output = capsys.readouterr()
+    assert PAT not in saved + output.out + output.err
+
+
+def test_failed_service_account_validation_preserves_existing_configuration(monkeypatch):
+    org_config.path().parent.mkdir(parents=True)
+    original = '{"adoPatParameter":"/previous/pat","adoOrganizations":["previous"]}'
+    org_config.path().write_text(original)
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: PAT)
+
+    def validate(org, pat):
+        if org == "second":
+            raise ado_login.AdoLoginError("Azure DevOps rejected the PAT")
+
+    monkeypatch.setattr(ado_login, "validate", validate)
+    with pytest.raises(ado_login.AdoLoginError, match="rejected"):
+        ado_login.configure_service_account("/new/pat", ["first", "second"])
+    assert org_config.path().read_text() == original
+
+
+def test_invalid_ssm_pat_is_not_echoed(monkeypatch):
+    _shared(monkeypatch)
+    bad = "sensitive value with spaces"
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: bad)
+    with pytest.raises(ado_login.AdoLoginError, match="valid PAT") as caught:
+        ado_login.load("contoso")
+    assert bad not in str(caught.value)

@@ -53,6 +53,13 @@ def validate_region(region: str) -> str:
     return region
 
 
+def validate_profile(profile: str | None) -> str | None:
+    """Validate an optional AWS profile without reading its credentials."""
+    if profile is not None and (not isinstance(profile, str) or not _PROFILE.fullmatch(profile)):
+        raise ParameterStoreError("Invalid AWS profile name.")
+    return profile
+
+
 def validate_reference(name: str, profile: str | None = None, region: str | None = None) -> None:
     """Validate the shared single- and multi-parameter reader inputs."""
     from threatlint.org_config import aws_region  # noqa: PLC0415 - avoids the bootstrap import cycle
@@ -60,8 +67,7 @@ def validate_reference(name: str, profile: str | None = None, region: str | None
     if not isinstance(name, str) or len(name) > 2048 or not _PARAMETER.fullmatch(name):
         raise ParameterStoreError("Invalid Parameter Store name. Supply a parameter name, path, or SSM parameter ARN.")
     validate_region(aws_region() if region is None else region)
-    if profile is not None and (not isinstance(profile, str) or not _PROFILE.fullmatch(profile)):
-        raise ParameterStoreError("Invalid AWS profile name.")
+    validate_profile(profile)
 
 
 def read_parameter(name: str, profile: str | None = None, region: str | None = None) -> str:

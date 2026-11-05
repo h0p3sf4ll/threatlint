@@ -61,7 +61,10 @@ def _http(url: str, *, headers: dict, data: bytes | None = None, method: str | N
 
 class Ado:
     def __init__(self, organization: str):
-        pat, _source = ado_login.load(organization)
+        try:
+            pat, _source = ado_login.load(organization)
+        except ado_login.AdoLoginError as exc:
+            raise SidekickError(str(exc)) from exc
         if not pat:
             raise SidekickError(f"No Azure DevOps PAT for {organization}. Run `threatlint ado login --organization {organization}`.")
         self.organization = organization

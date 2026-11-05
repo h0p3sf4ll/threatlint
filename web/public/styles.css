@@ -606,6 +606,8 @@ output.operations-status,output.field-note,output.toast{display:block}
 .fp-history-entry.success .fp-history-stage,.fp-history-entry.closed .fp-history-stage,.fp-history-entry.tuned .fp-history-stage{color:var(--accent)}
 .fp-history-entry.error{background:#482d2840}.fp-history-entry.error .fp-history-stage,.fp-history-entry.error .fp-history-detail{color:#f5c2bb}
 .fp-history-entry.warning .fp-history-stage{color:var(--amber)}
+.avit-card .stage-info{color:#a9cde6;border-color:#4d6f86;background:#20313d}.fp-history-entry.info .fp-history-stage{color:#a9cde6}
+.avit-card a.avit-id{text-decoration:underline;text-underline-offset:3px}.avit-card a.avit-id:hover{color:var(--text)}
 .avit-card>header .avit-updated{margin-left:auto;font-family:var(--mono);font-size:11px}
 .avit-card .avit-stage.stage-skipped{color:var(--amber);border-color:#655a3d;background:#332e21}
 .avit-card[data-result=error]{border-color:#6b4640}.avit-card.active{border-color:#3f5e4b}

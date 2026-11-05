@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 from threatlint import servicenow as sn
 from threatlint.avit_report import ResolveError
@@ -42,6 +44,13 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
+    fix = actions.add_parser("fix-pr", help="Open a draft ADO pull request for a reviewed AVIT fix using the Parameter Store service account")
+    fix.add_argument("number", metavar="AVIT")
+    fix.add_argument("--report", required=True, help="Reviewed Markdown report containing a Proposed fix patch")
+    fix.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
+    fix.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
+    fix.add_argument("--yes", action="store_true", help="Create the draft PR without prompting")
+    sn.add_avit_arguments(fix)
     from threatlint.dast import add_dast_parser
     add_dast_parser(actions)
 
@@ -61,6 +70,23 @@ def confirm(question: str, yes: bool) -> None:
         raise ResolveError("Confirmation required: rerun with --yes after reviewing the verdict")
     if input(f"{question} [y/N] ").strip().lower() not in ("y", "yes"):
         raise ResolveError("Cancelled; nothing was changed")
+
+
+def cmd_fix_pr(args) -> int:
+    from threatlint.avit_pr import create_fix_pr  # noqa: PLC0415
+
+    [avit] = sn.parse_avit_numbers(args.number)
+    try:
+        target = json.loads(Path(args.target).read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        raise ResolveError("The reviewed repository target could not be read") from None
+    if not isinstance(target, dict) or target.get("avit", avit) != avit:
+        raise ResolveError("The repository target does not belong to this AVIT")
+    report = Path(args.report).read_text(encoding="utf-8")
+    confirm(f"{avit}: publish its proposed fix as a draft ADO pull request?", args.yes)
+    result = create_fix_pr(avit, report, args.checkout, target, profile=args.aws_profile, instance=args.snow_instance)
+    print(json.dumps(result))
+    return 0
 
 
 def run(handler, args, *, remove_checkout) -> int:

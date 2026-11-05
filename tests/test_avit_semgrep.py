@@ -14,6 +14,9 @@ from threatlint import servicenow as sn
 TARGET = {"organization": "synthetic-org", "project": "Project Name", "name": "repo", "branch": "feature"}
 REPOSITORY = "synthetic-org/Project Name/repo"
 CONTEXT = {"file_path": "file.py", "rule": "r", "line": "42", "branch": "feature"}
+REPORT_AVIT = "AVIT000000000000001"
+REPORT_CONTEXT = {**CONTEXT, "avit": REPORT_AVIT, "file_path": "app/utils/auth.py", "line": ""}
+PUNCTUATED_REPORT = f"**Original finding**: {REPORT_AVIT}; r; Semgrep Code; app/utils/auth.py:97.  \n"
 
 
 def finding(identifier=1, **overrides):
@@ -33,9 +36,9 @@ def deployment(monkeypatch):
     monkeypatch.setattr(sp, "deployment", lambda *args: {"slug": "synthetic", "id": 7})
 
 
-def match(monkeypatch, query, *, kind="sast", context=None, target=None):
+def match(monkeypatch, query, *, kind="sast", context=None, target=None, report_text="synthetic"):
     monkeypatch.setattr(ar, "_semgrep", query)
-    return ar.semgrep_matches("synthetic", kind, target or TARGET, context or CONTEXT, report_text="synthetic")
+    return ar.semgrep_matches("synthetic", kind, target or TARGET, context or CONTEXT, report_text=report_text)
 
 
 def test_transport_keeps_auth_headers_and_original_opener(monkeypatch):
@@ -69,6 +72,41 @@ def test_original_report_line_and_path_collaborators_are_used(monkeypatch):
     _, matches = match(monkeypatch, paged([finding(location={"file_path": "different.py", "line": 42})]),
                        context={**CONTEXT, "line": ""})
     assert [row["id"] for row in matches] == [1]
+
+
+def test_report_line_with_terminal_period_keeps_exact_path_rule_and_three_line_window(monkeypatch):
+    rows = [finding(line, location={"file_path": "app/utils/auth.py", "line": line})
+            for line in (93, 94, 97, 100, 101)]
+    rows.extend([
+        finding(201, rule_name="other.r", location={"file_path": "app/utils/auth.py", "line": 97}),
+        finding(202, location={"file_path": "other/app/utils/auth.py", "line": 97}),
+        finding(203, location={"file_path": "app/utils/auth.py", "line": 97}, status="ignored"),
+    ])
+    calls = []
+
+    def query(path, token, **kwargs):
+        calls.append(urllib.parse.parse_qs(urllib.parse.urlsplit(path).query))
+        return paged(rows)(path, token, **kwargs)
+
+    _, matches = match(monkeypatch, query, context=REPORT_CONTEXT, report_text=PUNCTUATED_REPORT)
+    assert [row["id"] for row in matches] == [94, 97, 100]
+    assert all(call["repos"] == [REPOSITORY] and call["ref"] == ["feature"] for call in calls)
+    assert all(row["project"] == REPOSITORY and row["ref"] == "feature" and row["rule"] == "r"
+               and row["path"] == "app/utils/auth.py" for row in matches)
+
+
+@pytest.mark.parametrize("overrides", [{"repository": {"name": "other-org/Project Name/repo"}}, {"ref": "another-branch"}])
+def test_report_line_fallback_still_rejects_wrong_repository_or_branch(monkeypatch, overrides):
+    row = finding(location={"file_path": "app/utils/auth.py", "line": 97}, **overrides)
+    with pytest.raises(ar.ResolveError, match="repository|branch"):
+        match(monkeypatch, paged([row]), context=REPORT_CONTEXT, report_text=PUNCTUATED_REPORT)
+
+
+def test_report_line_from_another_file_is_rejected_before_finding_queries(monkeypatch):
+    report = PUNCTUATED_REPORT.replace("app/utils/auth.py:97.", "other/utils/auth.py:97.")
+    with pytest.raises(ar.ResolveError, match="flagged line"):
+        match(monkeypatch, lambda *args, **kwargs: pytest.fail("no finding query with a mismatched report path"),
+              context=REPORT_CONTEXT, report_text=report)
 
 
 @pytest.mark.parametrize(("target", "expected"), [

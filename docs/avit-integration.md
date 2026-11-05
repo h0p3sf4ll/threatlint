@@ -98,9 +98,20 @@ availability. Individual CLI stages use the credentials their operation needs.
 | Need | Configure / verify |
 | --- | --- |
 | ServiceNow instance and OAuth client | `threatlint setup` / `threatlint setup --check` |
-| Azure DevOps Code: Read PAT, per organization | `threatlint ado login --organization <org>` / `threatlint ado status` |
+| Azure DevOps service-account PAT in Parameter Store | `threatlint ado service-account --parameter <adoPatParameter> --organization <org> --aws-profile <profile> --region <region>` / `threatlint ado status` |
 | Semgrep deployment token with Web API access | `threatlint semgrep login` / `threatlint semgrep status` |
 | Local rule validation | Install Semgrep CE, then `semgrep login` and `semgrep install-semgrep-pro`; verify `semgrep --version` |
+
+When `adoPatParameter` is configured, it is the authoritative credential source
+for the listed `adoOrganizations`, ahead of personal PATs in environment variables
+or local credential stores. The service-account PAT is read at runtime and kept
+only in memory, so Parameter Store rotation takes effect without copying a new
+secret into local settings. An unavailable parameter or an organization outside
+the configured list stops ADO access instead of using a personal identity.
+`--aws-profile` selects the AWS identity for the run; `awsProfile` is the configured
+default. Use Code: Read & write and repository permission to create branches and
+pull requests for proposed fixes. Legacy `threatlint ado login` remains available
+only when no shared parameter is configured.
 
 For `--isst`, the ServiceNow OAuth client needs read access to the `task` table
 or `sys_db_object` metadata, read and comment/attachment access to the concrete
@@ -119,6 +130,10 @@ Organization defaults are optional. Environment variables override
 | `org.json` key | Environment variable |
 | --- | --- |
 | `ssoUrl` | `THREATLINT_AWS_SSO_PORTAL_URL` |
+| `awsProfile` | `THREATLINT_AWS_PROFILE` |
+| `awsRegion` | `THREATLINT_AWS_REGION` |
+| `adoPatParameter` | `THREATLINT_ADO_PAT_PARAMETER` |
+| `adoOrganizations` | `THREATLINT_ADO_ORGANIZATIONS` |
 | `snowClientIdParameter` | `THREATLINT_SNOW_CLIENT_ID_PARAMETER` |
 | `snowClientSecretParameter` | `THREATLINT_SNOW_CLIENT_SECRET_PARAMETER` |
 | `semgrepTokenParameter` | `THREATLINT_SEMGREP_TOKEN_PARAMETER` |
@@ -400,6 +415,46 @@ needed, uses the AVIT resolver, skips Semgrep, and deletes the checkout. No Invi
 API is called: `set_invicti_hook(fn)` supplies an optional callback; otherwise
 `invicti_mark_false_positive` only reports the issue ID.
 
+## Draft pull requests for proposed fixes
+
+Finding triage opens a draft Azure DevOps PR after a true-positive report has
+been attached successfully. The Workbench's **Open draft Azure DevOps PRs for
+proposed fixes** option is enabled by default. Headless `run fp-review
+--resolve-avits --yes` includes the same step; pass `--no-fix-pr` to skip it.
+
+The reviewer supplies a `**Proposed fix patch**:` field followed by a fenced
+`diff` block. Threatlint checks the patch against the clean reviewed checkout
+and confirms that the target branch still points at the reviewed commit. It
+publishes the proposed change on a separate branch and opens a draft PR for
+engineering review. A retry reuses the matching PR or branch. The AVIT card and
+headless result include the PR link. Application tests are not run by this
+publishing step; the PR states that CI and engineering validation remain due.
+
+PR publishing requires the service-account PAT referenced by the existing
+`adoPatParameter`, access to the repository's organization in `adoOrganizations`,
+and ADO permissions to create branches, contribute code, and create pull
+requests. It never falls back to a personal PAT. Configure this source through
+**Settings → Azure DevOps → AWS Parameter Store**, or `threatlint ado
+service-account`; the shared secret is fetched at runtime and not saved locally.
+
+False positives, conservative-default decisions, absent patches, non-ADO
+repositories, and checkouts without the exact reviewed branch produce no source
+PR. The flow shows why the PR step was skipped. If publishing fails after the
+report was attached, the completed ServiceNow work remains recorded and the PR
+failure is reported separately. The workflow never merges a PR.
+
+For an existing review and checkout, the standalone entry point is:
+
+```sh
+threatlint avit fix-pr AVIT000000095938462 \
+  --report review.md --checkout /path/to/repo --target reviewed-target.json \
+  --aws-profile appsec --yes
+```
+
+`reviewed-target.json` contains the JSON repository metadata from `avit checkout`.
+The command validates that its repository and branch match the checkout before
+publishing.
+
 ## Data flows
 
 | Data | Route / retention |
@@ -409,6 +464,8 @@ API is called: `set_invicti_hook(fn)` supplies an optional callback; otherwise
 | Source | ADO/GitHub → checkout → reviewer/model tools; not just a local-only operation when using a hosted model |
 | Report | Reviewer → local Markdown/Word → ServiceNow Word attachment; manual CLI stages retain their reports, while the headless Codex AVIT workflow and Workbench batch clean up temporary reports |
 | Semgrep token | Credential source → Semgrep API and rule publishing |
+| ADO service-account PAT | Configured AWS parameter → runtime memory → Azure DevOps; no local PAT copy |
+| Proposed fix | Reviewed diff → isolated applicability check → separate ADO branch and draft PR |
 | Model input | Prompts and inspected source → selected provider; use approved provider/data settings |
 
 ## Known limits

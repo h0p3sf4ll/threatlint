@@ -529,15 +529,31 @@
     catch (error) { $('semgrep-error').textContent = error.message; return; }
     await loadSemgrepSettings(); toast('Semgrep token validated and saved. It is never shown again.');
   }
-  // One PAT per Azure DevOps organization: list them (sources only), add or replace one, remove one.
+  function updateAdoFields() {
+    const shared = $('ado-auth-mode').value === 'service-account';
+    $('ado-service-account-fields').hidden = !shared; $('ado-personal-fields').hidden = shared;
+    $('ado-save').textContent = shared ? 'Save service-account settings' : 'Save Azure DevOps PAT';
+    $('ado-save-note').textContent = shared ? 'The service account is validated for every allowed organization before saving the reference.' : 'The PAT is checked against Azure DevOps before it is saved.';
+    if (shared) $('ado-pat').value = '';
+  }
+  // The page receives credential-source metadata; the shared PAT stays in the local runner's memory.
   async function loadAdoSettings() {
     try { state.adoSaved = await request('/api/ado/settings'); } catch { state.adoSaved = null; }
     const orgs = state.adoSaved?.organizations || [];
+    const serviceAccount = state.adoSaved?.serviceAccount || {};
+    const shared = !!serviceAccount.parameter;
+    $('ado-auth-mode').value = shared || !state.adoSaved?.hasPat ? 'service-account' : 'personal';
+    $('ado-auth-mode').querySelector('option[value=personal]').disabled = shared;
+    $('ado-pat-parameter').value = serviceAccount.parameter || '';
+    $('ado-service-organizations').value = (serviceAccount.organizations?.length ? serviceAccount.organizations : orgs.map(org => org.name)).join(', ');
+    $('ado-aws-profile').value = serviceAccount.profile || '';
+    $('ado-aws-region').value = serviceAccount.region || '';
+    updateAdoFields();
     const list = $('ado-organizations'); list.replaceChildren();
     for (const org of orgs) {
       const row = el('div', 'ado-org-row');
-      row.append(el('strong', '', org.name), el('span', 'small subtle', ` · ${org.source} · PAT ••••••••`),
-        button('Remove', 'button secondary small-button', async () => {
+      row.append(el('strong', '', org.name), el('span', 'small subtle', ` · ${org.source}${shared ? '' : ' · PAT ••••••••'}`));
+      if (!shared) row.append(button('Remove', 'button secondary small-button', async () => {
           if (!confirm(`Remove the saved PAT for ${org.name}?`)) return;
           try { state.adoSaved = await request(`/api/ado/settings/${encodeURIComponent(org.name)}`, { method: 'DELETE' }); } catch (error) { $('ado-error').textContent = error.message; return; }
           await loadAdoSettings(); toast(`Removed the PAT for ${org.name}.`);
@@ -545,11 +561,20 @@
       list.append(row);
     }
     $('ado-pat').value = '';
-    $('ado-status').textContent = orgs.length ? `${orgs.length} organization${orgs.length > 1 ? 's' : ''} configured. Each clone uses its own organization's PAT. PATs are never shown.`
+    $('ado-status').textContent = shared ? `AWS Parameter Store service account: ${serviceAccount.parameter}. Used for ${serviceAccount.organizations?.join(', ') || 'the configured organizations'}; personal PATs are not used. The PAT is never shown or saved locally.`
+      : orgs.length ? `${orgs.length} organization${orgs.length > 1 ? 's' : ''} configured with legacy PATs. Select AWS Parameter Store to use the service account.`
       : state.adoSaved?.hasPat ? `Saved in ${state.adoSaved.source}. The PAT is never shown.` : 'Not configured. Required to review AVITs.';
   }
   async function saveAdo(event) {
     event.preventDefault(); $('ado-error').textContent = '';
+    if ($('ado-auth-mode').value === 'service-account') {
+      const body = { parameter: $('ado-pat-parameter').value.trim(), organizations: $('ado-service-organizations').value.split(/[\s,;]+/).filter(Boolean),
+        profile: $('ado-aws-profile').value.trim(), region: $('ado-aws-region').value.trim() };
+      if (!body.parameter || !body.organizations.length) { $('ado-error').textContent = 'Enter the service-account parameter and its allowed Azure DevOps organizations.'; return; }
+      try { await request('/api/ado/service-account', { method: 'POST', body: JSON.stringify(body) }); }
+      catch (error) { $('ado-error').textContent = error.message; return; }
+      await loadAdoSettings(); toast('Service account validated. Threatlint will read its PAT from AWS Parameter Store.'); return;
+    }
     const pat = $('ado-pat').value.trim(), organization = $('ado-organization').value.trim();
     if (!organization) { $('ado-error').textContent = 'Enter the organization this PAT is for.'; return; }
     if (!pat) { $('ado-error').textContent = 'Enter the PAT for this organization.'; return; }
@@ -639,7 +664,18 @@
     if (state.modelListProvider !== provider) { state.modelListProvider = provider; fillModelSelect([], $('model-id').value.trim() || state.preferences.models[provider] || ''); $('model-source').textContent = ''; $('settings-error').textContent = ''; }
     if (fixedModel) $('model-id').value = fixedModel;
     if (bedrock) $('model-source').textContent = 'Enter the exact Claude model or inference profile ID from your AWS Bedrock console. Model availability depends on your AWS account and region.';
-    if (provider === 'daybreak') $('model-source').textContent = 'GPT-6 Sol with Daybreak Blue requires an approved OpenAI organization and enabled API project. Selecting this option does not grant access.';
+    if (provider === 'daybreak') {
+      $('api-key-label').firstChild.textContent = 'OpenAI project API key (optional) ';
+      $('api-key').placeholder = 'Leave empty to use your configured key or Codex login';
+      $('environment-key-note').textContent = $('api-key').value.trim()
+        ? 'Using the OpenAI project API key entered for this session.'
+        : source && source !== state.config.providers.codex
+          ? `Using ${source} for the OpenAI API. Leave this empty, or enter a key for this session only.`
+          : state.config.providers.codex
+            ? `Using your ${state.config.providers.codex} with Daybreak Blue enabled. No API key is needed. Agents run through Codex in a read-only sandbox.`
+            : 'Sign in with `codex login` and reload Settings, or enter an API key from a project with Daybreak Blue enabled.';
+      $('model-source').textContent = 'GPT-6 Sol with Daybreak Blue. Requires approved access on your Codex account or OpenAI API project; a detected login does not verify Daybreak approval.';
+    } else $('api-key').placeholder = 'Leave empty to use the configured key';
     if (daybreakBedrock) $('model-source').textContent = 'GPT-5.6 Sol Daybreak Blue on Bedrock requires approved AWS model access in us-east-2. Selecting this option does not grant access.';
     if (codex) $('model-source').textContent = 'Uses the Codex built-in default model. Enter an exact model ID only to override it.';
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
@@ -762,12 +798,12 @@
   // ── False positive review (AVIT batch) ──
   // Cards, history, and progress live in fpreview-run.js; created on first use so the page loads without it.
   function fpRun() {
-    if (!state.fpRun && window.ThreatlintFpRun) state.fpRun = window.ThreatlintFpRun.create($('fpreview-results'));
+    if (!state.fpRun && window.ThreatlintFpRun) state.fpRun = window.ThreatlintFpRun.create($('fpreview-results'), { getServiceNowInstance: () => state.preferences.snowInstance });
     return state.fpRun;
   }
   function fpreviewRunning(running) {
     state.fpreviewRunning = running;
-    $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
+    $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-fix-pr').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
   }
   // Required setup, as `threatlint setup --check` sees it; ServiceNow values typed this session also count.
   const SETUP_SECTIONS = { 'ServiceNow OAuth client': 'servicenow', 'Azure DevOps PAT': 'ado', 'Semgrep API token': 'semgrep' };
@@ -808,6 +844,7 @@
     fpreviewRunning(true);
     const provider = state.preferences.provider;
     state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), modelLabel: displayModel(), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+      createFixPr: $('fpreview-fix-pr').checked,
       ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
       servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
   }
@@ -926,10 +963,13 @@
     $('configure-provider').addEventListener('click', showSettings);
     $('servicenow-form').addEventListener('submit', saveServiceNow);
     $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'avit_batch_cancel' })); });
-    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo); $('github-form').addEventListener('submit', saveGithub); $('github-remove').addEventListener('click', removeGithub);
+    document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo); $('ado-auth-mode').addEventListener('change', updateAdoFields); $('github-form').addEventListener('submit', saveGithub); $('github-remove').addEventListener('click', removeGithub);
     $('github-use-app').addEventListener('change', () => { $('github-app-fields').hidden = !$('github-use-app').checked; });
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });
     $('settings-form').addEventListener('submit', saveSettings);
+    $('api-key').addEventListener('input', () => {
+      if (document.querySelector('input[name=provider]:checked').value === 'daybreak') updateSettingsFields('daybreak');
+    });
     $('model-select').addEventListener('change', () => { $('model-id').value = $('model-select').value; });
     $('model-id').addEventListener('change', () => fillModelSelect([...$('model-select').options].filter(option => option.value && !option.textContent.endsWith('(current)')).map(option => ({ id: option.value, name: option.textContent.split(' · ')[0] })), $('model-id').value.trim())); $('discover-models').addEventListener('click', discoverModels);
     let settingsProvider = state.preferences.provider;

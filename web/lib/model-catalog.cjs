@@ -9,6 +9,7 @@
  *              (macOS Keychain / ~/.claude/.credentials.json) is never read.
  *   OpenAI:    OPENAI_API_KEY, then an API key saved by the Codex CLI in ~/.codex/auth.json (API-key sign-in only).
  *   Codex:     the signed-in Codex CLI authenticates itself; Threatlint never reads its login tokens.
+ *   Daybreak:  an OpenAI API key takes priority; otherwise the signed-in Codex CLI authenticates itself.
  *   Copilot:   COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, then `gh auth token` (the GitHub CLI sign-in).
  *   Bedrock:   AWS_BEARER_TOKEN_BEDROCK / BEDROCK_API_KEY, then the env block of ~/.claude/settings.json.
  * Keys never leave this process except to the provider's own API; the UI only learns which source exists.
@@ -108,7 +109,10 @@ async function credentialSources(options = {}) {
   const entries = await Promise.all(['claude', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'copilot'].map(async provider => [provider, (await resolveKey(provider, '', options)).source]));
   const claudeCode = await (options.claudeCodeStatus || require('./claude-code.cjs').status)();
   const codex = await (options.codexStatus || require('./codex.cjs').status)();
-  return { ...Object.fromEntries(entries), 'claude-code': claudeCode.source, codex: codex.source };
+  const sources = Object.fromEntries(entries);
+  // This describes an available login, not proof of Daybreak entitlement.
+  if (!sources.daybreak && codex.loggedIn) sources.daybreak = codex.source;
+  return { ...sources, 'claude-code': claudeCode.source, codex: codex.source };
 }
 
 async function listJson(fetchImpl, url, headers) {
@@ -123,12 +127,13 @@ async function listJson(fetchImpl, url, headers) {
 async function listModels(provider, credential, { fetchImpl = fetch } = {}) {
   if (provider === 'claude-code') return require('./claude-code.cjs').MODELS;
   if (provider === 'codex') return [];
+  if (provider === 'daybreak' && credential.transport === 'codex') return [{ id: 'gpt-6-sol', name: 'GPT-6 Sol · Daybreak Blue' }];
   if (!credential.key) {
     const hints = {
       claude: 'Set ANTHROPIC_API_KEY (or the env block of ~/.claude/settings.json), or enter a key. To use your Claude Code login instead, choose the Claude Code provider.',
       bedrock: 'Set AWS_BEARER_TOKEN_BEDROCK or BEDROCK_API_KEY, or enter a Bedrock API key in Settings.',
       'daybreak-bedrock': 'Set AWS_BEARER_TOKEN_BEDROCK or BEDROCK_API_KEY, or enter a Bedrock API key with Daybreak Blue access.',
-      daybreak: 'Use an API key from an OpenAI project with Daybreak Blue enabled, or enter one in Settings.',
+      daybreak: 'Sign in to Codex with your Daybreak Blue account, or use an API key from an OpenAI project with Daybreak Blue enabled.',
       openai: codexAuth().auth_mode === 'chatgpt'
         ? 'Codex is signed in with ChatGPT. Choose the Codex provider to use that login, or set OPENAI_API_KEY for direct OpenAI API access.'
         : 'Set OPENAI_API_KEY, sign Codex in with an API key, or enter a key here.',

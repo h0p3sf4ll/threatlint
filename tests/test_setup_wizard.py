@@ -115,7 +115,7 @@ def test_shared_parameter_bootstraps_fresh_setup_without_credential_prompts(monk
 
     def read(name, profile=None, region=None):
         lookups.append((name, profile, region))
-        return {"/example/setup": json.dumps(metadata), "/example/ado": "synthetic-ado-token",
+        return {"/example/setup": json.dumps(metadata), "/example/ado": "synthetic-ado-token-12345",
                 "/example/semgrep": "synthetic-semgrep-token-12345"}[name]
 
     monkeypatch.setattr(parameter_store, "read_parameter", read)
@@ -133,13 +133,13 @@ def test_shared_parameter_bootstraps_fresh_setup_without_credential_prompts(monk
     monkeypatch.setattr(semgrep_platform, "deployment", lambda *_: {"id": 1, "name": "example"})
     assert setup_wizard.cmd_setup(_args(check=False, org_parameter="/example/setup", aws_region="eu-west-1")) == 0
     assert snow_calls == [("https://example.service-now.com", "synthetic-client", "synthetic-secret")]
-    assert ado_calls == [("example", "synthetic-ado-token")]
-    assert ado_login.load("example")[0] == "synthetic-ado-token"
+    assert ado_calls == [("example", "synthetic-ado-token-12345")]
+    assert not ado_login.store_path().exists(), "SSM PAT must not be copied to local storage"
     assert semgrep_platform.saved_token()[0] == "synthetic-semgrep-token-12345"
     assert [item[0] for item in lookups] == ["/example/setup", "/example/ado", "/example/semgrep"]
     output = capsys.readouterr()
     assert "Setup complete" in output.out
-    for secret in ("synthetic-client", "synthetic-secret", "synthetic-ado-token", "synthetic-semgrep-token-12345"):
+    for secret in ("synthetic-client", "synthetic-secret", "synthetic-ado-token-12345", "synthetic-semgrep-token-12345"):
         assert secret not in output.out + output.err
         assert secret not in (tmp_path / "org.json").read_text()
 
@@ -160,15 +160,39 @@ def test_setup_check_accepts_configured_ssm_without_saving(monkeypatch, tmp_path
     assert "synthetic" not in output
 
 
-def test_ado_shared_pat_is_validated_for_every_missing_organization(monkeypatch):
+def test_ado_shared_pat_is_revalidated_for_every_organization_without_storing_it(monkeypatch):
+    ado_login.save("first", "personal-pat-123456789012345")
+    original = ado_login.store_path().read_bytes()
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "personal-env-pat-1234567890")
     monkeypatch.setenv("THREATLINT_ADO_ORGANIZATIONS", "first,second")
     monkeypatch.setenv("THREATLINT_ADO_PAT_PARAMETER", "/example/ado")
-    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: "synthetic-pat")
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: "service-account-pat-1234567890")
     calls = []
-    monkeypatch.setattr(ado_login, "validate", lambda organization, _pat: calls.append(("validate", organization)))
-    monkeypatch.setattr(ado_login, "save", lambda organization, _pat: calls.append(("save", organization)) or "store")
+    monkeypatch.setattr(ado_login, "validate", lambda organization, pat: calls.append((organization, pat)))
+    monkeypatch.setattr(ado_login, "save", lambda *a, **k: pytest.fail("Do not save the shared secret locally"))
     setup_wizard.step_ado("appsec")
-    assert calls == [("validate", "first"), ("validate", "second"), ("save", "first"), ("save", "second")]
+    setup_wizard.step_ado("appsec")
+    assert calls == [(org, "service-account-pat-1234567890") for org in ("first", "second", "first", "second")]
+    assert ado_login.store_path().read_bytes() == original
+
+
+def test_ado_shared_parameter_failure_never_uses_personal_pat_or_prompts(monkeypatch):
+    monkeypatch.setenv("THREATLINT_ADO_PAT", "personal-pat-123456789012345")
+    monkeypatch.setenv("THREATLINT_ADO_ORGANIZATIONS", "first")
+    monkeypatch.setenv("THREATLINT_ADO_PAT_PARAMETER", "/example/ado")
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: (_ for _ in ()).throw(
+        parameter_store.ParameterStoreError("AWS SSO session has expired")))
+    monkeypatch.setattr(ado_login, "prompt_and_save", lambda *a, **k: pytest.fail("No personal fallback"))
+    with pytest.raises(ado_login.AdoLoginError, match="expired"):
+        setup_wizard.step_ado("appsec")
+
+
+def test_ado_setup_check_uses_only_service_account_metadata(monkeypatch):
+    monkeypatch.setenv("THREATLINT_ADO_ORGANIZATIONS", "first,second")
+    monkeypatch.setenv("THREATLINT_ADO_PAT_PARAMETER", "/example/ado")
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: pytest.fail("Configuration check must not retrieve ADO secret"))
+    monkeypatch.setattr(ado_login, "load", lambda *a, **k: pytest.fail("Configured service account must not inspect personal tokens"))
+    assert next(source for name, source, _ in setup_wizard.check("appsec") if name == "Azure DevOps PAT") == ado_login.SERVICE_ACCOUNT_SOURCE
 
 
 def test_ado_check_does_not_use_an_unrelated_saved_organization(monkeypatch):

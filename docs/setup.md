@@ -37,6 +37,7 @@ URL, organization, and parameter name with your own):
   "snowClientSecretParameter": "/your-team/servicenow/client-secret",
   "semgrepTokenParameter": "/your-team/semgrep/token",
   "semgrepDeployment": "your-deployment",
+  "awsProfile": "appsec",
   "adoOrganizations": ["your-organization"],
   "adoPatParameter": "/your-team/ado/pat"
 }
@@ -52,10 +53,33 @@ threatlint setup --org-parameter /your-team/threatlint/setup --aws-region us-wes
 ```
 
 Setup signs in to AWS, loads the shared settings, and retrieves and validates the
-configured ServiceNow, Azure DevOps, and Semgrep credentials before saving them
-for the CLI and Workbench. It reuses configured URLs and saved credentials.
-The Azure DevOps PAT is validated separately for every selected organization.
+configured ServiceNow, Azure DevOps, and Semgrep credentials. ServiceNow and
+Semgrep settings are saved for the CLI and Workbench. For Azure DevOps, Threatlint
+keeps only the Parameter Store reference and validates the shared service-account
+PAT separately for every selected organization; it does not save a local PAT copy.
 All these parameters use the selected AWS region (`us-west-2` by default).
+
+The existing `adoPatParameter` is the authoritative ADO credential source when
+configured. Runtime operations read its current value instead of using personal
+environment or locally saved PATs. Lookup failures stop the operation; they do not
+fall back to a personal identity. Allowed organizations come from `adoOrganizations`.
+The AWS profile comes from an explicit `--aws-profile`, then `awsProfile` /
+`THREATLINT_AWS_PROFILE`, then the AWS default credential chain.
+
+To configure or migrate an existing machine, use Settings → Azure DevOps in the
+Workbench, or run:
+
+```bash
+threatlint ado service-account --parameter /your-team/ado/pat --organization your-organization --aws-profile appsec --region us-west-2
+threatlint ado status
+```
+
+Repeat `--organization` for additional organizations. The command validates access
+before saving metadata. Existing personal PATs remain stored but are not used while
+`adoPatParameter` is configured. The service account needs Code: Read & write and
+repository permissions to create branches and pull requests for the proposed-fix
+flow. The Workbench replaces cached personal source connections when configuration
+changes and refreshes shared source credentials periodically when they are used.
 
 `THREATLINT_ORG_PARAMETER` can supply the shared parameter name instead of the
 option. Setup remembers the name and region in `~/.threatlint/org.json`

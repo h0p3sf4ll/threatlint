@@ -16,9 +16,9 @@
   const MAX_STORED = 4000;
   const MAX_LOG = 3000;
   const AVIT_STAGES = { queued: 'Queued', fetching: 'Fetching', checkout: 'Cloning', triage: 'Reviewing', reported: 'Report saved', resolving: 'Updating ServiceNow',
-    done: 'Done', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
+    'fix-pr': 'Opening draft PR', done: 'Done', info: 'Info', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
   const TASK_STAGES = { queued: 'Queued', expanding: 'Reading task', reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error', cancelled: 'Cancelled' };
-  const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
+  const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'pull-request': 'Draft PR', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
   const RESULTS = ['closed', 'noted', 'error', 'skipped'];
   const RUN_STATUS = { expanding: 'Expanding SCTASKs and ISSTs', running: 'Reviewing', complete: 'Complete', cancelled: 'Stopped', error: 'Did not start', interrupted: 'Interrupted' };
 
@@ -38,7 +38,7 @@
     return event.disposition === 'REPO REMOVED' || event.outcome?.closed === true ? 'closed' : 'noted';
   }
 
-  function create(root) {
+  function create(root, { getServiceNowInstance = () => '' } = {}) {
     let run, persist = true, saveTimer = null, stored = [];
 
     // ── Layout ──
@@ -104,6 +104,19 @@
     }
 
     // ── Cards ──
+    function linkAvit(item, id, recordUrl) {
+      let url;
+      try {
+        const instance = getServiceNowInstance();
+        if (!recordUrl && !instance) return;
+        url = new URL(recordUrl || `/nav_to.do?uri=${encodeURIComponent(`sn_vul_app_vulnerable_item.do?sysparm_query=number=${id}`)}`, instance || undefined);
+        if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/nav_to.do') return;
+      } catch { return; }
+      const link = el('a', 'avit-id', id);
+      link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.title = `Open ${id} in ServiceNow`;
+      item.node.querySelector('.avit-id').replaceWith(link);
+    }
     function card(kind, id) {
       const map = kind === 'avit' ? run.avits : run.tasks;
       if (map.has(id)) return map.get(id);
@@ -117,11 +130,12 @@
       history.append(el('summary', '', 'History'), el('ol', 'fp-history-list'));
       userToggled(history);
       node.append(head, el('div', 'avit-detail'));
-      if (kind === 'avit') node.append(el('ul', 'avit-outcome'), el('div', 'avit-tasks small subtle'));
+      if (kind === 'avit') node.append(el('ul', 'avit-outcome'), el('div', 'avit-actions'), el('div', 'avit-tasks small subtle'));
       else node.append(el('div', 'fp-task-progress small subtle'), el('ul', 'fp-task-avits'));
       node.append(history);
       (kind === 'avit' ? avits : tasks).append(node);
       const item = { node, stage: 'queued', result: null, active: false, tools: 0 };
+      if (kind === 'avit') linkAvit(item, id);
       map.set(id, item);
       return item;
     }
@@ -238,6 +252,8 @@
         }
         case 'avit_item': {
           const item = card('avit', event.avit);
+          if (event.url) linkAvit(item, event.avit, event.url);
+          if (event.pullRequest || event.outcome?.pullRequest) renderPullRequest(item, event.pullRequest || event.outcome.pullRequest);
           const list = item.node.querySelector('.fp-history-list');
           if (event.tool) {
             activate(item);
@@ -250,7 +266,7 @@
           if (event.detail !== undefined && !event.action) item.node.querySelector('.avit-detail').textContent = event.detail;
           if (event.disposition) { const badge = item.node.querySelector('.avit-disposition'); badge.className = 'avit-disposition disposition-badge'; badge.textContent = event.disposition; }
           const label = event.action ? ACTIONS[event.action] || 'Updated' : AVIT_STAGES[event.stage] || event.stage;
-          const kind = event.stage === 'error' ? 'error' : event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
+          const kind = event.stage === 'error' ? 'error' : event.stage === 'info' ? 'info' : event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
           const detail = `${event.detail || ''}${event.disposition && event.stage === 'reported' ? ` · ${event.disposition}` : ''}`;
           addHistory(item, at, label, detail, kind);
           runLog(at, event.avit, label, detail, kind);
@@ -292,6 +308,17 @@
       if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
       if (o.leftOpen) list.append(el('li', '', 'Left open with the Threatlint work note and the report attached.'));
       for (const line of o.semgrep || []) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
+    }
+    function renderPullRequest(item, result) {
+      const actions = item.node.querySelector('.avit-actions');
+      actions.replaceChildren();
+      if (result.status === 'skipped') { actions.append(el('span', 'small subtle', `Draft PR: ${result.reason}`)); return; }
+      let url;
+      try { url = new URL(result.url); } catch { return; }
+      if (url.protocol !== 'https:' || url.hostname !== 'dev.azure.com' || url.username || url.password || !/\/_git\/[^/]+\/pullrequest\/\d+$/i.test(url.pathname)) return;
+      const link = el('a', 'small', result.draft === false ? 'Open fix PR ↗' : 'Open draft fix PR ↗');
+      link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      actions.append(link);
     }
 
     // ── Session persistence ──

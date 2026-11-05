@@ -39,6 +39,7 @@ def parser(monkeypatch, tmp_path):
         (["avit", "semgrep", AVIT, "--line", "42"], "line", 42),
         (["avit", "note", AVIT, "--message", "synthetic"], "avit_command", "note"),
         (["avit", "close-removed", AVIT, "--yes"], "yes", True),
+        (["avit", "fix-pr", AVIT, "--report", "r.md", "--checkout", "repo", "--target", "target.json", "--yes"], "avit_command", "fix-pr"),
         (["semgrep", "login", "--token-stdin"], "token_stdin", True),
         (["semgrep", "status"], "semgrep_command", "status"),
         (["semgrep", "logout"], "semgrep_command", "logout"),

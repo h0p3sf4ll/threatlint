@@ -78,6 +78,37 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
     return matches[0]
 
 
-def report_line(report: str, avit: str) -> int | None:
-    match = re.search(rf"Original finding\W*:\s*{avit};[^\n]*:(\d+)\s*$", report, re.M)
-    return int(match.group(1)) if match else None
+def report_line(report: str, avit: str, expected_path: str = "") -> int | None:
+    """Read only this AVIT's explicit original location, never nearby evidence citations."""
+    if not _AVIT_TOKEN.fullmatch(avit):
+        return None
+
+    def unquote(value: str) -> str:
+        value = value.strip()
+        return value[1:-1] if value.startswith("`") and value.endswith("`") else value
+
+    def normalized_path(value: str) -> str:
+        return value.replace("\\", "/").removeprefix("./").lstrip("/")
+
+    locations = set()
+    for field in re.finditer(r"(?im)^[ \t]*\**Original finding\**[ \t]*:[ \t]*([^\n]+)$", report):
+        parts = field.group(1).split(";")
+        if unquote(parts[0]).upper() != avit.upper():
+            continue
+        if len(parts) < 2:
+            return None
+        # Reports commonly format the location as inline code or finish the
+        # sentence with a period. Neither changes the scanner's source location.
+        location = unquote(parts[-1].strip().removesuffix(".").rstrip())
+        match = re.fullmatch(r"([^`;\n]+):([0-9]+)(?:[-–]([0-9]+))?", location)
+        if not match:
+            return None
+        path = normalized_path(match.group(1).strip())
+        start = int(match.group(2))
+        end = int(match.group(3)) if match.group(3) else start
+        if not path or start < 1 or end < start:
+            return None
+        if expected_path and path != normalized_path(expected_path):
+            return None
+        locations.add((path, start, end))
+    return next(iter(locations))[1] if len(locations) == 1 else None

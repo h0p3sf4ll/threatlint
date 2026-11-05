@@ -152,7 +152,7 @@ def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict
     rule, path = context.get("rule", ""), context.get("file_path", "")
     if not rule or not path or Path(path).is_absolute():
         raise ResolveError("Rule tuning needs the AVIT rule and a repository-relative flagged file")
-    line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit)
+    line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit, path)
     if not line or line < 1:
         raise ResolveError("Rule tuning needs the flagged line from the AVIT or report")
     with tempfile.TemporaryDirectory(prefix="threatlint-tune-", dir=rt.repo_store_base()) as temporary:
@@ -232,7 +232,7 @@ def cmd_resolve(args) -> int:
     with open(os.path.expanduser(args.docx), "rb") as handle:
         files = [(name, handle.read(), _DOCX)]
     action = ("attach the report and close it as Closed / False Positive" if false_positive
-              else "attach the report and add a TRUE POSITIVE work note (it stays open)")
+              else "attach the report and add a TRUE POSITIVE work note (state unchanged)")
     _confirm(f"{avit}: {action}?", args.yes)
     # Attach first so the AVIT is never closed without its evidence.
     existing = attachment_names(instance, token, record["sys_id"])
@@ -262,7 +262,10 @@ def cmd_resolve(args) -> int:
         previous = record["fields"].get("state", "")
         closed_state = _false_positive_choices()[0]
         closed = lambda value: value == closed_state or value.lower().startswith("closed")
-        if not state or closed(state):
+        if closed(state):
+            print("  INFO: AVIT is already closed in ServiceNow; work note added and report attached.")
+            return 0
+        if not state:
             print(f"  ! Work note added and report attached, but AVIT open state could not be confirmed"
                   f" (previous {previous or 'unknown'}, stored {state or 'unknown'}); verify or reopen it")
             return 1

@@ -28,12 +28,19 @@ class Entry:
         return self._loader()
 
 
-@pytest.fixture
-def plugins(monkeypatch):
-    """Install fake entry points; the registry cache is cleared before and after."""
+@pytest.fixture(params=["selectable", "legacy-mapping"])
+def plugins(monkeypatch, request):
+    """Exercise modern and Python 3.9 discovery without loading real plugins."""
     import importlib.metadata as metadata
     installed = []
-    monkeypatch.setattr(metadata, "entry_points", lambda group: installed if group == registry.ENTRY_POINT_GROUP else [])
+
+    def discover():
+        if request.param == "selectable":
+            return types.SimpleNamespace(select=lambda *, group: installed if group == registry.ENTRY_POINT_GROUP else [])
+        return {registry.ENTRY_POINT_GROUP: installed,
+                "unrelated.plugins": [Entry("unrelated", lambda: pytest.fail("Unrelated plugins must not load"))]}
+
+    monkeypatch.setattr(metadata, "entry_points", discover)
     monkeypatch.delenv("THREATLINT_DISABLE_PLUGINS", raising=False)
     registry.reload()
     yield installed
@@ -47,6 +54,19 @@ def test_built_ins_are_separate_types(plugins):
     assert isinstance(dojo, FindingsManagementPlatform) and not isinstance(dojo, ScanningTool)
     assert isinstance(sonar, ScanningTool) and not isinstance(sonar, FindingsManagementPlatform)
     assert dojo.supports_attachments and not sonar.supports_attachments
+
+
+def test_avit_fetch_parser_starts_with_supported_entry_point_apis(plugins):
+    args = cli.build_parser().parse_args(["avit", "fetch", "AVIT0000001", "--output", "review.md"])
+    assert args.avit_command == "fetch"
+
+
+def test_legacy_discovery_without_the_plugin_group_keeps_builtins(plugins, monkeypatch):
+    import importlib.metadata as metadata
+    monkeypatch.setattr(metadata, "entry_points", lambda: {"unrelated.plugins": [
+        Entry("unrelated", lambda: pytest.fail("Unrelated plugins must not load")),
+    ]})
+    assert set(registry.reviewable()) == {"dojo", "sonar"}
 
 
 @pytest.mark.parametrize("loader", [lambda: AcmeFindings, lambda: AcmeFindings(), lambda: (lambda: AcmeFindings())],

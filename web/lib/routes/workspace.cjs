@@ -15,6 +15,7 @@ const servicenow = require('../servicenow.cjs');
 const catalog = require('../model-catalog.cjs');
 const threatlintConfig = require('../threatlint-config.cjs');
 const { modelPolicy } = require('../model-policy.cjs');
+const { publicAdoStatus } = require('../ado-settings.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -73,14 +74,12 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     threatlintConfig.writeSemgrep({ token, deployment: deployments.length === 1 ? deployments[0].slug : current.deployment });
     return threatlintConfig.publicSemgrep();
   }));
-  // Azure DevOps PAT, shared with `threatlint ado login` (OS credential store when available). Never returned.
+  // Azure DevOps credential-source metadata, shared with the CLI. PATs are never returned.
   const cli = (...args) => (integrations.threatlintCli || require('../avit-batch.cjs').runCli)(...args);
   const adoStatus = async () => {
-    const result = await cli(['ado', 'status']);
-    // One line per organization with a saved PAT (sources only, never the PAT).
-    const sources = [...result.stdout.matchAll(/^Azure DevOps PAT: (.+)$/gm)].map(match => match[1]);
-    const organizations = sources.map(line => /^(.*) · ([A-Za-z0-9-]+)$/.exec(line)).filter(Boolean).map(([, source, name]) => ({ name, source }));
-    return { hasPat: sources.length > 0, source: sources.join('; ') || null, organizations };
+    const result = await cli(['ado', 'status', '--json']);
+    if (result.code !== 0) throw new HttpError('Azure DevOps credential settings could not be read.', 503);
+    return publicAdoStatus(result.stdout);
   };
   app.delete('/api/ado/settings/:organization', handle(async req => {
     const organization = String(req.params.organization || '');
@@ -89,7 +88,24 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     return adoStatus();
   }));
   app.get('/api/ado/settings', handle(adoStatus));
+  app.post('/api/ado/service-account', handle(async req => {
+    const body = req.body || {};
+    const parameter = typeof body.parameter === 'string' ? body.parameter.trim() : '';
+    const organizations = Array.isArray(body.organizations) ? [...new Set(body.organizations)] : [];
+    const profile = typeof body.profile === 'string' ? body.profile.trim() : '';
+    const region = typeof body.region === 'string' ? body.region.trim() : '';
+    if (!parameter || parameter.length > 2048 || !/^(?:[A-Za-z0-9_./][A-Za-z0-9_./-]*|arn:aws(?:-[a-z]+)*:ssm:[a-z0-9-]+:\d{12}:parameter\/[A-Za-z0-9_./-]+)$/.test(parameter)) throw new HttpError('Enter the AWS Parameter Store name or ARN for the service-account PAT.');
+    if (!organizations.length || organizations.length > 100 || organizations.some(name => typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(name))) throw new HttpError('Enter one or more Azure DevOps organization names, not URLs.');
+    if (profile && !/^[\w.@+][\w.@+-]{0,127}$/.test(profile)) throw new HttpError('Enter a valid AWS profile name.');
+    if (region && !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\d+$/.test(region)) throw new HttpError('Enter a valid AWS region.');
+    const args = ['ado', 'service-account', '--parameter', parameter, ...organizations.flatMap(name => ['--organization', name]),
+      ...(profile ? ['--aws-profile', profile] : []), ...(region ? ['--region', region] : [])];
+    const result = await cli(args);
+    if (result.code !== 0) throw new HttpError((result.stderr.trim().split(/\r?\n/).pop() || 'Service-account configuration failed.').replace(/^ERROR:\s*/, ''), 400);
+    return adoStatus();
+  }));
   app.post('/api/ado/settings', handle(async req => {
+    if ((await adoStatus()).serviceAccount.parameter) throw new HttpError('AWS Parameter Store is the configured Azure DevOps credential source. Update the service-account settings instead of saving a personal PAT.');
     const organization = typeof req.body?.organization === 'string' ? req.body.organization.trim() : '';
     const pat = typeof req.body?.pat === 'string' ? req.body.pat.trim() : '';
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(organization)) throw new HttpError('Enter the Azure DevOps organization name (e.g. contoso), not a URL');
@@ -122,6 +138,12 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
       return { source: status.source, models: [] };
     }
     const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key, { region: req.body?.bedrockRegion });
+    if (provider === 'daybreak' && !credential.key) {
+      const status = await (integrations.codexStatus || require('../codex.cjs').status)();
+      if (!status.installed) throw new HttpError('Daybreak Blue needs your Codex login or an OpenAI API key. Install Codex and sign in, or enter an API key in Settings.', 401);
+      if (!status.loggedIn) throw new HttpError('Sign in to Codex with your Daybreak Blue account (`codex login`), or enter an OpenAI API key in Settings.', 401);
+      return { source: status.source, transport: 'codex', models: await catalog.listModels(provider, { transport: 'codex' }) };
+    }
     return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }),
       ...(['bedrock', 'daybreak-bedrock'].includes(provider) ? { manual: provider === 'bedrock', region: credential.region } : {}) };
   }));

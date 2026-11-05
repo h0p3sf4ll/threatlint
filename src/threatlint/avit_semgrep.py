@@ -124,7 +124,7 @@ def semgrep_matches(token, kind, target, context, deployment=None, report_text="
     if not path:
         raise ResolveError("The AVIT has no File Path, so its Semgrep finding cannot be matched narrowly")
     if not line.isdigit():
-        line = report_line(report_text, context.get("avit", "")) if report_text else None
+        line = report_line(report_text, context.get("avit", ""), path) if report_text else None
         line = str(line) if line else ""
     if not line.isdigit():
         raise ResolveError("Neither the AVIT nor the report records the flagged line, so the Semgrep finding cannot be matched narrowly; pass --line")

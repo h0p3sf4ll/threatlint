@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 ENV = {
     "orgParameter": "THREATLINT_ORG_PARAMETER",
     "awsRegion": "THREATLINT_AWS_REGION",
+    "awsProfile": "THREATLINT_AWS_PROFILE",
     "ssoUrl": "THREATLINT_AWS_SSO_PORTAL_URL",
     "snowInstance": "THREATLINT_SNOW_INSTANCE",
     "snowClientIdParameter": "THREATLINT_SNOW_CLIENT_ID_PARAMETER",
@@ -84,8 +85,13 @@ def aws_region() -> str:
     return value("awsRegion") or "us-west-2"
 
 
+def aws_profile() -> str | None:
+    """Configured profile, or None to use the AWS CLI credential chain."""
+    return value("awsProfile") or None
+
+
 def _metadata(payload: object, region: str) -> dict:
-    from threatlint.parameter_store import ParameterStoreError, validate_reference, validate_region  # noqa: PLC0415
+    from threatlint.parameter_store import ParameterStoreError, validate_profile, validate_reference, validate_region  # noqa: PLC0415
 
     if not isinstance(payload, dict) or any(key not in ENV for key in payload):
         raise ParameterStoreError("The organization parameter must be a JSON object containing supported configuration metadata and parameter names only.")
@@ -111,6 +117,8 @@ def _metadata(payload: object, region: str) -> dict:
                 raise ParameterStoreError(f"Organization setting {key} must be an HTTPS URL without embedded credentials or a fragment.")
         if key == "awsRegion" and normalized[key]:
             validate_region(normalized[key])
+        if key == "awsProfile" and normalized[key]:
+            validate_profile(normalized[key])
     for key, entry in normalized.items():
         if key.endswith("Parameter") and entry:
             validate_reference(entry, region=region)
@@ -146,6 +154,31 @@ def bootstrap(parameter: str, profile: str | None = None, region: str | None = N
             merged[key] = entry
     merged["orgParameter"] = parameter
     merged["awsRegion"] = selected_region
+    if profile is not None:
+        merged["awsProfile"] = profile
+    return _write_metadata(destination, merged)
+
+
+def update_metadata(updates: dict) -> Path:
+    """Merge validated configuration metadata atomically, preserving other settings."""
+    from threatlint.parameter_store import ParameterStoreError  # noqa: PLC0415
+
+    normalized = _metadata(updates, updates.get("awsRegion") or aws_region())
+    destination = path()
+    try:
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        existing = {}
+    except (OSError, ValueError):
+        raise ParameterStoreError("The existing org.json could not be read. Correct it before saving organization settings.") from None
+    if not isinstance(existing, dict):
+        raise ParameterStoreError("The existing org.json must contain a JSON object. Correct it before saving organization settings.")
+    return _write_metadata(destination, {**existing, **normalized})
+
+
+def _write_metadata(destination: Path, merged: dict) -> Path:
+    from threatlint.parameter_store import ParameterStoreError  # noqa: PLC0415
+
     temporary = None
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)

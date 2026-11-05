@@ -360,6 +360,8 @@
           <p class="field-note small subtle" id="fpreview-avits-note">Any number of AVITs (AVIT plus 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599), catalog tasks (SCTASK plus 7 to 10 digits, e.g. SCTASK14120565), and ISSTs (ISST plus 7 to 15 digits, e.g. ISST0012345), in any mix, separated by commas, spaces, semicolons, or new lines; a pasted list works. Each SCTASK is expanded into the AVITs in its description; each ISST is expanded into the AVITs on its exact repository and branch; an AVIT named more than once is reviewed once. There is no limit on how many AVITs a run reviews; they are reviewed one at a time. The run keeps going if you leave this page, reload it, or lose the connection: come back to see it exactly where it is. Quitting the Workbench stops it. A SCTASK gets every AVIT report attached and is closed once all its AVITs are decided; an ISST gets only its true-positive reports attached and a comment, and is left open for remediation (Threatlint never closes an ISST). One record failing does not stop the others.</p>
           <div class="fpreview-outcomes small subtle"><div><strong>False positive</strong> · Word report attached to the AVIT only, which is closed (state 3 / substate 3) with “Closed by Threatlint as a false positive, see attached report.”, the Semgrep finding ignored, and for SAST/Secrets the rule tuned once.</div><div><strong>True positive</strong> · Word report attached to the AVIT — and to the ISST when the AVIT came from one — left open with “True positive, see attached report.”</div><div><strong>Ambiguous</strong> · Word report attached, left open with “Ambiguous, see attached report.”</div></div>
           <div id="fpreview-setup" class="field-note small" aria-live="polite"></div>
+          <label class="check-row"><input id="fpreview-fix-pr" type="checkbox" checked> Open draft Azure DevOps PRs for proposed fixes</label>
+          <p class="field-note small subtle">Uses the configured service account from AWS Parameter Store. True-positive findings with a concrete fix get a draft PR against the reviewed branch for engineering review.</p>
           <p class="form-error" id="fpreview-error" role="alert"></p>
           <div class="settings-actions"><span class="small subtle" id="fpreview-model">Uses the model chosen in Settings.</span><div class="input-row"><button class="button secondary hidden" id="fpreview-cancel" type="button">Stop</button><button class="button primary" id="fpreview-start" type="submit">Review AVITs</button></div></div>
         </form>
@@ -432,7 +434,7 @@
 <fieldset class="provider-group daybreak-group">
   <legend>Daybreak Blue</legend>
   <div class="provider-options">
-    <label><input type="radio" name="provider" value="daybreak"><span><strong>OpenAI API</strong><small>Approved OpenAI project</small></span></label>
+    <label><input type="radio" name="provider" value="daybreak"><span><strong>OpenAI</strong><small>Codex login or API key</small></span></label>
     <label><input type="radio" name="provider" value="daybreak-bedrock"><span><strong>Amazon Bedrock</strong><small>Approved Bedrock model</small></span></label>
   </div>
 </fieldset>
@@ -458,11 +460,20 @@
 <label for="semgrep-token">API token</label><input id="semgrep-token" type="password" autocomplete="new-password" spellcheck="false"><p class="field-note small subtle">Shown masked. Leave it as is to keep the saved token, or type a new one to replace it.</p>
 <p id="semgrep-status" class="field-note small subtle" aria-live="polite"></p><p class="form-error" id="semgrep-error" role="alert"></p><div class="settings-actions"><span class="small subtle">The token is checked against Semgrep before it is saved.</span><button class="button primary" type="submit">Save Semgrep token</button></div></form>
             <form id="ado-form" class="settings-card" aria-labelledby="settings-ado-title"><span id="settings-ado" class="settings-anchor"></span><h2 id="settings-ado-title">Azure DevOps <span class="subtle small">saved in the Threatlint config</span></h2>
-<p class="field-note small subtle">Required to clone the repository and branch named on each AVIT. Create a PAT with scope <strong>Code: Read</strong> at <code>https://dev.azure.com/&lt;organization&gt;/_usersSettings/tokens</code>, or run <code>threatlint ado login --organization &lt;organization&gt;</code>. It is kept in the OS credential store when available.</p>
+<p class="field-note small subtle">Use the ADO service-account PAT in AWS Parameter Store for repository access and proposed-fix pull requests. The account needs <strong>Code: Read &amp; write</strong> and permission to create branches and pull requests. Threatlint reads the current PAT when needed; it saves only the parameter reference.</p>
 <div id="ado-organizations" class="ado-organizations" aria-live="polite"></div>
+<label for="ado-auth-mode">Credential source</label><select id="ado-auth-mode"><option value="service-account">AWS Parameter Store service account</option><option value="personal">Personal PAT (legacy)</option></select>
+<div id="ado-service-account-fields">
+<label for="ado-pat-parameter">PAT parameter name or ARN</label><input id="ado-pat-parameter" autocomplete="off" spellcheck="false" placeholder="/your-team/ado/pat"><p class="field-note small subtle">Uses the existing <code>adoPatParameter</code> setting.</p>
+<label for="ado-service-organizations">Allowed Azure DevOps organizations</label><input id="ado-service-organizations" autocomplete="off" spellcheck="false" placeholder="organization-a, organization-b">
+<label for="ado-aws-profile">AWS CLI profile (optional)</label><input id="ado-aws-profile" autocomplete="off" spellcheck="false" placeholder="Use the AWS default credential chain">
+<label for="ado-aws-region">AWS region</label><input id="ado-aws-region" autocomplete="off" spellcheck="false" placeholder="us-west-2">
+</div>
+<div id="ado-personal-fields" hidden>
 <label for="ado-organization">Add or replace an organization</label><input id="ado-organization" autocomplete="off" spellcheck="false" placeholder="your-organization">
 <label for="ado-pat">Personal access token</label><input id="ado-pat" type="password" autocomplete="new-password" spellcheck="false"><p class="field-note small subtle">Shown masked. One PAT is kept per organization: saving for a new organization adds it alongside the others; saving for the same organization replaces it.</p>
-<p id="ado-status" class="field-note small subtle" aria-live="polite"></p><p class="form-error" id="ado-error" role="alert"></p><div class="settings-actions"><span class="small subtle">The PAT is checked against Azure DevOps before it is saved.</span><button class="button primary" type="submit">Save Azure DevOps PAT</button></div></form>
+</div>
+<p id="ado-status" class="field-note small subtle" aria-live="polite"></p><p class="form-error" id="ado-error" role="alert"></p><div class="settings-actions"><span class="small subtle" id="ado-save-note">The service account is validated for every allowed organization before saving the reference.</span><button class="button primary" id="ado-save" type="submit">Save service-account settings</button></div></form>
             <form id="github-form" class="settings-card" aria-labelledby="settings-github-title"><span id="settings-github" class="settings-anchor"></span><h2 id="settings-github-title">GitHub <span class="subtle small">saved in the Threatlint config</span></h2>
 <p class="field-note small subtle">A GitHub App gives Sources → GitHub, GitHub clones, PR comments, and issues a short-lived installation token instead of a personal token. Create and install the App (permissions <strong>Metadata: read</strong> and <strong>Contents: read</strong>; add <strong>Pull requests</strong> and <strong>Issues: read &amp; write</strong> only for PR comments and issues), or run <code>threatlint github login</code>. See docs/github-app.md.</p>
 <label class="checkbox-label"><input type="checkbox" id="github-use-app"><span>Use GitHub App</span></label>

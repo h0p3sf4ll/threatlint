@@ -62,6 +62,37 @@ describe('Saved Semgrep token', () => {
 });
 
 describe('Saved Azure DevOps PAT and required setup', () => {
+  it('configures the existing service-account parameter with metadata only and refuses a personal override', async () => {
+    const calls = [], PAT = 'never-return-this-secret-value';
+    let configured = false;
+    const shared = { configured: true, parameter: '/team/ado/pat', profile: 'appsec', region: 'us-west-2', organizations: ['Contoso', 'Fabrikam'] };
+    const threatlintCli = async args => {
+      calls.push(args);
+      if (args[1] === 'service-account') { configured = true; return { code: 0, stdout: 'Configured', stderr: '' }; }
+      if (args[1] === 'status') return { code: 0, stdout: JSON.stringify({ hasPat: configured, source: configured ? 'AWS Parameter Store (service account)' : null,
+        organizations: configured ? shared.organizations.map(name => ({ name, source: 'AWS Parameter Store (service account)' })) : [],
+        serviceAccount: configured ? shared : {}, pat: PAT }), stderr: '' };
+      throw new Error(`unexpected ${args.join(' ')}`);
+    };
+    const wb = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-')), integrations: { threatlintCli } });
+    await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${wb.server.address().port}`;
+    const post = (route, body) => fetch(`${base}/api/ado/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    try {
+      assert.equal((await post('service-account', { ...shared, parameter: '--help' })).status, 400);
+      assert.equal((await post('service-account', { ...shared, organizations: ['https://dev.azure.com/Contoso'] })).status, 400);
+      const response = await post('service-account', shared);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.deepEqual(body.serviceAccount, shared);
+      assert.ok(!JSON.stringify(body).includes(PAT));
+      assert.deepEqual(calls.find(args => args[1] === 'service-account'), ['ado', 'service-account', '--parameter', '/team/ado/pat',
+        '--organization', 'Contoso', '--organization', 'Fabrikam', '--aws-profile', 'appsec', '--region', 'us-west-2']);
+      assert.equal((await post('settings', { organization: 'Contoso', pat: 'z'.repeat(52) })).status, 400);
+      assert.ok(!calls.some(args => args[1] === 'login'));
+    } finally { await wb.close(); }
+  });
+
   it('passes the PAT to `threatlint ado login` on stdin only, and never returns it', async () => {
     const PAT = 'z'.repeat(52), calls = [];
     let saved = false;

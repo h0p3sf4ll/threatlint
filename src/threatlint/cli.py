@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -252,7 +253,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--output-dir", metavar="DIR",
         help="Directory for the output report (default: repository root)")
     p_run.add_argument("--resolve-avits", action="store_true",
-        help="Headlessly review --avit or --isst findings, attach Word reports, and apply verdicts (Claude, Codex, Copilot; requires --yes)")
+        help="Review --avit/--isst findings, attach reports, apply verdicts, and open eligible ADO fix PRs (requires --yes)")
+    p_run.add_argument("--no-fix-pr", action="store_true",
+        help="Skip draft ADO pull requests for proposed fixes during --resolve-avits")
     p_run.add_argument("--isst", metavar="ISST", action="append", default=[],
         help="ServiceNow ISST record whose repository and branch identify associated AVITs (repeatable; with --resolve-avits)")
     p_run.add_argument("--yes", action="store_true",
@@ -381,6 +384,10 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args()
+    if getattr(args, "aws_profile", None):
+        # Each CLI invocation is its own process; nested clone/Sidekick credential
+        # lookups must use the same selected profile as ServiceNow and Semgrep.
+        os.environ["THREATLINT_AWS_PROFILE"] = args.aws_profile
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
                 "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "isst": _cmd_isst, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam, "assure": _cmd_assure}
     # Integration commands (built-in and plugin) register their own handler.

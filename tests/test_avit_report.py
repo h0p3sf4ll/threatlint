@@ -89,6 +89,58 @@ def test_report_line_requires_the_requested_avit_and_a_terminal_line_number():
     assert avit_report.report_line(finding().replace(":42\n", ":42 details\n"), AVIT) is None
 
 
+@pytest.mark.parametrize("location", [
+    "src/a.py:42.  ", "`src/a.py:42`", "`src/a.py:42`.  ",
+    "src/a.py:42-45", "`src/a.py:42–45`.",
+])
+def test_report_line_accepts_location_formatting_and_valid_ranges(location):
+    report = f"**Original finding**: {AVIT}; rule; Semgrep Code; {location}\n"
+    assert avit_report.report_line(report, AVIT, "src/a.py") == 42
+
+
+def test_report_line_accepts_the_observed_sentence_terminated_original_finding():
+    avit = "AVIT000000000000097"
+    report = (
+        f"Original finding: {avit}; python.jwt.security.unverified-jwt-decode.unverified-jwt-decode; "
+        "Semgrep Code SAST, version not supplied; app/utils/auth.py:97.  \n"
+        "Location: app/utils/auth.py:97\n"
+    )
+    assert avit_report.report_line(report, avit, "app/utils/auth.py") == 97
+
+
+@pytest.mark.parametrize("location", [
+    "src/a.py:0", "src/a.py:0-2", "src/a.py:42-0", "src/a.py:42-41",
+    "src/a.py:-1", "src/a.py:42-", "src/a.py:42 details", "src/a.py:42. More details.",
+])
+def test_report_line_rejects_invalid_ranges_and_trailing_prose(location):
+    report = f"Original finding: {AVIT}; rule; {location}\n"
+    assert avit_report.report_line(report, AVIT) is None
+
+
+def test_report_line_requires_an_exact_avit_in_an_anchored_original_field():
+    short, long = "AVIT1234567", "AVIT12345678"
+    assert avit_report.report_line(finding(avit=long), short) is None
+    for original in (f"X{short}", f"{short}X", f"{short}, {long}"):
+        assert avit_report.report_line(finding(avit=original), short) is None
+    assert avit_report.report_line(f"Evidence mentions Original finding: {short}; rule; a.py:42\n", short) is None
+    assert avit_report.report_line(f"Original finding: {short}; rule; unknown\nLocation: a.py:42\n", short) is None
+    assert avit_report.report_line(f"Location: a.py:42\nEvidence: {short}; a.py:42\n", short) is None
+    assert avit_report.report_line(f"Original finding: `{short}`; rule; a.py:42\n", short.lower()) == 42
+
+
+def test_report_line_rejects_conflicting_duplicates_and_accepts_consistent_locations():
+    assert avit_report.report_line(finding() + finding(identifier="FP-002"), AVIT) == 42
+    for changed in ("src/a.py:43", "src/other.py:42", "src/a.py:42-45", "unknown"):
+        assert avit_report.report_line(finding() + finding().replace("src/a.py:42", changed), AVIT) is None
+
+
+def test_report_line_checks_the_full_expected_path_with_only_existing_path_normalization():
+    for expected in ("src/a.py", "./src/a.py", "/src/a.py", "src\\a.py"):
+        assert avit_report.report_line(finding(), AVIT, expected) == 42
+    for expected in ("a.py", "other/src/a.py", "src/../src/a.py", "src/b.py"):
+        assert avit_report.report_line(finding(), AVIT, expected) is None
+
+
 def test_original_imports_keep_the_parser_and_error_identity():
     assert avit_resolve.ResolveError is avit_report.ResolveError
     assert avit_resolve.verdict_for is avit_report.verdict_for

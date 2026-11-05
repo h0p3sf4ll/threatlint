@@ -76,7 +76,7 @@ describe('Workbench GitHub App settings and Sources', () => {
   const connected = [];
   before(async () => {
     const threatlintCli = async args => {
-      if (args.join(' ') === 'ado status') return { code: 0, stdout: 'No Azure DevOps PAT configured.\n', stderr: '' };
+      if (args.join(' ') === 'ado status --json') return { code: 0, stdout: 'No Azure DevOps PAT configured.\n', stderr: '' };
       throw new Error(`unexpected ${args.join(' ')}`);
     };
     const scm = {

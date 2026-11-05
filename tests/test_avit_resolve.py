@@ -193,6 +193,37 @@ def test_rule_tuning_fetches_the_exact_avit_branch_when_checkout_is_missing(monk
     assert not Path(tuned[0][0]).exists(), "temporary repository must be removed"
 
 
+def test_matching_and_tuning_use_the_same_punctuated_report_line_when_avit_line_is_missing(monkeypatch, tmp_path):
+    from threatlint import semgrep_platform as sp
+
+    target = {"organization": "synthetic-org", "project": "P", "name": "repo", "branch": "develop"}
+    context = {"avit": AVIT, "rule": "synthetic.rule", "file_path": "app/utils/auth.py", "line": ""}
+    markdown = f"**Original finding**: {AVIT}; synthetic.rule; Semgrep Code; app/utils/auth.py:97.  \n"
+    monkeypatch.setattr(sp, "deployment", lambda *_args: {"id": 7, "slug": "synthetic"})
+
+    def query(path, token, **kwargs):
+        page = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["page"][0]
+        return {"findings": [{"id": 1, "rule_name": "synthetic.rule", "repository": {"name": "synthetic-org/P/repo"},
+                              "ref": "develop", "status": "open", "location": {"file_path": "app/utils/auth.py", "line": 97}}]
+                if page == "0" else []}
+
+    monkeypatch.setattr(ar, "_semgrep", query)
+    dep, matches = ar.semgrep_matches("synthetic-token", "sast", target, context, report_text=markdown)
+    assert [match["line"] for match in matches] == [97]
+    flagged = tmp_path / "app/utils/auth.py"
+    flagged.parent.mkdir(parents=True)
+    flagged.write_text("# synthetic fixture\n" * 97, encoding="utf-8")
+    monkeypatch.setattr(sn, "checkout_repository", lambda *_args: pytest.fail("the supplied checkout must be reused"))
+    tuned = []
+    monkeypatch.setattr(sp, "tune_rule", lambda *args, **kwargs: tuned.append((args, kwargs)))
+    ar._tune_verified_rule(types.SimpleNamespace(checkout=str(tmp_path)), markdown, AVIT, "sast", context,
+                           "synthetic-token", dep, target, matches)
+    assert len(tuned) == 1
+    args, kwargs = tuned[0]
+    assert args[:5] == (markdown, "sast", "synthetic.rule", str(flagged), 97)
+    assert kwargs == {"project": "synthetic-org/P/repo", "verified_finding": True}
+
+
 def test_rule_tuning_rejects_flagged_path_escape_before_checkout(monkeypatch):
     monkeypatch.setattr(sn, "checkout_repository", lambda *_args: pytest.fail("unsafe path must not be checked out"))
     with pytest.raises(ar.ResolveError, match="escapes"):
@@ -438,7 +469,8 @@ def test_malformed_attachment_listing_prevents_avit_update(monkeypatch, tmp_path
     assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
 
 
-def test_true_positive_on_previously_closed_avit_attaches_but_reports_not_open(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stored_state", ["3", "Closed", {"display_value": "Closed", "value": "3"}])
+def test_true_positive_on_previously_closed_avit_is_informational(monkeypatch, tmp_path, stored_state):
     fake = FakeServiceNow()
     old_row = {**ROW, "state": {"display_value": "Closed", "value": "3"}}
     original = fake.__call__
@@ -448,16 +480,38 @@ def test_true_positive_on_previously_closed_avit_attaches_but_reports_not_open(m
             return {"result": [old_row]}
         if kwargs.get("method") == "PATCH":
             fake.calls.append(("PATCH", url.split("?")[0], kwargs.get("data")))
-            return {"result": {"state": "3", "substate": "3"}}
+            return {"result": {"state": stored_state, "substate": "3"}}
         return original(url, **kwargs)
 
     monkeypatch.setattr(sn, "_request_json", previously_closed)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
     output = io.StringIO()
     monkeypatch.setattr("sys.stdout", output)
-    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 1
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
     assert any("/attachment/file" in url for _m, url, _d in fake.calls)
+    patch = next(json.loads(data) for method, _url, data in fake.calls if method == "PATCH")
+    assert patch == {"work_notes": ar.TRUE_POSITIVE_COMMENT}
+    assert "INFO: AVIT is already closed in ServiceNow; work note added and report attached." in output.getvalue()
+    assert "AVIT left open" not in output.getvalue()
+
+
+@pytest.mark.parametrize("stored", [{}, {"state": ""}, {"state": None}, {"state": {}}])
+def test_true_positive_with_unreadable_stored_state_remains_an_error(monkeypatch, tmp_path, stored):
+    fake = FakeServiceNow()
+    original = fake.__call__
+
+    def unreadable_state(url, **kwargs):
+        if kwargs.get("method") == "PATCH":
+            return {"result": stored}
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", unreadable_state)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stdout", output)
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 1
     assert "could not be confirmed" in output.getvalue()
+    assert "INFO:" not in output.getvalue()
     assert "AVIT left open" not in output.getvalue()
 
 
@@ -513,13 +567,31 @@ def test_a_renamed_ado_repository_is_followed_through_its_guid(monkeypatch):
         seen["path"] = path
         return {"project": {"url": "https://dev.azure.com/contoso/698f/_apis/git/repositories/b13a53cc-86f7-4d90-a055-b754186e580f"}}
     monkeypatch.setattr(sp, "call", call)
-    monkeypatch.setattr("threatlint.ado_login.load", lambda organization="": ("pat", "x"))
+    monkeypatch.setattr("threatlint.ado_login.load", lambda organization="", profile=None: seen.update(profile=profile) or ("pat", "x"))
     class Response(io.BytesIO):
         def __enter__(self): return self
         def __exit__(self, *a): return False
     monkeypatch.setattr(ar.urllib.request, "urlopen", lambda request, **_k: Response(b'{"name": "workflow-pro-api"}') if "b13a53cc" in request.full_url else pytest.fail(request.full_url))
-    assert ar.renamed_ado_repository(target, types.SimpleNamespace(aws_profile=None)) == "workflow-pro-api"
+    assert ar.renamed_ado_repository(target, types.SimpleNamespace(aws_profile="service-account-reader")) == "workflow-pro-api"
     assert seen["path"].endswith("/projects/AI_Projects/workflow-api")
+    assert seen["profile"] == "service-account-reader"
+
+
+def test_rename_lookup_credential_failure_uses_the_cli_error_boundary(monkeypatch, capsys):
+    from threatlint import ado_login, semgrep_platform as sp
+
+    monkeypatch.setattr(sp, "resolve_token", lambda *_a: ("t", "x"))
+    monkeypatch.setattr(sp, "deployment", lambda *_a: {"slug": "example"})
+    monkeypatch.setattr(sp, "call", lambda *a, **k: {"project": {"url": "https://dev.azure.com/contoso/p/_apis/git/repositories/b13a53cc-86f7-4d90-a055-b754186e580f"}})
+
+    def denied(*args, **kwargs):
+        raise ado_login.AdoLoginError("AWS SSO session has expired")
+
+    monkeypatch.setattr(ado_login, "load", denied)
+    target = {"organization": "contoso", "project": "P", "name": "repo"}
+    args = types.SimpleNamespace(avit_command="checkout", aws_profile="appsec")
+    assert ar.run(lambda call: ar.renamed_ado_repository(target, call), args) == 1
+    assert capsys.readouterr().err.strip() == "ERROR: AWS SSO session has expired"
 
 
 def test_semgrep_is_never_matched_without_a_line(monkeypatch):

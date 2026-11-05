@@ -8,6 +8,9 @@ const { chromium } = require('playwright');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-bedrock-browser-'));
 process.env.THREATLINT_HOME = path.join(temporary, 'config');
+// Isolate the no-key Daybreak path from credentials on the developer's machine.
+process.env.CODEX_HOME = path.join(temporary, 'codex');
+delete process.env.OPENAI_API_KEY;
 process.env.AWS_REGION = 'eu-west-1';
 delete process.env.AWS_DEFAULT_REGION;
 for (const name of ['THREATLINT_GITHUB_APP_ID', 'THREATLINT_GITHUB_APP_INSTALLATION_ID', 'THREATLINT_GITHUB_APP_PRIVATE_KEY_FILE']) delete process.env[name];
@@ -30,7 +33,7 @@ async function filesBelow(directory) {
   const observed = [], requests = [];
   const workbench = createWorkbench({ storageDir: storage, integrations: {
     credentialSources: async () => ({ claude: null, bedrock: null, 'claude-code': 'synthetic Claude Code login',
-      codex: 'Codex login (ChatGPT)', daybreak: null, 'daybreak-bedrock': null, openai: null, copilot: null }),
+      codex: 'Codex login (ChatGPT)', daybreak: 'Codex login (ChatGPT)', 'daybreak-bedrock': null, openai: null, copilot: null }),
     claudeCodeStatus: async () => ({ installed: true, loggedIn: true, source: 'synthetic Claude Code login' }),
     resolveKey: async (_provider, key) => ({ key: key || '', source: key ? 'session' : null }),
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'claude-opus-5-5', display_name: 'Synthetic Claude' }] }) }),
@@ -127,6 +130,23 @@ async function filesBelow(directory) {
     assert.deepEqual(await daybreakChoices.locator('input[name=provider]').evaluateAll(inputs => inputs.map(input => input.value)), ['daybreak', 'daybreak-bedrock']);
     await page.locator('input[name=provider][value=daybreak]').check();
     assert.equal(await page.locator('#model-id').inputValue(), 'gpt-6-sol');
+    assert.match(await page.locator('#environment-key-note').innerText(), /Codex login \(ChatGPT\).*Daybreak Blue enabled/);
+    assert.match(await page.locator('#environment-key-note').innerText(), /No API key is needed/);
+    await page.locator('#api-key').fill('synthetic-openai-session-key');
+    assert.match(await page.locator('#environment-key-note').innerText(), /API key entered for this session/);
+    await page.locator('#api-key').fill('');
+    assert.match(await page.locator('#environment-key-note').innerText(), /Codex login/);
+    await page.locator('#cloud-consent').check();
+    await page.locator('#settings-form button[type=submit]').click();
+    await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
+    await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
+    assert.equal(observed.at(-1).provider, 'daybreak');
+    assert.equal(observed.at(-1).transport, 'codex');
+    assert.equal(observed.at(-1).daybreakBlue, true);
+    assert.equal(observed.at(-1).model, 'gpt-6-sol');
+    assert.equal(observed.at(-1).key, null);
+    assert.equal(requests.at(-1).openaiApiKey, undefined);
+    await page.locator('#settings-button').click();
     await page.locator('input[name=provider][value=daybreak-bedrock]').check();
     assert.equal(await page.locator('#model-id').inputValue(), 'openai.gpt-daybreak-blue-5.6-sol');
     assert.equal(await page.locator('#bedrock-region').inputValue(), 'us-east-2');

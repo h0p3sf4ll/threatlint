@@ -151,7 +151,7 @@ def _guard_fp_rule(item: dict, repo: Path, rule_base: str, report: str, avit: st
     if not file_path or not flagged.is_relative_to(root) or not flagged.is_file():
         raise ResolveError("The flagged checkout file is unavailable; the false-positive AVIT was not changed")
     line_text = str(context.get("line", ""))
-    line = int(line_text) if line_text.isdigit() else report_line(report, avit)
+    line = int(line_text) if line_text.isdigit() else report_line(report, avit, file_path)
     if not line or line < 1:
         raise ResolveError("The flagged source line is unavailable; the false-positive AVIT was not changed")
     with flagged.open(encoding="utf-8", errors="replace") as source:
@@ -205,7 +205,7 @@ def _prove_tuned_rule(item: dict, repo: Path, report: str, avit: str, args) -> N
     file_path = context.get("file_path", "")
     flagged = (repo.resolve() / file_path.lstrip("/")).resolve()
     line_text = str(context.get("line", ""))
-    line = int(line_text) if line_text.isdigit() else report_line(report, avit)
+    line = int(line_text) if line_text.isdigit() else report_line(report, avit, file_path)
     token = avit_resolve.semgrep_token(args.aws_profile)
     sp.validate_tuned_rule(semgrep_rule_text.tuned_rule_from_report(report), context["rule"],
                            str(flagged), line, semgrep_rule_text.fixtures_from_report(report), token)
@@ -250,6 +250,9 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             "Never reproduce a secret, key, token, password, or connection-string value; "
             "use [REDACTED] in excerpts. " + _RULE_GUIDANCE
         )
+        if not getattr(args, "no_fix_pr", False) and target.get("scm") == "azure-devops":
+            from .avit_pr import FIX_PATCH_GUIDANCE  # noqa: PLC0415
+            prompt += "\n" + FIX_PATCH_GUIDANCE
         print(f"  Reviewing {kind.upper()} with {provider}", flush=True)
         output = _run_review_model(provider, system_prompt, prompt, repo, model, args, base_url, api_key)
         file_path = item["context"].get("file_path", "")
@@ -300,7 +303,18 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             skip_semgrep=False, skip_rule_tuning=False, require_complete_semgrep=True, yes=True,
         )
         completed = avit_resolve.cmd_resolve(resolve_args) == 0
+        pull_request = None
+        if completed and verdict["disposition"] == "TRUE POSITIVE" and target.get("scm") == "azure-devops" and not getattr(args, "no_fix_pr", False):
+            from .avit_pr import create_fix_pr  # noqa: PLC0415
+            try:
+                pull_request = create_fix_pr(avit, output, str(repo), target, profile=args.aws_profile, instance=instance)
+                print(f"  INFO: Draft fix PR: {pull_request.get('url') or pull_request.get('reason')}", flush=True)
+            except (ResolveError, sn.ServiceNowError, OSError, ValueError, subprocess.SubprocessError) as exc:
+                completed = False
+                pull_request = {"status": "error", "reason": _safe_error(exc)}
+                print(f"  ! Report attached, but draft fix PR failed: {_safe_error(exc)}", flush=True)
         return {"avit": avit, "disposition": verdict["disposition"], "completed": completed, "kind": kind,
+                **({"pull_request": pull_request} if pull_request else {}),
                 "unverified": bool(verdict.get("unverified")), "decision_basis": verdict.get("decision_basis", ""),
                 "attachment_name": resolve_args.attachment_name,
                 "report_bytes": docx.read_bytes() if verdict["disposition"] == "TRUE POSITIVE" else b""}
@@ -385,7 +399,7 @@ def run(args, system_prompt: str, model: str, semgrep_version: str, *,
             summary_failed = True
     print(f"\nAVIT reviews: {len(numbers) - failures} completed, {failures} failed", flush=True)
     # Explicit allowlist: never serialize report contents, source excerpts, tokens, or binary attachments.
-    public = [{key: item[key] for key in ("avit", "disposition", "completed", "kind", "unverified", "decision_basis")
+    public = [{key: item[key] for key in ("avit", "disposition", "completed", "kind", "unverified", "decision_basis", "pull_request")
                if key in item} for item in outcomes]
     print(json.dumps({"type": "finding_review_result", "outcomes": public,
                       "completed": len(numbers) - failures, "failed": failures,

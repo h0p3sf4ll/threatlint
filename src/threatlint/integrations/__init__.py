@@ -83,7 +83,12 @@ def check(integration: Integration, taken_names: set[str], taken_commands: set[s
 
 def _plugins():
     from importlib.metadata import entry_points  # noqa: PLC0415
-    for entry in entry_points(group=ENTRY_POINT_GROUP):
+    # Python 3.9 returns a group-to-entry-points mapping; newer versions expose
+    # selection on EntryPoints. Calling without keywords works with both APIs.
+    discovered = entry_points()
+    entries = discovered.select(group=ENTRY_POINT_GROUP) if hasattr(discovered, "select") \
+        else discovered.get(ENTRY_POINT_GROUP, ())
+    for entry in entries:
         distribution = getattr(getattr(entry, "dist", None), "name", "") or entry.value.split(":")[0]
         try:
             integration = _instantiate(entry.load())

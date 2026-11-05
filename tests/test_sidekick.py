@@ -23,6 +23,19 @@ def test_loadout_text_uses_org_directives_and_skips_duplicates():
     assert len(warnings) == 3
 
 
+def test_ado_credential_failure_is_reported_per_organization_without_aborting_discovery(monkeypatch):
+    def load(organization):
+        if organization == "contoso":
+            raise clients.ado_login.AdoLoginError("AWS Parameter Store access was denied")
+        return "synthetic-service-account-pat", "AWS Parameter Store (service account)"
+
+    monkeypatch.setattr(clients.ado_login, "load", load)
+    monkeypatch.setattr(clients.Ado, "repositories", lambda self: [{"name": "api", "project": "P"}])
+    result = ops.find_projects(["api"], ["contoso", "fabrikam"])
+    assert result["results"] == [{"repo": "api", "project": "P", "organization": "fabrikam", "status": "found"}]
+    assert result["skipped"] == [{"organization": "contoso", "error": "AWS Parameter Store access was denied"}]
+
+
 def test_loadout_save_rename_and_journal_counts():
     assert store.save_loadout("Team A", [{"repo": "api", "project": "P"}]) == {"added": 1, "removed": 0}
     change = store.save_loadout("Team B", [{"repo": "web", "project": "P"}], previous="Team A")

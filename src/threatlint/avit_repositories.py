@@ -70,7 +70,7 @@ def checkout_branch(target: dict[str, str], directory: str, path: str) -> dict[s
 def renamed_ado_repository(target: dict[str, str], args) -> str | None:
     """Resolve the repository GUID retained by Semgrep to its current ADO name."""
     from threatlint import semgrep_platform as sp
-    from threatlint.ado_login import load
+    from threatlint.ado_login import AdoLoginError, load
     try:
         token = sp.resolve_token(getattr(args, "aws_profile", None))[0]
         dep = sp.deployment(token)
@@ -79,7 +79,10 @@ def renamed_ado_repository(target: dict[str, str], args) -> str | None:
         return None
     url = str((project.get("project") or project).get("url", ""))
     match = re.search(r"/_apis/git/repositories/([0-9a-f-]{36})", url)
-    pat, _source = load(target["organization"])
+    try:
+        pat, _source = load(target["organization"], profile=getattr(args, "aws_profile", None))
+    except AdoLoginError as exc:
+        raise sn.ServiceNowError(str(exc)) from exc
     if not match or not pat:
         return None
     request = urllib.request.Request(f"https://dev.azure.com/{urllib.parse.quote(target['organization'])}/_apis/git/repositories/{match.group(1)}?api-version=7.1",

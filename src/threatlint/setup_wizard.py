@@ -4,7 +4,7 @@ Steps 2-4 are required for `/fp-review <AVIT>` and the Workbench batch; each is 
 configured, and can be re-run on its own. `threatlint setup --check` reports what is missing without prompting.
   1. AWS IAM Identity Center sign-in in a private browser window   (threatlint aws login)
   2. ServiceNow instance URL and OAuth client, saved for the CLI and Workbench (~/.threatlint/servicenow.json)
-  3. Azure DevOps PAT with Code: Read                                (threatlint ado login)
+  3. Azure DevOps service account from Parameter Store, or local PAT (threatlint ado service-account)
   4. Semgrep API token                                               (threatlint semgrep login)
   5. GitHub App, optional, for GitHub clones, PR comments, and issues (threatlint github login)
 Secrets are typed with hidden input or read from Parameter Store; they are never echoed.
@@ -96,22 +96,19 @@ def step_servicenow(profile: str) -> None:
 
 
 def step_ado(profile: str | None = None) -> None:
+    shared = ado_login.service_account_config()
+    if shared["parameter"]:
+        # Existing personal PATs cannot suppress service account validation or win after rotation.
+        pat, source = ado_login.service_account_pat(next(iter(shared["organizations"]), ""), profile)
+        for organization in shared["organizations"]:
+            ado_login.validate(organization, pat)
+        print(f"✓ Azure DevOps: {source}, validated for every selected organization; PAT not saved locally")
+        return
     organizations = org_config.values("adoOrganizations")
-    parameter = org_config.value("adoPatParameter")
-    if parameter and not organizations:
-        raise ado_login.AdoLoginError("Set adoOrganizations in the shared setup settings before reading the Azure DevOps PAT from Parameter Store.")
     if organizations:
         missing = [organization for organization in organizations if not ado_login.load(organization)[0]]
-        if parameter and missing:
-            pat = parameter_store.read_parameter(parameter, profile=profile)
-            for organization in missing:
-                ado_login.validate(organization, pat)
-            for organization in missing:
-                where = ado_login.save(organization, pat)
-                print(f"✓ Azure DevOps PAT read from Parameter Store, validated and saved to {where} for {organization}")
-        else:
-            for organization in missing:
-                print(f"✓ Azure DevOps PAT validated and saved to {ado_login.prompt_and_save(organization)} for {organization}")
+        for organization in missing:
+            print(f"✓ Azure DevOps PAT validated and saved to {ado_login.prompt_and_save(organization)} for {organization}")
         if not missing:
             print("✓ Azure DevOps PAT: configured for every selected organization")
         return
@@ -165,7 +162,11 @@ def check(profile: str | None = None) -> list[tuple[str, str, str]]:
         except servicenow.ServiceNowError:
             pass
     organizations = org_config.values("adoOrganizations")
-    if organizations:
+    shared = ado_login.service_account_config()
+    if shared["parameter"]:
+        # Configuration status is metadata-only; setup validates access, runtime reads the current PAT.
+        ado = ado_login.SERVICE_ACCOUNT_SOURCE if shared["configured"] else ""
+    elif organizations:
         ado = "configured for every selected organization" if all(ado_login.load(org)[0] for org in organizations) else ""
     else:
         _pat, ado = ado_login.load()
@@ -174,7 +175,8 @@ def check(profile: str | None = None) -> list[tuple[str, str, str]]:
     except semgrep_platform.SemgrepError:
         semgrep = ""
     return [("ServiceNow OAuth client", snow, "threatlint setup  (or Workbench → Settings → ServiceNow)"),
-            ("Azure DevOps PAT", ado, "threatlint ado login --organization <org>  (or Workbench → Settings → Azure DevOps)"),
+            ("Azure DevOps PAT", ado, "threatlint setup  (or Workbench → Settings → Azure DevOps)" if shared["parameter"] else
+             "threatlint ado login --organization <org>  (or Workbench → Settings → Azure DevOps)"),
             ("Semgrep API token", semgrep, "threatlint semgrep login  (or Workbench → Settings → Semgrep)")]
 
 
@@ -192,7 +194,7 @@ def cmd_check(args) -> int:
 
 def add_setup_parser(sub) -> None:
     p = sub.add_parser("setup", help="One-time setup: AWS SSO, ServiceNow, Azure DevOps PAT, Semgrep token, and (optional) GitHub App")
-    p.add_argument("--aws-profile", default="appsec", help="AWS CLI profile (default: appsec)")
+    p.add_argument("--aws-profile", default=org_config.aws_profile() or "appsec", help="AWS CLI profile (default: configured awsProfile, or appsec)")
     p.add_argument("--org-parameter", metavar="NAME", default="", help="AWS Parameter Store JSON parameter containing shared setup settings (or THREATLINT_ORG_PARAMETER)")
     p.add_argument("--aws-region", metavar="REGION", help="AWS region for setup parameters (or THREATLINT_AWS_REGION; default: us-west-2)")
     p.add_argument("--check", action="store_true", help="Report which required credentials are missing, without prompting")

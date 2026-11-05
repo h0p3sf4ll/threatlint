@@ -15,7 +15,7 @@ def add_avit_arguments(parser, *, instance_env, saved_config):
     parser.add_argument("--snow-instance", metavar="URL", default=os.environ.get(instance_env, "") or saved_config().get("instance", ""),
         help=f"ServiceNow instance URL, e.g. https://<instance>.service-now.com (or set {instance_env}; defaults to the Workbench's saved instance)")
     parser.add_argument("--aws-profile", metavar="PROFILE",
-        help="AWS CLI profile with access to the ServiceNow parameters (default: AWS CLI default chain)")
+        help="AWS CLI profile with access to integration parameters, including the ADO service account")
 
 
 def requested_avits(args, *, parse_numbers, error_type):
@@ -69,6 +69,9 @@ def add_avit_parser(sub, *, add_arguments):
 
 
 def cmd_avit(args, *, requested_avits, collect_avits, error_type):
+    if args.avit_command == "fix-pr":
+        from threatlint import avit_cli, avit_resolve
+        return avit_resolve.run(avit_cli.cmd_fix_pr, args)
     if args.avit_command in ("checkout", "resolve", "semgrep", "note", "close-removed", "dast"):
         from threatlint import avit_resolve
         if args.avit_command == "dast":

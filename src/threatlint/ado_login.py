@@ -1,4 +1,8 @@
-"""Azure DevOps personal access token setup so `threatlint avit checkout` can clone ADO repositories.
+"""Azure DevOps credentials for checkouts, source browsing, and remediation PRs.
+
+When adoPatParameter is configured, the service account PAT is read from AWS Parameter Store on demand,
+only for adoOrganizations. It takes precedence over personal environment/local PATs and is never saved
+locally. A failed lookup never falls back to another identity.
 
   threatlint ado login --organization ORG [--pat-stdin]     validate and save a PAT (Code: Read) for ORG
   threatlint ado status                                     list organizations with a PAT and their source
@@ -10,8 +14,8 @@ saved for its own organization, falling back to an `az login` token for an organ
 The PAT is validated against the organization before it is saved. It is kept in the OS credential
 store when the optional `keyring` package is installed (macOS Keychain, Windows Credential Manager,
 Secret Service on Linux), otherwise in ~/.threatlint/ado.json (%USERPROFILE%\\.threatlint\\ado.json on
-Windows) readable only by the current user. THREATLINT_ADO_PAT, AZURE_DEVOPS_EXT_PAT, and
-SYSTEM_ACCESSTOKEN take precedence when set.
+Windows) readable only by the current user. Without a configured service account, THREATLINT_ADO_PAT,
+AZURE_DEVOPS_EXT_PAT, and SYSTEM_ACCESSTOKEN take precedence over saved personal PATs.
 """
 
 from __future__ import annotations
@@ -25,10 +29,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from threatlint import org_config, parameter_store
 from threatlint.ado_payloads import AdoLoginError, _ORG, _PAT, store_payload, store_records, validation_request
 
 ENV_NAMES = ("THREATLINT_ADO_PAT", "AZURE_DEVOPS_EXT_PAT", "SYSTEM_ACCESSTOKEN")
 KEYRING_SERVICE = "threatlint-azure-devops"
+SERVICE_ACCOUNT_SOURCE = "AWS Parameter Store (service account)"
 PAT_HELP = ("Create a PAT at https://dev.azure.com/<organization>/_usersSettings/tokens with scope Code: Read "
             "(and Work Items: Read & write if you also close ADO items).")
 
@@ -107,15 +113,102 @@ def _secret(record: dict) -> tuple[str, str]:
 
 
 def organizations() -> list[str]:
-    """Organizations with a saved PAT (never the PATs themselves)."""
+    """Organizations served by the configured credential source; never resolves a secret."""
+    shared = service_account_config()
+    if shared["parameter"]:
+        return shared["organizations"]
     return [record.get("organization") or key for key, record in _read_store().items()]
 
 
-def load(organization: str = "") -> tuple[str, str]:
+def _validate_service_account(parameter: str, organizations: list[str], profile: str | None, region: str) -> None:
+    if not parameter:
+        raise AdoLoginError("Configure adoPatParameter or THREATLINT_ADO_PAT_PARAMETER for the Azure DevOps service account.")
+    if not organizations or any(not _ORG.fullmatch(organization) for organization in organizations):
+        raise AdoLoginError("Set adoOrganizations to valid Azure DevOps organization names before using the service account.")
+    try:
+        parameter_store.validate_reference(parameter, profile=profile, region=region)
+    except parameter_store.ParameterStoreError as exc:
+        raise AdoLoginError(str(exc)) from None
+
+
+def service_account_config() -> dict:
+    """Public configuration metadata only; no SSM call or local secret lookup."""
+    organizations = list({name.lower(): name for name in org_config.values("adoOrganizations")}.values())
+    config = {"parameter": org_config.value("adoPatParameter"), "organizations": organizations,
+              "profile": org_config.aws_profile(), "region": org_config.aws_region()}
+    try:
+        _validate_service_account(**config)
+    except AdoLoginError:
+        config["configured"] = False
+    else:
+        config["configured"] = True
+    return config
+
+
+def _read_service_account(parameter: str, profile: str | None, region: str) -> str:
+    try:
+        pat = parameter_store.read_parameter(parameter, profile=profile, region=region).strip()
+    except parameter_store.ParameterStoreError as exc:
+        raise AdoLoginError(f"Azure DevOps service account: {exc}") from None
+    if not _PAT.fullmatch(pat):
+        raise AdoLoginError("The Azure DevOps service account parameter does not contain a valid PAT.")
+    return pat
+
+
+def service_account_pat(organization: str, profile: str | None = None) -> tuple[str, str]:
+    """Require the SSM service account for an allowed organization; never use a personal fallback."""
+    config = service_account_config()
+    selected_profile = config["profile"] if profile is None else profile
+    _validate_service_account(config["parameter"], config["organizations"], selected_profile, config["region"])
+    if not isinstance(organization, str) or organization.lower() not in {name.lower() for name in config["organizations"]}:
+        raise AdoLoginError("The Azure DevOps organization is not allowed by adoOrganizations for the service account.")
+    return _read_service_account(config["parameter"], selected_profile, config["region"]), SERVICE_ACCOUNT_SOURCE
+
+
+def public_status() -> dict:
+    """Report credential source metadata without retrieving a PAT from SSM or the keyring."""
+    shared = service_account_config()
+    if shared["parameter"]:
+        sources = [{"name": organization, "source": SERVICE_ACCOUNT_SOURCE} for organization in shared["organizations"]] if shared["configured"] else []
+        return {"hasPat": shared["configured"], "source": SERVICE_ACCOUNT_SOURCE if shared["configured"] else None,
+                "organizations": sources, "serviceAccount": shared}
+    env = next((name for name in ENV_NAMES if os.environ.get(name)), "")
+    sources = []
+    for key, record in _read_store().items():
+        source = env or ("OS credential store" if record.get("storage") == "keyring" else str(store_path()) if record.get("pat") else "")
+        if source:
+            sources.append({"name": record.get("organization") or key, "source": source})
+    source = env or "; ".join(dict.fromkeys(item["source"] for item in sources)) or None
+    return {"hasPat": bool(source), "source": source, "organizations": sources, "serviceAccount": shared}
+
+
+def configure_service_account(parameter: str, organizations: list[str], profile: str | None = None,
+                              region: str | None = None) -> Path:
+    """Validate the selected service account everywhere, then save only its references and scope."""
+    selected_profile = org_config.aws_profile() if profile is None else profile
+    selected_region = org_config.aws_region() if region is None else region
+    organizations = list({name.strip().lower(): name.strip() for name in organizations}.values())
+    _validate_service_account(parameter, organizations, selected_profile, selected_region)
+    pat = _read_service_account(parameter, selected_profile, selected_region)
+    for organization in organizations:
+        validate(organization, pat)
+    updates = {"adoPatParameter": parameter, "adoOrganizations": organizations, "awsRegion": selected_region}
+    if selected_profile is not None:
+        updates["awsProfile"] = selected_profile
+    try:
+        return org_config.update_metadata(updates)
+    except parameter_store.ParameterStoreError as exc:
+        raise AdoLoginError(str(exc)) from None
+
+
+def load(organization: str = "", profile: str | None = None) -> tuple[str, str]:
     """(PAT, source label); ('', '') when none is configured.
 
-    An environment PAT wins. Otherwise the PAT saved for `organization`; with no organization given, the
-    only (or first) saved PAT. A PAT saved for one organization is never returned for another."""
+    A configured SSM service account wins. Otherwise use an environment PAT or the PAT saved for the
+    organization. Missing/denied service account access raises instead of switching identities."""
+    shared = service_account_config()
+    if shared["parameter"]:
+        return service_account_pat(organization or next(iter(shared["organizations"]), ""), profile)
     for name in ENV_NAMES:
         if os.environ.get(name):
             return os.environ[name], name
@@ -172,10 +265,17 @@ def add_ado_parser(sub) -> None:
     login = actions.add_parser("login", help="Validate and save a PAT (Code: Read)")
     login.add_argument("--organization", default="", help="Azure DevOps organization, e.g. contoso")
     login.add_argument("--pat-stdin", action="store_true", help="Read the PAT from standard input instead of prompting")
-    actions.add_parser("status", help="Show which organizations have a PAT and where each comes from (never prints them)")
+    status = actions.add_parser("status", help="Show credential source metadata without retrieving or printing PATs")
+    status.add_argument("--json", action="store_true", help="Return source and service account configuration as JSON")
+    shared = actions.add_parser("service-account", help="Validate an AWS Parameter Store PAT and save only its configuration")
+    shared.add_argument("--parameter", required=True, help="SSM parameter name or ARN containing the service account PAT")
+    shared.add_argument("--organization", action="append", required=True, help="Allowed Azure DevOps organization; repeat for each")
+    shared.add_argument("--aws-profile", default=None, help="AWS profile with parameter access (or configured awsProfile)")
+    shared.add_argument("--region", default=None, help="AWS region containing the parameter (or configured awsRegion)")
     # The Workbench reads a saved PAT over a pipe to open its source connection; not for interactive use.
     token = actions.add_parser("token", help="Print a saved PAT to a pipe (for the Workbench; refuses a terminal)")
     token.add_argument("--organization", required=True)
+    token.add_argument("--aws-profile", default=None)
     logout_parser = actions.add_parser("logout", help="Remove a saved PAT (one organization, or all)")
     logout_parser.add_argument("--organization", default="", help="Remove only this organization's PAT")
 
@@ -186,18 +286,26 @@ def cmd_ado(args) -> int:
             organization = args.organization.strip()
             where = prompt_and_save(organization, args.pat_stdin)
             print(f"✓ PAT validated and saved to {where}{' for ' + organization if organization else ''}")
+        elif args.ado_command == "service-account":
+            where = configure_service_account(args.parameter, args.organization, args.aws_profile, args.region)
+            print(f"✓ Azure DevOps service account validated; configuration saved to {where}. The PAT is not stored locally.")
         elif args.ado_command == "token":
             if sys.stdout.isatty():
                 raise AdoLoginError("Refusing to print a PAT to a terminal")
-            pat = load(args.organization.strip())[0]
+            profile = getattr(args, "aws_profile", None)
+            pat = (load(args.organization.strip(), profile=profile) if profile is not None else load(args.organization.strip()))[0]
             if not pat:
                 raise AdoLoginError(f"No PAT saved for {args.organization}")
             sys.stdout.write(pat)
         elif args.ado_command == "status":
-            env = next((name for name in ENV_NAMES if os.environ.get(name)), "")
-            saved = [(org, load(org)[1]) for org in organizations()]
-            lines = ([f"Azure DevOps PAT: {env} (all organizations)"] if env else []) + [f"Azure DevOps PAT: {source} · {org}" for org, source in saved if source]
-            print("\n".join(lines) if lines else "No Azure DevOps PAT configured. Run `threatlint ado login --organization <org>`.")
+            status = public_status()
+            if getattr(args, "json", False):
+                print(json.dumps(status))
+            else:
+                lines = [f"Azure DevOps PAT: {item['source']} · {item['name']}" for item in status["organizations"]]
+                if status["hasPat"] and not lines:
+                    lines.append(f"Azure DevOps PAT: {status['source']} (all organizations)")
+                print("\n".join(lines) if lines else "No Azure DevOps PAT configured. Configure a service account or run `threatlint ado login --organization <org>`.")
         else:
             organization = args.organization.strip()
             print(("✓ Saved PAT removed" + (f" for {organization}" if organization else "")) if logout(organization) else "No saved PAT")

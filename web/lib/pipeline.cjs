@@ -70,7 +70,10 @@ function providerRequest(message, purpose = 'review') {
   const sessionKey = { claude: message.apiKey, bedrock: message.bedrockApiKey, daybreak: message.openaiApiKey, 'daybreak-bedrock': message.bedrockApiKey, openai: message.openaiApiKey, copilot: message.copilotToken }[provider];
   const credential = KEYLESS.has(provider) ? { key: null } : configuredKey(provider, sessionKey, { region: message.bedrockRegion });
   const key = credential.key;
-  if (!KEYLESS.has(provider) && !key) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
+  // Daybreak is also available through the user's signed-in Codex account. Keep
+  // API keys authoritative; when absent, let Codex authenticate its own request.
+  const codexDaybreak = provider === 'daybreak' && !key;
+  if (!KEYLESS.has(provider) && !key && !codexDaybreak) throw new HttpError(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token with Copilot access in Settings' : 'Add a provider API key in Settings or configure the server environment');
   let model = provider === 'lmstudio' ? message.lmstudioModel || message.model : message.model;
   // An explicit model always wins; otherwise Claude follows the policy (Sonnet for scanning, Opus for chat).
   if ((provider === 'claude' || provider === 'claude-code') && (model == null || (typeof model === 'string' && !model.trim()))) model = defaultModel(purpose);
@@ -82,8 +85,9 @@ function providerRequest(message, purpose = 'review') {
   if (provider === 'daybreak-bedrock' && model.trim() !== 'openai.gpt-daybreak-blue-5.6-sol') throw new HttpError('Choose the Daybreak Blue Bedrock model');
   if (provider === 'bedrock' && /^openai\./.test(model.trim())) throw new HttpError('Choose Daybreak Blue on Bedrock for OpenAI models');
   const baseUrl = { claude: credential.baseUrl, bedrock: credential.baseUrl, daybreak: 'https://api.openai.com/v1', 'daybreak-bedrock': credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
-  return { provider, key, bearer: !!credential.bearer, model: model.trim(), baseUrl,
-    daybreakBlue: provider === 'codex' && message.codexDaybreak === true,
+  return { provider, key: codexDaybreak ? null : key, bearer: !!credential.bearer, model: model.trim(), baseUrl: codexDaybreak ? null : baseUrl,
+    ...(codexDaybreak ? { transport: 'codex' } : {}),
+    daybreakBlue: codexDaybreak || (provider === 'codex' && message.codexDaybreak === true),
     headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
 }
 
@@ -92,8 +96,9 @@ function runModel({ settings, systemPrompt, userMessage, images = [], history = 
   const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent, daybreakBlue: settings.daybreakBlue,
     accessProgram: settings.provider === 'daybreak-bedrock' ? '' : 'daybreak_blue',
     execute: (name, input) => executeTool(name, input, repoPath) };
-  if (override) return override({ ...args, provider: settings.provider, agentId, purpose });
-  return ({ claude: runClaude, bedrock: runClaude, 'claude-code': runClaudeCode, codex: runCodex, daybreak: runResponses, 'daybreak-bedrock': runResponses }[settings.provider] || runOpenAi)(args);
+  if (override) return override({ ...args, provider: settings.provider, transport: settings.transport, agentId, purpose });
+  return (settings.transport === 'codex' ? runCodex
+    : ({ claude: runClaude, bedrock: runClaude, 'claude-code': runClaudeCode, codex: runCodex, daybreak: runResponses, 'daybreak-bedrock': runResponses }[settings.provider] || runOpenAi))(args);
 }
 
 /** ServiceNow AVIT request: FP review only, with session credentials; null when no AVITs were entered. */

@@ -65,6 +65,44 @@ def test_headless_batch_attaches_each_verdict_from_temporary_artifacts(monkeypat
     assert all(not Path(row[1]).exists() for row in reviewed), "temporary checkouts must be removed"
 
 
+@pytest.mark.parametrize("pr_status", ["created", "existing", "skipped", "error", "spawn-error", "disabled"])
+def test_headless_true_positive_runs_draft_pr_after_report_writeback(monkeypatch, pr_status):
+    from threatlint import avit_pr
+
+    args = _args(AVIT_TP)
+    args.no_fix_pr = pr_status == "disabled"
+    target = {"scm": "azure-devops", "organization": "contoso", "project": "project", "name": "repo", "branch": "main"}
+    monkeypatch.setattr(avit_headless, "_checkout", lambda _item, _args, repo: repo.mkdir() or target)
+    monkeypatch.setattr(avit_headless, "_rule_base", lambda *_: "")
+    monkeypatch.setattr(sn, "avits_markdown", lambda *_: "AVIT evidence")
+    markdown = (f"# Finding Review\n\n#### [FP-001] — Finding\n**Original finding**: {AVIT_TP}; rule; scanner; src/flagged.js:2\n"
+                "**Disposition**: TRUE POSITIVE\n**Confidence**: CONFIRMED\n**Evidence**: src/flagged.js:2\n")
+    monkeypatch.setattr(avit_headless, "_run_review_model", lambda *_: markdown)
+    monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
+    calls = []
+    monkeypatch.setattr(avit_resolve, "cmd_resolve", lambda _args: calls.append("resolve") or 0)
+
+    def publish(avit, report, checkout, reviewed_target, **options):
+        assert calls == ["resolve"]
+        assert avit == AVIT_TP and report == markdown and Path(checkout).is_dir()
+        assert reviewed_target == target and options["instance"] == "https://test.service-now.com"
+        calls.append("pr")
+        if pr_status == "error":
+            raise avit_pr.ResolveError("Azure DevOps rejected the draft PR")
+        if pr_status == "spawn-error":
+            raise OSError("Git could not start")
+        return {"status": pr_status, "url": "https://dev.azure.com/contoso/project/_git/repo/pullrequest/42"} if pr_status != "skipped" else {"status": "skipped", "reason": "No applicable proposed fix"}
+
+    monkeypatch.setattr(avit_pr, "create_fix_pr", publish)
+    outcome = avit_headless._review_one(args, _item(AVIT_TP), "https://test.service-now.com", "reviewer", "", "1.99")
+    assert outcome["completed"] is (pr_status not in ("error", "spawn-error"))
+    assert outcome["report_bytes"] == b"PKword", "a PR failure must preserve the completed report outcome"
+    if pr_status == "disabled":
+        assert calls == ["resolve"] and "pull_request" not in outcome
+    else:
+        assert calls == ["resolve", "pr"] and outcome["pull_request"]["status"] == ("error" if pr_status == "spawn-error" else pr_status)
+
+
 def test_no_resolve_when_word_report_fails_but_later_avit_continues(monkeypatch):
     args = _args(AVIT_FP, AVIT_TP)
     monkeypatch.setattr(sn, "requested_avits", lambda _args: [AVIT_FP, AVIT_TP])

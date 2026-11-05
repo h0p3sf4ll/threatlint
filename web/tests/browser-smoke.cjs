@@ -355,13 +355,14 @@ async function fprCli(args, options) {
   if (args[0] === 'sctask' && args[1] === 'close') return { code: 0, stdout: args[2] === FPR.T1 ? `  ✓ Attached x\n  ✓ Closed ${args[2]}\n` : `  ✓ Attached x\n  ✓ Comment added; ${args[2]} left open until the remaining AVITs are decided\n`, stderr: '' };
   if (args[0] === 'avit') {
     const [, command, avit] = args;
-    if (command === 'fetch') { fs.writeFileSync(args[args.indexOf('-o') + 1], `## ${avit}\n`); return { code: 0, stdout: '✓', stderr: '' }; }
+    if (command === 'fetch') { fs.writeFileSync(args[args.indexOf('-o') + 1], `## ${avit}\n\n### AVIT fields\n\n| Field | Value |\n|---|---|\n| sys_id | ${avit.at(-1).repeat(32)} |\n\n### Referenced vulnerability\n\n| sys_id | ${'f'.repeat(32)} |\n`); return { code: 0, stdout: '✓', stderr: '' }; }
     if (command === 'checkout') {
       if (avit === FPR.A4) return { code: 1, stdout: '', stderr: 'ERROR: git clone failed: authentication required' };
       fs.mkdirSync(args[args.indexOf('--dir') + 1], { recursive: true });
-      return json({ kind: 'sca', name: 'svc', branch: 'main', file_path: 'package.json' });
+      return json({ kind: 'sca', name: 'svc', branch: 'main', file_path: 'package.json', ...(avit === FPR.A3 ? { scm: 'azure-devops', organization: 'contoso', project: 'project' } : {}) });
     }
-    if (command === 'resolve') return { code: 0, stdout: avit === FPR.A1 ? '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' : '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
+    if (command === 'fix-pr') return json({ status: 'created', url: 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42' });
+    if (command === 'resolve') return { code: 0, stdout: avit === FPR.A1 ? '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' : avit === FPR.A3 ? '  ✓ Attached x.docx\n  INFO: AVIT is already closed in ServiceNow; work note added and report attached.\n' : '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
   }
   return require('../lib/avit-batch.cjs').runCli(args, options);
 }
@@ -371,7 +372,7 @@ async function fprProvider(args) {
   args.onEvent({ type: 'tool_executing', tool: 'read_file', input: {} });
   args.onEvent({ type: 'tool_executing', tool: 'grep', input: {} });
   if (avit === FPR.A3) await Promise.race([fprGate.waiting, new Promise((_, reject) => args.signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }))]);
-  const disposition = { [FPR.A1]: 'FALSE POSITIVE', [FPR.A2]: 'TRUE POSITIVE', [FPR.A3]: 'AMBIGUOUS' }[avit];
+  const disposition = { [FPR.A1]: 'FALSE POSITIVE', [FPR.A2]: 'TRUE POSITIVE', [FPR.A3]: 'TRUE POSITIVE' }[avit];
   return `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x; Semgrep Supply Chain; package.json:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: package.json:2\nProposed fix: y. Acceptance criteria: x.\n`;
 }
 async function fpReviewRun(page) {
@@ -413,6 +414,19 @@ async function fpReviewRun(page) {
   await page.locator('#fpreview-run-status', { hasText: 'Complete' }).waitFor();
   assert.equal(await bar.getAttribute('aria-valuenow'), '4');
   assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
+  const infoCard = page.locator(`#avit-${FPR.A3}`);
+  assert.equal(await infoCard.getAttribute('data-result'), 'noted');
+  assert.equal(await infoCard.locator('.avit-stage').innerText(), 'INFO');
+  assert.match(await infoCard.locator('.avit-detail').innerText(), /already closed in ServiceNow; work note added and report attached/);
+  assert.equal(await infoCard.locator('.fp-history-entry.error').count(), 0);
+  const avitLink = infoCard.locator('a.avit-id');
+  const recordUrl = new URL(await avitLink.getAttribute('href'));
+  assert.equal(recordUrl.origin, 'https://example.service-now.com');
+  assert.equal(recordUrl.searchParams.get('uri'), `sn_vul_app_vulnerable_item.do?sys_id=${'3'.repeat(32)}`);
+  assert.equal(await avitLink.textContent(), FPR.A3);
+  assert.equal(await avitLink.getAttribute('target'), '_blank');
+  assert.equal(await avitLink.getAttribute('rel'), 'noopener noreferrer');
+  assert.equal(await infoCard.getByRole('link', { name: 'Open draft fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42');
   assert.match(await page.locator('#fpreview-task-counts').innerText(), /3 SCTASKs · 1 closed · 1 left open · 1 error/);
   assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0, 'every spinner stops at the end');
   assert.equal(await page.locator('#fpreview-run').getAttribute('aria-busy'), 'false');
@@ -445,6 +459,9 @@ async function fpReviewRun(page) {
   });
   await page.reload(); await page.locator('#connection-status.online').waitFor(); await page.locator('#view-fpreview:not([hidden])').waitFor();
   assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
+  assert.equal(await infoCard.locator('.avit-stage').innerText(), 'INFO');
+  assert.equal(await avitLink.getAttribute('href'), recordUrl.href, 'the record link survives replay');
+  assert.equal(await infoCard.getByRole('link', { name: 'Open draft fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42', 'the draft PR link survives replay');
   assert.equal(await page.locator('#fpreview-run-log .fp-history-entry').count(), runLog);
   assert.deepEqual((await history(`avit-${FPR.A1}`)).length, 11);
 
@@ -495,6 +512,12 @@ async function fpReviewRun(page) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(base); await page.locator('#connection-status.online').waitFor();
+    if (process.env.THREATLINT_BROWSER_SCENARIO === 'fp-review') {
+      await fpReviewRun(page);
+      assert.deepEqual(errors, []);
+      console.log('PASS: AVIT review progress, informational closed status, ServiceNow record links, errors, and replay.');
+      return;
+    }
     assert.equal(await page.locator('.agent-card').count(), Object.keys(SKILL_MAP).length);
     assert.equal(await page.locator('.skill-card').count(), new Set(Object.values(SKILL_MAP).flat()).size);
     await page.locator('#choose-repo').click(); await page.locator('#repo-path').fill(repo); await page.locator('#open-repository').click();

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { WebSocket } = require('ws');
 const { createWorkbench } = require('../server.js');
-const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResult, outcomeActions, errorOf } = require('../lib/avit-batch.cjs');
+const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResult, outcomeActions, errorOf, avitRecordUrl } = require('../lib/avit-batch.cjs');
 const { convertToWord } = require('./helpers/docx.cjs');
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
@@ -28,10 +28,31 @@ it('reports the resolve failure instead of a successful checkout cleanup line', 
   assert.equal(errorOf({ code: 1, stdout: `  ✓ Attached report.docx\n${cleanup}`, stderr: '' }), 'Command failed (exit code 1)');
 });
 
+it('links the AVIT record using only its own sys_id and otherwise looks up its number', () => {
+  const instance = 'https://example.service-now.com', sysId = 'a'.repeat(32), referenceId = 'b'.repeat(32);
+  const markdown = `## ${TP}\n\n### AVIT fields\n\n| Field | Value |\n|---|---|\n| sys_id | ${sysId} |\n\n### Referenced records\n\n| sys_id | ${referenceId} |\n`;
+  const direct = new URL(avitRecordUrl(instance, TP, markdown));
+  assert.equal(direct.origin, instance);
+  assert.equal(direct.pathname, '/nav_to.do');
+  assert.equal(direct.searchParams.get('uri'), `sn_vul_app_vulnerable_item.do?sys_id=${sysId}`);
+  for (const evidence of ['', `### Referenced records\n| sys_id | ${referenceId} |\n`, markdown.replace(`| sys_id | ${sysId} |`, '| state | Closed |')]) {
+    const fallback = new URL(avitRecordUrl(instance, TP, evidence));
+    assert.equal(fallback.searchParams.get('uri'), `sn_vul_app_vulnerable_item.do?sysparm_query=number=${TP}`);
+  }
+  assert.equal(avitRecordUrl('', TP), '');
+  assert.equal(avitRecordUrl(instance, `${TP}^active=true`), '');
+});
+
+it('refuses unsafe ServiceNow record link origins', () => {
+  for (const instance of ['javascript:alert(1)', 'http://example.service-now.com', 'https://user:password@example.service-now.com', 'https://untrusted.example']) {
+    assert.throws(() => avitRecordUrl(instance, TP));
+  }
+});
+
 describe('False positive review batch', () => {
   let wb, base;
-  const calls = [];
-  let adoMissing = false, omitTuning = false;
+  const calls = [], modelCalls = [];
+  let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, adoTarget = false, prResult = null;
   const taskAvits = {};
   before(async () => {
     const threatlintCli = async args => {
@@ -47,17 +68,24 @@ describe('False positive review batch', () => {
       const [, command, avit] = args;
       if (command === 'fetch') {
         if (avit === OUT) return { code: 1, stdout: '', stderr: `ERROR: None of the requested AVITs are in the AVR CodeSecurity view (${OUT}).` };
-        fs.writeFileSync(args[args.indexOf('-o') + 1], `## ${avit}\n`); return { code: 0, stdout: '✓', stderr: '' };
+        fs.writeFileSync(args[args.indexOf('-o') + 1], avitMarkdown || `## ${avit}\n`); return { code: 0, stdout: '✓', stderr: '' };
       }
       if (command === 'checkout') {
         const dir = args[args.indexOf('--dir') + 1];
         fs.mkdirSync(path.join(dir, '.git'), { recursive: true }); fs.writeFileSync(path.join(dir, 'app.yaml'), `name: svc\nAPI_KEY: "${SECRET}"\n`);
-        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml' })}\n`, stderr: '' };
+        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml', ...(adoTarget ? { scm: 'azure-devops', organization: 'contoso', project: 'project' } : {}) })}\n`, stderr: '' };
+      }
+      if (command === 'fix-pr') {
+        assert.ok(fs.existsSync(args[args.indexOf('--checkout') + 1]), 'the checkout remains until the PR step completes');
+        assert.equal(JSON.parse(fs.readFileSync(args[args.indexOf('--target') + 1], 'utf8')).avit, avit);
+        if (prResult instanceof Error) throw prResult;
+        return prResult;
       }
       if (command === 'resolve') {
         const md = fs.readFileSync(args[args.indexOf('--report') + 1], 'utf8');
         assert.ok(!md.includes(SECRET), 'the secret is redacted before the report is saved or uploaded');
         assert.ok(fs.existsSync(args[args.indexOf('--docx') + 1]));
+        if (resolveResult) return resolveResult;
         return avit === FP ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning ? '' : '  ✓ Published org-private rule synthetic.rule.tuned\n'), stderr: '' }
           : { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
       }
@@ -65,12 +93,47 @@ describe('False positive review batch', () => {
     };
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-store-'));
     wb = createWorkbench({ storageDir: storage,
-      runProvider: async args => { const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1]; const text = report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE'); args.onEvent({ type: 'text_chunk', text }); return text; },
+      runProvider: async args => { modelCalls.push(args); const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1]; const text = report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE'); args.onEvent({ type: 'text_chunk', text }); return text; },
       integrations: { convertToWord, semgrepVersion: async () => '1.107.0', threatlintCli } });
     await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${wb.server.address().port}`;
   });
   after(() => wb.close());
+
+  it('opens proposed fix PRs after successful write-back and keeps failures visible', async t => {
+    adoTarget = true;
+    t.after(() => { adoTarget = false; prResult = null; calls.length = 0; });
+    const url = 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42';
+    for (const status of ['created', 'existing', 'skipped', 'error', 'spawn-error', 'disabled']) {
+      const start = calls.length;
+      prResult = status === 'error' ? { code: 1, stdout: '', stderr: 'ERROR: ADO denied draft PR creation' }
+        : { code: 0, stdout: JSON.stringify(status === 'skipped' ? { status, reason: 'No applicable proposed fix' } : { status, url }), stderr: '' };
+      if (status === 'spawn-error') prResult = new Error('synthetic spawn failure');
+      const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
+      await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+      const events = await new Promise(resolve => {
+        const seen = [];
+        socket.on('message', raw => { const event = JSON.parse(raw); seen.push(event); if (event.type === 'avit_batch_complete' || event.type === 'avit_batch_error') resolve(seen); });
+        socket.send(JSON.stringify({ action: 'run_avit_batch', avits: TP, provider: 'lmstudio', model: 'fixture', createFixPr: status !== 'disabled' }));
+      });
+      socket.close();
+      const current = calls.slice(start);
+      const done = events.find(event => event.type === 'avit_item' && event.done);
+      assert.ok(done, JSON.stringify(events));
+      assert.equal(done.stage, ['error', 'spawn-error'].includes(status) ? 'error' : 'done');
+      assert.equal(done.outcome.attached, true);
+      if (status === 'disabled') {
+        assert.equal(current.some(args => args[1] === 'fix-pr'), false);
+      } else {
+        assert.ok(current.find(args => args[1] === 'resolve').includes('--keep-checkout'));
+        assert.ok(current.findIndex(args => args[1] === 'resolve') < current.findIndex(args => args[1] === 'fix-pr'));
+        if (status === 'error') assert.match(done.detail, /Report attached.*ADO denied/);
+        else if (status === 'spawn-error') assert.match(done.detail, /Report attached.*could not complete/);
+        else assert.equal(done.outcome.pullRequest.status, status);
+        if (['created', 'existing'].includes(status)) assert.ok(events.some(event => event.action === 'pull-request' && event.pullRequest.url === url));
+      }
+    }
+  });
 
   it('reviews, reports, and resolves each AVIT individually', async () => {
     const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
@@ -93,6 +156,39 @@ describe('False positive review batch', () => {
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8')), [], 'no report history kept');
     for (const args of calls.filter(item => item[1] === 'checkout')) assert.ok(!fs.existsSync(args[args.indexOf('--dir') + 1]), 'checkouts are deleted');
   });
+  it('starts a Daybreak AVIT review through Codex when no OpenAI API key is configured', async t => {
+    const previousKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    t.after(() => {
+      if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousKey;
+    });
+    const authPath = path.join(process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : path.join(os.homedir(), '.codex'), 'auth.json');
+    const readFile = fs.readFileSync;
+    // Model the ChatGPT-only sign-in without reading or changing a real login.
+    t.mock.method(fs, 'readFileSync', (file, ...args) => file === authPath ? '{"auth_mode":"chatgpt"}' : readFile(file, ...args));
+    const firstCall = modelCalls.length;
+    const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
+    t.after(() => socket.close());
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const events = await new Promise(resolve => {
+      const seen = [];
+      socket.on('message', raw => { const event = JSON.parse(raw); seen.push(event); if (event.type === 'avit_batch_complete' || event.type === 'avit_batch_error') resolve(seen); });
+      socket.send(JSON.stringify({ action: 'run_avit_batch', avits: TP, provider: 'daybreak', model: 'gpt-6-sol' }));
+    });
+    assert.ok(events.some(event => event.type === 'avit_batch_start'), JSON.stringify(events));
+    assert.equal(events.some(event => event.type === 'avit_batch_error'), false);
+    assert.equal(modelCalls.length, firstCall + 1);
+    const invocation = modelCalls[firstCall];
+    assert.equal(invocation.provider, 'daybreak');
+    assert.equal(invocation.transport, 'codex');
+    assert.equal(invocation.daybreakBlue, true);
+    assert.equal(invocation.model, 'gpt-6-sol');
+    assert.equal(invocation.key, null);
+    const final = events.find(event => event.type === 'avit_item' && event.avit === TP && event.done);
+    assert.equal(final.stage, 'done');
+    assert.equal(final.result, 'noted');
+  });
   it('expands an SCTASK into its AVITs, reviews each, then closes the task', async () => {
     calls.length = 0;
     const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
@@ -109,17 +205,48 @@ describe('False positive review batch', () => {
     const done = events.filter(event => event.type === 'sctask_item' && event.done).pop();
     assert.equal(done.stage, 'done'); assert.match(done.detail, /Closed/);
   });
-  const runBatch = async avits => {
+  const runBatch = async (avits, options = {}) => {
     const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
     await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
     const events = await new Promise(resolve => {
       const seen = [];
       socket.on('message', raw => { const event = JSON.parse(raw); seen.push(event); if (event.type === 'avit_batch_complete' || event.type === 'avit_batch_error') resolve(seen); });
-      socket.send(JSON.stringify({ action: 'run_avit_batch', avits, provider: 'lmstudio', model: 'fixture' }));
+      socket.send(JSON.stringify({ action: 'run_avit_batch', avits, provider: 'lmstudio', model: 'fixture', ...options }));
     });
     socket.close();
     return events;
   };
+  it('reports an already closed AVIT as informational with a direct ServiceNow record link', async () => {
+    const information = 'AVIT is already closed in ServiceNow; work note added and report attached.';
+    const sysId = 'c'.repeat(32);
+    resolveResult = { code: 0, stdout: `  ✓ Attached x.docx\n  INFO: ${information}\n`, stderr: '' };
+    avitMarkdown = `## ${TP}\n\n### AVIT fields\n\n| sys_id | ${sysId} |\n\n### Referenced records\n\n| sys_id | ${'d'.repeat(32)} |\n`;
+    try {
+      const events = await runBatch(TP, { servicenow: { instance: 'https://example.service-now.com' } });
+      const final = events.find(event => event.avit === TP && event.done);
+      assert.equal(final.stage, 'info'); assert.equal(final.result, 'noted');
+      assert.equal(final.detail, information);
+      assert.equal(final.outcome.information, information);
+      assert.equal(final.outcome.attached, true);
+      assert.equal(final.outcome.leftOpen, false);
+      assert.equal(final.outcome.closed, false, 'the review did not close the record');
+      assert.equal(new URL(final.url).searchParams.get('uri'), `sn_vul_app_vulnerable_item.do?sys_id=${sysId}`);
+      const fetching = events.find(event => event.avit === TP && event.stage === 'fetching');
+      assert.equal(new URL(fetching.url).searchParams.get('uri'), `sn_vul_app_vulnerable_item.do?sysparm_query=number=${TP}`);
+      assert.ok(!events.some(event => event.avit === TP && (event.stage === 'error' || /left open/i.test(event.detail || ''))));
+    } finally { resolveResult = null; avitMarkdown = null; }
+  });
+  it('retains actual resolve failures even when stdout also contains an informational notice', async () => {
+    resolveResult = { code: 1, stdout: '  ✓ Attached x.docx\n  INFO: AVIT is already closed in ServiceNow; work note added and report attached.\n',
+      stderr: 'ERROR: ServiceNow denied the update\n' };
+    try {
+      const events = await runBatch(TP);
+      const final = events.find(event => event.avit === TP && event.done);
+      assert.equal(final.stage, 'error'); assert.equal(final.result, 'error');
+      assert.equal(final.detail, 'ServiceNow denied the update');
+      assert.equal(final.outcome.leftOpen, false);
+    } finally { resolveResult = null; }
+  });
   it('expands several SCTASKs, deduplicates their AVITs, closes each after its own AVITs, and survives a failing task', async () => {
     calls.length = 0;
     const A = 'SCTASK1000001', B = 'SCTASK1000002', BAD = 'SCTASK1000003';
