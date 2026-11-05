@@ -28,7 +28,7 @@ const TOOLTIPS = {
   'metrics-kpi': 'Open risk score = Σ severity weight for findings not marked false positive or remediated (CRITICAL 10, HIGH 6, MEDIUM 3, LOW 1).',
   'dashboard-builder': 'Add widgets, pick a metric, a dimension, and a chart. Dashboards are saved locally.',
   'chat-context': 'What the conversation is about. Threatlint can still read the whole repository to answer.',
-  'fpreview-input': 'Paste AVIT, SCTASK, and ISST numbers in any mix, separated by commas, spaces, semicolons, or new lines. Each SCTASK expands to the AVITs in its description; each ISST expands to the AVITs on its exact repository and branch; duplicates are reviewed once, up to 50 AVITs per run.',
+  'fpreview-input': 'Paste AVIT, SCTASK, and ISST numbers in any mix, separated by commas, spaces, semicolons, or new lines. Each SCTASK expands to the AVITs in its description; each ISST expands to the AVITs on its exact repository and branch; duplicates are reviewed once. There is no AVIT limit, and a run keeps going if you leave the page; it is shown again when you return.',
   'evidence-coverage': 'Share of findings that cite a file:line location. Higher means easier to fix.',
 };
 

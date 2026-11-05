@@ -5,9 +5,10 @@
  * to the cards and appended to two chronological logs: one per AVIT / SCTASK card and one for the whole run.
  * Entries are only ever appended; the current stage stays at the top of each card. All values are set as text.
  *
- * Reloads and reconnects: the server keeps no run state. A batch belongs to the WebSocket that started it and is
- * cancelled when that connection closes. So the history is kept for this browser session only (sessionStorage):
- * a reload shows the run exactly as far as it got, marked interrupted when it had not finished.
+ * Leaving and returning: a run belongs to the Workbench, not to this page (web/lib/avit-runs.cjs). It keeps going
+ * when the page is left, reloaded, or loses its connection; on (re)connecting the page attaches and the server
+ * replays the run's log (`replay`), then live events continue. sessionStorage keeps a copy so the page shows the
+ * last run immediately on load and still has it if the Workbench itself was restarted (then marked interrupted).
  */
 (() => {
   'use strict';
@@ -159,7 +160,7 @@
         list.append(chip);
       }
       const done = info.avits.filter(avit => run.avits.get(avit)?.result).length;
-      info.node.querySelector('.fp-task-progress').textContent = `${done} / ${info.avits.length} AVITs reviewed${info.shared?.length ? ` · ${info.shared.length} shared with an earlier entry, reviewed once` : ''}${info.skipped?.length ? ` · ${info.skipped.length} over the limit` : ''}`;
+      info.node.querySelector('.fp-task-progress').textContent = `${done} / ${info.avits.length} AVITs reviewed${info.shared?.length ? ` · ${info.shared.length} shared with an earlier entry, reviewed once` : ''}`;
     }
 
     // ── Summary ──
@@ -312,14 +313,23 @@
       remember(stamped);
       apply(stamped);
     }
-    /** Replays this session's last run after a reload. Returns true when one was shown. */
+    /** Shows this browser session's last run on load, before the Workbench is reached. Returns true when shown.
+     *  It is not marked interrupted here: the run may still be going, and the server's replay decides. */
     function restore() {
       let events = [];
       try { events = JSON.parse(sessionStorage.getItem(STORE_KEY) || '[]'); } catch { events = []; }
       if (!Array.isArray(events) || !events.length || events[0]?.type !== 'fp_run_start') return false;
       stored = events; persist = false;
       try { for (const event of events) apply(event); } finally { persist = true; }
-      if (run.status === 'running' || run.status === 'expanding') handle({ type: 'fp_interrupted', detail: 'The page was reloaded during the run' });
+      return true;
+    }
+    /** Replaces the page's view with the Workbench's authoritative log of the current or last run. */
+    function replay(events) {
+      if (!Array.isArray(events) || events[0]?.type !== 'fp_run_start') return false;
+      persist = false;
+      try { for (const event of events) apply(event); } finally { persist = true; }
+      // Same bound as live storage: past MAX_STORED, keep only final outcomes and task/run events.
+      stored = events.filter((event, index) => index < MAX_STORED || event.done || event.type !== 'avit_item'); clearTimeout(saveTimer); save();
       return true;
     }
 
@@ -328,6 +338,8 @@
       start(plan) { handle({ type: 'fp_run_start', avits: plan.avits, sctasks: plan.sctasks, issts: plan.issts, model: plan.model }); },
       handle,
       restore,
+      replay,
+      get runId() { return stored[0]?.runId || null; },
       interrupt(detail) { handle({ type: 'fp_interrupted', detail }); },
       get running() { return run.status === 'running' || run.status === 'expanding'; },
     };

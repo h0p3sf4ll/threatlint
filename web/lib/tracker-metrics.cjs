@@ -10,7 +10,6 @@ const SOURCE_META = Object.freeze({
   'servicenow-avit': { label: 'ServiceNow AVIT', kind: 'defect-tracker' },
   defectdojo: { label: 'DefectDojo', kind: 'defect-tracker' },
 });
-const MAX_ITEMS = 10000;
 const SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNSPECIFIED']);
 const DISPOSITIONS = new Set(['OPEN', 'FALSE POSITIVE', 'REMEDIATED', 'RESOLVED']);
 
@@ -99,7 +98,7 @@ function createTrackerMetrics(directory) {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       for (const source of Object.keys(SOURCE_META)) {
         const entry = saved?.[source];
-        if (!entry || !Array.isArray(entry.items) || entry.items.length > MAX_ITEMS) continue;
+        if (!entry || !Array.isArray(entry.items)) continue;
         const syncedAt = time(entry.lastSyncedAt, Date.now());
         snapshots[source] = { lastSyncedAt: syncedAt, createdThrough: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z$/.test(entry.createdThrough) ? entry.createdThrough : null,
           scope: source === 'servicenow-avit' && entry.scope?.type === 'avits' && Array.isArray(entry.scope.avits)
@@ -124,7 +123,7 @@ function createTrackerMetrics(directory) {
     snapshot(source) { return snapshots[source] || null; },
     replace(source, items, { createdThrough = null, scope = null } = {}) {
       if (!SOURCE_META[source]) throw new Error('Unknown defect tracker');
-      if (!Array.isArray(items) || items.length > MAX_ITEMS) throw new Error('Too many defect tracker findings');
+      if (!Array.isArray(items)) throw new Error('Defect tracker findings must be a list');
       const syncedAt = Date.now();
       const normalized = [...new Map(items.map(item => [bounded(item?.id, 100), fact(source, item, syncedAt)])).values()];
       const cutoff = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z$/.test(createdThrough) ? createdThrough : null;
@@ -138,4 +137,4 @@ function createTrackerMetrics(directory) {
   };
 }
 
-module.exports = { SOURCE_META, createTrackerMetrics, avitMetricsItems, avitSeverity, avitDisposition, MAX_ITEMS };
+module.exports = { SOURCE_META, createTrackerMetrics, avitMetricsItems, avitSeverity, avitDisposition };

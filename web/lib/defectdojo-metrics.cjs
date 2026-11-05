@@ -6,7 +6,6 @@ const { HttpError } = require('./http.cjs');
 const scanners = require('./scanners.cjs');
 
 const PAGE_SIZE = 100;
-const MAX_FINDINGS = 5000;
 const MAX_PAGE_CHARS = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']);
@@ -64,14 +63,13 @@ async function readPage(fetchImpl, conn, offset, signal) {
 }
 
 /**
- * Reads every finding the configured token may view, up to MAX_FINDINGS. A changed or
- * oversized result fails the whole sync so the dashboard never shows a partial total.
+ * Reads every finding the configured token may view; there is no count limit. A result that changes
+ * mid-sync fails the whole sync so the dashboard never shows a partial total.
  * We construct each page URL ourselves rather than following an upstream `next` URL.
  */
 async function fetchMetrics({ fetchImpl = fetch, signal } = {}) {
   const conn = scanners.connection('dojo');
   const first = await readPage(fetchImpl, conn, 0, signal);
-  if (first.count > MAX_FINDINGS) throw new HttpError(`DefectDojo has more than ${MAX_FINDINGS} visible findings; metrics sync cannot create a complete snapshot`, 422);
   const rows = [...first.results];
   let offset = rows.length;
   while (offset < first.count) {
@@ -86,4 +84,4 @@ async function fetchMetrics({ fetchImpl = fetch, signal } = {}) {
   return { items };
 }
 
-module.exports = { fetchMetrics, connectionStatus, normalize, PAGE_SIZE, MAX_FINDINGS };
+module.exports = { fetchMetrics, connectionStatus, normalize, PAGE_SIZE };

@@ -86,12 +86,14 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
     for (const view of document.querySelectorAll('.view')) { const active = view.id === `view-${name}`; view.hidden = !active; view.classList.toggle('active', active); }
     for (const item of document.querySelectorAll('[data-view]')) { item.classList.toggle('active', item.dataset.view === name); item.setAttribute('aria-current', item.dataset.view === name ? 'page' : 'false'); }
+    // Sidekick capabilities live on their own landing page now; keep the Sidekick nav item lit while inside one.
+    if (name.startsWith('sk-')) document.querySelector('[data-view="sidekick"]')?.classList.add('active');
     $('breadcrumb-title').textContent = titles[name];
     document.dispatchEvent(new CustomEvent('threatlint:view', { detail: { view: name } }));
     history.replaceState(null, '', `#${name}`);
@@ -792,9 +794,8 @@
     let parsed;
     try { parsed = window.ThreatlintFpRun.parseInput($('fpreview-avits').value); } catch (error) { $('fpreview-error').textContent = error.message; return; }
     const { avits, sctasks, order } = parsed;
-    const maxAvits = state.config.servicenow?.maxAvits || 50;
-    if (!avits.length && !sctasks.length) { $('fpreview-error').textContent = 'Enter at least one AVIT or SCTASK number.'; return; }
-    if (avits.length > maxAvits) { $('fpreview-error').textContent = `Review at most ${maxAvits} AVITs at a time (${avits.length} entered). AVITs from SCTASKs over the limit are reported as skipped.`; return; }
+    // No AVIT limit: the Workbench reviews them one at a time and keeps going if this page is left.
+    if (!avits.length && !sctasks.length && !parsed.issts.length) { $('fpreview-error').textContent = 'Enter at least one AVIT, SCTASK, or ISST number.'; return; }
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (cloudProvider() && !state.consent.has(consentKey())) { showSettings(); toast('Authorize remote context sharing in model settings first.', true); return; }
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
@@ -802,19 +803,26 @@
     if (!await requireSemgrep()) return;
     await updateFpreviewSetup();
     if (state.setupMissing.length) { $('fpreview-error').textContent = `Finish the required setup first: ${state.setupMissing.join(', ')}.`; return; }
-    fpRun().start({ avits, sctasks, model: displayModel() });
+    // The Workbench announces the run (fp_run_start) to every open page, so this one does not draw it first.
+    fpRun();
     fpreviewRunning(true);
     const provider = state.preferences.provider;
-    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
+    state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), modelLabel: displayModel(), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
       servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
   }
 
   function handleEvent(event) {
     switch (event.type) {
+      case 'fp_run_start': fpRun()?.handle(event); fpreviewRunning(true); break;
       case 'avit_batch_start': case 'sctask_item': case 'avit_item': fpRun()?.handle(event); break;
+      case 'avit_batch_replay': resumeAvitBatch(event); break;
+      case 'avit_batch_cancel_ack': if (event.accepted) toast('Stopping the review after the current AVIT…'); break;
       case 'avit_batch_complete': fpRun()?.handle(event); fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
-      case 'avit_batch_error': fpRun()?.handle(event); fpreviewRunning(false); $('fpreview-error').textContent = event.message; break;
+      case 'avit_batch_error':
+        // A second start while a run is active leaves that run (already shown here) untouched.
+        if (event.code !== 'run_active') { fpRun()?.handle(event); fpreviewRunning(false); }
+        $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${displayModel()}`); break;
@@ -837,16 +845,32 @@
     clearTimeout(state.reconnectTimer);
     const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/`);
     state.ws = socket;
-    socket.addEventListener('open', () => { state.connected = true; $('connection-status').textContent = 'Connected'; $('connection-status').className = 'connection online'; updateRunControls(); });
+    socket.addEventListener('open', () => {
+      state.connected = true; $('connection-status').textContent = 'Connected'; $('connection-status').className = 'connection online'; updateRunControls();
+      socket.send(JSON.stringify({ action: 'avit_batch_attach' }));  // pick up a finding-triage run started earlier
+    });
     socket.addEventListener('message', message => { try { handleEvent(JSON.parse(message.data)); } catch (error) { console.error('Invalid runner event', error.message); } });
     socket.addEventListener('close', () => {
       state.connected = false; $('connection-status').textContent = 'Disconnected'; $('connection-status').className = 'connection offline';
       if (state.running) finishRun('interrupted');
-      if (state.fpreviewRunning) { fpRun()?.interrupt('The connection to the Workbench closed; the runner stops a batch when its connection closes'); fpreviewRunning(false); }
+      // A finding-triage run lives on the Workbench and continues; reconnecting replays it (resumeAvitBatch).
       updateRunControls();
       if (!state.intentionalClose) state.reconnectTimer = setTimeout(connectSocket, 3000);
     });
     socket.addEventListener('error', () => { $('connection-status').textContent = 'Reconnecting'; });
+  }
+  /** The Workbench's log of its current or last finding-triage run, sent on every (re)connect. */
+  function resumeAvitBatch(event) {
+    const run = fpRun();
+    if (!run) return;
+    if (event.runId && event.events?.length) {
+      run.replay(event.events);
+      fpreviewRunning(!!event.active);
+      return;
+    }
+    // The Workbench has no run: one this browser was following ended when the Workbench restarted.
+    if (run.running) { run.interrupt('The Workbench restarted during the run; reviews already finished are recorded in ServiceNow'); }
+    fpreviewRunning(false);
   }
   function parseAvits(text) {
     const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
@@ -867,7 +891,6 @@
     let avits = [];
     if (state.pipeline.includes(FP_REVIEWER)) {
       try { avits = parseAvits($('avit-list').value); } catch (error) { toast(error.message, true); $('avit-list').focus(); return; }
-      if (avits.length > (state.config.servicenow?.maxAvits || 50)) { toast(`Review at most ${state.config.servicenow?.maxAvits || 50} AVITs per report.`, true); return; }
       if (avits.length && state.attachment) { toast('Use either an attached findings file or ServiceNow AVITs for one review, not both.', true); return; }
       if (avits.length && !servicenowReady()) { showSettingsSection('servicenow'); toast('Authenticate through SSO and set the ServiceNow instance, client ID, and secret first.', true); return; }
     }
@@ -902,7 +925,7 @@
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
     $('configure-provider').addEventListener('click', showSettings);
     $('servicenow-form').addEventListener('submit', saveServiceNow);
-    $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
+    $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'avit_batch_cancel' })); });
     document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo); $('github-form').addEventListener('submit', saveGithub); $('github-remove').addEventListener('click', removeGithub);
     $('github-use-app').addEventListener('change', () => { $('github-app-fields').hidden = !$('github-use-app').checked; });
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });

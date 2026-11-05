@@ -35,26 +35,64 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
       const connected = await scm.connect({ provider: 'github', token });
       if (appConnection) scm.disconnect(appConnection.id);
       appConnection = { id: connected.id, expiresAt };
-      appFailedAt = 0;
-    } catch { appFailedAt = Date.now(); }
+      appFailedAt = 0; appFailure = '';
+    } catch (error) { appFailedAt = Date.now(); appFailure = failureReason(error, 'installation token could not be minted'); }
   }
-  const connectionsView = () => scm.list().map(item => (appConnection && item.id === appConnection.id
-    ? { ...item, label: `GitHub App · ${item.account}`, source: 'GitHub App' } : item));
+  // Azure DevOps organizations with a PAT saved in Settings, surfaced by the last connectSaved() pass, and why
+  // each saved source last failed. Reasons are fixed phrases chosen here, never provider or token text.
+  let savedAzureOrgs = [];
+  const failureReasons = new Map();
+  let appFailure = '';
+  function failureReason(error, fallback) {
+    return { SCM_AUTHORIZATION_FAILED: 'credential rejected or expired', SCM_TIMEOUT: 'provider timed out',
+      SCM_LIMIT: 'connection limit reached' }[error?.code] || fallback;
+  }
+  function connectionsView() {
+    const list = scm.list();
+    const live = list.map(item => (appConnection && item.id === appConnection.id
+      ? { ...item, label: `GitHub App · ${item.account}`, source: 'GitHub App', connected: true } : { ...item, connected: true }));
+    // A saved source that is configured but could not be connected (expired/invalid PAT, mint failure) stays
+    // visible as connected:false, so nothing a user set up silently disappears from the list.
+    const liveAzure = new Set(live.filter(item => item.provider === 'azure-devops').map(item => item.account));
+    const degraded = [];
+    for (const organization of savedAzureOrgs) {
+      const account = organization.toLowerCase();
+      if (liveAzure.has(account)) continue;
+      degraded.push({ id: `saved:azure-devops:${account}`, provider: 'azure-devops', account,
+        label: `Azure DevOps · ${account}`, host: 'dev.azure.com', source: 'Saved PAT', connected: false,
+        reason: failureReasons.get(account) || 'not connected yet' });
+    }
+    const appLive = appConnection && list.some(item => item.id === appConnection.id);
+    if (!appLive) {
+      const config = githubAppModule.readConfig();
+      let cloudApp = false;
+      if (config) { try { cloudApp = githubAppModule.validateApiUrl(config.apiUrl) === githubAppModule.DEFAULT_API_URL; } catch { cloudApp = false; } }
+      if (cloudApp) degraded.push({ id: 'saved:github-app', provider: 'github', account: 'GitHub App',
+        label: 'GitHub App', host: 'github.com', source: 'GitHub App', connected: false, reason: appFailure || 'not connected yet' });
+    }
+    return [...live, ...degraded];
+  }
   // Azure DevOps organizations with a PAT saved in Settings (or `threatlint ado login`) connect without retyping it.
   // The PAT is read from the CLI over a pipe, held only by the source manager, and never returned.
   async function connectSaved() {
     await connectApp();
     const status = await cli(['ado', 'status']);
     const saved = [...status.stdout.matchAll(/^Azure DevOps PAT: .+ · ([A-Za-z0-9-]+)$/gm)].map(match => match[1]);
+    savedAzureOrgs = saved;
     const live = new Set(scm.list().filter(item => item.provider === 'azure-devops').map(item => item.account));
     for (const organization of saved) {
       if (live.has(organization.toLowerCase()) || Date.now() - (failedAt.get(organization) || 0) < SAVED_RETRY_MS) continue;
       const token = await cli(['ado', 'token', '--organization', organization]);
+      const account = organization.toLowerCase();
       try {
-        if (token.code !== 0) throw new Error('no saved PAT');
+        if (token.code !== 0) throw Object.assign(new Error('no saved PAT'), { code: 'SAVED_PAT_UNREADABLE' });
         await scm.connect({ provider: 'azure-devops', token: token.stdout.trim(), organization });
         failedAt.delete(organization);
-      } catch { failedAt.set(organization, Date.now()); }
+        failureReasons.delete(account);
+      } catch (error) {
+        failedAt.set(organization, Date.now());
+        failureReasons.set(account, error.code === 'SAVED_PAT_UNREADABLE' ? 'saved PAT could not be read' : failureReason(error, 'provider unreachable'));
+      }
     }
   }
   app.get('/api/scm/providers', (_req, res) => res.json(SOURCE_MANAGER_CAPABILITIES));

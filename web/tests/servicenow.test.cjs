@@ -17,7 +17,7 @@ describe('AVIT numbers and instance URLs', () => {
     assert.deepEqual(parseAvitNumbers('AVIT000000095938462'), ['AVIT000000095938462'], 'production AVITs have 15 digits');
     assert.throws(() => parseAvitNumbers('AVIT0000000959384621'), /Not an AVIT/);
     assert.throws(() => parseAvitNumbers(''), /at least one/);
-    assert.throws(() => parseAvitNumbers(Array.from({ length: 51 }, (_, i) => `AVIT${String(i).padStart(15, '0')}`)), /at most 50/);
+    assert.equal(parseAvitNumbers(Array.from({ length: 1000 }, (_, i) => `AVIT${String(i).padStart(15, '0')}`)).length, 1000, 'no count limit');
   });
   it('accepts only HTTPS ServiceNow origins because the client secret is sent there', () => {
     assert.equal(validateInstanceUrl('https://Example.service-now.com/'), INSTANCE);
@@ -90,7 +90,7 @@ describe('AVIT aggregate filters (metrics page)', () => {
   it('rejects a project without Azure DevOps, and unknown enum values', () => {
     assert.throws(() => validateAggregateFilters({ scm: 'github', project: 'web' }), /only to Azure DevOps/);
     assert.throws(() => validateAggregateFilters({ scm: 'bitbucket' }), /github or ado/);
-    assert.throws(() => validateAggregateFilters({ findingType: 'iac' }), /sast, sca, or secrets/);
+    assert.throws(() => validateAggregateFilters({ findingType: 'iac' }), /sast, sca, secrets, or dast/);
     assert.throws(() => validateAggregateFilters({ repository: 'a;b' }), /repository contains/);
   });
 
@@ -103,6 +103,12 @@ describe('AVIT aggregate filters (metrics page)', () => {
     assert.ok(query.includes('u_scm_toolLIKEazure'));
     assert.ok(query.includes('u_org=acme') && query.includes('u_proj=web') && query.includes('u_repo=shop') && query.includes('u_branch=main'));
     assert.ok(query.includes('u_sfsLIKEsecret'));  // 'secrets' queries the 'secret' stem
+  });
+
+  it('maps Dynamic (DAST) to the Invicti source column, not the finding source', () => {
+    const f = validateAggregateFilters({ findingType: 'dast' });
+    assert.deepEqual(f, { findingType: 'dast' });
+    assert.equal(aggregateQuery({ findingType: 'dast' }, { finding_source: 'u_sfs' }), 'sourceLIKEinvicti');
   });
 
   it('maps GitHub Enterprise to a github SCM-tool match', () => {

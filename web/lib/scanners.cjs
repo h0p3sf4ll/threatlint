@@ -17,7 +17,6 @@ const { HttpError } = require('./http.cjs');
 const { CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT } = require('./servicenow.cjs');
 
 const HTTP_TIMEOUT_MS = 30_000;
-const MAX_REFERENCES = 50;
 const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const DISPOSITIONS = ['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'];
 
@@ -118,7 +117,7 @@ const SONAR_REF = /^(?:(SONAR-HOTSPOT-|HOTSPOT-)|(?:SONAR-)?)([A-Za-z0-9_-]{6,64
 function parseReferences(id, value) {
   const spec = tool(id);
   const text = Array.isArray(value) ? value.join(' ') : String(value ?? '');
-  if (text.length > 64 * 1024) throw new HttpError('The list is too long');
+  // No count limit; the WebSocket/JSON payload limit (7 MB) is the only size bound.
   const tokens = text.split(/[\s,;]+/).filter(Boolean);
   const pattern = spec.id === 'dojo' ? DOJO_REF : SONAR_REF;
   const invalid = tokens.filter(token => !pattern.test(token));
@@ -128,7 +127,6 @@ function parseReferences(id, value) {
     return spec.id === 'dojo' ? `DOJO-${Number(match[1])}` : match[1] ? `SONAR-HOTSPOT-${match[2]}` : `SONAR-${match[2]}`;
   }))];
   if (!references.length) throw new HttpError(`Enter at least one ${spec.label} reference`);
-  if (references.length > MAX_REFERENCES) throw new HttpError(`Review at most ${MAX_REFERENCES} ${spec.label} findings at a time`);
   return references;
 }
 
@@ -212,4 +210,4 @@ async function resolveSonar(conn, reference, { disposition, summary = '', where 
 }
 
 module.exports = { TOOLS, tool, configPath, readConfig, writeConfig, clearConfig, publicConfig, validateBaseUrl, connection, validateToken, parseReferences, mentions,
-  resolveDojo, resolveSonar, sonarComment, DOCX_TYPE, MAX_REFERENCES };
+  resolveDojo, resolveSonar, sonarComment, DOCX_TYPE };

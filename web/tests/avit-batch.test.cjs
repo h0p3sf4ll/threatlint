@@ -11,6 +11,9 @@ const { redactSecrets, resolveOutcome, parseBatchInput, planBatch, terminalResul
 const { convertToWord } = require('./helpers/docx.cjs');
 
 const FP = 'AVIT000000000000001', TP = 'AVIT000000000000002', OUT = 'AVIT000000000000003';
+const SLOW = 'AVIT000000000000077';
+let gate = { promise: Promise.resolve(), release: () => {} };
+const holdSlowFetch = () => { let release; gate = { promise: new Promise(resolve => { release = resolve; }), release: () => release() }; };
 let storage;
 const SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x.y; Semgrep Code; app.yaml:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: app.yaml:2 — value ${SECRET}\nBlast radius: one rule. Acceptance criteria: x. Proposed fix: y.\n`;
@@ -33,6 +36,7 @@ describe('False positive review batch', () => {
   before(async () => {
     const threatlintCli = async args => {
       calls.push(args);
+      if (args[1] === 'fetch' && args[2] === SLOW) await gate.promise;
       if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true }, { name: 'Azure DevOps PAT', configured: !adoMissing, fix: 'threatlint ado login --organization <org>' }, { name: 'Semgrep API token', configured: true }]), stderr: '' };
       if (args[0] === 'sctask' && args[1] === 'avits') {
         if (taskAvits[args[2]] === null) return { code: 1, stdout: '', stderr: `ERROR: ${args[2]} was not found` };
@@ -136,18 +140,76 @@ describe('False positive review batch', () => {
     assert.equal(events.filter(event => event.type === 'avit_item' && event.done).find(event => event.avit === TP).result, 'noted');
     for (const key of Object.keys(taskAvits)) delete taskAvits[key];
   });
-  it('reports the AVITs over the batch limit as skipped instead of dropping them', async () => {
+  it('reviews every AVIT with no batch limit', async () => {
     calls.length = 0;
     const many = Array.from({ length: 52 }, (_, index) => `AVIT${String(9000000 + index)}`);
     taskAvits.SCTASK2000001 = many;
     const events = await runBatch(`${FP} SCTASK2000001`);
     const start = events.find(event => event.type === 'avit_batch_start');
-    assert.equal(start.avits.length, 53); assert.deepEqual(start.truncated, { total: 53, reviewed: 50, skipped: many.slice(49) });
-    const skipped = events.filter(event => event.type === 'avit_item' && event.stage === 'skipped');
-    assert.deepEqual(skipped.map(event => event.avit), many.slice(49)); assert.ok(skipped.every(event => event.done && event.result === 'skipped'));
-    assert.equal(calls.filter(args => args[1] === 'fetch').length, 50, 'only the first 50 are reviewed');
-    assert.match(events.find(event => event.sctask && event.avits).detail, /3 over the 50-AVIT limit/);
+    assert.equal(start.avits.length, 53); assert.equal(start.truncated, null);
+    assert.ok(!events.some(event => event.type === 'avit_item' && event.stage === 'skipped'), 'nothing is skipped for size');
+    assert.equal(calls.filter(args => args[1] === 'fetch').length, 53, 'all 53 are reviewed');
+    assert.doesNotMatch(events.find(event => event.sctask && event.avits).detail, /limit/);
     delete taskAvits.SCTASK2000001;
+  });
+
+  const open = async () => {
+    const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
+    socket.seen = [];
+    socket.on('message', raw => socket.seen.push(JSON.parse(raw)));
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    return socket;
+  };
+  const waitFor = (socket, test) => new Promise(resolve => {
+    const found = socket.seen.find(test); if (found) { resolve(found); return; }
+    const listener = raw => { const event = JSON.parse(raw); if (test(event)) { socket.off('message', listener); resolve(event); } };
+    socket.on('message', listener);
+  });
+
+  it('keeps a run going when its page closes and replays it to the next page', async () => {
+    holdSlowFetch();
+    const first = await open();
+    first.send(JSON.stringify({ action: 'run_avit_batch', avits: `${SLOW} ${FP}`, modelLabel: 'Fixture model', provider: 'lmstudio', model: 'fixture', servicenow: { clientSecret: 'never-replayed-secret' } }));
+    const announced = await waitFor(first, event => event.type === 'fp_run_start');
+    assert.deepEqual(announced.avits, [SLOW, FP]); assert.equal(announced.model, 'Fixture model');
+    await waitFor(first, event => event.avit === SLOW && event.stage === 'fetching');
+    first.close();  // the user leaves the page mid-review
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const second = await open();
+    second.send(JSON.stringify({ action: 'avit_batch_attach' }));
+    const replay = await waitFor(second, event => event.type === 'avit_batch_replay');
+    assert.equal(replay.active, true, 'the run is still going after its page closed');
+    assert.equal(replay.runId, announced.runId);
+    assert.equal(replay.events[0].type, 'fp_run_start');
+    assert.ok(replay.events.some(event => event.avit === SLOW && event.stage === 'fetching'), 'history before the page closed is replayed');
+    assert.ok(!JSON.stringify(replay).includes('never-replayed-secret'), 'credentials from the start message are never recorded');
+    gate.release();
+    const complete = await waitFor(second, event => event.type === 'avit_batch_complete');
+    assert.equal(complete.cancelled, false, 'closing the page did not cancel the run');
+    assert.ok(second.seen.some(event => event.avit === FP && event.done), 'live events continue on the returning page');
+
+    second.send(JSON.stringify({ action: 'avit_batch_attach' }));
+    const later = await waitFor(second, event => event.type === 'avit_batch_replay' && !event.active);
+    assert.equal(later.events.at(-1).type, 'avit_batch_complete', 'a finished run stays available to show its outcome');
+    second.close();
+  });
+
+  it('allows one active run, and any page can stop it', async () => {
+    holdSlowFetch();
+    const a = await open(), b = await open();
+    a.send(JSON.stringify({ action: 'run_avit_batch', avits: `${SLOW} ${FP}`, provider: 'lmstudio', model: 'fixture' }));
+    await waitFor(a, event => event.avit === SLOW && event.stage === 'fetching');
+    b.send(JSON.stringify({ action: 'run_avit_batch', avits: TP, provider: 'lmstudio', model: 'fixture' }));
+    const busy = await waitFor(b, event => event.type === 'avit_batch_error');
+    assert.equal(busy.code, 'run_active');
+    b.send(JSON.stringify({ action: 'avit_batch_cancel' }));
+    assert.equal((await waitFor(b, event => event.type === 'avit_batch_cancel_ack')).accepted, true);
+    gate.release();
+    const complete = await waitFor(a, event => event.type === 'avit_batch_complete');
+    assert.equal(complete.cancelled, true);
+    assert.ok(a.seen.some(event => event.avit === FP && event.stage === 'cancelled'), 'the remaining AVITs are reported cancelled');
+    a.close(); b.close();
   });
   it('parses mixed AVIT/SCTASK/ISST lists and plans a deduplicated batch', () => {
     const parsed = parseBatchInput(' sctask1000001, AVIT0000001;AVIT0000002\n\nSCTASK1000002\tavit0000001 SCTASK1000001 isst0012345 ');

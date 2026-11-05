@@ -23,7 +23,6 @@ const servicenow = require('./servicenow.cjs');
 const { HttpError } = require('./http.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
-const MAX_BATCH = 50;
 const CLI_TIMEOUT_MS = 20 * 60_000;
 
 /** The Python package: bundled in the desktop app's resources, or the repository's src/ in development. */
@@ -130,7 +129,7 @@ function outcomeActions(outcome, disposition) {
 
 /**
  * The progress-bar bucket for an item's final event: closed, noted (left open with a work note), error, or
- * skipped (out of scope, cancelled, or over the batch limit).
+ * skipped (out of scope or cancelled).
  */
 function terminalResult(stage, { disposition, outcome } = {}) {
   if (stage === 'error') return 'error';
@@ -160,9 +159,9 @@ function parseBatchInput(value) {
 /**
  * The review order: input order, each SCTASK or ISST replaced by its AVITs. An AVIT named twice (directly or by
  * more than one group) is reviewed once; `shared[number]` lists a group's AVITs that an earlier entry already
- * queued. Over `max`, the remainder is returned as `skipped` (reported, never silently dropped).
+ * queued. There is no batch limit by default; a `max` returns the remainder as `skipped` (reported, never dropped).
  */
-function planBatch(order, fromTasks, max) {
+function planBatch(order, fromTasks, max = Infinity) {
   const all = [], shared = {};
   for (const token of order) {
     const isGroup = !token.startsWith('AVIT');
@@ -190,7 +189,6 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   function validate(message) {
     // SCTASK and ISST numbers are expanded server-side (SCTASK from its description, ISST by repository + branch).
     const { avits: numbers, sctasks, issts, order } = parseBatchInput(message.avits);
-    if (numbers.length > MAX_BATCH) throw new HttpError(`Review at most ${MAX_BATCH} AVITs at a time`);
     return { numbers, sctasks, issts, order, settings: providerRequest(message) };
   }
 
@@ -313,26 +311,19 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       if (listed.code !== 0 || !avits.length) { send({ type: 'sctask_item', sctask: number, kind, stage: 'error', detail: errorOf(listed) || `The ${groupNoun(kind)} names no AVITs`, done: true, result: 'error' }); continue; }
       fromTasks[number] = avits;
     }
-    const { all, shared, kept, skipped } = planBatch(order, fromTasks, MAX_BATCH);
+    // No AVIT limit: AVITs are reviewed one at a time, however many the input and its SCTASKs/ISSTs name.
+    const { all, shared } = planBatch(order, fromTasks);
     for (const [number, avits] of Object.entries(fromTasks)) {
       const kind = groupKind[number];
-      const notKept = avits.filter(avit => skipped.includes(avit));
-      send({ type: 'sctask_item', sctask: number, kind, stage: 'reviewing', avits, shared: shared[number] || [], skipped: notKept,
-        detail: `${avits.length} AVIT${avits.length === 1 ? '' : 's'} ${kind === 'isst' ? 'on this ISST' : 'in the description'}${shared[number]?.length ? ` · ${shared[number].length} also listed earlier (reviewed once)` : ''}${notKept.length ? ` · ${notKept.length} over the ${MAX_BATCH}-AVIT limit, not reviewed` : ''}` });
+      send({ type: 'sctask_item', sctask: number, kind, stage: 'reviewing', avits, shared: shared[number] || [],
+        detail: `${avits.length} AVIT${avits.length === 1 ? '' : 's'} ${kind === 'isst' ? 'on this ISST' : 'in the description'}${shared[number]?.length ? ` · ${shared[number].length} also listed earlier (reviewed once)` : ''}` });
     }
     if (!all.length && !groups.length) throw new HttpError('Enter at least one AVIT, SCTASK, or ISST number');
     send({ type: 'avit_batch_start', avits: all, sctasks: sctasks.filter(number => fromTasks[number]), issts: issts.filter(number => fromTasks[number]),
-      requested: groups, max: MAX_BATCH, truncated: skipped.length ? { total: all.length, reviewed: kept.length, skipped } : null });
-    for (const avit of skipped) send({ type: 'avit_item', avit, stage: 'skipped', detail: `Not reviewed: the batch is limited to ${MAX_BATCH} AVITs. Run it again to review this one.`, done: true, result: 'skipped' });
-    const finished = new Set(skipped);
+      requested: groups, truncated: null });
+    const finished = new Set();
     const finalizeGroup = async number => {
       const kind = groupKind[number];
-      const avits = fromTasks[number];
-      const notKept = avits.filter(avit => skipped.includes(avit));
-      if (notKept.length === avits.length) {
-        send({ type: 'sctask_item', sctask: number, kind, done: true, stage: 'cancelled', result: 'skipped', detail: `Not updated: none of its AVITs fit in this run (over the ${MAX_BATCH}-AVIT limit)` });
-        return;
-      }
       send({ type: 'sctask_item', sctask: number, kind, stage: 'resolving',
         detail: kind === 'isst' ? 'Attaching true-positive reports to the ISST and commenting' : 'Attaching each AVIT report and commenting on the task' });
       try {
@@ -350,7 +341,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
             : kind === 'isst' ? (closureReady ? 'True-positive reports attached; all findings were false positives, so the ISST and SCAN request can be closed'
               : 'True-positive reports attached and the ISST annotated; left open for remediation of the true positives')
             : isClosed ? 'Closed with the Threatlint comment and every AVIT report attached'
-              : `Comment added; left open until every AVIT is decided${notKept.length ? ` (${notKept.length} not reviewed in this run: over the ${MAX_BATCH}-AVIT limit)` : ''}` });
+              : 'Comment added; left open until every AVIT is decided' });
       } catch (error) { send({ type: 'sctask_item', sctask: number, kind, done: true, stage: 'error', result: 'error', detail: error.message }); }
     };
     // A group is finalized as soon as its own AVITs are reviewed, without waiting for the rest of the batch.
@@ -364,7 +355,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       }
     };
     await finalizeReady();
-    for (const avit of kept) {
+    for (const avit of all) {
       if (controller.signal.aborted) { send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled', done: true, result: 'skipped' }); continue; }
       await reviewOne(avit, { settings, message, semgrep, env, profile, signal: controller.signal, send });
       finished.add(avit);
@@ -382,4 +373,4 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   return { run };
 }
 
-module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, MAX_BATCH, runCli, setupStatus, pythonPath, python };
+module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, runCli, setupStatus, pythonPath, python };

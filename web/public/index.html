@@ -29,7 +29,7 @@
       <div class="sidebar-label">1 · TEST</div>
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
       <button class="nav-item" data-view="sources" aria-controls="view-sources"><span class="nav-icon" aria-hidden="true">⑂</span>Connect source</button>
-      <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span>Scan running app</button>
+      <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Scan running app<small class="nav-caption">Preview · not yet GA</small></span></button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>Finding triage</button>
       <button class="nav-item" data-view="scanimport" aria-controls="view-scanimport"><span class="nav-icon" aria-hidden="true">↥</span>Triage a scan report</button>
       <button class="nav-item" data-view="sonarreview" aria-controls="view-sonarreview"><span class="nav-icon" aria-hidden="true">◎</span>SonarQube review</button>
@@ -39,17 +39,7 @@
       <div class="sidebar-label">3 · TRACK</div>
       <button class="nav-item" data-view="dojoreview" aria-controls="view-dojoreview"><span class="nav-icon" aria-hidden="true">◉</span>DefectDojo review</button>
       <button class="nav-item" data-view="metrics" aria-controls="view-metrics"><span class="nav-icon" aria-hidden="true">▦</span>Metrics</button>
-      <div class="sidebar-label">SIDEKICK</div>
-      <button class="nav-item" data-view="sk-vreports" aria-controls="view-sk-vreports"><span class="nav-icon" aria-hidden="true">▣</span>Generate vReports</button>
-      <button class="nav-item" data-view="sk-loadouts" aria-controls="view-sk-loadouts"><span class="nav-icon" aria-hidden="true">☰</span>Loadouts</button>
-      <button class="nav-item" data-view="sk-find" aria-controls="view-sk-find"><span class="nav-icon" aria-hidden="true">⌕</span>Find projects</button>
-      <button class="nav-item" data-view="sk-reports" aria-controls="view-sk-reports"><span class="nav-icon" aria-hidden="true">▤</span>View vReports</button>
-      <button class="nav-item" data-view="sk-branch" aria-controls="view-sk-branch"><span class="nav-icon" aria-hidden="true">⑂</span>Branch report</button>
-      <button class="nav-item" data-view="sk-trends" aria-controls="view-sk-trends"><span class="nav-icon" aria-hidden="true">↗</span>Trends</button>
-      <button class="nav-item" data-view="sk-ownership" aria-controls="view-sk-ownership"><span class="nav-icon" aria-hidden="true">☺</span>Ownership hub</button>
-      <button class="nav-item" data-view="sk-avit" aria-controls="view-sk-avit"><span class="nav-icon" aria-hidden="true">✕</span>AVIT closure</button>
-      <button class="nav-item" data-view="sk-triage" aria-controls="view-sk-triage"><span class="nav-icon" aria-hidden="true">⇊</span>Bulk triage</button>
-      <button class="nav-item" data-view="sk-actions" aria-controls="view-sk-actions"><span class="nav-icon" aria-hidden="true">⟲</span>Actions history</button>
+      <button class="nav-item" data-view="sidekick" aria-controls="view-sidekick"><span class="nav-icon" aria-hidden="true">◆</span>Sidekick</button>
       <div class="sidebar-label">REFERENCE</div>
       <button class="nav-item" data-view="agents"><span class="nav-icon" aria-hidden="true">⌘</span>Agents<span class="nav-count" id="agent-nav-count">—</span></button>
       <button class="nav-item" data-view="skills"><span class="nav-icon" aria-hidden="true">◇</span>Skills<span class="nav-count" id="skill-nav-count">—</span></button>
@@ -146,7 +136,7 @@
         <output class="operations-status" id="scm-status" aria-live="polite" aria-atomic="true">Connect an account to browse source. Tokens are not saved by this interface.</output>
         <div class="sources-grid">
           <section class="panel" aria-labelledby="scm-connect-title">
-            <div class="panel-header"><div><span class="eyebrow">01 / CONNECT</span><h2 id="scm-connect-title">A session, not a saved secret.</h2></div><span class="operations-pill">SESSION ONLY</span></div>
+            <div class="panel-header"><div><span class="eyebrow">01 / CONNECT</span><h2 id="scm-connect-title">A session, not a saved secret.</h2></div><div class="panel-header-pills"><span class="operations-pill is-connected" id="scm-connect-state" hidden></span><span class="operations-pill">SESSION ONLY</span></div></div>
             <form id="scm-connection-form" class="operations-form" autocomplete="off">
               <fieldset id="scm-connection-fields" class="operations-fieldset">
                 <legend class="operations-sr-only">Source connection</legend>
@@ -257,11 +247,11 @@
           <form id="avit-aggregate-form" novalidate>
             <div class="avit-aggregate-filters">
               <label class="aqf"><span>Source code manager</span><select name="scm" id="avit-scm"><option value="">Any</option><option value="github">GitHub Enterprise</option><option value="ado">Azure DevOps</option></select></label>
-              <label class="aqf"><span>Organization</span><input name="organization" placeholder="e.g. acme" autocomplete="off" maxlength="200"></label>
-              <label class="aqf" id="avit-project-field" hidden><span>Project</span><input name="project" placeholder="Azure DevOps project" autocomplete="off" maxlength="200"></label>
-              <label class="aqf"><span>Repository</span><input name="repository" placeholder="Repository name" autocomplete="off" maxlength="200"></label>
-              <label class="aqf"><span>Branch</span><input name="branch" placeholder="e.g. main" autocomplete="off" maxlength="200"></label>
-              <label class="aqf"><span>Finding type</span><select name="findingType"><option value="">Any</option><option value="sast">Static (SAST)</option><option value="sca">SCA (dependencies)</option><option value="secrets">Secret</option></select></label>
+              <label class="aqf"><span>Organization</span><input name="organization" placeholder="e.g. acme" autocomplete="off" maxlength="200" list="avit-sg-organization"><datalist id="avit-sg-organization"></datalist></label>
+              <label class="aqf" id="avit-project-field" hidden><span>Project</span><input name="project" placeholder="Azure DevOps project" autocomplete="off" maxlength="200" list="avit-sg-project"><datalist id="avit-sg-project"></datalist></label>
+              <label class="aqf"><span>Repository</span><input name="repository" placeholder="Repository name" autocomplete="off" maxlength="200" list="avit-sg-repository"><datalist id="avit-sg-repository"></datalist></label>
+              <label class="aqf"><span>Branch</span><input name="branch" placeholder="e.g. main" autocomplete="off" maxlength="200" list="avit-sg-branch"><datalist id="avit-sg-branch"></datalist></label>
+              <label class="aqf"><span>Finding type</span><select name="findingType"><option value="">Any</option><option value="sast">Static (SAST)</option><option value="dast">Dynamic (DAST)</option><option value="sca">SCA (dependencies)</option><option value="secrets">Secret</option></select></label>
               <label class="aqf"><span>Risk rating</span><select name="riskRating"><option value="">Any</option><option value="1">Critical</option><option value="2">High</option><option value="3">Medium</option><option value="4">Low</option><option value="5">None</option></select></label>
               <label class="aqf"><span>State</span><select name="state"><option value="">Any</option><option value="1">Open</option><option value="101">Resolved</option><option value="3">Closed</option></select></label>
             </div>
@@ -300,44 +290,66 @@
         <div id="chart-tooltip" class="chart-tooltip" role="tooltip" hidden></div>
       </section>
 
+      <section class="view" id="view-sidekick" aria-labelledby="sidekick-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sidekick-title">Your portfolio sidekick.</h1><p class="page-description">Portfolio-wide reporting and bulk remediation across your loadouts. Pick a capability to begin.</p></div></div>
+        <div class="section-heading"><div><h2>Reports &amp; insights</h2><p>Vulnerability reports, trends, and ownership across a loadout.</p></div></div>
+        <div class="workflow-grid sidekick-grid">
+          <button class="workflow-card" type="button" data-go-view="sk-vreports"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">▣</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Generate vReports</h3><p>Run a vulnerability report for a loadout: branch and stale-branch counts, open critical/high/secret counts from ServiceNow, and each repository’s owner and director.</p><div class="workflow-meta"><b>REPORT</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-reports"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">▤</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>View vReports</h3><p>Browse past runs, open or download a workbook, and file a report someone else produced under a loadout and date.</p><div class="workflow-meta"><b>REPORT</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-trends"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">↗</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Trends</h3><p>How one loadout changed over time, with like-for-like comparison when repositories join or leave it.</p><div class="workflow-meta"><b>REPORT</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-branch"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">⑂</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Branch report</h3><p>Stale branches of one repository, oldest first, with the last commit date and committer.</p><div class="workflow-meta"><b>REPORT</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-ownership"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">☺</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Ownership hub</h3><p>Who owns a repository: its main-branch committer and their manager and director.</p><div class="workflow-meta"><b>REPORT</b><span>Open →</span></div></button>
+        </div>
+        <div class="section-heading"><div><h2>Loadouts</h2><p>Define and populate the repository sets every report runs against.</p></div></div>
+        <div class="workflow-grid sidekick-grid">
+          <button class="workflow-card" type="button" data-go-view="sk-loadouts"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">☰</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Loadouts</h3><p>Named sets of repositories, each with its own Azure DevOps organization. Powered loadouts rank the top repositories by open findings.</p><div class="workflow-meta"><b>SETUP</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-find"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">⌕</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Find projects</h3><p>Find which project and organization each repository lives in, then save the matches as a loadout.</p><div class="workflow-meta"><b>SETUP</b><span>Open →</span></div></button>
+        </div>
+        <div class="section-heading"><div><h2>Bulk actions</h2><p>Write-capable remediation. Every change is journalled and reversible.</p></div></div>
+        <div class="workflow-grid sidekick-grid">
+          <button class="workflow-card" type="button" data-go-view="sk-avit"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">✕</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>AVIT closure</h3><p>Find AVITs by condition and close them in bulk through the ServiceNow Batch API. Every closure is journalled and can be reversed.</p><div class="workflow-meta"><b>ACTION</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-triage"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">⇊</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Bulk triage</h3><p>Ignore every open Semgrep finding of one rule or secret type in a project as a false positive.</p><div class="workflow-meta"><b>ACTION</b><span>Open →</span></div></button>
+          <button class="workflow-card" type="button" data-go-view="sk-actions"><div class="workflow-top"><span class="workflow-icon" aria-hidden="true">⟲</span><span class="workflow-arrow" aria-hidden="true">→</span></div><h3>Actions history</h3><p>Everything Sidekick changed, with retention controls. Closures can be reversed here.</p><div class="workflow-meta"><b>ACTION</b><span>Open →</span></div></button>
+        </div>
+      </section>
       <section class="view sk-view" id="view-sk-vreports" aria-labelledby="sk-vreports-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-vreports-title">Generate vReports</h1><p class="page-description">Run a vulnerability report for a loadout: branch and stale-branch counts, open critical/high/secret counts from ServiceNow, and the owner and director of each repository.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-vreports-title">Generate vReports</h1><p class="page-description">Run a vulnerability report for a loadout: branch and stale-branch counts, open critical/high/secret counts from ServiceNow, and the owner and director of each repository.</p></div></div>
         <div class="sk-body" id="sk-vreports-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-loadouts" aria-labelledby="sk-loadouts-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-loadouts-title">Loadouts</h1><p class="page-description">Named sets of repositories, each with its own Azure DevOps organization. Powered loadouts rank the top repositories by open findings.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-loadouts-title">Loadouts</h1><p class="page-description">Named sets of repositories, each with its own Azure DevOps organization. Powered loadouts rank the top repositories by open findings.</p></div></div>
         <div class="sk-body" id="sk-loadouts-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-find" aria-labelledby="sk-find-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-find-title">Find projects</h1><p class="page-description">Find which project and organization each repository lives in, then save the matches as a loadout.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-find-title">Find projects</h1><p class="page-description">Find which project and organization each repository lives in, then save the matches as a loadout.</p></div></div>
         <div class="sk-body" id="sk-find-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-reports" aria-labelledby="sk-reports-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-reports-title">View vReports</h1><p class="page-description">Browse past runs, open or download a workbook, and file a report someone else produced under a loadout and date.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-reports-title">View vReports</h1><p class="page-description">Browse past runs, open or download a workbook, and file a report someone else produced under a loadout and date.</p></div></div>
         <div class="sk-body" id="sk-reports-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-branch" aria-labelledby="sk-branch-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-branch-title">Branch report</h1><p class="page-description">Stale branches of one repository, oldest first, with the last commit date and committer.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-branch-title">Branch report</h1><p class="page-description">Stale branches of one repository, oldest first, with the last commit date and committer.</p></div></div>
         <div class="sk-body" id="sk-branch-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-trends" aria-labelledby="sk-trends-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-trends-title">Trends</h1><p class="page-description">How one loadout changed over time, with like-for-like comparison when repositories join or leave it.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-trends-title">Trends</h1><p class="page-description">How one loadout changed over time, with like-for-like comparison when repositories join or leave it.</p></div></div>
         <div class="sk-body" id="sk-trends-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-ownership" aria-labelledby="sk-ownership-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-ownership-title">Ownership hub</h1><p class="page-description">Who owns a repository: its main-branch committer and their manager and director.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-ownership-title">Ownership hub</h1><p class="page-description">Who owns a repository: its main-branch committer and their manager and director.</p></div></div>
         <div class="sk-body" id="sk-ownership-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-avit" aria-labelledby="sk-avit-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-avit-title">AVIT closure</h1><p class="page-description">Find AVITs by condition and close them in bulk through the ServiceNow Batch API. Every closure is journalled and can be reversed.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-avit-title">AVIT closure</h1><p class="page-description">Find AVITs by condition and close them in bulk through the ServiceNow Batch API. Every closure is journalled and can be reversed.</p></div></div>
         <div class="sk-body" id="sk-avit-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-triage" aria-labelledby="sk-triage-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-triage-title">Bulk triage</h1><p class="page-description">Ignore every open Semgrep finding of one rule or secret type in a project as a false positive.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-triage-title">Bulk triage</h1><p class="page-description">Ignore every open Semgrep finding of one rule or secret type in a project as a false positive.</p></div></div>
         <div class="sk-body" id="sk-triage-body"></div>
       </section>
       <section class="view sk-view" id="view-sk-actions" aria-labelledby="sk-actions-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SIDEKICK</div><h1 id="sk-actions-title">Actions history</h1><p class="page-description">Everything Sidekick changed, with retention controls. Closures can be reversed here.</p></div></div>
+        <div class="page-heading compact"><div><button class="eyebrow sk-back" type="button" data-go-view="sidekick"><span aria-hidden="true">←</span> SIDEKICK</button><h1 id="sk-actions-title">Actions history</h1><p class="page-description">Everything Sidekick changed, with retention controls. Closures can be reversed here.</p></div></div>
         <div class="sk-body" id="sk-actions-body"></div>
       </section>
       <section class="view" id="view-fpreview" aria-labelledby="fpreview-title" hidden>
@@ -345,7 +357,7 @@
         <form id="fpreview-form" class="settings-card fpreview-form">
           <label for="fpreview-avits">AVIT, SCTASK, and ISST numbers<span data-tip="fpreview-input"></span></label>
           <textarea id="fpreview-avits" rows="4" spellcheck="false" aria-describedby="fpreview-avits-note" placeholder="ISST0012345&#10;SCTASK14120565, SCTASK14120571&#10;AVIT000000092808580; AVIT000000095995078&#10;AVIT000000041277488 SCTASK14120590"></textarea>
-          <p class="field-note small subtle" id="fpreview-avits-note">Any number of AVITs (AVIT plus 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599), catalog tasks (SCTASK plus 7 to 10 digits, e.g. SCTASK14120565), and ISSTs (ISST plus 7 to 15 digits, e.g. ISST0012345), in any mix, separated by commas, spaces, semicolons, or new lines; a pasted list works. Each SCTASK is expanded into the AVITs in its description; each ISST is expanded into the AVITs on its exact repository and branch; an AVIT named more than once is reviewed once. Up to 50 AVITs per run: extra AVITs are listed as skipped, not dropped. A SCTASK gets every AVIT report attached and is closed once all its AVITs are decided; an ISST gets only its true-positive reports attached and a comment, and is left open for remediation (Threatlint never closes an ISST). One record failing does not stop the others.</p>
+          <p class="field-note small subtle" id="fpreview-avits-note">Any number of AVITs (AVIT plus 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599), catalog tasks (SCTASK plus 7 to 10 digits, e.g. SCTASK14120565), and ISSTs (ISST plus 7 to 15 digits, e.g. ISST0012345), in any mix, separated by commas, spaces, semicolons, or new lines; a pasted list works. Each SCTASK is expanded into the AVITs in its description; each ISST is expanded into the AVITs on its exact repository and branch; an AVIT named more than once is reviewed once. There is no limit on how many AVITs a run reviews; they are reviewed one at a time. The run keeps going if you leave this page, reload it, or lose the connection: come back to see it exactly where it is. Quitting the Workbench stops it. A SCTASK gets every AVIT report attached and is closed once all its AVITs are decided; an ISST gets only its true-positive reports attached and a comment, and is left open for remediation (Threatlint never closes an ISST). One record failing does not stop the others.</p>
           <div class="fpreview-outcomes small subtle"><div><strong>False positive</strong> · Word report attached to the AVIT only, which is closed (state 3 / substate 3) with “Closed by Threatlint as a false positive, see attached report.”, the Semgrep finding ignored, and for SAST/Secrets the rule tuned once.</div><div><strong>True positive</strong> · Word report attached to the AVIT — and to the ISST when the AVIT came from one — left open with “True positive, see attached report.”</div><div><strong>Ambiguous</strong> · Word report attached, left open with “Ambiguous, see attached report.”</div></div>
           <div id="fpreview-setup" class="field-note small" aria-live="polite"></div>
           <p class="form-error" id="fpreview-error" role="alert"></p>

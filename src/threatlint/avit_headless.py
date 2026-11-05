@@ -326,8 +326,6 @@ def run(args, system_prompt: str, model: str, semgrep_version: str, *,
                 numbers.extend(avit for avit in associated if avit not in numbers)
         if not numbers:
             raise ResolveError("No AVITs were found for this review")
-        if len(numbers) > 50:
-            raise ResolveError("Review at most 50 AVITs in one run")
         items, _missing, _excluded = sn.fetch_avits(instance, token, numbers)
     except (ResolveError, sn.ServiceNowError, OSError, ValueError) as exc:
         print(f"ERROR: {_safe_error(exc)}", file=sys.stderr)

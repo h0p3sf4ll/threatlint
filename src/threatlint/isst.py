@@ -275,8 +275,6 @@ def discover(instance: str, token: str, number: str) -> tuple[dict, list[str]]:
         identity = lambda item: (item["scm"], item["organization"].casefold(), item["project"].casefold(), item["name"].casefold(), item["branch"])
         if identity(avit_target) == identity(target):
             numbers.append(avit)
-    if len(numbers) > sn.MAX_AVITS:
-        raise ResolveError(f"{number} matches {len(numbers)} AVITs; review at most {sn.MAX_AVITS} in one headless run")
     record["target"] = target
     record["avits"] = numbers
     return record, numbers

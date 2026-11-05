@@ -18,10 +18,10 @@ const execFileAsync = promisify(execFile);
 const PARAMETER_STORE_URL = 'https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table';
 const AWS_REGION = 'us-west-2';
 const AVIT_TABLE = 'sn_vul_app_vulnerable_item';
-const MAX_AVITS = 50;
+// AVIT numbers per ServiceNow numberIN query. Not a review limit: longer lists are fetched in several queries.
+const AVIT_QUERY_CHUNK = 50;
+const chunked = (values, size = AVIT_QUERY_CHUNK) => Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
 const METRICS_PAGE_SIZE = 100;
-const MAX_METRICS_AVITS = 10000;
-const MAX_METRICS_SCOPE_AVITS = 500;
 const METRICS_PAGE_MAX_BYTES = 8 * 1024 * 1024;
 const METRICS_CREATION_LAG_MS = 60_000;
 // AVIT plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
@@ -57,9 +57,18 @@ const CONTEXT_LABELS = {
 const LABEL_TABLES = ['sn_vul_app_vulnerable_item', 'sn_vul_app_vul_entry', 'sn_vul_entry', 'task'];
 // A LIKE token that matches the SCM Tool values Threatlint recognises (see servicenow_checkout.py).
 const SCM_TOOL_TOKEN = { github: 'github', ado: 'azure' };
+// Finding type -> a LIKE token matched against the resolved CodeSecurity finding_source column.
+const FINDING_TYPE_TOKEN = { sast: 'sast', sca: 'sca', secrets: 'secret' };
+const FINDING_TYPES = new Set([...Object.keys(FINDING_TYPE_TOKEN), 'dast']);
+/** Dynamic (DAST) AVITs come from Invicti and carry source=Invicti on the standard source column; they have no
+ *  CodeSecurity finding source, so they never need that instance column resolved. */
+function findingTypeClause(type, columns = {}) {
+  if (type === 'dast') return 'sourceLIKEinvicti';
+  return columns.finding_source ? `${columns.finding_source}LIKE${FINDING_TYPE_TOKEN[type]}` : '';
+}
 
 /** Map each context label to its instance column via sys_documentation; falls back to known standard columns. */
-async function aggregateColumns(credentials, fetchImpl, signal) {
+async function aggregateColumns(credentials, fetchImpl, signal, token) {
   const columns = {};
   for (const [key, meta] of Object.entries(CONTEXT_LABELS)) if (meta.fallback) columns[key] = meta.fallback;
   const labels = Object.values(CONTEXT_LABELS).map(meta => meta.label);
@@ -67,7 +76,7 @@ async function aggregateColumns(credentials, fetchImpl, signal) {
     sysparm_query: `nameIN${LABEL_TABLES.join(',')}^language=en^labelIN${labels.join(',')}`,
     sysparm_fields: 'name,element,label', sysparm_limit: '200',
   });
-  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  const headers = { Authorization: `Bearer ${token || await accessToken(credentials, fetchImpl, signal)}` };
   let rows;
   try {
     rows = (await requestJson(fetchImpl, `${credentials.instance}/api/now/table/sys_documentation?${query}`, { headers }, signal)).result;
@@ -92,18 +101,17 @@ const SEMGREP_INSTALL = 'Install Semgrep Community Edition before running the Fi
 function access() {
   return { ssoUrl: orgValue('ssoUrl'), parameterStoreUrl: PARAMETER_STORE_URL, region: AWS_REGION,
     clientIdParameter: orgValue('snowClientIdParameter'), clientSecretParameter: orgValue('snowClientSecretParameter'),
-    semgrepTokenParameter: orgValue('semgrepTokenParameter'), maxAvits: MAX_AVITS };
+    semgrepTokenParameter: orgValue('semgrepTokenParameter') };
 }
 
 function parseAvitNumbers(value) {
   const text = Array.isArray(value) ? value.join(' ') : String(value ?? '');
-  if (text.length > 64 * 1024) throw new HttpError('The AVIT list is too long');
+  // No count limit; the request body limit is the only size bound.
   const tokens = text.toUpperCase().split(/[\s,;]+/).filter(Boolean);
   const invalid = tokens.filter(token => !AVIT_PATTERN.test(token));
   if (invalid.length) throw new HttpError(`Not an AVIT number: ${invalid.slice(0, 5).join(', ')} (expected AVIT followed by 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599)`);
   const numbers = [...new Set(tokens)];
   if (!numbers.length) throw new HttpError('Enter at least one AVIT number');
-  if (numbers.length > MAX_AVITS) throw new HttpError(`Review at most ${MAX_AVITS} AVITs per report`);
   return numbers;
 }
 
@@ -233,10 +241,14 @@ async function accessToken({ instance, clientId, clientSecret }, fetchImpl, sign
 async function fetchAvits(credentials, numbers, { fetchImpl = fetch, signal } = {}) {
   const { instance } = credentials;
   const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
-  const query = new URLSearchParams({ sysparm_query: `numberIN${numbers.join(',')}`, sysparm_display_value: 'all', sysparm_limit: String(numbers.length) });
-  const rows = (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal)).result;
+  const rows = [];
+  for (const chunk of chunked(numbers)) {
+    const query = new URLSearchParams({ sysparm_query: `numberIN${chunk.join(',')}`, sysparm_display_value: 'all', sysparm_limit: String(chunk.length) });
+    const result = (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal)).result;
+    if (Array.isArray(result)) rows.push(...result);
+  }
   const items = [];
-  for (const row of Array.isArray(rows) ? rows : []) {
+  for (const row of rows) {
     const item = { fields: flatten(row), references: {} };
     for (const name of FOLLOW_REFERENCES) {
       const url = referenceUrl(instance, row[name]);
@@ -267,11 +279,10 @@ function validateMetricsScope(input) {
     throw new HttpError('Choose AVIT numbers or a scoped ServiceNow filter before syncing metrics');
   }
   if (input.type === 'avits') {
+    // No count limit: a long list is synced in several numberIN queries.
     const value = Array.isArray(input.avits) ? input.avits.join(' ') : String(input.avits || '');
-    if (value.length > 16 * 1024) throw new HttpError('The AVIT number list is too long');
     const tokens = [...new Set(value.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
     if (!tokens.length) throw new HttpError('Enter at least one AVIT number for metrics sync');
-    if (tokens.length > MAX_METRICS_SCOPE_AVITS) throw new HttpError(`Sync at most ${MAX_METRICS_SCOPE_AVITS} AVIT numbers at a time`);
     if (tokens.some(number => !AVIT_PATTERN.test(number))) throw new HttpError('Every metrics scope number must be AVIT followed by 7 to 15 digits');
     return { type: 'avits', avits: tokens };
   }
@@ -314,55 +325,55 @@ async function fetchAvitMetrics(credentials, { scope, fetchImpl = fetch, signal,
   cutoff.setUTCMilliseconds(0);
   const cutoffDate = cutoff.toISOString().slice(0, 10);
   const cutoffTime = cutoff.toISOString().slice(11, 19);
-  const scopeQuery = validScope.type === 'avits' ? `numberIN${validScope.avits.join(',')}` : validScope.query;
-  const cutoffQuery = `${scopeQuery}^sys_created_on<=javascript:gs.dateGenerate('${cutoffDate}','${cutoffTime}')^ORDERBYsys_id`;
+  // A number-list scope is split into numberIN queries of AVIT_QUERY_CHUNK; a filter scope is one query.
+  const scopeQueries = validScope.type === 'avits' ? chunked(validScope.avits).map(chunk => `numberIN${chunk.join(',')}`) : [validScope.query];
   const fields = ['sys_id', 'number', 'short_description', 'severity', 'risk_rating', 'priority', 'state', 'substate',
     'source', 'scanner', 'rule', 'sys_created_on', 'sys_updated_on', 'first_found', 'last_found', 'location',
     'source_file', 'line_number', 'application_release', 'cmdb_ci', 'u_repository', 'repository', 'u_security_finding_source'];
   const items = new Map();
   const numbers = new Set();
-  let firstTotal = null;
-  for (let offset = 0; offset <= MAX_METRICS_AVITS; offset += METRICS_PAGE_SIZE) {
-    const query = new URLSearchParams({ sysparm_query: cutoffQuery, sysparm_fields: fields.join(','),
-      sysparm_display_value: 'all', sysparm_exclude_reference_link: 'true', sysparm_suppress_pagination_header: 'false',
-      sysparm_limit: String(METRICS_PAGE_SIZE), sysparm_offset: String(offset) });
-    const { data, headers: responseHeaders } = await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal, true, METRICS_PAGE_MAX_BYTES);
-    if (!Array.isArray(data?.result)) throw new HttpError('ServiceNow returned an invalid AVIT list', 502);
-    const rows = data.result;
-    for (const row of rows) {
-      const number = fieldValue(row?.number).toUpperCase();
-      const sysId = fieldValue(row?.sys_id?.value ?? row?.sys_id);
-      if (!AVIT_PATTERN.test(number) || !/^[0-9a-f]{32}$/i.test(sysId)) {
-        throw new HttpError('ServiceNow did not return a readable AVIT number and sys_id for every row. Check table field access.', 502);
+  // No row limit: page until ServiceNow reports no next page. The sync timeout bounds a misbehaving instance.
+  /** Every page of one scope query, into `items`. */
+  async function syncScope(scopeQuery) {
+    const cutoffQuery = `${scopeQuery}^sys_created_on<=javascript:gs.dateGenerate('${cutoffDate}','${cutoffTime}')^ORDERBYsys_id`;
+    let firstTotal = null;
+    for (let offset = 0; ; offset += METRICS_PAGE_SIZE) {
+      const query = new URLSearchParams({ sysparm_query: cutoffQuery, sysparm_fields: fields.join(','),
+        sysparm_display_value: 'all', sysparm_exclude_reference_link: 'true', sysparm_suppress_pagination_header: 'false',
+        sysparm_limit: String(METRICS_PAGE_SIZE), sysparm_offset: String(offset) });
+      const { data, headers: responseHeaders } = await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal, true, METRICS_PAGE_MAX_BYTES);
+      if (!Array.isArray(data?.result)) throw new HttpError('ServiceNow returned an invalid AVIT list', 502);
+      const rows = data.result;
+      for (const row of rows) {
+        const number = fieldValue(row?.number).toUpperCase();
+        const sysId = fieldValue(row?.sys_id?.value ?? row?.sys_id);
+        if (!AVIT_PATTERN.test(number) || !/^[0-9a-f]{32}$/i.test(sysId)) {
+          throw new HttpError('ServiceNow did not return a readable AVIT number and sys_id for every row. Check table field access.', 502);
+        }
+        const created = fieldValue(row?.sys_created_on?.value ?? row?.sys_created_on);
+        const createdAt = Date.parse(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(created) ? `${created.replace(' ', 'T')}Z` : created);
+        if (!Number.isFinite(createdAt) || createdAt > cutoff.getTime()) {
+          throw new HttpError('ServiceNow did not apply the AVIT creation cutoff or hid sys_created_on; metrics were not updated.', 502);
+        }
+        if (items.has(sysId) || numbers.has(number)) throw new HttpError('ServiceNow AVIT pages changed during metrics sync; retry', 409);
+        numbers.add(number);
+        items.set(sysId, { id: number, sysId, fields: Object.fromEntries(fields.filter(name => row?.[name] !== undefined)
+          .map(name => [name, row[name]])) });
       }
-      const created = fieldValue(row?.sys_created_on?.value ?? row?.sys_created_on);
-      const createdAt = Date.parse(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(created) ? `${created.replace(' ', 'T')}Z` : created);
-      if (!Number.isFinite(createdAt) || createdAt > cutoff.getTime()) {
-        throw new HttpError('ServiceNow did not apply the AVIT creation cutoff or hid sys_created_on; metrics were not updated.', 502);
-      }
-      if (items.has(sysId) || numbers.has(number)) throw new HttpError('ServiceNow AVIT pages changed during metrics sync; retry', 409);
-      numbers.add(number);
-      items.set(sysId, { id: number, sysId, fields: Object.fromEntries(fields.filter(name => row?.[name] !== undefined)
-        .map(name => [name, row[name]])) });
-    }
-    // The Table API applies page limits before ACL filtering. A short visible page is not the end.
-    const link = responseHeaders?.get?.('link') || '';
-    const totalHeader = responseHeaders?.get?.('x-total-count') || '';
-    const total = /^\d+$/.test(totalHeader) ? Number(totalHeader) : null;
-    if (!link && total === null) throw new HttpError('ServiceNow did not return AVIT pagination headers; metrics were not updated.', 502);
-    if (total !== null && total > MAX_METRICS_AVITS) throw new HttpError(`The ServiceNow filter matches more than ${MAX_METRICS_AVITS} AVIT rows. Narrow it before syncing metrics.`, 413);
-    if (total !== null && firstTotal !== null && total !== firstTotal) throw new HttpError('ServiceNow AVIT count changed during metrics sync; retry', 409);
-    if (total !== null) firstTotal = total;
-    const hasNext = /<[^>]+>\s*;\s*rel="?next"?/i.test(link) || (total !== null && offset + METRICS_PAGE_SIZE < total);
-    if (items.size > MAX_METRICS_AVITS || (offset >= MAX_METRICS_AVITS && (hasNext || rows.length))) {
-      throw new HttpError(`ServiceNow has more than ${MAX_METRICS_AVITS} AVIT rows. Narrow the integration scope before syncing metrics.`, 413);
-    }
-    if (!hasNext) {
-      if (validScope.type === 'avits' && !items.size) throw new HttpError('No scoped AVITs were readable. Check the numbers and ServiceNow table access.', 404);
-      return { items: [...items.values()], createdThrough: cutoff.toISOString(), scope: validScope };
+      // The Table API applies page limits before ACL filtering. A short visible page is not the end.
+      const link = responseHeaders?.get?.('link') || '';
+      const totalHeader = responseHeaders?.get?.('x-total-count') || '';
+      const total = /^\d+$/.test(totalHeader) ? Number(totalHeader) : null;
+      if (!link && total === null) throw new HttpError('ServiceNow did not return AVIT pagination headers; metrics were not updated.', 502);
+      if (total !== null && firstTotal !== null && total !== firstTotal) throw new HttpError('ServiceNow AVIT count changed during metrics sync; retry', 409);
+      if (total !== null) firstTotal = total;
+      const hasNext = /<[^>]+>\s*;\s*rel="?next"?/i.test(link) || (total !== null && offset + METRICS_PAGE_SIZE < total);
+      if (!hasNext) break;
     }
   }
-  throw new HttpError(`ServiceNow has more than ${MAX_METRICS_AVITS} AVIT rows. Narrow the integration scope before syncing metrics.`, 413);
+  for (const scopeQuery of scopeQueries) await syncScope(scopeQuery);
+  if (validScope.type === 'avits' && !items.size) throw new HttpError('No scoped AVITs were readable. Check the numbers and ServiceNow table access.', 404);
+  return { items: [...items.values()], createdThrough: cutoff.toISOString(), scope: validScope };
 }
 
 /** Count the complete credential-visible AVIT population without downloading individual records. */
@@ -393,7 +404,7 @@ function validateAggregateFilters(input = {}) {
   }
   if (filters.project && filters.scm !== 'ado') throw new HttpError('Project applies only to Azure DevOps');
   const findingType = String(input.findingType ?? '').trim().toLowerCase();
-  if (findingType && !['sast', 'sca', 'secrets'].includes(findingType)) throw new HttpError('Finding type must be sast, sca, or secrets');
+  if (findingType && !FINDING_TYPES.has(findingType)) throw new HttpError('Finding type must be sast, sca, secrets, or dast');
   if (findingType) filters.findingType = findingType;
   for (const key of ['createdFrom', 'createdTo']) {
     const value = String(input[key] ?? '').trim();
@@ -422,7 +433,8 @@ function aggregateQuery(filters, columns = {}) {
     ['repository', columns.repository], ['branch', columns.branch]]) {
     if (filters[key]) terms.push(`${column}=${filters[key]}`);
   }
-  if (filters.findingType && columns.finding_source) terms.push(`${columns.finding_source}LIKE${filters.findingType === 'secrets' ? 'secret' : filters.findingType}`);
+  const findingType = filters.findingType && findingTypeClause(filters.findingType, columns);
+  if (findingType) terms.push(findingType);
   if (filters.createdFrom) terms.push(`sys_created_on>=javascript:gs.dateGenerate('${filters.createdFrom}','00:00:00')`);
   if (filters.createdTo) terms.push(`sys_created_on<=javascript:gs.dateGenerate('${filters.createdTo}','23:59:59')`);
   return terms.join('^');
@@ -454,6 +466,7 @@ async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch
   const needsContext = Object.keys(CONTEXT_FILTER_COLUMN).some(key => selected[key]);
   const columns = needsContext ? await aggregateColumns(credentials, fetchImpl, signal) : {};
   for (const [key, contextKey] of Object.entries(CONTEXT_FILTER_COLUMN)) {
+    if (key === 'findingType' && selected.findingType === 'dast') continue;  // matched on the standard source column
     if (selected[key] && !columns[contextKey]) {
       throw new HttpError(`This ServiceNow instance did not expose a column for "${CONTEXT_LABELS[contextKey].label}"; that filter is unavailable here`, 422);
     }
@@ -491,9 +504,65 @@ async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch
     asOf: new Date().toISOString(), total, falsePositive, riskRating, state, substate,
     limitations: [
       unavailable.length ? `${unavailable.join(', ')} unavailable with this ServiceNow account's field permissions.` : '',
+      selected.findingType === 'dast' ? 'Dynamic (DAST) counts only the Invicti AVITs this ServiceNow account can read; Invicti records are often hidden from OAuth clients.' : '',
       'The stored false-positive count uses the configured Closed / False Positive state and substate codes; ServiceNow business rules may clear the substate.',
     ].filter(Boolean).join(' '),
   };
+}
+
+const CONTEXT_VALUE_FIELDS = ['organization', 'project', 'repository', 'branch'];
+const SUGGESTION_CACHE_MS = 5 * 60_000;
+// Type-ahead fires per keystroke: reuse one OAuth token and one label->column map per instance/client for a few
+// minutes instead of paying two extra ServiceNow round trips on every suggestion.
+const suggestionSessions = new Map();
+async function suggestionSession(credentials, fetchImpl, signal, now = Date.now()) {
+  const key = `${credentials.instance}\u0000${credentials.clientId}`;
+  const cached = suggestionSessions.get(key);
+  if (cached && cached.expires > now) return cached;
+  const token = await accessToken(credentials, fetchImpl, signal);
+  const session = { token, columns: await aggregateColumns(credentials, fetchImpl, signal, token), expires: now + SUGGESTION_CACHE_MS };
+  suggestionSessions.set(key, session);
+  return session;
+}
+
+/** Distinct values of one source-control context column, for type-ahead suggestions. Uses the ServiceNow stats
+ *  (group-by) API so individual AVITs are never downloaded, matching the aggregate summary's data promise. The
+ *  other filters already chosen (SCM, organization, project, repository) narrow the values, so branch
+ *  suggestions are that repository's branches rather than every branch name in the instance. */
+async function fetchAvitContextValues(credentials, { field, q = '', context = {}, fetchImpl = fetch, signal } = {}) {
+  const key = String(field || '').trim();
+  if (!CONTEXT_VALUE_FIELDS.includes(key)) throw new HttpError('Unsupported context field for suggestions');
+  const prefix = String(q || '').trim();
+  if (prefix && (prefix.length > 200 || !/^[\w .@/+-]+$/.test(prefix))) throw new HttpError('Suggestion query contains unsupported characters');
+  const narrowing = validateAggregateFilters(Object.fromEntries(Object.entries(context || {})
+    .filter(([name, value]) => ['scm', ...CONTEXT_VALUE_FIELDS].includes(name) && name !== key && value)));
+  const { token, columns } = await suggestionSession(credentials, fetchImpl, signal);
+  const column = columns[key];
+  if (!column) throw new HttpError(`This ServiceNow instance did not expose a column for "${CONTEXT_LABELS[key].label}"; suggestions are unavailable here`, 422);
+  // A narrowing filter whose own column is unresolved is dropped rather than failing the whole suggestion.
+  const usable = Object.fromEntries(Object.entries(narrowing).filter(([name]) => columns[CONTEXT_FILTER_COLUMN[name]]));
+  const clauses = [aggregateQuery(usable, columns), `${column}ISNOTEMPTY`, prefix ? `${column}STARTSWITH${prefix}` : ''];
+  const query = new URLSearchParams({ sysparm_count: 'true', sysparm_display_value: 'all',
+    sysparm_group_by: column, sysparm_query: clauses.filter(Boolean).join('^') });
+  let data;
+  try {
+    data = await requestJson(fetchImpl, `${credentials.instance}/api/now/stats/${AVIT_TABLE}?${query}`,
+      { headers: { Authorization: `Bearer ${token}` } }, signal, false, METRICS_PAGE_MAX_BYTES);
+  } catch (error) {
+    if (error.upstreamStatus === 401) suggestionSessions.delete(`${credentials.instance}\u0000${credentials.clientId}`);  // expired token: next keystroke re-authenticates
+    throw error;
+  }
+  const seen = new Set();
+  const values = [];
+  // Most common values first, so the 25 offered are the ones the user most likely means.
+  for (const row of statsGroups(data?.result, column).sort((a, b) => b.count - a.count)) {
+    const value = row.key;
+    if (!value || value === '(blank)' || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    values.push(value);
+    if (values.length >= 25) break;
+  }
+  return { field: key, values };
 }
 
 /** AVIT numbers selected by the CodeSecurity view rule; null when no rule is readable. */
@@ -509,8 +578,10 @@ async function viewMembers(instance, headers, numbers, fetchImpl, signal) {
   if (!conditions.length) return null;
   const members = new Set();
   for (const condition of conditions) {
-    const query = new URLSearchParams({ sysparm_query: `numberIN${numbers.join(',')}^${condition}`, sysparm_fields: 'number', sysparm_limit: String(numbers.length) });
-    for (const row of (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal)).result || []) members.add(fieldValue(row.number));
+    for (const chunk of chunked(numbers)) {
+      const query = new URLSearchParams({ sysparm_query: `numberIN${chunk.join(',')}^${condition}`, sysparm_fields: 'number', sysparm_limit: String(chunk.length) });
+      for (const row of (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}?${query}`, { headers }, signal)).result || []) members.add(fieldValue(row.number));
+    }
   }
   return members;
 }
@@ -668,6 +739,6 @@ async function semgrepVersion() {
 
 module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
-  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, validateAggregateFilters, aggregateQuery, aggregateColumns,
-  METRICS_PAGE_SIZE, MAX_METRICS_AVITS, MAX_METRICS_SCOPE_AVITS,
+  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, fetchAvitContextValues, validateAggregateFilters, aggregateQuery, aggregateColumns,
+  METRICS_PAGE_SIZE, AVIT_QUERY_CHUNK,
   METRICS_CREATION_LAG_MS, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };

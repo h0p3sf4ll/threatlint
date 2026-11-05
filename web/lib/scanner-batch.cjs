@@ -21,7 +21,6 @@ const scanners = require('./scanners.cjs');
 const { runCli, redactSecrets } = require('./avit-batch.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
-const MAX_SEARCH = 200;
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
 const errorOf = result => (lastLine(result.stderr) || lastLine(result.stdout)).replace(/^ERROR:\s*/, '');
 const REFERENCE_HEADING = /^## ((?:DOJO-\d+)|(?:SONAR-(?:HOTSPOT-)?[A-Za-z0-9_-]{6,64}))\b/gm;
@@ -47,8 +46,9 @@ function choices(values, allowed, name) {
 function filterArgs(toolId, filter) {
   if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return [];
   const args = [];
-  const limit = filter.limit === undefined || filter.limit === '' ? 50 : Number(filter.limit);
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH) throw new HttpError(`limit must be 1 to ${MAX_SEARCH}`);
+  // No limit unless one is given: a filter reviews every matching finding.
+  const limit = filter.limit === undefined || filter.limit === '' || filter.limit === null ? 0 : Number(filter.limit);
+  if (!Number.isInteger(limit) || limit < 0) throw new HttpError('limit must be a positive whole number, or blank for every matching finding');
   if (scanners.tool(toolId).id === 'dojo') {
     for (const [key, flag] of [['product', '--product'], ['engagement', '--engagement'], ['test', '--test']]) { const id = positiveInt(filter[key], key); if (id) args.push(flag, id); }
     for (const key of ['active', 'verified']) if (filter[key] !== undefined && filter[key] !== '') { if (!['true', 'false'].includes(String(filter[key]))) throw new HttpError(`${key} must be true or false`); args.push(`--${key}`, String(filter[key])); }
@@ -71,7 +71,7 @@ function filterArgs(toolId, filter) {
     for (const severity of choices(list(filter.severities), SONAR_SEVERITIES, 'severities')) args.push('--severity', severity);
     for (const status of choices(list(filter.statuses), SONAR_STATUSES, 'statuses')) args.push('--status', status);
   }
-  return [...args, '--limit', String(limit)];
+  return limit ? [...args, '--limit', String(limit)] : args;
 }
 
 function createScannerBatch({ store, reports, override, integrations = {} }) {
@@ -151,7 +151,6 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
     }
     const all = [...new Set([...explicit, ...found])];
     if (!all.length) throw new HttpError(filter.length ? `The ${spec.label} search returned no findings` : `Enter ${spec.label} references or a filter`);
-    if (all.length > scanners.MAX_REFERENCES) throw new HttpError(`Review at most ${scanners.MAX_REFERENCES} ${spec.label} findings at a time; narrow the filter or lower the limit`);
     send({ type: 'scanner_batch_start', tool: toolId, references: all });
     for (const reference of all) {
       if (controller.signal.aborted) { send({ type: 'scanner_item', tool: toolId, reference, stage: 'cancelled', detail: 'Cancelled', done: true }); continue; }

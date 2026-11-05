@@ -48,7 +48,7 @@ describe('Scanner references and connection settings', () => {
     assert.deepEqual(scanners.parseReferences('dojo', '123, DOJO-124 dojo:123'), ['DOJO-123', 'DOJO-124']);
     assert.deepEqual(scanners.parseReferences('sonar', 'AYxExampleKey01 hotspot-AYxExampleKey02'), ['SONAR-AYxExampleKey01', 'SONAR-HOTSPOT-AYxExampleKey02']);
     assert.throws(() => scanners.parseReferences('dojo', 'AVIT0042599'), /Not a DefectDojo finding id/);
-    assert.throws(() => scanners.parseReferences('dojo', Array.from({ length: 51 }, (_, i) => String(i + 1))), /at most 50/);
+    assert.equal(scanners.parseReferences('dojo', Array.from({ length: 1000 }, (_, i) => String(i + 1))).length, 1000, 'no count limit');
     assert.equal(scanners.mentions('DOJO-1234; rule', 'DOJO-123'), false);
     assert.equal(scanners.mentions('DOJO-123; rule', 'DOJO-123'), true);
   });
@@ -63,7 +63,9 @@ describe('Scanner references and connection settings', () => {
     assert.throws(() => filterArgs('dojo', { active: 'true' }), /Narrow the DefectDojo search/);
     assert.throws(() => filterArgs('dojo', { product: '-1' }), /positive id/);
     assert.throws(() => filterArgs('sonar', { project: 'web', branch: '--upload-pack=x' }), /Not a valid branch/);
-    assert.deepEqual(filterArgs('sonar', { project: 'web', branch: 'develop', types: ['SECURITY_HOTSPOT'] }), ['--project', 'web', '--branch', 'develop', '--type', 'SECURITY_HOTSPOT', '--limit', '50']);
+    assert.deepEqual(filterArgs('sonar', { project: 'web', branch: 'develop', types: ['SECURITY_HOTSPOT'] }), ['--project', 'web', '--branch', 'develop', '--type', 'SECURITY_HOTSPOT'], 'no limit given: every matching finding');
+    assert.deepEqual(filterArgs('sonar', { project: 'web', limit: 5000 }), ['--project', 'web', '--limit', '5000'], 'a large explicit limit is accepted');
+    assert.throws(() => filterArgs('sonar', { project: 'web', limit: -3 }), /positive whole number/);
     assert.deepEqual(filterArgs('sonar', {}), []);
   });
 });

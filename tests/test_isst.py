@@ -290,3 +290,13 @@ def test_summarize_number_errors_when_a_true_positive_has_no_report(monkeypatch)
     monkeypatch.setattr(sctask, "avit_outcome", lambda *a, **k: {"avit": AVIT, "disposition": "TRUE POSITIVE", "report": None, "report_name": None})
     with pytest.raises(ResolveError, match="no readable Threatlint report"):
         isst.summarize_number(INSTANCE, "token", ISST, yes=True)
+
+
+def test_isst_discovery_has_no_avit_limit(monkeypatch):
+    """An ISST may name any number of AVITs; the Workbench reviews them one at a time, so discovery never caps them."""
+    many = [f"AVIT{9000000 + index:07d}" for index in range(57)]
+    fake = FakeServiceNow(avits=[avit(number) for number in many])
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "field_labels", lambda *_: {})
+    _record, numbers = isst.discover(INSTANCE, "token", ISST)
+    assert numbers == many

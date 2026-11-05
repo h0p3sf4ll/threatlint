@@ -151,6 +151,48 @@
     $('avit-project-field').hidden = !show;
     if (!show && form.elements.namedItem('project')) form.elements.namedItem('project').value = '';
   }
+  // Type-ahead suggestions: as the user types in organization / repository / branch / project, fetch distinct
+  // values from ServiceNow (server-side group-by) and offer them as a native datalist dropdown. Best-effort only.
+  const SUGGEST_FIELDS = { organization: 'avit-sg-organization', project: 'avit-sg-project', repository: 'avit-sg-repository', branch: 'avit-sg-branch' };
+  // The filter that, once chosen, narrows a field enough to list its values before anything is typed.
+  const SUGGEST_PARENT = { project: 'organization', repository: 'organization', branch: 'repository' };
+  const suggestTimer = {}; const suggestAbort = {}; const suggestLast = {};
+  function suggestionContext(field) {
+    const context = aggregateFilters();  // SCM-aware: drops project unless Azure DevOps
+    for (const key of Object.keys(context)) if (!['scm', ...Object.keys(SUGGEST_FIELDS)].includes(key) || key === field) delete context[key];
+    return context;
+  }
+  async function fetchSuggestions(field, q) {
+    if (!state.avitConfigured) return;
+    if (field === 'project' && (($('avit-scm')?.value) || '') !== 'ado') return;
+    const context = suggestionContext(field);
+    // Unnarrowed, a group-by spans every AVIT, so wait for two characters unless a parent filter is set.
+    if (q.length < 2 && !(SUGGEST_PARENT[field] && context[SUGGEST_PARENT[field]]) && field !== 'organization') return;
+    const params = new URLSearchParams({ field, ...(q ? { q } : {}), ...context });
+    const signature = params.toString();
+    if (suggestLast[field] === signature) return;  // same prefix and context: the list is already current
+    suggestLast[field] = signature;
+    suggestAbort[field]?.abort();
+    const controller = new AbortController(); suggestAbort[field] = controller;
+    try {
+      const payload = await api(`/api/trackers/servicenow-avit/context-values?${params}`, { signal: controller.signal });
+      $(SUGGEST_FIELDS[field]).replaceChildren(...(payload?.values || []).map(value => { const option = el('option'); option.value = value; return option; }));
+    } catch { if (suggestLast[field] === signature) delete suggestLast[field]; }  // best-effort; allow a retry
+  }
+  function resetSuggestions(field) { delete suggestLast[field]; $(SUGGEST_FIELDS[field]).replaceChildren(); }
+  function wireSuggestions() {
+    const form = $('avit-aggregate-form');
+    for (const field of Object.keys(SUGGEST_FIELDS)) {
+      const input = form.elements.namedItem(field); if (!input) continue;
+      input.addEventListener('input', () => {
+        // A changed parent makes its children's lists stale (a new organization has different repositories).
+        for (const [child, parent] of Object.entries(SUGGEST_PARENT)) if (parent === field) resetSuggestions(child);
+        clearTimeout(suggestTimer[field]); suggestTimer[field] = setTimeout(() => fetchSuggestions(field, input.value.trim()), 250);
+      });
+      input.addEventListener('focus', () => fetchSuggestions(field, input.value.trim()));
+    }
+    $('avit-scm').addEventListener('change', () => Object.keys(SUGGEST_FIELDS).forEach(resetSuggestions));
+  }
   function updateAggregateNote() {
     const note = $('avit-aggregate-dirty');
     $('avit-aggregate-submit').disabled = !state.avitConfigured;
@@ -174,7 +216,7 @@
     assignmentGroup: 'Assignment group', source: 'Finding source', createdFrom: 'Created from', createdTo: 'Created to' };
   const FILTER_VALUE_LABELS = {
     scm: { github: 'GitHub Enterprise', ado: 'Azure DevOps' },
-    findingType: { sast: 'Static (SAST)', sca: 'SCA', secrets: 'Secret' },
+    findingType: { sast: 'Static (SAST)', dast: 'Dynamic (DAST)', sca: 'SCA', secrets: 'Secret' },
     riskRating: { 1: 'Critical', 2: 'High', 3: 'Medium', 4: 'Low', 5: 'None' },
     state: { 1: 'Open', 3: 'Closed', 101: 'Resolved' },
   };
@@ -281,7 +323,7 @@
           const isNumbers = type.value === 'avits';
           entry.value = isNumbers ? state.avitScope.avits : state.avitScope.query;
           entry.placeholder = isNumbers ? 'AVIT000000095938462, AVIT000000095938463' : 'u_repository=team/repo^state=1';
-          note.textContent = isNumbers ? 'Enter specific AVIT numbers, separated by commas or spaces. Up to 500 per sync.'
+          note.textContent = isNumbers ? 'Enter specific AVIT numbers, separated by commas or spaces. No limit.'
             : 'Paste the encoded query from a bounded ServiceNow filter. Up to 10,000 matching AVITs; unsupported operators are rejected.';
           sync.disabled = !tracker.connected || !currentAvitScope();
         };
@@ -424,6 +466,7 @@
     $('avit-aggregate-form').addEventListener('input', () => { state.aggregateDirty = true; updateAggregateNote(); });
     $('avit-scm').addEventListener('change', syncScmFields);
     syncScmFields();
+    wireSuggestions();
     $('avit-aggregate-form').addEventListener('submit', submitAggregate);
     $('avit-aggregate-configure').addEventListener('click', () => openTrackerSettings('servicenow-avit'));
     $('dashboard-new').addEventListener('click', () => openEditor({ name: 'My dashboard', widgets: [{ id: 'w1', title: 'Findings by severity', chart: 'bar', metric: 'findings', groupBy: 'severity', size: 2 }] }, false));

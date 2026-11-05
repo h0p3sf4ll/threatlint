@@ -187,3 +187,31 @@ test('whole-sync timeout keeps the previous ServiceNow metrics snapshot', async 
   const overview = await fetch(`${base}/api/metrics/overview?source=servicenow-avit`);
   assert.equal((await overview.json()).findings, 1);
 });
+
+test('ServiceNow metrics sync has no AVIT-number or row limit', async () => {
+  const now = Date.parse('2026-11-04T12:00:00Z');
+  const credentials = { instance: INSTANCE, clientId: 'client', clientSecret: 'secret' };
+  const sysId = index => index.toString(16).padStart(32, '0');
+  // 150 AVIT numbers: synced through several numberIN queries, every AVIT kept.
+  const numbers = Array.from({ length: 150 }, (_, i) => `AVIT${String(8000000 + i)}`);
+  const chunks = [];
+  const byNumber = async url => {
+    if (url.endsWith('/oauth_token.do')) return response({ access_token: 'synthetic-access-token' });
+    const chunk = new URL(url).searchParams.get('sysparm_query').split('^')[0].replace(/^numberIN/, '').split(',');
+    chunks.push(chunk.length);
+    return response({ result: chunk.map(number => avit(number, sysId(numbers.indexOf(number) + 1))) }, { 'x-total-count': String(chunk.length) });
+  };
+  const listed = await fetchAvitMetrics(credentials, { scope: { type: 'avits', avits: numbers.join(' ') }, fetchImpl: byNumber, now });
+  assert.deepEqual(chunks, [50, 50, 50]);
+  assert.equal(listed.items.length, 150);
+  // A filter scope keeps paging past the old 10,000-row stop until ServiceNow reports no next page.
+  const total = 10_250;
+  const byFilter = async url => {
+    if (url.endsWith('/oauth_token.do')) return response({ access_token: 'synthetic-access-token' });
+    const offset = Number(new URL(url).searchParams.get('sysparm_offset'));
+    const rows = Array.from({ length: Math.min(100, total - offset) }, (_, i) => avit(`AVIT${String(10000000 + offset + i)}`, sysId(offset + i + 1)));
+    return response({ result: rows }, { 'x-total-count': String(total) });
+  };
+  const filtered = await fetchAvitMetrics(credentials, { scope: { type: 'query', query: 'u_repository=team/repo' }, fetchImpl: byFilter, now });
+  assert.equal(filtered.items.length, total);
+});

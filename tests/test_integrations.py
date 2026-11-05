@@ -151,12 +151,23 @@ def test_registry_lists_both_integrations_and_the_cli_parses_them():
 
 # ── DefectDojo ───────────────────────────────────────────────────────────────
 
-def test_dojo_references_are_ids_bounded_and_deduplicated():
+def test_dojo_references_are_validated_deduplicated_and_unlimited():
     assert defectdojo.INTEGRATION.parse_references("123, DOJO-124 dojo:123") == ["DOJO-123", "DOJO-124"]
     with pytest.raises(IntegrationError, match="Not a DefectDojo finding id"):
         defectdojo.INTEGRATION.parse_references("AVIT0042599")
-    with pytest.raises(IntegrationError, match="at most 50"):
-        defectdojo.INTEGRATION.parse_references([str(i) for i in range(1, 52)])
+    assert len(defectdojo.INTEGRATION.parse_references([str(i) for i in range(1, 1001)])) == 1000, "no count limit"
+
+
+def test_dojo_search_without_a_limit_follows_every_page(monkeypatch):
+    def page(call):
+        offset = int(call["query"].get("offset", "0"))
+        following = f"{DOJO}/api/v2/findings/?offset={offset + 100}&limit=100" if offset + 100 < 750 else None
+        return {"results": [{**FINDING, "id": 1000 + index} for index in range(offset, min(offset + 100, 750))], "next": following}
+    monkeypatch.setattr(defectdojo, "request", Fake(dojo_routes({("GET", "/api/v2/findings/"): page})))
+    items = defectdojo.INTEGRATION.search(DOJO, "tok", {"test__engagement__product": 1})
+    assert len(items) == 750, "no --limit means every matching finding, past the old 500 ceiling"
+    with pytest.raises(IntegrationError, match="positive number"):
+        defectdojo.INTEGRATION.search(DOJO, "tok", {"test__engagement__product": 1, "limit": -1})
 
 
 def test_dojo_finding_maps_to_repository_branch_commit_file_line_rule_and_tool(monkeypatch):

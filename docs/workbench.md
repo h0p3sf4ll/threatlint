@@ -203,6 +203,13 @@ can remain on disk and contains source.
 A saved [GitHub App](github-app.md) connects automatically and refreshes installation tokens.
 Source browsing does not support GitHub Enterprise Server or Azure DevOps Server.
 
+Once at least one source is connected, the Connect panel shows a **n CONNECTED** badge and the button
+becomes **Add another connection**; the loading indicator while a source or its repositories load is a
+spinner. A saved source that could not be used (an expired or invalid Azure DevOps PAT, or a GitHub
+App token that could not be minted) stays listed under **Connected accounts** marked *not connected*
+with the reason (for example *credential rejected or expired*) and a **Reconnect** action, rather than
+silently disappearing.
+
 ## Runtime scanning
 
 Observe a running app only when you have authority to test it:
@@ -256,8 +263,8 @@ verdict (true positive, false positive, or ambiguous) with its evidence, in a fi
    them when you have a choice.
 2. Leave **Scanner** on auto-detect or select it. Optionally select the matching workspace
    and supply the destination finding reference.
-3. Press **Triage findings** and inspect the saved findings/report. At most **500 findings** are retained;
-   omissions are disclosed. Without a usable model, results are **NOT TRIAGED**, with
+3. Press **Triage findings** and inspect the saved findings/report. Every finding is retained and
+   reviewed (no count limit; the model sees them in batches). Without a usable model, results are **NOT TRIAGED**, with
    AMBIGUOUS placeholders—not model verdicts.
 4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
    **Post to SonarQube…**. Posting requires confirmation and can change status.
@@ -292,9 +299,13 @@ are in `web/scripts/build-videos.cjs`.
 
 ## Developer flow
 
-The sidebar groups **Test** (review, sources, runtime, false positive review of AVITs/SCTASKs/ISSTs, triage/import), **Fix** (Findings and Ask
-Threatlint), **Track** (Metrics), and **Reference** (Agents, Skills, help). The Skills view shows
-the packaged workflow bodies and assignments from the [registry](../src/threatlint/data/agent-skills.json).
+The sidebar groups **Test** (review, sources, runtime scanning, finding triage of AVITs/SCTASKs/ISSTs,
+and triage/import), **Fix** (Findings and Ask Threatlint), **Track** (DefectDojo review, Metrics, and
+Sidekick), and **Reference** (Agents, Skills, help). **Scan running app** is labelled *Preview · not yet
+GA* while it matures. **Sidekick** is one nav item that opens a landing page of its capabilities
+(vReports, loadouts, trends, ownership, and bulk actions) as cards; each capability page links back to
+it. The Skills view shows the packaged workflow bodies and assignments from the
+[registry](../src/threatlint/data/agent-skills.json).
 
 ## Desktop packaging
 

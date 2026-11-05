@@ -104,3 +104,84 @@ test('aggregate API stores a completed full-table summary and preserves it after
     assert.equal((await (await fetch(`${base}/api/trackers/servicenow-avit/aggregate`)).json()).summary.total, 67512944);
   } finally { await workbench.close(); }
 });
+
+// ── Type-ahead suggestions and Dynamic (DAST) ───────────────────────────────────
+
+function fakeContext(calls, groups) {
+  return async (url, options) => {
+    calls.push(url);
+    if (url.endsWith('/oauth_token.do')) return reply({ access_token: 'synthetic-token' });
+    const parsed = new URL(url);
+    if (parsed.pathname === '/api/now/table/sys_documentation') {
+      return reply({ result: [{ name: 'sn_vul_app_vulnerable_item', element: 'u_org', label: 'Organization Name' },
+        { name: 'sn_vul_app_vulnerable_item', element: 'u_repo', label: 'Repository' },
+        { name: 'sn_vul_app_vulnerable_item', element: 'u_branch', label: 'Project Branch' }] });
+    }
+    assert.equal(parsed.pathname, '/api/now/stats/sn_vul_app_vulnerable_item');
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-token');
+    const group = parsed.searchParams.get('sysparm_group_by');
+    return reply({ result: groups.map(([value, count]) => ({ stats: { count: String(count) },
+      groupby_fields: [{ field: group, value, display_value: value }] })) });
+  };
+}
+
+test('suggestions cascade from chosen filters, match by prefix, rank by frequency, and reuse one session', async () => {
+  const calls = [];
+  const credentials = { instance: 'https://suggest-a.service-now.com', clientId: 'id', clientSecret: 'secret' };
+  const fetchImpl = fakeContext(calls, [['release/1', 3], ['main', 90], ['', 5], ['Main', 1]]);
+  const result = await servicenow.fetchAvitContextValues(credentials, { field: 'branch', q: 'ma',
+    context: { scm: 'github', organization: 'acme', repository: 'shop', branch: 'ignored-own-field' }, fetchImpl });
+  assert.deepEqual(result, { field: 'branch', values: ['main', 'release/1'] }, 'blank and case-duplicate values dropped, most common first');
+  const stats = new URL(calls.find(url => url.includes('/api/now/stats/')));
+  assert.equal(stats.searchParams.get('sysparm_group_by'), 'u_branch');
+  const query = stats.searchParams.get('sysparm_query');
+  for (const clause of ['u_scm_toolLIKEgithub', 'u_org=acme', 'u_repo=shop', 'u_branchISNOTEMPTY', 'u_branchSTARTSWITHma']) {
+    assert.ok(query.includes(clause), `${clause} in ${query}`);
+  }
+  assert.ok(!query.includes('ignored-own-field'), 'the field being suggested does not filter itself');
+  await servicenow.fetchAvitContextValues(credentials, { field: 'repository', q: 'sh', fetchImpl });
+  assert.equal(calls.filter(url => url.endsWith('/oauth_token.do')).length, 1, 'one OAuth token for consecutive keystrokes');
+  assert.equal(calls.filter(url => url.includes('sys_documentation')).length, 1, 'one label lookup for consecutive keystrokes');
+});
+
+test('suggestions reject unsupported fields, injection-shaped prefixes, and invalid context', async () => {
+  const credentials = { instance: 'https://suggest-b.service-now.com', clientId: 'id', clientSecret: 'secret' };
+  const fetchImpl = fakeContext([], []);
+  await assert.rejects(servicenow.fetchAvitContextValues(credentials, { field: 'assignment_group', fetchImpl }), /Unsupported context field/);
+  await assert.rejects(servicenow.fetchAvitContextValues(credentials, { field: 'branch', q: 'main^ORstate=1', fetchImpl }), /unsupported characters/);
+  await assert.rejects(servicenow.fetchAvitContextValues(credentials, { field: 'branch', context: { repository: 'a^b' }, fetchImpl }), /repository contains/);
+});
+
+test('Dynamic (DAST) counts Invicti AVITs by source without needing the finding-source column', async () => {
+  const queries = [];
+  const fetchImpl = async (url) => {
+    if (url.endsWith('/oauth_token.do')) return reply({ access_token: 'synthetic-token' });
+    const parsed = new URL(url);
+    if (parsed.pathname === '/api/now/table/sys_documentation') return reply({ result: [] });
+    queries.push(parsed.searchParams.get('sysparm_query') || '');
+    if (!parsed.searchParams.get('sysparm_group_by')) return reply({ result: { stats: { count: '7' } } });
+    return reply({ result: [] });
+  };
+  const summary = await servicenow.fetchAvitAggregate({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' },
+    { filters: { findingType: 'dast' }, fetchImpl });
+  assert.equal(summary.total, 7);
+  assert.ok(queries.every(query => query.startsWith('sourceLIKEinvicti')), queries.join(' | '));
+  assert.match(summary.limitations, /Invicti AVITs this ServiceNow account can read/);
+});
+
+test('long AVIT lists are fetched in numberIN chunks, with every AVIT returned', async () => {
+  const numbers = Array.from({ length: 120 }, (_, i) => `AVIT${String(9100000 + i)}`);
+  const queried = [];
+  const fetchImpl = async url => {
+    if (url.endsWith('/oauth_token.do')) return reply({ access_token: 'synthetic-token' });
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith('/sysrule_view')) return reply({ result: [] });
+    const query = parsed.searchParams.get('sysparm_query');
+    const chunk = query.replace(/^numberIN/, '').split(',');
+    queried.push(chunk.length);
+    return reply({ result: chunk.map(number => ({ number: { value: number, display_value: number }, sys_id: { value: number.slice(-8).padStart(32, '0') } })) });
+  };
+  const { items } = await servicenow.fetchAvits({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' }, numbers, { fetchImpl });
+  assert.deepEqual(queried, [50, 50, 20], 'no single query carries more than one chunk of numbers');
+  assert.deepEqual(items.map(item => item.fields.number), numbers, 'all 120 come back, in input order');
+});

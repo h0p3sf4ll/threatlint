@@ -24,13 +24,12 @@ import json
 import re
 import urllib.parse
 
-from threatlint.integrations.common import (AMBIGUOUS_COMMENT, CLOSING_COMMENT, MAX_BY_ID, TRUE_POSITIVE_COMMENT, IntegrationError,
-                                           context_from_repository_url, multipart, request)
+from threatlint.integrations.common import (AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, IntegrationError,
+                                           context_from_repository_url, multipart, request, search_limit)
 from threatlint.integrations.findings_management.base import FindingsManagementPlatform
 
 _REFERENCE = re.compile(r"(?:DOJO-|DOJO:|DEFECTDOJO-)?(\d{1,12})", re.IGNORECASE)
 _SEVERITIES = ("Critical", "High", "Medium", "Low", "Info")
-MAX_SEARCH = 500
 _MAX_FIELD = 4000
 _SKIPPED = frozenset({"files", "notes", "request_response", "finding_meta", "display_status", "accepted_risks", "jira_creation", "jira_change",
                       "push_to_jira", "related_fields", "age", "sla_days_remaining", "sla_expiration_date"})
@@ -74,8 +73,6 @@ class DefectDojo(FindingsManagementPlatform):
         references = list(dict.fromkeys(f"DOJO-{int(_REFERENCE.fullmatch(token).group(1))}" for token in tokens))
         if not references:
             raise IntegrationError("Enter at least one DefectDojo finding id")
-        if len(references) > MAX_BY_ID:
-            raise IntegrationError(f"Review at most {MAX_BY_ID} DefectDojo findings per report")
         return references
 
     @staticmethod
@@ -168,7 +165,7 @@ class DefectDojo(FindingsManagementPlatform):
         parser.add_argument("--verified", choices=("true", "false"), help="Only verified (true) or unverified (false) findings")
         parser.add_argument("--severity", action="append", choices=_SEVERITIES, help="Severity (repeatable)")
         parser.add_argument("--tag", action="append", default=[], help="Tag (repeatable; findings with any of them)")
-        parser.add_argument("--limit", type=int, default=MAX_BY_ID, help=f"Most findings to fetch (default {MAX_BY_ID}, at most {MAX_SEARCH})")
+        parser.add_argument("--limit", type=int, default=0, help="Most findings to fetch (default: every matching finding)")
 
     def filters(self, args) -> dict:
         values = {"test__engagement__product": getattr(args, "product", None), "test__engagement": getattr(args, "engagement", None),
@@ -178,16 +175,14 @@ class DefectDojo(FindingsManagementPlatform):
         return {key: value for key, value in values.items() if value not in (None, "")}
 
     def search(self, url: str, token: str, filters: dict) -> list[dict]:
-        limit = int(filters.get("limit") or MAX_BY_ID)
-        if not 1 <= limit <= MAX_SEARCH:
-            raise IntegrationError(f"--limit must be 1 to {MAX_SEARCH}")
+        limit = search_limit(filters)
         if not any(key in filters for key in ("test__engagement__product", "test__engagement", "test", "tags")):
             raise IntegrationError("Narrow the search with --product, --engagement, --test, or --tag (or pass finding ids)")
         for key in ("test__engagement__product", "test__engagement", "test"):
             if key in filters and int(filters[key]) < 1:
                 raise IntegrationError(f"{key} must be a positive id")
         query = {key: str(value) for key, value in filters.items() if key != "limit"}
-        query.update({"limit": str(min(limit, 100)), "offset": "0", "ordering": "id"})
+        query.update({"limit": str(int(min(limit, 100))), "offset": "0", "ordering": "id"})
         page_url, findings, cache = f"{url}/api/v2/findings/?{urllib.parse.urlencode(query)}", [], {}
         while page_url and len(findings) < limit:
             page = request(page_url, label=self.label, headers=self.auth_headers(token), hints=_HINTS) or {}
@@ -195,7 +190,8 @@ class DefectDojo(FindingsManagementPlatform):
             following = page.get("next")
             # Follow pagination only on the validated base URL; the token must never go elsewhere.
             page_url = following if isinstance(following, str) and following.startswith(f"{url}/api/v2/findings/") else None
-        return [self.item(url, token, finding, cache) for finding in findings[:limit]]
+        kept = findings if limit == float("inf") else findings[:int(limit)]
+        return [self.item(url, token, finding, cache) for finding in kept]
 
     # Writes -----------------------------------------------------------------
     def describe(self, disposition: str) -> str:

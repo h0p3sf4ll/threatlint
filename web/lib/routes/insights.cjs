@@ -114,6 +114,16 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
   app.get('/api/metrics/trackers', handle(trackers));
   app.get('/api/trackers/servicenow-avit/aggregate', handle(() => ({ summary: avitAggregate.get() })));
   app.post('/api/trackers/servicenow-avit/aggregate', handle(req => loadAvitAggregate(req.body?.filters || {})));
+  // Type-ahead suggestions for the organization / repository / branch / project filters (server-side group-by).
+  app.get('/api/trackers/servicenow-avit/context-values', handle(req => {
+    const credentials = servicenow.validateCredentials({});
+    const context = {};
+    for (const name of ['scm', 'organization', 'project', 'repository', 'branch']) {
+      if (typeof req.query[name] === 'string' && req.query[name]) context[name] = req.query[name];
+    }
+    return servicenow.fetchAvitContextValues(credentials, { field: req.query.field, q: typeof req.query.q === 'string' ? req.query.q : '',
+      context, fetchImpl: integrations.fetchImpl || fetch, signal: AbortSignal.timeout(15_000) });
+  }, { fallback: 'Suggestions unavailable' }));
   app.post('/api/trackers/:id/sync', handle(req => sync(req.params.id, req.body?.scope)));
   app.get('/api/metrics/overview', handle(req => {
     const chosen = source(req.query.source);

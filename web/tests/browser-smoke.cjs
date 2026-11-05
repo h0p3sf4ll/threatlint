@@ -62,13 +62,30 @@ async function trackerMetrics(page) {
   });
   await page.locator('[data-view="metrics"]').click();
   await page.locator('#metrics-tracker-cards .metrics-tracker-card').first().waitFor();
-  await page.locator('#avit-aggregate-form [name="state"]').fill('1');
+  await page.locator('#avit-aggregate-form [name="state"]').selectOption('1');
   await page.locator('#avit-aggregate-submit').click();
   await page.locator('#avit-aggregate-result', { hasText: '67,513,188' }).waitFor();
   assert.deepEqual(aggregateRequests[0], { state: '1' });
   assert.match(await page.locator('#avit-aggregate-result').innerText(), /Risk rating.*State.*Substate/s);
+  // Type-ahead: repository suggestions are narrowed by the chosen organization and offered as a datalist.
+  const suggestionRequests = [];
+  await page.route(/\/api\/trackers\/servicenow-avit\/context-values/, route => {
+    const params = Object.fromEntries(new URL(route.request().url()).searchParams);
+    suggestionRequests.push(params);
+    return json(route, { field: params.field, values: params.field === 'repository' ? ['shop-api', 'shop-web'] : ['acme'] });
+  });
+  assert.deepEqual(await page.locator('#avit-aggregate-form [name="findingType"] option').allTextContents(), ['Any', 'Static (SAST)', 'Dynamic (DAST)', 'SCA (dependencies)', 'Secret']);
+  await page.locator('#avit-aggregate-form [name="organization"]').fill('acme');
+  await page.locator('#avit-aggregate-form [name="repository"]').fill('sh');
+  for (let tries = 0; !suggestionRequests.some(request => request.field === 'repository' && request.q === 'sh') && tries < 50; tries++) await page.waitForTimeout(50);
+  await page.waitForFunction(() => document.querySelectorAll('#avit-sg-repository option').length === 2);
+  const repositoryRequests = suggestionRequests.filter(request => request.field === 'repository');
+  assert.deepEqual(repositoryRequests[0], { field: 'repository', organization: 'acme' }, 'focus with an organization chosen lists its repositories');
+  assert.deepEqual(repositoryRequests.at(-1), { field: 'repository', q: 'sh', organization: 'acme' }, 'typing narrows within the organization');
+  await page.locator('#avit-aggregate-form [name="organization"]').fill('');
+  await page.locator('#avit-aggregate-form [name="repository"]').fill('');
   aggregateFails = true;
-  await page.locator('#avit-aggregate-form [name="riskRating"]').fill('2');
+  await page.locator('#avit-aggregate-form [name="riskRating"]').selectOption('2');
   await page.locator('#avit-aggregate-submit').click();
   await page.locator('#avit-aggregate-error', { hasText: 'previous summary remains visible' }).waitFor();
   assert.match(await page.locator('#avit-aggregate-result').innerText(), /67,513,188/, 'a failed aggregate refresh preserves the prior count');
@@ -368,7 +385,7 @@ async function fpReviewRun(page) {
   assert.match(await page.locator('#fpreview-avits').getAttribute('placeholder'), /SCTASK\d+, SCTASK\d+/);
   await page.locator('#fpreview-avits').fill('SCTASK3000001, INC0012345');
   await page.locator('#fpreview-start').click();
-  assert.match(await page.locator('#fpreview-error').innerText(), /Not an AVIT or SCTASK number: INC0012345/);
+  assert.match(await page.locator('#fpreview-error').innerText(), /Not an AVIT, SCTASK, or ISST number: INC0012345/);
   await page.locator('#fpreview-avits').fill(`${FPR.T1}, ${FPR.T2}; ${FPR.BAD}\n${FPR.A4}  ${FPR.A1}`);
   await page.locator('#fpreview-start').click();
 
@@ -431,18 +448,25 @@ async function fpReviewRun(page) {
   assert.equal(await page.locator('#fpreview-run-log .fp-history-entry').count(), runLog);
   assert.deepEqual((await history(`avit-${FPR.A1}`)).length, 11);
 
-  // A reload mid-run: the server stops the batch with its connection, and the restored page says so.
+  // A reload mid-run: the run belongs to the Workbench, so it keeps going and the reloaded page follows it.
   fprArmGate();
   await page.locator('#fpreview-avits').fill(FPR.A3);
   await page.locator('#fpreview-start').click();
   await page.locator(`#avit-${FPR.A3}.active`).waitFor();
   await page.waitForTimeout(300);
   await page.reload(); await page.locator('#connection-status.online').waitFor();
-  await page.locator('#fpreview-run-status', { hasText: 'Interrupted' }).waitFor();
-  assert.match(await page.locator('#fpreview-run-note').innerText(), /no run state is kept on the server/);
-  assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0);
-  assert.equal(await page.locator('#fpreview-start').isDisabled(), false, 'a new run can start after the interruption');
+  await page.locator(`#avit-${FPR.A3}.active`).waitFor();
+  assert.match(await page.locator('#fpreview-run-status').textContent(), /Reviewing/, 'the reloaded page shows the run still in progress');
+  assert.equal(await page.locator('#fpreview-run .fp-run-header .fp-spinner').isVisible(), true);
+  assert.equal(await page.locator('#fpreview-start').isDisabled(), true, 'the reloaded page knows a run is active');
+  // Navigating to another page and back keeps it as well.
+  await page.locator('[data-view="metrics"]').click(); await page.locator('#view-metrics:not([hidden])').waitFor();
+  await page.locator('[data-view="fpreview"]').click();
+  await page.locator(`#avit-${FPR.A3}.active`).waitFor();
   fprGate.release();
+  await page.locator('#fpreview-run-status', { hasText: 'Complete' }).waitFor();
+  assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0);
+  assert.equal(await page.locator('#fpreview-start').isDisabled(), false, 'a new run can start once it finishes');
   await page.unroute(/\/api\/servicenow\/settings$/);
 }
 

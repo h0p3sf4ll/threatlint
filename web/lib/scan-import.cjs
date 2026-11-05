@@ -24,7 +24,6 @@ const { detectPdf, parseInvictiPdf, parseMobsfPdf } = require('./scan-import-pdf
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const MAX_UPLOAD = 25 * 1024 * 1024;
-const MAX_FINDINGS = 500;
 const BATCH_SIZE = 20;
 const REQUEST_LIMIT = 3000;
 const RESPONSE_LIMIT = 4000;
@@ -463,17 +462,18 @@ const PARSERS = {
   'defectdojo:json': parseDojo, 'sonarqube:json': parseSonar,
 };
 
-/** Full parse of a detected report into bounded, redacted findings with stable FP-NNN ids (highest severity first). */
+/** Full parse of a detected report into redacted findings with stable FP-NNN ids (highest severity first). Every finding
+ *  is reviewed: there is no count limit, and the model sees them in batches of BATCH_SIZE. */
 function extract(detected) {
   const parse = PARSERS[`${detected.source}:${detected.format}`];
   if (!parse) fail(`${SOURCES[detected.source] || detected.source} ${detected.format} reports are not supported`);
   const parsed = parse(detected.document);
   const ordered = parsed.findings.map((finding, index) => ({ ...finding, order: index })).sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.order - b.order);
-  const kept = ordered.slice(0, MAX_FINDINGS).map((finding, index) => {
+  const kept = ordered.map((finding, index) => {
     const { order, ...rest } = finding;
     return { ...rest, id: `FP-${String(index + 1).padStart(3, '0')}`, originalId: rest.originalId || `${detected.source}-${order + 1}` };
   });
-  return { ...parsed, source: detected.source, format: detected.format, findings: kept, total: parsed.findings.length, omitted: Math.max(0, parsed.findings.length - MAX_FINDINGS) };
+  return { ...parsed, source: detected.source, format: detected.format, findings: kept, total: parsed.findings.length, omitted: 0 };
 }
 
 async function parseScanReport(buffer, { source = 'auto' } = {}) { return extract(await readReport(buffer, source)); }
@@ -650,13 +650,13 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
     `**Status**: ${triaged ? `Triaged by ${model}` : `NOT TRIAGED — ${NOT_TRIAGED}`}`, `**Date**: ${uploadedAt.toISOString().slice(0, 10)}`,
     `**Input**: ${filename.replace(/[\n|]/g, ' ')} (${scanner} ${parsed.format.toUpperCase()} report, uploaded to the Workbench)`,
     `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
-    `**Source context**: ${workspace ? workspace.repoPath : 'none (scan evidence only)'}`, `**Findings reviewed**: ${parsed.findings.length}${parsed.omitted ? ` of ${parsed.total} (${parsed.omitted} lowest-severity findings omitted)` : ''}`,
+    `**Source context**: ${workspace ? workspace.repoPath : 'none (scan evidence only)'}`, `**Findings reviewed**: ${parsed.findings.length}`,
     `**Reviewed by**: ${AGENT_ID}`, '', '## TIER 1 — EXECUTIVE SUMMARY', '',
     triaged ? `Threatlint triaged ${parsed.findings.length} ${scanner} finding(s) for ${target}: ${summary.tp} true positive, ${summary.fp} false positive, ${summary.ambiguous} ambiguous.${untriaged ? ` ${untriaged} finding(s) could not be triaged and are AMBIGUOUS.` : ''} A scanner label, severity, or certainty alone was not treated as a verified vulnerability.`
       : `No model is configured, so none of the ${parsed.findings.length} ${scanner} finding(s) were triaged; each is AMBIGUOUS (${NOT_TRIAGED}). The scanner output below is evidence to review, not a verdict.`,
     'Report content is redacted scanner evidence: authorization headers, cookies, and secret values keep only their name, length, and character class. No requests were sent to the target and no code was changed.',
     '', '### Finding Summary', '', '| Disposition | Count |', '| --- | --- |', `| TRUE POSITIVE | ${summary.tp} |`, `| FALSE POSITIVE | ${summary.fp} |`, `| AMBIGUOUS | ${summary.ambiguous} |`, '',
-    `Input: ${parsed.total}; reviewed: ${parsed.findings.length}; unreviewed: ${parsed.omitted}${untriaged ? `; not triaged: ${untriaged}` : ''}.`];
+    `Input: ${parsed.total}; reviewed: ${parsed.findings.length}${untriaged ? `; not triaged: ${untriaged}` : ''}.`];
   if (priorities.length) {
     lines.push('', '### Priority Actions', '', '| Priority | Finding / original ID | Action | Severity | Acceptance |', '| --- | --- | --- | --- | --- |');
     priorities.forEach((finding, index) => { const verdict = verdicts.get(finding.id); lines.push(`| P${index < 3 ? 1 : 2} | ${finding.id} / ${cell(finding.originalId)} | ${cell(verdict.proposedFix || finding.title)} | ${verdict.severity} | ${cell(verdict.acceptanceCriteria[0] || 'Rescan is clean and a regression test passes')} |`); });
@@ -664,7 +664,7 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
   lines.push('', '## TIER 2 — DETAILED FINDINGS', '');
   if (!parsed.findings.length) lines.push('The report contains no findings to triage (no findings).');
   for (const finding of parsed.findings) lines.push(findingSection({ ...finding, source: parsed.source }, verdicts.get(finding.id), scanner), '');
-  lines.push('## Residual Risk', '', `${parsed.omitted ? `${parsed.omitted} finding(s) beyond the ${MAX_FINDINGS}-finding limit were not reviewed. ` : ''}${parsed.source === 'invicti' ? 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.' : parsed.source === 'mobsf' ? 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.' : `${scanner} results are static findings as exported; the reviewed source may differ from the scanned revision, and runtime behaviour was not observed.`} Verdicts are advisory and need human confirmation before closing tickets.`);
+  lines.push('## Residual Risk', '', `${parsed.source === 'invicti' ? 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.' : parsed.source === 'mobsf' ? 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.' : `${scanner} results are static findings as exported; the reviewed source may differ from the scanned revision, and runtime behaviour was not observed.`} Verdicts are advisory and need human confirmation before closing tickets.`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -689,7 +689,6 @@ function parseAvitMapping(value) {
   if (Array.isArray(mapping)) mapping = Object.fromEntries(mapping.map(item => [item?.findingId ?? item?.id, item?.avit]));
   if (!mapping || typeof mapping !== 'object') fail('Invalid AVIT mapping');
   const entries = Object.entries(mapping);
-  if (entries.length > MAX_FINDINGS) fail(`Map at most ${MAX_FINDINGS} findings to AVITs`);
   const result = {};
   for (const [key, avit] of entries) {
     if (!key || key.length > 200 || typeof avit !== 'string') fail('Each AVIT mapping entry needs a finding id and an AVIT number');
@@ -722,7 +721,6 @@ function parseReferenceMapping(toolId, value) {
   if (Array.isArray(mapping)) mapping = Object.fromEntries(mapping.map(item => [item?.findingId ?? item?.id, item?.reference]));
   if (!mapping || typeof mapping !== 'object') fail('Invalid reference mapping');
   const entries = Object.entries(mapping);
-  if (entries.length > MAX_FINDINGS) fail(`Map at most ${MAX_FINDINGS} findings`);
   const result = {};
   for (const [key, reference] of entries) {
     if (!key || key.length > 200 || typeof reference !== 'string') fail('Each mapping entry needs a finding id and a reference');
@@ -950,4 +948,4 @@ function createScanImports({ store, reports, override, integrations = {} }) {
 }
 
 module.exports = { createScanImports, parseScanReport, readReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,
-  parseAvitMapping, avitTargets, parseReferenceMapping, groupTargets, CODE_SOURCES, MAX_UPLOAD, MAX_FINDINGS, NOT_TRIAGED, ScanImportError };
+  parseAvitMapping, avitTargets, parseReferenceMapping, groupTargets, CODE_SOURCES, MAX_UPLOAD, NOT_TRIAGED, ScanImportError };

@@ -42,8 +42,16 @@ test('DefectDojo metrics read bounded pages with token confined to the saved HTT
   assert.equal(result.items[0].disposition, 'OPEN');
 });
 
-test('DefectDojo metrics never present an oversized or inconsistent snapshot as complete', async () => {
-  await assert.rejects(metrics.fetchMetrics({ fetchImpl: async () => reply({ count: metrics.MAX_FINDINGS + 1, results: [finding(1)] }) }), /more than 5000/);
+test('DefectDojo metrics read every finding, with no count limit', async () => {
+  const total = 5250;
+  const result = await metrics.fetchMetrics({ fetchImpl: async url => {
+    const offset = Number(new URL(url).searchParams.get('offset'));
+    return reply({ count: total, results: Array.from({ length: Math.min(100, total - offset) }, (_, i) => finding(offset + i + 1)) });
+  } });
+  assert.equal(result.items.length, total, 'past the old 5000 ceiling');
+});
+
+test('DefectDojo metrics never present an inconsistent snapshot as complete', async () => {
   await assert.rejects(metrics.fetchMetrics({ fetchImpl: async (url) => reply(new URL(url).searchParams.get('offset') === '0'
     ? { count: 2, results: [finding(1)] } : { count: 3, results: [finding(2)] }) }), /changed during metrics sync/);
   await assert.rejects(metrics.fetchMetrics({ fetchImpl: async () => reply({ count: 2, results: [finding(1), finding(1)] }) }), /changed during metrics sync/);

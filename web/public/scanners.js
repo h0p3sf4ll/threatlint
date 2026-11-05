@@ -83,12 +83,12 @@
       grid.append(field('Product id', input('dojo-filter-product', 'e.g. 3', { inputMode: 'numeric' })), field('Engagement id', input('dojo-filter-engagement', 'optional', { inputMode: 'numeric' })),
         field('Test id', input('dojo-filter-test', 'optional', { inputMode: 'numeric' })), field('Tags', input('dojo-filter-tags', 'comma-separated')),
         field('Severity', input('dojo-filter-severity', 'Critical, High')), field('Active', select('dojo-filter-active', [['true', 'Active only'], ['', 'Any'], ['false', 'Inactive only']])),
-        field('Verified', select('dojo-filter-verified', [['', 'Any'], ['false', 'Unverified only'], ['true', 'Verified only']])), field('Limit', input('dojo-filter-limit', '50', { inputMode: 'numeric' })));
+        field('Verified', select('dojo-filter-verified', [['', 'Any'], ['false', 'Unverified only'], ['true', 'Verified only']])), field('Limit', input('dojo-filter-limit', 'All matching', { inputMode: 'numeric' })));
     } else {
       grid.append(field('Project key', input('sonar-filter-project', 'e.g. web')), field('Branch', input('sonar-filter-branch', 'main branch when blank')),
         field('Pull request', input('sonar-filter-pullRequest', 'optional')), field('Organization', input('sonar-filter-organization', 'SonarCloud only')),
         field('Types', input('sonar-filter-types', 'VULNERABILITY, SECURITY_HOTSPOT')), field('Severities', input('sonar-filter-severities', 'BLOCKER, CRITICAL')),
-        field('Statuses', input('sonar-filter-statuses', 'OPEN, CONFIRMED, REOPENED / TO_REVIEW')), field('Limit', input('sonar-filter-limit', '50', { inputMode: 'numeric' })));
+        field('Statuses', input('sonar-filter-statuses', 'OPEN, CONFIRMED, REOPENED / TO_REVIEW')), field('Limit', input('sonar-filter-limit', 'All matching', { inputMode: 'numeric' })));
     }
     return grid;
   }
@@ -118,7 +118,7 @@
     const start = button(`Review ${spec.label} findings`, 'button primary', null, 'submit'); start.id = ids.start(tool);
     const row = el('div', 'input-row'); row.append(cancel, start);
     actions.append(el('span', 'small subtle', 'Uses the model chosen in Settings. Nothing is posted until you confirm each finding.'), row);
-    form.append(label, refs, el('p', 'field-note small subtle', `${tool === 'dojo' ? 'Numbers or DOJO-<id>' : 'Issue keys, or SONAR-HOTSPOT-<key> for hotspots'}, separated by commas, spaces, or new lines (up to 50).`), filters, outcomes, connection, error, actions);
+    form.append(label, refs, el('p', 'field-note small subtle', `${tool === 'dojo' ? 'Numbers or DOJO-<id>' : 'Issue keys, or SONAR-HOTSPOT-<key> for hotspots'}, separated by commas, spaces, or new lines. No limit; each is reviewed in turn.`), filters, outcomes, connection, error, actions);
     form.addEventListener('submit', event => { event.preventDefault(); start_(tool); });
     const results = el('div', 'fpreview-results'); results.id = ids.results(tool); results.setAttribute('aria-live', 'polite');
     container.replaceChildren(form, results);

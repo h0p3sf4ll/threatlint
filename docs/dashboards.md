@@ -35,8 +35,14 @@ The all-AVIT filters are:
 - **Organization**, **Project**, **Repository**, **Branch** — the AVIT's source-control context.
   These resolve to your instance's own AVIT columns through the form labels in `sys_documentation`
   (Organization Name, Project Name, Repository, Project Branch); if your instance does not expose a
-  column for one of them, the summary says so instead of filtering on a guessed field.
-- **Finding type** — Static (SAST), SCA, or Secret, matched against the Security Finding Source.
+  column for one of them, the summary says so instead of filtering on a guessed field. As you type
+  (two characters, or on focus once a parent filter is set), each field offers a dropdown of matching
+  values, most common first, computed server-side with a ServiceNow group-by query; no individual AVITs
+  are downloaded. Suggestions cascade: repositories are limited to the chosen organization, branches to
+  the chosen repository. They are best-effort and never block typing a value the list does not include.
+- **Finding type** — Static (SAST), SCA, or Secret, matched against the Security Finding Source; or
+  Dynamic (DAST), which matches AVITs whose source is Invicti. ServiceNow often hides Invicti AVITs
+  from OAuth clients, so a DAST count covers only the Invicti records your account can read.
 - **Risk rating** and **State** — plain-English dropdowns (Critical / High / Medium / Low / None,
   and Open / Resolved / Closed); you no longer type ServiceNow's numeric choice values.
 

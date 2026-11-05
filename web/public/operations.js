@@ -192,8 +192,13 @@
     return {
       id: idOf(value.id), provider: text(value.provider), label: redactText(value.label),
       account: redactText(value.account), host: redactText(value.host),
+      // A saved source (Azure DevOps PAT or GitHub App) that is configured but not currently live is surfaced
+      // as connected:false so the user sees it rather than it silently disappearing.
+      connected: value.connected !== false, source: redactText(value.source), reason: redactText(value.reason),
     };
   }
+  // Only live connections can be browsed; a saved-but-unconnected row has a synthetic id the runner rejects.
+  function firstLiveId() { return scm.connections.find(item => item.connected !== false)?.id || ''; }
   function sourceLocked() { return scm.checkout || scm.connecting || scm.connectionBusy; }
   function syncSourceControls() {
     const locked = sourceLocked();
@@ -208,7 +213,11 @@
     $('scm-branch').disabled = locked || scm.branchBusy || !scm.branches.length;
     $('scm-checkout').disabled = locked || scm.branchBusy || !scm.repository || !$('scm-branch').value;
     $('scm-checkout').textContent = scm.checkout ? 'Preparing checkout…' : 'Check out & open workspace →';
-    $('scm-connect').textContent = scm.connecting ? 'Connecting…' : 'Connect source ↗';
+    const liveCount = scm.connections.filter(item => item.connected !== false).length;
+    $('scm-connect').textContent = scm.connecting ? 'Connecting…' : (liveCount ? 'Add another connection ↗' : 'Connect source ↗');
+    const countPill = $('scm-repository-count');
+    countPill.classList.toggle('is-running', scm.repositoryBusy);
+    countPill.textContent = scm.repositoryBusy ? 'LOADING…' : (scm.connectionId ? `${scm.repositories.length} LOADED` : 'NO CONNECTION');
     $('scm-repositories').setAttribute('aria-busy', String(scm.repositoryBusy));
     $('scm-connections').setAttribute('aria-busy', String(scm.refreshing || scm.connectionBusy));
     for (const node of $('scm-connections').querySelectorAll('button')) node.disabled = locked;
@@ -221,21 +230,49 @@
     $('scm-organization').required = azure;
     $('scm-token').value = '';
   }
+  function liveConnectionRow(item) {
+    const row = el('li', `scm-connection${item.id === scm.connectionId ? ' selected' : ''}`);
+    const select = button('', 'scm-connection-select', () => selectConnection(item.id));
+    select.setAttribute('aria-pressed', String(item.id === scm.connectionId));
+    const azure = item.provider !== 'github';
+    const copy = el('span', 'scm-connection-copy');
+    copy.append(el('strong', '', item.label || (azure ? 'Azure DevOps' : 'GitHub')), el('small', '', [item.account, item.host].filter(Boolean).join(' · ') || 'Session connection'));
+    select.append(el('span', `scm-provider-mark${azure ? ' azure' : ''}`, azure ? 'AZ' : 'GH'), copy);
+    row.append(select, button('×', 'icon-button', () => disconnect(item.id), `Disconnect ${item.label || item.account || 'source connection'}`));
+    return row;
+  }
+  // A configured-but-not-live source (saved PAT / GitHub App that could not be used) stays visible, marked and
+  // non-selectable, with a Reconnect affordance — it never silently vanishes from the list.
+  function savedConnectionRow(item) {
+    const row = el('li', 'scm-connection saved');
+    const azure = item.provider !== 'github';
+    const info = el('span', 'scm-connection-select');
+    const copy = el('span', 'scm-connection-copy');
+    copy.append(el('strong', '', item.label || (azure ? 'Azure DevOps' : 'GitHub')), el('small', '', `${item.source || 'Saved'} · not connected${item.reason ? ` — ${item.reason}` : ''}`));
+    info.append(el('span', `scm-provider-mark${azure ? ' azure' : ''}`, azure ? 'AZ' : 'GH'), copy);
+    row.append(info, button('Reconnect', 'text-button scm-reconnect', () => reconnectSaved(item), `Reconnect ${item.label || item.account || 'saved source'}`));
+    return row;
+  }
+  function reconnectSaved(item) {
+    if (sourceLocked()) return;
+    const azure = item.provider !== 'github';
+    $('scm-provider').value = azure ? 'azure-devops' : 'github';
+    providerChanged();
+    if (azure) $('scm-organization').value = item.account || '';
+    $('scm-token').focus();
+    status('scm-status', item.source === 'GitHub App'
+      ? 'Reconnect the GitHub App in Settings → GitHub, or paste a repository-read token above to connect it now.'
+      : `Re-enter a token for ${item.label || item.account} above to reconnect it. The saved credential could not be used.`);
+  }
   function renderConnections() {
     const list = $('scm-connections');
     list.replaceChildren();
-    for (const item of scm.connections) {
-      const row = el('li', `scm-connection${item.id === scm.connectionId ? ' selected' : ''}`);
-      const select = button('', 'scm-connection-select', () => selectConnection(item.id));
-      select.setAttribute('aria-pressed', String(item.id === scm.connectionId));
-      const azure = item.provider !== 'github';
-      const copy = el('span', 'scm-connection-copy');
-      copy.append(el('strong', '', item.label || (azure ? 'Azure DevOps' : 'GitHub')), el('small', '', [item.account, item.host].filter(Boolean).join(' · ') || 'Session connection'));
-      select.append(el('span', `scm-provider-mark${azure ? ' azure' : ''}`, azure ? 'AZ' : 'GH'), copy);
-      row.append(select, button('×', 'icon-button', () => disconnect(item.id), `Disconnect ${item.label || item.account || 'source connection'}`));
-      list.append(row);
-    }
+    for (const item of scm.connections) list.append(item.connected === false ? savedConnectionRow(item) : liveConnectionRow(item));
     if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above, save an Azure DevOps PAT in Settings → Azure DevOps, or a GitHub App in Settings → GitHub.'));
+    const liveCount = scm.connections.filter(item => item.connected !== false).length;
+    const state = $('scm-connect-state');
+    state.hidden = !liveCount;
+    if (liveCount) state.textContent = `${liveCount} CONNECTED`;
     syncSourceControls();
   }
   async function refreshConnections() {
@@ -250,9 +287,13 @@
       scm.initialized = true;
       const selected = scm.connections.some(item => item.id === scm.connectionId);
       renderConnections();
-      if (!selected) selectConnection(scm.connections[0]?.id || '');
+      const liveId = firstLiveId();
+      const unconnected = scm.connections.filter(item => item.connected === false).length;
+      if (!selected) selectConnection(liveId);
       else status('scm-status', 'Session connections refreshed. Select a repository to continue.');
       if (!scm.connections.length) status('scm-status', 'No source connections yet. Connect an account above, or save an Azure DevOps PAT in Settings to connect it automatically.');
+      // Without a live connection nothing else replaces the busy "Loading…" status, so always settle it here.
+      else if (!liveId) status('scm-status', `${unconnected} saved source${unconnected === 1 ? '' : 's'} could not connect. Use Reconnect under Connected accounts, or add a token above.`, 'error');
     } catch {
       status('scm-status', 'Source connections could not be loaded. The local runner may not support source connections yet; use Refresh to retry.', 'error');
     } finally { scm.refreshing = false; syncSourceControls(); }
@@ -275,7 +316,9 @@
       const payload = await api('/api/scm/connections', { method: 'POST', body: { provider, token, ...(provider === 'azure-devops' ? { organization } : {}) } });
       const item = connection(payload);
       if (!item) throw new Error('Invalid connection.');
-      scm.connections = [...scm.connections.filter(existing => existing.id !== item.id), item];
+      // A reconnected saved source replaces its "not connected" row instead of appearing beside it.
+      scm.connections = [...scm.connections.filter(existing => existing.id !== item.id
+        && !(existing.connected === false && existing.provider === item.provider && existing.account.toLowerCase() === item.account.toLowerCase())), item];
       scm.initialized = true;
       scm.connecting = false;
       renderConnections();
@@ -292,7 +335,7 @@
       await api(`/api/scm/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
       scm.connections = scm.connections.filter(item => item.id !== id);
       scm.connectionBusy = false;
-      if (scm.connectionId === id) selectConnection(scm.connections[0]?.id || '');
+      if (scm.connectionId === id) selectConnection(firstLiveId());
       renderConnections();
       status('scm-status', 'Source disconnected. Its existing checkout, if any, was not removed.');
     } catch {
@@ -352,8 +395,7 @@
     const list = $('scm-repositories');
     list.replaceChildren(...scm.repositories.map(repositoryRow));
     if (!scm.repositories.length) list.append(repositoriesEmptyState());
-    $('scm-repository-count').textContent = scm.connectionId ? `${scm.repositories.length} LOADED` : 'NO CONNECTION';
-    syncSourceControls();
+    syncSourceControls();  // owns the repository-count pill (LOADING / N LOADED / NO CONNECTION)
   }
   function repositoryItem(item) {
     return { id: idOf(item.id), name: redactText(item.name), fullName: redactText(item.fullName), defaultBranch: text(item.defaultBranch), webUrl: text(item.webUrl) };

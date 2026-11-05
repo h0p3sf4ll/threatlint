@@ -38,7 +38,14 @@ __all__ = ["IntegrationError", "Integration", "ConnectedIntegration", "Reviewabl
 
 DISPOSITIONS = ("TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS")
 HTTP_TIMEOUT_S = 120
-MAX_BY_ID = 50
+
+
+def search_limit(filters: dict) -> float:
+    """How many findings a filtered search returns: ``--limit N`` when given, otherwise every match (no cap)."""
+    limit = int(filters.get("limit") or 0)
+    if limit < 0:
+        raise IntegrationError("--limit must be a positive number, or omitted to fetch every matching finding")
+    return limit or float("inf")
 
 
 class IntegrationError(RuntimeError):

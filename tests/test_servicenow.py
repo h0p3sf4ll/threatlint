@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import urllib.parse
+
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -15,12 +17,32 @@ from threatlint.servicenow import ServiceNowError
 INSTANCE = "https://example.service-now.com"
 
 
-def test_avit_numbers_are_normalized_and_bounded():
+def test_avit_numbers_are_normalized_and_unlimited():
     assert servicenow.parse_avit_numbers(["avit000000000001234, AVIT000000000001235", "AVIT000000000001234"]) == ["AVIT000000000001234", "AVIT000000000001235"]
     with pytest.raises(ServiceNowError, match="Not an AVIT"):
         servicenow.parse_avit_numbers("CVE-2024-0001")
-    with pytest.raises(ServiceNowError, match="at most"):
-        servicenow.parse_avit_numbers([f"AVIT{i:015d}" for i in range(51)])
+    assert len(servicenow.parse_avit_numbers([f"AVIT{i:015d}" for i in range(1000)])) == 1000, "no count limit"
+
+
+def test_long_avit_lists_are_fetched_in_chunks(monkeypatch):
+    numbers = [f"AVIT{9200000 + i}" for i in range(120)]
+    chunks = []
+
+    def fake(url, **_):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if "sysrule_view" in url:
+            return {"result": []}
+        if "sysparm_query" not in query:
+            return {"result": []}
+        listed = query["sysparm_query"][0].removeprefix("numberIN").split(",")
+        chunks.append(len(listed))
+        return {"result": [{"number": {"value": n, "display_value": n}, "sys_id": {"value": n[-8:].rjust(32, "0")}} for n in listed]}
+
+    monkeypatch.setattr(servicenow, "_request_json", fake)
+    monkeypatch.setattr(servicenow, "field_labels", lambda *_: {})
+    items, missing, _excluded = servicenow.fetch_avits(INSTANCE, "token", numbers)
+    assert chunks == [50, 50, 20], "no single query carries more than one chunk"
+    assert [item["fields"]["number"] for item in items] == numbers and missing == []
 
 
 @pytest.mark.parametrize("bad", ["http://example.service-now.com", "https://u:p@example.service-now.com",

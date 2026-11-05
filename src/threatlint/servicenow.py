@@ -35,7 +35,12 @@ ALLOWED_HOSTS_ENV = "THREATLINT_SNOW_ALLOWED_HOSTS"
 SERVICENOW_DOMAINS = (".service-now.com", ".servicenowservices.com")
 
 AVIT_TABLE = "sn_vul_app_vulnerable_item"
-MAX_AVITS = 50
+# AVIT numbers per ServiceNow numberIN query. Not a review limit: longer lists are fetched in several queries.
+AVIT_QUERY_CHUNK = 50
+
+
+def _chunks(values: list[str], size: int = AVIT_QUERY_CHUNK) -> list[list[str]]:
+    return [values[index:index + size] for index in range(0, len(values), size)]
 # AVIT numbers are "AVIT" plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
 _AVIT_PATTERN = re.compile(r"AVIT\d{7,15}")
 AVIT_EXAMPLE = "AVIT000000095938462"
@@ -75,8 +80,6 @@ def parse_avit_numbers(values) -> list[str]:
     numbers = list(dict.fromkeys(tokens))
     if not numbers:
         raise ServiceNowError("Enter at least one AVIT number")
-    if len(numbers) > MAX_AVITS:
-        raise ServiceNowError(f"Review at most {MAX_AVITS} AVITs per report")
     return numbers
 
 
@@ -185,9 +188,10 @@ def view_members(instance: str, token: str, numbers: list[str]) -> set[str] | No
         return None
     members: set[str] = set()
     for condition in conditions:
-        query = urllib.parse.urlencode({"sysparm_query": f"numberIN{','.join(numbers)}^{condition}", "sysparm_fields": "number", "sysparm_limit": str(len(numbers))})
-        rows = _request_json(f"{instance}/api/now/table/{AVIT_TABLE}?{query}", headers=headers).get("result", [])
-        members |= {_field_value(row.get("number")) for row in rows if isinstance(row, dict)}
+        for chunk in _chunks(numbers):
+            query = urllib.parse.urlencode({"sysparm_query": f"numberIN{','.join(chunk)}^{condition}", "sysparm_fields": "number", "sysparm_limit": str(len(chunk))})
+            rows = _request_json(f"{instance}/api/now/table/{AVIT_TABLE}?{query}", headers=headers).get("result", [])
+            members |= {_field_value(row.get("number")) for row in rows if isinstance(row, dict)}
     return members
 
 
@@ -218,10 +222,13 @@ def avit_context(fields: dict[str, str], labels: dict[str, str] | None = None) -
 
 def fetch_avits(instance: str, token: str, numbers: list[str]) -> tuple[list[dict], list[str], list[str]]:
     """CodeSecurity-view AVIT records with references and repository context, numbers not found, and out-of-scope numbers."""
-    query = urllib.parse.urlencode({"sysparm_query": f"numberIN{','.join(numbers)}", "sysparm_display_value": "all",
-                                    "sysparm_limit": str(len(numbers))})
     headers = {"Authorization": f"Bearer {token}"}
-    rows = _request_json(f"{instance}/api/now/table/{AVIT_TABLE}?{query}", headers=headers).get("result", [])
+    rows: list = []
+    for chunk in _chunks(numbers):
+        query = urllib.parse.urlencode({"sysparm_query": f"numberIN{','.join(chunk)}", "sysparm_display_value": "all",
+                                        "sysparm_limit": str(len(chunk))})
+        result = _request_json(f"{instance}/api/now/table/{AVIT_TABLE}?{query}", headers=headers).get("result", [])
+        rows += result if isinstance(result, list) else []
     labels = field_labels(instance, token) if rows else {}
     items = []
     for row in rows if isinstance(rows, list) else []:

@@ -26,6 +26,7 @@ const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/ru
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
 const { prepareProcess } = require('./lib/system-env.cjs');
 const { createAvitBatch } = require('./lib/avit-batch.cjs');
+const { createAvitRuns } = require('./lib/avit-runs.cjs');
 const { registerTriageRoutes } = require('./lib/routes/triage.cjs');
 const { registerSidekickRoutes } = require('./lib/routes/sidekick.cjs');
 const { registerScanImportRoutes, scanImportBodyParsers } = require('./lib/routes/scan-import.cjs');
@@ -100,12 +101,14 @@ function createWorkbench(options = {}) {
   app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413 ? 'Request exceeds the 7 MB limit' : 'Request could not be processed' }));
 
   const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
-  const wss = attachSocket(server, { pipeline, conversations, avitBatch, scannerBatch });
+  const avitRuns = createAvitRuns(avitBatch);
+  const wss = attachSocket(server, { pipeline, conversations, avitRuns, scannerBatch });
   // Scan-import progress goes to every open Workbench connection; polling GET /api/scan-import/:id works too.
   const unsubscribe = scanImports.subscribe(event => { for (const socket of wss.clients) if (socket.readyState === 1) socket.send(JSON.stringify(event)); });
 
   async function close() {
     pipeline.abortAll();
+    avitRuns.close();
     unsubscribe();
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();

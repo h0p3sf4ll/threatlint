@@ -318,8 +318,13 @@ include that table and its attachments.
 
 ## Workbench: Finding triage
 
-The Workbench processes up to 50 AVITs sequentially, including AVITs expanded from
-SCTASKs and ISSTs. Each card shows fetch, checkout, model review, report, and
+The Workbench reviews any number of AVITs, one at a time, including AVITs expanded
+from SCTASKs and ISSTs (an ISST may name any number). The run belongs to the Workbench,
+not the page: leaving Finding triage, reloading, closing the tab, or a dropped connection
+does not stop it. Returning, from any tab, replays the run's history and continues with
+live progress. One run is active at a time; **Stop** works from any tab, and quitting the
+Workbench ends the run. The headless CLI (`threatlint avit headless`) has no AVIT limit
+either; long lists are fetched from ServiceNow in batches. Each card shows fetch, checkout, model review, report, and
 write-back. One failure does not stop the remaining AVITs. Missing repositories
 trigger an ADO removal check before a no-report closure is attempted. A SCTASK is
 closed once its AVITs are decided; an ISST gets its true-positive reports attached

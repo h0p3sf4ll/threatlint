@@ -25,12 +25,13 @@ import os
 import re
 import urllib.parse
 
-from threatlint.integrations.common import MAX_BY_ID, IntegrationError, context_from_repository_url, request
+from threatlint.integrations.common import IntegrationError, context_from_repository_url, request, search_limit
 from threatlint.integrations.scanning.base import ScanningTool
 
 _KEY = r"[A-Za-z0-9_-]{6,64}"
 _REFERENCE = re.compile(rf"(?:(SONAR-HOTSPOT-|HOTSPOT-)|(?:SONAR-)?)({_KEY})", re.IGNORECASE)
-MAX_SEARCH = 500
+# SonarQube's search APIs refuse to page past 10,000 results (p * ps <= 10000); that is the only stop.
+_API_RESULT_WINDOW = 10_000
 _TYPES = ("VULNERABILITY", "BUG", "CODE_SMELL", "SECURITY_HOTSPOT")
 _SEVERITIES = ("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
 _HINTS = {401: " Check the SonarQube token.", 403: " The token lacks permission (Browse to read; Administer Issues / Administer Security Hotspots to change status).",
@@ -89,8 +90,6 @@ class SonarQube(ScanningTool):
         references = list(dict.fromkeys(references))
         if not references:
             raise IntegrationError("Enter at least one SonarQube issue or hotspot key")
-        if len(references) > MAX_BY_ID:
-            raise IntegrationError(f"Review at most {MAX_BY_ID} SonarQube findings per report")
         return references
 
     @staticmethod
@@ -228,7 +227,7 @@ class SonarQube(ScanningTool):
         parser.add_argument("--type", action="append", choices=_TYPES, help="Issue type (repeatable; default VULNERABILITY and SECURITY_HOTSPOT)")
         parser.add_argument("--severity", action="append", choices=_SEVERITIES, help="Issue severity (repeatable)")
         parser.add_argument("--status", action="append", help="Issue status (default OPEN, CONFIRMED, REOPENED) or hotspot status (default TO_REVIEW)")
-        parser.add_argument("--limit", type=int, default=MAX_BY_ID, help=f"Most findings to fetch (default {MAX_BY_ID}, at most {MAX_SEARCH})")
+        parser.add_argument("--limit", type=int, default=0, help="Most findings to fetch (default: every matching finding)")
 
     def filters(self, args) -> dict:
         values = {"project": getattr(args, "project", None), "branch": getattr(args, "branch", None), "pullRequest": getattr(args, "pull_request", None),
@@ -240,9 +239,7 @@ class SonarQube(ScanningTool):
         project = filters.get("project")
         if not project or not re.fullmatch(r"[\w.:-]{1,400}", str(project)):
             raise IntegrationError("Pass --project with the SonarQube project key (or pass issue keys)")
-        limit = int(filters.get("limit") or MAX_BY_ID)
-        if not 1 <= limit <= MAX_SEARCH:
-            raise IntegrationError(f"--limit must be 1 to {MAX_SEARCH}")
+        limit = search_limit(filters)
         types = list(filters.get("types") or ["VULNERABILITY", "SECURITY_HOTSPOT"])
         scope = {key: str(filters[key]) for key in ("branch", "pullRequest", "organization") if filters.get(key)}
         cache: dict = {}
@@ -252,7 +249,7 @@ class SonarQube(ScanningTool):
         if issue_types:
             params = {"componentKeys": project, "types": ",".join(issue_types), "statuses": ",".join(s for s in statuses if s != "TO_REVIEW" and s != "REVIEWED") or "OPEN,CONFIRMED,REOPENED",
                       **({"severities": ",".join(filters["severities"])} if filters.get("severities") else {}), **scope}
-            for page in range(1, 21):
+            for page in range(1, _API_RESULT_WINDOW // 100 + 1):
                 payload = self._get(url, token, "/api/issues/search", {**params, "p": str(page), "ps": "100"})
                 components = self._components(payload)
                 rows = [row for row in payload.get("issues", []) if isinstance(row, dict) and row.get("key")]
@@ -263,7 +260,7 @@ class SonarQube(ScanningTool):
         if "SECURITY_HOTSPOT" in types and len(items) < limit:
             status = next((s for s in statuses if s in ("TO_REVIEW", "REVIEWED")), "TO_REVIEW")
             params = {"projectKey": project, "status": status, **scope}
-            for page in range(1, 21):
+            for page in range(1, _API_RESULT_WINDOW // 100 + 1):
                 payload = self._get(url, token, "/api/hotspots/search", {**params, "p": str(page), "ps": "100"})
                 components = self._components(payload)
                 rows = [row for row in payload.get("hotspots", []) if isinstance(row, dict) and row.get("key")]
@@ -271,7 +268,7 @@ class SonarQube(ScanningTool):
                 total = int((payload.get("paging") or {}).get("total", 0) or 0)
                 if len(items) >= limit or len(rows) < 100 or page * 100 >= total:
                     break
-        return items[:limit]
+        return items if limit == float("inf") else items[:int(limit)]
 
     # Writes -----------------------------------------------------------------
     def describe(self, disposition: str) -> str:

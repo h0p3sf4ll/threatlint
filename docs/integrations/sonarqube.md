@@ -48,7 +48,7 @@ Replace the sample URL/key with an authorized issue:
 
 References are `SONAR-<issue-key>` and `SONAR-HOTSPOT-<hotspot-key>`. A bare key is tried as an
 issue, then a hotspot. Preserve that full reference in the report's **Original finding** field.
-Explicit lists allow up to 50 findings.
+Explicit lists have no limit.
 
 ```bash
 threatlint sonar fetch --project web --branch develop --severity CRITICAL -o sonar.md
@@ -56,7 +56,7 @@ threatlint sonar fetch --project web --branch develop --severity CRITICAL -o son
 
 Search filters: required `--project`; `--branch` or `--pull-request`;
 `--organization` for SonarCloud; repeatable `--type`, `--severity`, `--status`; `--limit`
-(default 50, maximum 500). Types default to `VULNERABILITY` and `SECURITY_HOTSPOT`.
+(default: every matching finding, up to SonarQube's own 10,000-result search window per type). Types default to `VULNERABILITY` and `SECURITY_HOTSPOT`.
 Issues default to `OPEN,CONFIRMED,REOPENED`; hotspots to `TO_REVIEW`.
 
 File/line: `components[].path` (else suffix after `project:`), `line` / `textRange`.
@@ -108,7 +108,7 @@ For a status-neutral note, use
 
 **Triage a scan report** also accepts `/api/issues/search` and `/api/hotspots/search` JSON exports;
 posting maps each imported result back to its issue/hotspot.
-Workbench review batches allow at most 50 findings; narrow filters if more match.
+Workbench review batches have no limit: every listed or matching finding is reviewed in turn.
 See [Workbench import limits](../workbench.md#triaging-a-scan-report).
 
 ## API calls

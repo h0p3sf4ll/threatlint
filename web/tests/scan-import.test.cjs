@@ -94,10 +94,12 @@ describe('Scan report parsing', () => {
     assert.ok(parsed.findings.some(finding => finding.originalId.startsWith('certificate:')));
     assert.deepEqual(parsed.findings.map(finding => finding.id), parsed.findings.map((_, index) => `FP-${String(index + 1).padStart(3, '0')}`));
   });
-  it('caps the finding count and reports what was omitted', async () => {
-    const many = { app_name: 'Big', package_name: 'com.example.big', code_analysis: { findings: Object.fromEntries(Array.from({ length: scan.MAX_FINDINGS + 7 }, (_, i) => [`rule_${i}`, { files: {}, metadata: { description: 'x', severity: 'info' } }])) } };
+  it('keeps every finding, with no count limit', async () => {
+    const many = { app_name: 'Big', package_name: 'com.example.big', code_analysis: { findings: Object.fromEntries(Array.from({ length: 1207 }, (_, i) => [`rule_${i}`, { files: {}, metadata: { description: 'x', severity: 'info' } }])) } };
     const parsed = await scan.parseScanReport(Buffer.from(JSON.stringify(many)));
-    assert.equal(parsed.findings.length, scan.MAX_FINDINGS); assert.equal(parsed.omitted, 7);
+    assert.equal(parsed.findings.length, 1207); assert.equal(parsed.omitted, 0);
+    assert.equal(parsed.findings.at(-1).id, 'FP-1207', 'ids keep counting past 999');
+    assert.equal(new Set(parsed.findings.map(finding => finding.id)).size, 1207, 'every id is unique');
   });
 });
 

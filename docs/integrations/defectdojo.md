@@ -58,8 +58,8 @@ threatlint dojo fetch --product 3 --active true --severity High -o dojo.md
 ```
 
 Filters: `--product`, `--engagement`, `--test`, `--active`, `--verified`, repeatable
-`--severity` / `--tag`, and `--limit` (default 50, maximum 500). Searches require product,
-engagement, test, or tag scope; explicit ID lists allow up to 50.
+`--severity` / `--tag`, and `--limit` (default: every matching finding). Searches require product,
+engagement, test, or tag scope. Explicit ID lists have no limit.
 
 ### Review target mapping
 
@@ -128,7 +128,7 @@ repository. DefectDojo and Semgrep outcomes are separate; inspect both.
 
 **Triage a scan report** also accepts `/api/v2/findings/` JSON exports. Imported findings can post
 back to their original references or explicit mapped references after confirmation.
-Workbench review batches allow at most 50 findings; narrow filters if more match.
+Workbench review batches have no limit: every listed or matching finding is reviewed in turn.
 
 ## API calls
 

@@ -28,8 +28,15 @@ describe('Saved Azure DevOps PATs', () => {
   it('connects each organization with a saved PAT once, and never returns the PAT', async () => {
     const first = await (await fetch(`${base}/api/scm/connections`)).text();
     const second = await (await fetch(`${base}/api/scm/connections`)).json();
-    assert.deepEqual(connected.map(c => [c.provider, c.organization]), [['azure-devops', 'Contoso']], 'connected once; a missing PAT is skipped');
-    assert.equal(second.length, 1);
+    assert.deepEqual(connected.map(c => [c.provider, c.organization]), [['azure-devops', 'Contoso']], 'connected once; a failing PAT is not retried on this pass');
     assert.ok(!first.includes('p'.repeat(20)), 'the PAT is never in a response');
+    // The working org is live; the org whose PAT failed stays visible as not-connected rather than disappearing.
+    const contoso = second.find(c => c.account === 'contoso');
+    const broken = second.find(c => c.account === 'broken');
+    assert.ok(contoso && contoso.connected === true, 'the connected org is live');
+    assert.ok(broken && broken.connected === false, 'a saved org whose PAT fails is still listed, marked not connected');
+    assert.equal(broken.source, 'Saved PAT');
+    assert.equal(broken.reason, 'saved PAT could not be read', 'the failure reason is a fixed phrase, never CLI or provider text');
+    assert.equal(second.length, 2);
   });
 });
