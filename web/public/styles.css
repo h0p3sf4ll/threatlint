@@ -355,9 +355,17 @@
 .metrics-saved-scope summary{cursor:pointer;color:var(--accent)}
 .metrics-saved-scope code{display:block;margin-top:5px;padding:7px;border-radius:5px;background:#111c18;font:11px var(--mono);overflow-wrap:anywhere;white-space:pre-wrap}
 .avit-aggregate{padding:16px 18px;margin-bottom:18px}
-.avit-aggregate-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px 12px}
-.avit-aggregate-filters label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--subtle)}
-.avit-aggregate-filters input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:13px}
+.avit-aggregate-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px 11px}
+.avit-aggregate-filters label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--subtle)}
+.avit-aggregate-filters label>span{font-weight:600;letter-spacing:.02em;text-transform:uppercase;font-size:10.5px}
+.avit-aggregate-filters input,.avit-aggregate-filters select{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:13px}
+.avit-aggregate-filters select{appearance:none;cursor:pointer;background-image:linear-gradient(45deg,transparent 50%,var(--subtle) 50%),linear-gradient(135deg,var(--subtle) 50%,transparent 50%);background-position:calc(100% - 15px) calc(50% - 2px),calc(100% - 10px) calc(50% - 2px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:28px}
+.avit-aggregate-filters input:focus,.avit-aggregate-filters select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 25%,transparent)}
+.avit-aggregate-advanced{margin-top:10px}
+.avit-aggregate-advanced>summary{cursor:pointer;font-size:12px;color:var(--subtle);font-weight:600;width:fit-content;list-style:none;padding:3px 0}
+.avit-aggregate-advanced>summary::before{content:"▸ ";font-size:10px}
+.avit-aggregate-advanced[open]>summary::before{content:"▾ "}
+.avit-aggregate-advanced[open]>summary{margin-bottom:9px}
 .avit-aggregate-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
 .avit-aggregate-actions span{margin-right:auto}
 .avit-aggregate-result{margin-top:16px}

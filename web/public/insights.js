@@ -8,7 +8,8 @@
   const CHART_LABELS = { kpi: 'Stat tile', bar: 'Column chart', hbar: 'Bar chart', line: 'Line over time', donut: 'Donut', table: 'Table', heatmap: 'Heatmap' };
   const DIMENSION_LABELS = { severity: 'Severity', agent: 'Specialist / tracker', category: 'Discipline', workspace: 'Workspace', day: 'Day', week: 'Week', disposition: 'Disposition', confidence: 'Confidence', source: 'Source', rule: 'Finding type' };
   const TRACKER_SETTINGS = { 'servicenow-avit': 'servicenow', defectdojo: 'defectdojo' };
-  const AGGREGATE_FILTERS = ['riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo'];
+  const AGGREGATE_FILTERS = ['scm', 'organization', 'project', 'repository', 'branch', 'findingType',
+    'riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo'];
   const state = { schema: null, dashboards: [], current: 'default', source: 'all', editing: null, help: null, loaded: false,
     avitScope: { type: 'avits', avits: '', query: '' }, avitScopeTouched: false,
     avitAggregate: null, aggregateDirty: false, avitConfigured: false };
@@ -141,7 +142,14 @@
       const value = form.elements.namedItem(key)?.value.trim();
       if (value) filters[key] = value;
     }
+    if (filters.scm !== 'ado') delete filters.project;  // Project is an Azure DevOps-only field.
     return filters;
+  }
+  function syncScmFields() {
+    const form = $('avit-aggregate-form');
+    const show = (form.elements.namedItem('scm')?.value || '') === 'ado';
+    $('avit-project-field').hidden = !show;
+    if (!show && form.elements.namedItem('project')) form.elements.namedItem('project').value = '';
   }
   function updateAggregateNote() {
     const note = $('avit-aggregate-dirty');
@@ -161,12 +169,23 @@
     for (const row of values) { const tr = el('tr'); tr.append(el('td', '', row.key || '(blank)'), el('td', '', aggregateNumber(row.count))); body.append(tr); }
     table.append(head, body); panel.append(table); return panel;
   }
+  const FILTER_LABELS = { scm: 'Source code manager', organization: 'Organization', project: 'Project', repository: 'Repository',
+    branch: 'Branch', findingType: 'Finding type', riskRating: 'Risk rating', state: 'State', substate: 'Substate',
+    assignmentGroup: 'Assignment group', source: 'Finding source', createdFrom: 'Created from', createdTo: 'Created to' };
+  const FILTER_VALUE_LABELS = {
+    scm: { github: 'GitHub Enterprise', ado: 'Azure DevOps' },
+    findingType: { sast: 'Static (SAST)', sca: 'SCA', secrets: 'Secret' },
+    riskRating: { 1: 'Critical', 2: 'High', 3: 'Medium', 4: 'Low', 5: 'None' },
+    state: { 1: 'Open', 3: 'Closed', 101: 'Resolved' },
+  };
+  const filterLabel = key => FILTER_LABELS[key] || key;
+  const filterValueLabel = (key, value) => FILTER_VALUE_LABELS[key]?.[value] || value;
   function renderAggregate(summary) {
     state.avitAggregate = summary;
     const result = $('avit-aggregate-result'); result.replaceChildren();
     if (!summary) { result.append(el('p', 'small subtle', 'No AVIT summary loaded yet.')); updateAggregateNote(); return; }
     const applied = Object.entries(summary.filters || {}).filter(([, value]) => value !== '' && value != null);
-    result.append(el('p', 'avit-aggregate-meta', `Last completed ${dateLabel(summary.asOf)} · ${applied.length ? `Filters: ${applied.map(([key, value]) => `${key}=${value}`).join(' · ')}` : 'All readable AVITs'}`));
+    result.append(el('p', 'avit-aggregate-meta', `Last completed ${dateLabel(summary.asOf)} · ${applied.length ? `Filters: ${applied.map(([key, value]) => `${filterLabel(key)}: ${filterValueLabel(key, value)}`).join(' · ')}` : 'All readable AVITs'}`));
     const kpis = el('div', 'avit-aggregate-kpis');
     for (const [label, value] of [['Total AVITs', summary.total], ['Stored false-positive state', summary.falsePositive]]) {
       if (label === 'Stored false-positive state' && !Number.isFinite(value)) continue;
@@ -182,6 +201,7 @@
   function fillAggregateFilters(filters) {
     const form = $('avit-aggregate-form');
     for (const key of AGGREGATE_FILTERS) form.elements.namedItem(key).value = filters?.[key] || '';
+    syncScmFields();
   }
   async function loadAggregate() {
     try {
@@ -402,6 +422,8 @@
     $('metrics-range').addEventListener('change', renderDashboard);
     $('metrics-refresh-connections').addEventListener('click', loadConnections);
     $('avit-aggregate-form').addEventListener('input', () => { state.aggregateDirty = true; updateAggregateNote(); });
+    $('avit-scm').addEventListener('change', syncScmFields);
+    syncScmFields();
     $('avit-aggregate-form').addEventListener('submit', submitAggregate);
     $('avit-aggregate-configure').addEventListener('click', () => openTrackerSettings('servicenow-avit'));
     $('dashboard-new').addEventListener('click', () => openEditor({ name: 'My dashboard', widgets: [{ id: 'w1', title: 'Findings by severity', chart: 'bar', metric: 'findings', groupBy: 'severity', size: 2 }] }, false));

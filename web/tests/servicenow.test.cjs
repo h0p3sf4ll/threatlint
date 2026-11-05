@@ -76,3 +76,37 @@ describe('AVIT retrieval', () => {
     assert.equal(loaded.retrieved, 1);
   });
 });
+
+describe('AVIT aggregate filters (metrics page)', () => {
+  const { validateAggregateFilters, aggregateQuery } = require('../lib/servicenow.cjs');
+
+  it('accepts the source-control, finding-type, risk, and state filters', () => {
+    const f = validateAggregateFilters({ scm: 'ado', organization: 'acme', project: 'web', repository: 'shop',
+      branch: 'main', findingType: 'sast', riskRating: '2', state: '1' });
+    assert.deepEqual(f, { scm: 'ado', organization: 'acme', project: 'web', repository: 'shop', branch: 'main',
+      findingType: 'sast', riskRating: '2', state: '1' });
+  });
+
+  it('rejects a project without Azure DevOps, and unknown enum values', () => {
+    assert.throws(() => validateAggregateFilters({ scm: 'github', project: 'web' }), /only to Azure DevOps/);
+    assert.throws(() => validateAggregateFilters({ scm: 'bitbucket' }), /github or ado/);
+    assert.throws(() => validateAggregateFilters({ findingType: 'iac' }), /sast, sca, or secrets/);
+    assert.throws(() => validateAggregateFilters({ repository: 'a;b' }), /repository contains/);
+  });
+
+  it('builds a ServiceNow query from resolved instance columns', () => {
+    const columns = { scm_tool: 'u_scm_tool', organization: 'u_org', project: 'u_proj', repository: 'u_repo',
+      branch: 'u_branch', finding_source: 'u_sfs' };
+    const query = aggregateQuery({ scm: 'ado', organization: 'acme', project: 'web', repository: 'shop',
+      branch: 'main', findingType: 'secrets', riskRating: '2', state: '1' }, columns);
+    assert.ok(query.includes('risk_rating=2') && query.includes('state=1'));
+    assert.ok(query.includes('u_scm_toolLIKEazure'));
+    assert.ok(query.includes('u_org=acme') && query.includes('u_proj=web') && query.includes('u_repo=shop') && query.includes('u_branch=main'));
+    assert.ok(query.includes('u_sfsLIKEsecret'));  // 'secrets' queries the 'secret' stem
+  });
+
+  it('maps GitHub Enterprise to a github SCM-tool match', () => {
+    const query = aggregateQuery({ scm: 'github' }, { scm_tool: 'u_scm_tool' });
+    assert.equal(query, 'u_scm_toolLIKEgithub');
+  });
+});

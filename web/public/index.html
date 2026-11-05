@@ -256,16 +256,25 @@
           <div class="metrics-connections-heading"><div><span class="eyebrow">SERVICENOW AVIT · ALL READABLE RECORDS</span><h2 id="avit-aggregate-title">All AVITs summary</h2><p class="field-note subtle">ServiceNow computes these counts across every AVIT your connection can read. Filters run on the server; individual AVITs are not downloaded into this summary. The dashboard and CSV below use only detailed synced findings.</p></div></div>
           <form id="avit-aggregate-form" novalidate>
             <div class="avit-aggregate-filters">
-              <label>Risk rating <input name="riskRating" list="avit-risk-rating-choices" placeholder="1 Critical · 2 High · 3 Medium" inputmode="numeric" maxlength="3" autocomplete="off"></label>
-              <label>State <input name="state" list="avit-state-choices" placeholder="1 Open · 3 Closed · 101 Resolved" inputmode="numeric" maxlength="3" autocomplete="off"></label>
-              <label>Substate <input name="substate" placeholder="Numeric ServiceNow choice value" inputmode="numeric" maxlength="3" autocomplete="off"></label>
-              <label>Assignment group <input name="assignmentGroup" placeholder="32-character group sys_id" autocomplete="off" maxlength="32"></label>
-              <label>Finding source <input name="source" placeholder="Exact ServiceNow value" autocomplete="off"></label>
-              <label>Created from <input name="createdFrom" type="date"></label>
-              <label>Created to <input name="createdTo" type="date"></label>
+              <label class="aqf"><span>Source code manager</span><select name="scm" id="avit-scm"><option value="">Any</option><option value="github">GitHub Enterprise</option><option value="ado">Azure DevOps</option></select></label>
+              <label class="aqf"><span>Organization</span><input name="organization" placeholder="e.g. acme" autocomplete="off" maxlength="200"></label>
+              <label class="aqf" id="avit-project-field" hidden><span>Project</span><input name="project" placeholder="Azure DevOps project" autocomplete="off" maxlength="200"></label>
+              <label class="aqf"><span>Repository</span><input name="repository" placeholder="Repository name" autocomplete="off" maxlength="200"></label>
+              <label class="aqf"><span>Branch</span><input name="branch" placeholder="e.g. main" autocomplete="off" maxlength="200"></label>
+              <label class="aqf"><span>Finding type</span><select name="findingType"><option value="">Any</option><option value="sast">Static (SAST)</option><option value="sca">SCA (dependencies)</option><option value="secrets">Secret</option></select></label>
+              <label class="aqf"><span>Risk rating</span><select name="riskRating"><option value="">Any</option><option value="1">Critical</option><option value="2">High</option><option value="3">Medium</option><option value="4">Low</option><option value="5">None</option></select></label>
+              <label class="aqf"><span>State</span><select name="state"><option value="">Any</option><option value="1">Open</option><option value="101">Resolved</option><option value="3">Closed</option></select></label>
             </div>
-            <datalist id="avit-risk-rating-choices"><option value="1" label="Critical"></option><option value="2" label="High"></option><option value="3" label="Medium"></option><option value="4" label="Low"></option><option value="5" label="None"></option></datalist>
-            <datalist id="avit-state-choices"><option value="1" label="Open"></option><option value="3" label="Closed"></option><option value="101" label="Resolved"></option></datalist>
+            <details class="avit-aggregate-advanced">
+              <summary>More filters</summary>
+              <div class="avit-aggregate-filters">
+                <label class="aqf"><span>Substate</span><input name="substate" placeholder="Numeric choice value" inputmode="numeric" maxlength="3" autocomplete="off"></label>
+                <label class="aqf"><span>Assignment group</span><input name="assignmentGroup" placeholder="32-character group sys_id" autocomplete="off" maxlength="32"></label>
+                <label class="aqf"><span>Finding source (exact)</span><input name="source" placeholder="Exact ServiceNow value" autocomplete="off"></label>
+                <label class="aqf"><span>Created from</span><input name="createdFrom" type="date"></label>
+                <label class="aqf"><span>Created to</span><input name="createdTo" type="date"></label>
+              </div>
+            </details>
             <div class="avit-aggregate-actions"><span id="avit-aggregate-dirty" class="small subtle" aria-live="polite">Leave fields blank to count all readable AVITs.</span><button id="avit-aggregate-configure" class="button secondary small-button" type="button">ServiceNow settings</button><button id="avit-aggregate-submit" class="button primary small-button" type="submit">Load AVIT summary</button></div>
           </form>
           <div id="avit-aggregate-result" class="avit-aggregate-result" aria-live="polite"><p class="small subtle">No AVIT summary loaded yet.</p></div>

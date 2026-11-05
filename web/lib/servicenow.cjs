@@ -42,6 +42,48 @@ const KEPT_SYSTEM_FIELDS = new Set(['sys_id', 'sys_created_on', 'sys_updated_on'
 // unreadable, the view's SCM fields (SCM Tool and Repository) identify CodeSecurity AVITs.
 const VIEW = () => process.env.THREATLINT_SNOW_VIEW || 'CodeSecurity';
 const SCM_FIELDS = { tool: ['u_scm_tool', 'scm_tool'], repository: ['u_repository', 'repository'] };
+
+// AVIT source-control context, resolved by ServiceNow form label (sys_documentation) because the underlying
+// column names are instance-specific. Mirrors src/threatlint/servicenow_records.py CONTEXT_FIELDS. The candidate
+// names and defaults let scm_tool/repository/finding_source work even when the label table is unreadable.
+const CONTEXT_LABELS = {
+  scm_tool: { label: 'SCM Tool', fallback: 'u_scm_tool' },
+  organization: { label: 'Organization Name', fallback: '' },
+  project: { label: 'Project Name', fallback: '' },
+  repository: { label: 'Repository', fallback: 'u_repository' },
+  branch: { label: 'Project Branch', fallback: '' },
+  finding_source: { label: 'Security Finding Source', fallback: 'u_security_finding_source' },
+};
+const LABEL_TABLES = ['sn_vul_app_vulnerable_item', 'sn_vul_app_vul_entry', 'sn_vul_entry', 'task'];
+// A LIKE token that matches the SCM Tool values Threatlint recognises (see servicenow_checkout.py).
+const SCM_TOOL_TOKEN = { github: 'github', ado: 'azure' };
+
+/** Map each context label to its instance column via sys_documentation; falls back to known standard columns. */
+async function aggregateColumns(credentials, fetchImpl, signal) {
+  const columns = {};
+  for (const [key, meta] of Object.entries(CONTEXT_LABELS)) if (meta.fallback) columns[key] = meta.fallback;
+  const labels = Object.values(CONTEXT_LABELS).map(meta => meta.label);
+  const query = new URLSearchParams({
+    sysparm_query: `nameIN${LABEL_TABLES.join(',')}^language=en^labelIN${labels.join(',')}`,
+    sysparm_fields: 'name,element,label', sysparm_limit: '200',
+  });
+  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  let rows;
+  try {
+    rows = (await requestJson(fetchImpl, `${credentials.instance}/api/now/table/sys_documentation?${query}`, { headers }, signal)).result;
+  } catch { return columns; }
+  const byLabel = {};
+  for (const row of (Array.isArray(rows) ? rows : []).filter(row => row && typeof row === 'object')
+    .sort((a, b) => (LABEL_TABLES.indexOf(a.name) + 1 || 99) - (LABEL_TABLES.indexOf(b.name) + 1 || 99))) {
+    const label = String(row.label || '').trim().toLowerCase();
+    if (label && !(label in byLabel) && row.element) byLabel[label] = String(row.element);
+  }
+  for (const [key, meta] of Object.entries(CONTEXT_LABELS)) {
+    const resolved = byLabel[meta.label.toLowerCase()];
+    if (resolved) columns[key] = resolved;
+  }
+  return columns;
+}
 // Agents whose proposals are validated with Semgrep Community Edition.
 const SEMGREP_AGENTS = new Set(['appsec-fp-reviewer']);
 const SEMGREP_INSTALL = 'Install Semgrep Community Edition before running the Findings triage agent: `python3 -m pip install semgrep` (or `brew install semgrep`), confirm with `semgrep --version`, then retry.';
@@ -326,7 +368,8 @@ async function fetchAvitMetrics(credentials, { scope, fetchImpl = fetch, signal,
 /** Count the complete credential-visible AVIT population without downloading individual records. */
 function validateAggregateFilters(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError('AVIT filters must be an object');
-  const allowed = new Set(['riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo']);
+  const allowed = new Set(['riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo',
+    'scm', 'organization', 'project', 'repository', 'branch', 'findingType']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new HttpError(`Unsupported AVIT filter: ${key}`);
   const filters = {};
   for (const key of ['riskRating', 'state', 'substate']) {
@@ -340,6 +383,18 @@ function validateAggregateFilters(input = {}) {
   const source = String(input.source ?? '').trim();
   if (source && (source.length > 100 || !/^[\w .()/+-]+$/.test(source))) throw new HttpError('Finding source contains unsupported characters');
   if (source) filters.source = source;
+  const scm = String(input.scm ?? '').trim().toLowerCase();
+  if (scm && !Object.hasOwn(SCM_TOOL_TOKEN, scm)) throw new HttpError('Source code manager must be github or ado');
+  if (scm) filters.scm = scm;
+  for (const key of ['organization', 'project', 'repository', 'branch']) {
+    const value = String(input[key] ?? '').trim();
+    if (value && (value.length > 200 || !/^[\w .@/+-]+$/.test(value))) throw new HttpError(`${key} contains unsupported characters`);
+    if (value) filters[key] = value;
+  }
+  if (filters.project && filters.scm !== 'ado') throw new HttpError('Project applies only to Azure DevOps');
+  const findingType = String(input.findingType ?? '').trim().toLowerCase();
+  if (findingType && !['sast', 'sca', 'secrets'].includes(findingType)) throw new HttpError('Finding type must be sast, sca, or secrets');
+  if (findingType) filters.findingType = findingType;
   for (const key of ['createdFrom', 'createdTo']) {
     const value = String(input[key] ?? '').trim();
     const parsed = Date.parse(`${value}T00:00:00Z`);
@@ -354,16 +409,27 @@ function validateAggregateFilters(input = {}) {
   return filters;
 }
 
-function aggregateQuery(filters) {
+function aggregateQuery(filters, columns = {}) {
   const terms = [];
   for (const [key, field] of [['riskRating', 'risk_rating'], ['state', 'state'], ['substate', 'substate'],
     ['assignmentGroup', 'assignment_group'], ['source', 'source']]) {
     if (filters[key]) terms.push(`${field}=${filters[key]}`);
   }
+  // Source-control context: resolved instance columns (aggregateColumns). A requested filter whose column could
+  // not be resolved is a hard error, surfaced by fetchAvitAggregate, rather than a silently ignored clause.
+  if (filters.scm && columns.scm_tool) terms.push(`${columns.scm_tool}LIKE${SCM_TOOL_TOKEN[filters.scm]}`);
+  for (const [key, column] of [['organization', columns.organization], ['project', columns.project],
+    ['repository', columns.repository], ['branch', columns.branch]]) {
+    if (filters[key]) terms.push(`${column}=${filters[key]}`);
+  }
+  if (filters.findingType && columns.finding_source) terms.push(`${columns.finding_source}LIKE${filters.findingType === 'secrets' ? 'secret' : filters.findingType}`);
   if (filters.createdFrom) terms.push(`sys_created_on>=javascript:gs.dateGenerate('${filters.createdFrom}','00:00:00')`);
   if (filters.createdTo) terms.push(`sys_created_on<=javascript:gs.dateGenerate('${filters.createdTo}','23:59:59')`);
   return terms.join('^');
 }
+
+/** Context filter keys that need an instance column resolved before they can be queried. */
+const CONTEXT_FILTER_COLUMN = { scm: 'scm_tool', organization: 'organization', project: 'project', repository: 'repository', branch: 'branch', findingType: 'finding_source' };
 
 function statsCount(result) {
   const count = Number(result?.stats?.count);
@@ -385,7 +451,14 @@ async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch
   const selected = validateAggregateFilters(filters);
   const { instance } = credentials;
   const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
-  const baseQuery = aggregateQuery(selected);
+  const needsContext = Object.keys(CONTEXT_FILTER_COLUMN).some(key => selected[key]);
+  const columns = needsContext ? await aggregateColumns(credentials, fetchImpl, signal) : {};
+  for (const [key, contextKey] of Object.entries(CONTEXT_FILTER_COLUMN)) {
+    if (selected[key] && !columns[contextKey]) {
+      throw new HttpError(`This ServiceNow instance did not expose a column for "${CONTEXT_LABELS[contextKey].label}"; that filter is unavailable here`, 422);
+    }
+  }
+  const baseQuery = aggregateQuery(selected, columns);
   async function stats(groupBy = '', extra = '') {
     const query = new URLSearchParams({ sysparm_count: 'true', sysparm_display_value: 'all' });
     const encoded = [baseQuery, extra].filter(Boolean).join('^');
@@ -595,6 +668,6 @@ async function semgrepVersion() {
 
 module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
-  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, validateAggregateFilters,
+  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, validateAggregateFilters, aggregateQuery, aggregateColumns,
   METRICS_PAGE_SIZE, MAX_METRICS_AVITS, MAX_METRICS_SCOPE_AVITS,
   METRICS_CREATION_LAG_MS, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };
