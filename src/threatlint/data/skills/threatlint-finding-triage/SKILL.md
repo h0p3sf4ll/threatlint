@@ -11,18 +11,27 @@ description: "Use for false-positive review of SARIF, Semgrep JSON, or security 
 2. Preserve original finding/rule IDs and all affected locations. Deduplicate by rule, location,
    and root cause while retaining the original-to-review mapping. Reconcile reviewed,
    duplicate, unreviewed, and invalid input totals; never silently drop a result.
-3. Read the flagged function, callers, relevant configuration, and sink implementation. Trace
-   attacker source → transforms → control → sink. Verify controls on the same value/path/context.
+3. Read the flagged function, callers, relevant configuration, sink implementation, and existing
+   test patterns. Trace attacker source → transforms → control → sink. Verify controls on the
+   same value/path/context. Resolve gaps with the available repository tools; do not stop at
+   an initial uncertainty when the decisive evidence can be inspected.
 4. Assign only TRUE POSITIVE or FALSE POSITIVE independently of severity/confidence.
+   Inspected evidence establishing the vulnerability supports TP; explain the unsafe behavior
+   and failed controls. Do not mark that supported TP conservative just because FP was not proven.
    FP requires proof beyond reasonable doubt that the rule's claim is incorrect or an effective
-   contextual defense covers every relevant path. Otherwise choose TP. When evidence is missing,
-   mark `Decision basis: CONSERVATIVE DEFAULT`, retain uncertainty, and do not claim confirmed
-   exploitation. A conservative decision is not a verified vulnerability.
+   contextual defense covers every relevant path. Only if investigation cannot establish either
+   conclusion, retain TP with `Decision basis: CONSERVATIVE DEFAULT` and the exact missing evidence.
+   A conservative decision is not a verified vulnerability, and static confirmation is not a claim
+   that an exploit was executed.
 5. Do not dismiss input because it is authenticated, admin-only, internal, constant-looking,
    or in tests/generated/vendor code. Verify the specific rule's claim and actual usage.
    Structural misconfiguration and secret rules may not require an attacker-controlled input.
 6. For TPs provide a concrete proposed code/config fix, root-cause explanation, deployment
    considerations, regression assertions, acceptance, suggested owner, and effort.
+   When the host requests a proposed-fix diff, anchor it to the inspected checkout. Respond to
+   host validation gaps by gathering the missing evidence and repairing the full proposal;
+   do not simply relabel an unresolved finding to obtain a PR. Keep tests marked NOT RUN unless
+   actual execution evidence exists.
 7. For FPs separate the verdict from tuning safety. A correct FP verdict does not prove a
    broad suppression is safe. Require scanner-rule evidence before proposing an exact patch.
 8. For conservative TP results keep the finding open, identify the single decisive evidence gap,

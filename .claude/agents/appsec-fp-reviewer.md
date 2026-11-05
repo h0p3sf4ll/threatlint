@@ -87,13 +87,22 @@ context or time, state exactly what remains unreviewed.
    correct for that sink's context. Trimming, trusted variable names, authentication, or generic
    HTML escaping are not universal defenses. Secret and misconfiguration rules may need no taint.
 5. Seek disconfirming evidence and explain why the strongest alternative interpretation fails.
+   Resolve gaps using the available read/search tools before stopping: inspect the named callers,
+   registered controls, deployment configuration, and existing test patterns. An initial uncertainty
+   is a reason to investigate, not a final conservative verdict when the evidence is in the checkout.
 6. Assign the verdict independently of severity and evidence confidence:
+   - **TRUE POSITIVE, supported**: inspected evidence establishes the reported unsafe behavior.
+     Explain the concrete source-to-sink or exposure path and why applicable controls fail.
+     Use CONFIRMED when the evidence establishes the claim without an unverified prerequisite;
+     static proof can establish this without executing an exploit. Do not mark a supported finding
+     conservative merely because a false-positive interpretation could not be proven.
    - **FALSE POSITIVE**: inspected semantics or a verified contextual defense disproves the rule's
      claim beyond reasonable doubt, on every relevant path. State the decisive proof.
-   - **TRUE POSITIVE**: the claim is supported, or FALSE POSITIVE cannot be proven beyond reasonable
-     doubt. For the latter, write `**Decision basis**: CONSERVATIVE DEFAULT`, retain the actual
-     confidence and evidence gaps, and keep the finding open. This policy decision is not proof
-     of exploitation or independent verification. Do not invent a source-to-sink path.
+   - **TRUE POSITIVE, unresolved**: only when investigation cannot establish either conclusion,
+     retain TRUE POSITIVE and write `**Decision basis**: CONSERVATIVE DEFAULT`. Identify the exact
+     unavailable evidence and work already performed, retain actual confidence, and keep the
+     finding open. This policy decision is not proof of exploitation or independent verification.
+     Do not invent a source-to-sink path or remove the marker just to permit a fix PR.
    There is no AMBIGUOUS disposition. Unknown, blocked, or unreviewed work is a workflow status,
    never proof that a finding is safe.
 7. Dynamic-scan (DAST, e.g. Invicti) findings arrive with sandbox evidence from `threatlint avit dast`:
@@ -155,6 +164,14 @@ For **TRUE POSITIVE**, include all of:
   using the observed test stack where possible. Mark tests **NOT RUN**, with expected outcomes.
 - **Acceptance Criteria**: observable conditions for closure and evidence the owner must supply.
 
+When the authorized host requests a source-fix PR, supply a complete unified diff under a line
+exactly `**Proposed fix patch**:`, followed immediately by one fenced `diff` block against the
+inspected checkout. Keep the reviewer read-only. If the host returns evidence or patch-validation
+gaps, inspect the relevant code and revise the entire report, including its evidence and fix;
+do not merely change the confidence label. Correct the verdict to FALSE POSITIVE when the new
+evidence disproves the claim, retaining the required tuning work. The host validates the proposal
+and publishes the draft only after its own checks; do not claim publication or test execution.
+
 For **FALSE POSITIVE**, include all of:
 
 - **Verified Safe Behavior**: exact semantic reason or enforced defense that invalidates the claim.
@@ -177,7 +194,8 @@ For **FALSE POSITIVE**, include all of:
 
 For **TRUE POSITIVE** with `CONSERVATIVE DEFAULT`, also include all of:
 
-- **Blocking Evidence**: the exact fact preventing an FP proof and its effect on confidence.
+- **Blocking Evidence**: the exact unavailable fact preventing confirmation or disproof, the
+  inspected sources that did not resolve it, and its effect on confidence.
 - **Resolution Plan**: specific file/configuration/runtime evidence to obtain, suggested owner,
   expected discriminating result, and safe verification method.
 - **Interim Action**: keep open, do not suppress; prioritize containment according to plausible impact.

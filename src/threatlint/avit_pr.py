@@ -24,7 +24,13 @@ from .avit_report import ResolveError, verdict_for
 from .finding_review import is_conservative
 
 FIX_PATCH_GUIDANCE = (
-    "For a supported TRUE POSITIVE, provide the smallest concrete source fix under a line exactly "
+    "Use repository read/search tools to resolve evidence gaps before preparing a fix: inspect the "
+    "full flagged function, actual callers, input/exposure path, relevant guards and configuration, "
+    "and existing test patterns. For a supported TRUE POSITIVE, include **Evidence** with quoted "
+    "file:line references, **Exploit path** explaining the concrete unsafe behavior and failed controls, "
+    "**Fix rationale**, and **Regression assertions**. Set Confidence CONFIRMED only when the "
+    "inspected evidence establishes the vulnerability; static proof does not require running an exploit. "
+    "Provide the smallest concrete source fix under a line exactly "
     "**Proposed fix patch**:, followed immediately by one fenced diff block containing a complete "
     "git-style unified diff (diff --git, --- a/path, +++ b/path, and accurate context hunks) against "
     "the inspected checkout. Include relevant regression-test source when supported. Use only "

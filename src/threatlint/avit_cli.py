@@ -36,6 +36,7 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
     resolve.add_argument("--docx", required=True, help="Word report to attach (the only file attached to the AVIT)")
+    resolve.add_argument("--attachment-name", help="Unique AVIT report filename for retaining a new review alongside earlier evidence")
     resolve.add_argument("--semgrep-deployment", help="Semgrep deployment slug when the token can access several")
     resolve.add_argument("--semgrep-rule-hash-id", help="Authoritative ruleHashId for Secrets-product correlation")
     resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")
@@ -51,6 +52,12 @@ def add_resolve_parsers(actions) -> None:
     fix.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
     fix.add_argument("--yes", action="store_true", help="Create the draft PR without prompting")
     sn.add_avit_arguments(fix)
+    prepare = actions.add_parser("prepare-fix", help="Inspect local evidence and proposed-fix readiness without tracker or repository writes")
+    prepare.add_argument("number", metavar="AVIT")
+    prepare.add_argument("--report", required=True, help="Reviewed Markdown report to assess")
+    prepare.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
+    prepare.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
+    prepare.add_argument("--aws-profile", help="Accepted for workflow compatibility; evidence preparation uses no AWS credentials")
     from threatlint.dast import add_dast_parser
     add_dast_parser(actions)
 
@@ -72,17 +79,32 @@ def confirm(question: str, yes: bool) -> None:
         raise ResolveError("Cancelled; nothing was changed")
 
 
-def cmd_fix_pr(args) -> int:
-    from threatlint.avit_pr import create_fix_pr  # noqa: PLC0415
-
+def _proposal_inputs(args):
     [avit] = sn.parse_avit_numbers(args.number)
     try:
+        if Path(args.target).stat().st_size > 64 * 1024 or Path(args.report).stat().st_size > 2 * 1024 * 1024:
+            raise ResolveError("The reviewed report or repository target exceeds its size limit")
         target = json.loads(Path(args.target).read_text(encoding="utf-8"))
     except (ValueError, OSError):
         raise ResolveError("The reviewed repository target could not be read") from None
     if not isinstance(target, dict) or target.get("avit", avit) != avit:
         raise ResolveError("The repository target does not belong to this AVIT")
     report = Path(args.report).read_text(encoding="utf-8")
+    return avit, report, target
+
+
+def cmd_prepare_fix(args) -> int:
+    from threatlint.avit_evidence import assess_review  # noqa: PLC0415
+
+    avit, report, target = _proposal_inputs(args)
+    print(json.dumps(assess_review(avit, report, args.checkout, target)))
+    return 0
+
+
+def cmd_fix_pr(args) -> int:
+    from threatlint.avit_pr import create_fix_pr  # noqa: PLC0415
+
+    avit, report, target = _proposal_inputs(args)
     confirm(f"{avit}: publish its proposed fix as a draft pull request?", args.yes)
     result = create_fix_pr(avit, report, args.checkout, target, profile=args.aws_profile, instance=args.snow_instance)
     print(json.dumps(result))

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 from . import avit_repositories, avit_resolve, servicenow as sn
 from .avit_report import ResolveError, report_line, verdict_for
-from .finding_review import normalize_report
+from .finding_review import FindingReviewError, normalize_report
 from .run_context import _build_run_message
 
 
@@ -29,8 +29,14 @@ _RULE_GUIDANCE = (
     "Use only TRUE POSITIVE or FALSE POSITIVE. A FALSE POSITIVE requires inspected evidence "
     "that disproves the specific rule claim beyond reasonable doubt; include Evidence and Verified Safe Behavior. "
     "Being internal, authenticated, constant-looking, or in tests does not establish safety. "
-    "If that standard cannot be met, choose TRUE POSITIVE and label the Decision basis as CONSERVATIVE DEFAULT. "
-    "Preserve the actual confidence and missing evidence; this classification does not prove exploitation. "
+    "First investigate the flagged function, its callers, input origins, guards, deployment configuration, "
+    "and existing tests using repository read/search tools. When inspected evidence establishes the "
+    "reported vulnerability, classify TRUE POSITIVE with an evidence-backed confidence and explain the "
+    "source-to-sink or exposure path; absence of false-positive proof does not make that confirmed "
+    "finding a conservative default. If inspected evidence disproves the claim, classify FALSE POSITIVE. "
+    "Only when neither conclusion can be established after investigation, retain TRUE POSITIVE with "
+    "Decision basis CONSERVATIVE DEFAULT and identify the exact unavailable evidence. "
+    "Preserve the actual confidence and validation limits; do not claim exploit execution without evidence. "
     "For a SAST or Secrets FALSE POSITIVE, include a complete tuned Semgrep rule "
     "based on the supplied live or original rule, preserving all existing exclusions. "
     "Use the original rule id plus `.tuned`. Put one fenced YAML block immediately "
@@ -250,7 +256,8 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             "Never reproduce a secret, key, token, password, or connection-string value; "
             "use [REDACTED] in excerpts. " + _RULE_GUIDANCE
         )
-        if not getattr(args, "no_fix_pr", False) and target.get("scm") in ("azure-devops", "github"):
+        prepare_fix = not getattr(args, "no_fix_pr", False) and target.get("scm") in ("azure-devops", "github")
+        if prepare_fix:
             from .avit_pr import FIX_PATCH_GUIDANCE  # noqa: PLC0415
             prompt += "\n" + FIX_PATCH_GUIDANCE
         print(f"  Reviewing {kind.upper()} with {provider}", flush=True)
@@ -262,10 +269,34 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             if not file_path or not flagged.is_relative_to(root) or not flagged.is_file():
                 raise ResolveError("The flagged Secrets file is unavailable; no report was uploaded")
         redacted = 0
+        evidence_attempts = 0
+        readiness = None
+        evidence_target = {**target, "file_path": file_path, "line": item["context"].get("line", "")}
+
+        def sanitized_draft(draft):
+            try:
+                draft = normalize_report(draft)
+            except FindingReviewError:
+                if not prepare_fix:
+                    raise
+                # The assessor asks the reviewer to repair malformed declarations;
+                # the final verdict still must parse before any tracker write.
+            return redact_secrets(draft, repo, file_path, source)
+
         for attempt in range(3):
-            output = normalize_report(output)
-            output, count = redact_secrets(output, repo, file_path, source)
+            output, count = sanitized_draft(output)
             redacted += count
+            if prepare_fix:
+                from .avit_evidence import assess_review  # noqa: PLC0415
+                readiness = assess_review(avit, output, str(repo), evidence_target)
+                while readiness["status"] == "refine" and evidence_attempts < 2:
+                    evidence_attempts += 1
+                    print(f"  Investigating evidence and preparing the fix (follow-up {evidence_attempts}/2)", flush=True)
+                    output = _run_review_model(provider, system_prompt, prompt + "\n\n" + readiness["prompt"],
+                                               repo, model, args, base_url, api_key)
+                    output, count = sanitized_draft(output)
+                    redacted += count
+                    readiness = assess_review(avit, output, str(repo), evidence_target)
             verdict = verdict_for(output, avit)
             if verdict["disposition"] != "FALSE POSITIVE":
                 break
@@ -304,11 +335,20 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
         )
         completed = avit_resolve.cmd_resolve(resolve_args) == 0
         pull_request = None
-        if completed and verdict["disposition"] == "TRUE POSITIVE" and target.get("scm") in ("azure-devops", "github") and not getattr(args, "no_fix_pr", False):
+        if completed and verdict["disposition"] == "TRUE POSITIVE" and prepare_fix:
             from .avit_pr import create_fix_pr  # noqa: PLC0415
             try:
-                pull_request = create_fix_pr(avit, output, str(repo), target, profile=args.aws_profile, instance=instance)
-                print(f"  INFO: Draft fix PR: {pull_request.get('url') or pull_request.get('reason')}", flush=True)
+                if readiness["status"] == "refine":
+                    reason = "; ".join(readiness["issues"])
+                    pull_request = {"status": "blocked", "reason": reason}
+                    completed = False
+                    print(f"  ! Report attached, but evidence investigation could not produce a validated fix: {reason}", flush=True)
+                elif readiness["status"] == "skipped":
+                    pull_request = {"status": "skipped", "reason": "; ".join(readiness["issues"])}
+                    print(f"  INFO: Draft fix PR: {pull_request['reason']}", flush=True)
+                else:
+                    pull_request = create_fix_pr(avit, output, str(repo), target, profile=args.aws_profile, instance=instance)
+                    print(f"  INFO: Draft fix PR: {pull_request.get('url') or pull_request.get('reason')}", flush=True)
             except (ResolveError, sn.ServiceNowError, OSError, ValueError, subprocess.SubprocessError) as exc:
                 completed = False
                 pull_request = {"status": "error", "reason": _safe_error(exc)}

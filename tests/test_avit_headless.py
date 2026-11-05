@@ -68,7 +68,7 @@ def test_headless_batch_attaches_each_verdict_from_temporary_artifacts(monkeypat
 @pytest.mark.parametrize("pr_status", ["created", "existing", "skipped", "error", "spawn-error", "disabled"])
 @pytest.mark.parametrize("scm", ["azure-devops", "github"])
 def test_headless_true_positive_runs_draft_pr_after_report_writeback(monkeypatch, pr_status, scm):
-    from threatlint import avit_pr
+    from threatlint import avit_evidence, avit_pr
 
     args = _args(AVIT_TP)
     args.no_fix_pr = pr_status == "disabled"
@@ -85,6 +85,7 @@ def test_headless_true_positive_runs_draft_pr_after_report_writeback(monkeypatch
         return markdown
 
     monkeypatch.setattr(avit_headless, "_run_review_model", review)
+    monkeypatch.setattr(avit_evidence, "assess_review", lambda *_: {"status": "ready", "issues": [], "prompt": ""})
     monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
     calls = []
     monkeypatch.setattr(avit_resolve, "cmd_resolve", lambda _args: calls.append("resolve") or 0)

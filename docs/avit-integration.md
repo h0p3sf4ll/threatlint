@@ -423,13 +423,33 @@ repositories are supported. The Workbench's **Open draft PRs for proposed fixes*
 option is enabled by default. Headless `run fp-review
 --resolve-avits --yes` includes the same step; pass `--no-fix-pr` to skip it.
 
-The reviewer supplies a `**Proposed fix patch**:` field followed by a fenced
-`diff` block. Threatlint checks the patch against the clean reviewed checkout
-and confirms that the target branch still points at the reviewed commit. It
-publishes the proposed change on a separate branch and opens a draft PR for
-engineering review. A retry reuses the matching PR or branch. The AVIT card and
-headless result include the PR link. Application tests are not run by this
-publishing step; the PR states that CI and engineering validation remain due.
+Before saving or attaching the report, Threatlint checks whether the review
+establishes the true positive and contains a concrete fix. A conservative-default
+or non-confirmed decision, missing source evidence, or absent/invalid patch
+triggers up to two follow-up investigations using the same reviewer and checkout.
+Each follow-up receives the original AVIT and scanner context, the exact gaps,
+bounded source excerpts, and the prior draft as untrusted evidence. The reviewer
+uses its read/search tools to inspect the flagged function, callers, input or
+exposure path, registered controls, configuration, and existing tests, then
+returns a complete revised report and fix. A supported true positive is not
+marked conservative merely because a false-positive interpretation was not proven.
+
+Preparation requires a non-conservative `CONFIRMED` true positive, substantive
+evidence and exploit/exposure reasoning, source references that exist in the
+checkout, a fix rationale, regression assertions, and a `**Proposed fix patch**:`
+field followed by a fenced `diff` block. The host checks the diff in an isolated
+Git index without changing the reviewed files. These checks validate report
+structure, source locations, and patch applicability; the reviewer remains
+responsible for the semantic evidence and fix assessment.
+
+Only the final report is attached, with a unique timestamped name so a rerun
+retains the new evidence alongside earlier reviews. The publisher then confirms that the target
+branch still points at the reviewed commit, publishes the proposed change on a
+separate branch, and opens a draft PR for engineering review. A retry reuses the
+matching PR or branch. The AVIT card and headless result include the PR link.
+Static source evidence can confirm a vulnerability without executing an exploit.
+Application tests are not run by this publishing step; the PR states that CI and
+engineering validation remain due.
 
 Azure DevOps PR publishing requires the service-account PAT referenced by the existing
 `adoPatParameter`, access to the repository's organization in `adoOrganizations`,
@@ -453,9 +473,13 @@ Store. Configure `THREATLINT_GITHUB_API_URL` or the saved GitHub App API URL as
 default is `https://api.github.com`. AVIT checkout and proposed-fix PR operations
 use that configured host. See [GitHub App setup](github-app.md).
 
-False positives, conservative-default decisions, absent patches, unsupported SCM
-providers, and checkouts without the exact reviewed branch produce no source
-PR. The flow shows why the PR step was skipped. If publishing fails after the
+If further investigation disproves the claim, the final false-positive report
+follows the existing closure and rule-tuning flow. If the two follow-ups still
+cannot confirm the finding or produce a validated fix, Threatlint attaches the
+honest final report, records the remaining gaps, and marks automated remediation
+blocked without opening a PR. It does not manufacture confirmation to satisfy
+the publishing gate. Unsupported SCM providers or checkouts without the exact
+reviewed Git branch produce an explicit skip. If publishing fails after the
 report was attached, the completed ServiceNow work remains recorded and the PR
 failure is reported separately. The workflow never merges a PR.
 
@@ -470,6 +494,12 @@ threatlint avit fix-pr AVIT000000095938462 \
 `reviewed-target.json` contains the JSON repository metadata from `avit checkout`.
 The command validates that its repository and branch match the checkout before
 publishing.
+
+`threatlint avit prepare-fix AVIT... --report review.md --checkout /path/to/repo
+--target reviewed-target.json` performs the shared read-only readiness assessment
+and returns JSON with its status, issues, and follow-up instructions. It does not
+invoke the reviewer, change a tracker, or open a PR; the Workbench and headless
+flows use that assessment to drive the investigations described above.
 
 ## Data flows
 

@@ -52,7 +52,10 @@ it('refuses unsafe ServiceNow record link origins', () => {
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [], modelCalls = [];
+  const attachmentNames = new Set();
   let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, prScm = '', prResult = null;
+  let preparationResults = [], modelReports = [], modelHook = null;
+  const preparedReports = [], resolvedReports = [];
   const taskAvits = {};
   before(async () => {
     const threatlintCli = async args => {
@@ -81,19 +84,40 @@ describe('False positive review batch', () => {
         if (prResult instanceof Error) throw prResult;
         return prResult;
       }
+      if (command === 'prepare-fix') {
+        const md = fs.readFileSync(args[args.indexOf('--report') + 1], 'utf8');
+        assert.ok(!md.includes(SECRET), 'evidence preparation receives only a redacted draft');
+        assert.ok(md.startsWith('# Finding Review'), 'the draft is normalized before assessment');
+        assert.equal(JSON.parse(fs.readFileSync(args[args.indexOf('--target') + 1], 'utf8')).avit, avit);
+        preparedReports.push(md);
+        const result = preparationResults.shift() || { status: 'ready', issues: [], prompt: '' };
+        return Object.hasOwn(result, 'code') ? result : { code: 0, stdout: JSON.stringify(result), stderr: '' };
+      }
       if (command === 'resolve') {
         const md = fs.readFileSync(args[args.indexOf('--report') + 1], 'utf8');
+        resolvedReports.push(md);
+        const attachment = args[args.indexOf('--attachment-name') + 1];
+        assert.match(attachment, new RegExp(`^${avit}-threatlint-fp-review-\\d{8}T\\d{12}Z\\.docx$`));
+        assert.equal(attachmentNames.has(attachment), false, 'every final report gets a new attachment name on rerun');
+        attachmentNames.add(attachment);
         assert.ok(!md.includes(SECRET), 'the secret is redacted before the report is saved or uploaded');
         assert.ok(fs.existsSync(args[args.indexOf('--docx') + 1]));
         if (resolveResult) return resolveResult;
-        return avit === FP ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning ? '' : '  ✓ Published org-private rule synthetic.rule.tuned\n'), stderr: '' }
+        return /\*\*Disposition\*\*: FALSE POSITIVE/.test(md) ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning ? '' : '  ✓ Published org-private rule synthetic.rule.tuned\n'), stderr: '' }
           : { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
       }
       throw new Error(`unexpected ${args.join(' ')}`);
     };
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-store-'));
     wb = createWorkbench({ storageDir: storage,
-      runProvider: async args => { modelCalls.push(args); const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1]; const text = report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE'); args.onEvent({ type: 'text_chunk', text }); return text; },
+      runProvider: async args => {
+        modelCalls.push(args);
+        if (modelHook) await modelHook(args);
+        const avit = /servicenow-(AVIT\d+)/.exec(args.userMessage)[1];
+        const text = modelReports.shift() || report(avit, avit === FP ? 'FALSE POSITIVE' : 'TRUE POSITIVE');
+        if (text instanceof Error) throw text;
+        args.onEvent({ type: 'text_chunk', text }); return text;
+      },
       integrations: { convertToWord, semgrepVersion: async () => '1.107.0', threatlintCli } });
     await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${wb.server.address().port}`;
@@ -124,6 +148,7 @@ describe('False positive review batch', () => {
       assert.equal(done.stage, ['error', 'spawn-error'].includes(status) ? 'error' : 'done');
       assert.equal(done.outcome.attached, true);
       if (status === 'disabled') {
+        assert.equal(current.some(args => args[1] === 'prepare-fix'), false);
         assert.equal(current.some(args => args[1] === 'fix-pr'), false);
         assert.equal(current.find(args => args[1] === 'resolve').includes('--keep-checkout'), false);
       } else {
@@ -218,6 +243,105 @@ describe('False positive review batch', () => {
     socket.close();
     return events;
   };
+  const setupRefinement = (t, scm = 'github') => {
+    calls.length = 0; preparedReports.length = 0; resolvedReports.length = 0;
+    prScm = scm;
+    prResult = { code: 0, stdout: JSON.stringify({ status: 'created', url: 'https://git.example.com/contoso/svc/pull/42' }), stderr: '' };
+    t.after(() => {
+      prScm = ''; prResult = null; preparationResults = []; modelReports = []; modelHook = null;
+      calls.length = 0; preparedReports.length = 0; resolvedReports.length = 0;
+    });
+  };
+  const refine = (issue, prompt = `Inspect the caller and registered controls to resolve: ${issue}. Return the full report.`) => ({ status: 'refine', issues: [issue], prompt });
+  const uncertain = () => report(TP, 'TRUE POSITIVE') + '**Decision basis**: CONSERVATIVE DEFAULT\n**Blocking Evidence**: Caller control is not yet traced.\n';
+
+  for (const scm of ['azure-devops', 'github']) it(`investigates ${scm} evidence and repairs a proposal before saving, resolving, and publishing once`, async t => {
+    setupRefinement(t, scm);
+    const firstModel = modelCalls.length;
+    preparationResults = [refine('Trace caller control', 'Inspect caller app.yaml:2 and its registered controls.'),
+      refine('Patch does not apply', 'Re-read the exact checkout and repair the unified diff context.'), { status: 'ready', issues: [], prompt: '' }];
+    modelReports = [uncertain(), report(TP, 'TRUE POSITIVE') + 'Confirmed caller evidence, but draft patch needs repair.\n',
+      report(TP, 'TRUE POSITIVE') + '**Exploit path**: Final inspected proof.\n**Proposed fix patch**:\n```diff\nvalidated fixture diff\n```\n'];
+    modelHook = () => assert.equal(calls.some(args => args[1] === 'resolve' || args[1] === 'fix-pr'), false, 'all investigation occurs before tracker or PR writes');
+    const events = await runBatch(TP);
+    const reviews = modelCalls.slice(firstModel);
+    assert.equal(reviews.length, 3);
+    assert.match(reviews[0].userMessage, /TRUE POSITIVE when the inspected evidence establishes the vulnerability/);
+    assert.match(reviews[1].userMessage, /Inspect caller app.yaml:2 and its registered controls/);
+    assert.match(reviews[2].userMessage, /repair the unified diff context/);
+    assert.ok(reviews.every(args => args.repoPath === reviews[0].repoPath && args.purpose === 'review' && args.agentId === 'appsec-fp-reviewer'));
+    assert.equal(preparedReports.length, 3);
+    assert.match(preparedReports[0], /CONSERVATIVE DEFAULT/);
+    assert.equal(resolvedReports.length, 1);
+    assert.match(resolvedReports[0], /Final inspected proof/);
+    assert.doesNotMatch(resolvedReports[0], /CONSERVATIVE DEFAULT/);
+    const commands = calls.filter(args => ['prepare-fix', 'resolve', 'fix-pr'].includes(args[1])).map(args => args[1]);
+    assert.deepEqual(commands, ['prepare-fix', 'prepare-fix', 'prepare-fix', 'resolve', 'fix-pr']);
+    assert.equal(events.filter(event => event.attempt).length, 2);
+    const final = events.find(event => event.avit === TP && event.done);
+    assert.equal(final.stage, 'done'); assert.equal(final.outcome.pullRequest.status, 'created');
+    assert.ok(!fs.existsSync(reviews[0].repoPath), 'temporary source and intermediate reports are deleted');
+  });
+
+  it('retains honest evidence gaps after bounded investigation and reports blocked remediation without publishing', async t => {
+    setupRefinement(t);
+    const firstModel = modelCalls.length;
+    preparationResults = [refine('Deployment configuration is unavailable'), refine('Deployment configuration is unavailable'), refine('Deployment configuration is unavailable')];
+    modelReports = [uncertain(), uncertain(), uncertain()];
+    const events = await runBatch(TP);
+    const final = events.find(event => event.avit === TP && event.done);
+    assert.equal(modelCalls.length - firstModel, 3);
+    assert.equal(resolvedReports.length, 1);
+    assert.match(resolvedReports[0], /CONSERVATIVE DEFAULT/);
+    assert.equal(final.stage, 'error'); assert.equal(final.outcome.attached, true);
+    assert.deepEqual(final.outcome.pullRequest, { status: 'blocked', reason: 'Deployment configuration is unavailable' });
+    assert.match(final.detail, /evidence investigation.*Deployment configuration is unavailable/);
+    assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
+    assert.equal(calls.find(args => args[1] === 'resolve').includes('--keep-checkout'), false);
+  });
+
+  it('allows evidence investigation to prove a false positive and follows the normal closure and tuning path', async t => {
+    setupRefinement(t);
+    preparationResults = [refine('Inspect the actual control'), { status: 'skipped', issues: [], prompt: '', reason: 'False positives need no source-fix PR' }];
+    modelReports = [uncertain(), report(TP, 'FALSE POSITIVE')];
+    const events = await runBatch(TP);
+    const final = events.find(event => event.avit === TP && event.done);
+    assert.equal(final.stage, 'done'); assert.equal(final.disposition, 'FALSE POSITIVE');
+    assert.equal(final.outcome.closed, true); assert.equal(final.outcome.tuned, true);
+    assert.match(resolvedReports[0], /Disposition\*\*: FALSE POSITIVE/);
+    assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
+  });
+
+  for (const failure of ['assessment', 'model']) it(`stops before tracker writes if ${failure} fails during evidence investigation`, async t => {
+    setupRefinement(t);
+    if (failure === 'assessment') preparationResults = [{ code: 1, stdout: '', stderr: 'ERROR: Synthetic assessment failure' }];
+    else { preparationResults = [refine('Inspect caller')]; modelReports = [uncertain(), new Error('Synthetic follow-up model failure')]; }
+    const events = await runBatch(TP);
+    const final = events.find(event => event.avit === TP && event.done);
+    assert.equal(final.stage, 'error'); assert.match(final.detail, /Synthetic/);
+    assert.equal(calls.some(args => ['resolve', 'fix-pr'].includes(args[1])), false);
+    const checkout = calls.find(args => args[1] === 'checkout');
+    assert.ok(!fs.existsSync(checkout[checkout.indexOf('--dir') + 1]));
+  });
+
+  it('cancels a follow-up investigation before saving or writing tracker state', async t => {
+    setupRefinement(t);
+    preparationResults = [refine('Inspect caller')];
+    modelReports = [uncertain(), report(TP, 'TRUE POSITIVE')];
+    let reviews = 0;
+    modelHook = async () => {
+      if (++reviews !== 2) return;
+      const stop = await open();
+      stop.send(JSON.stringify({ action: 'avit_batch_cancel' }));
+      await waitFor(stop, event => event.type === 'avit_batch_cancel_ack');
+      stop.close();
+    };
+    const events = await runBatch(TP);
+    assert.equal(events.find(event => event.avit === TP && event.done).stage, 'cancelled');
+    assert.equal(calls.some(args => ['resolve', 'fix-pr'].includes(args[1])), false);
+    assert.equal(events.at(-1).cancelled, true);
+  });
+
   it('reports an already closed AVIT as informational with a direct ServiceNow record link', async () => {
     const information = 'AVIT is already closed in ServiceNow; work note added and report attached.';
     const sysId = 'c'.repeat(32);
