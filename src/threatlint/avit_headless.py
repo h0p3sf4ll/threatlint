@@ -24,6 +24,12 @@ from .run_context import _build_run_message
 _CREDENTIAL_ASSIGNMENT = re.compile(r"^\s*#?\s*[\"']?[\w.-]+[\"']?\s*[:=]\s*[\"']?([^\"'\s#,]{16,})")
 _KNOWN_SECRET = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b")
 _RULE_GUIDANCE = (
+    "Be decisive and aggressive: when the evidence shows the flagged code cannot be exploited "
+    "(the sink is unreachable, the input is not attacker-controlled, it is a test or fixture, or an "
+    "effective control is present), call it a FALSE POSITIVE and tune its rule rather than downgrading "
+    "a clear false positive to AMBIGUOUS out of caution. Reserve AMBIGUOUS for genuine evidence "
+    "conflicts you cannot resolve from the source, and never mark a real, reachable vulnerability as a "
+    "false positive. "
     "For a SAST or Secrets FALSE POSITIVE, include a complete tuned Semgrep rule "
     "based on the supplied live or original rule, preserving all existing exclusions. "
     "Use the original rule id plus `.tuned`. Put one fenced YAML block immediately "
