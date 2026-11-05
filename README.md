@@ -173,6 +173,7 @@ engineering handoff without overstating what was verified.
 | Review findings from a findings platform or scanning tool | [Integrations](docs/integrations/README.md): [DefectDojo](docs/integrations/defectdojo.md) (findings management) · [SonarQube](docs/integrations/sonarqube.md) (scanning) |
 | Add your own integration | [Writing an integration](docs/integrations/authoring.md) |
 | Attack a running build in an isolated sandbox | [Runtime red team](docs/runtime-redteam.md) |
+| Gate a repo through SAST then DAST/MAST with fail-fast disqualification | [Assurance gate](docs/assurance.md) |
 | Read trends from reports and synced ServiceNow AVIT or DefectDojo findings | [Dashboards](docs/dashboards.md) |
 | Export a report or fix missing Word output | [Reports](docs/reports.md) |
 | Discuss supplied evidence in Teams | [Teams](docs/teams.md) |

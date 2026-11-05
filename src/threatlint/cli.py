@@ -291,6 +291,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_integration_parsers(sub)
     from threatlint.redteam.cli import add_redteam_parser
     add_redteam_parser(sub)
+    from threatlint.assurance.cli import add_assure_parser
+    add_assure_parser(sub)
 
     return parser
 
@@ -318,6 +320,11 @@ def _cmd_sctask(args: argparse.Namespace) -> int:
 def _cmd_isst(args: argparse.Namespace) -> int:
     from threatlint.isst_cli import cmd_isst
     return cmd_isst(args)
+
+
+def _cmd_assure(args: argparse.Namespace) -> int:
+    from threatlint.assurance.cli import cmd_assure
+    return cmd_assure(args)
 
 
 def _cmd_ado(args: argparse.Namespace) -> int:
@@ -362,7 +369,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "isst": _cmd_isst, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "isst": _cmd_isst, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam, "assure": _cmd_assure}
     # Integration commands (built-in and plugin) register their own handler.
     handler = commands.get(args.command) or getattr(args, "integration_handler", None)
     if handler is None:
