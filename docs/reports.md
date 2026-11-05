@@ -11,8 +11,33 @@ evidence, and what should we do next?** A file attachment is only the delivery f
 - **Action last:** a proposed fix, compatibility notes, suggested owner/effort,
   regression assertions, and acceptance criteria.
 
-False-positive reviews add a disposition and an engineering action plan.
-Ambiguous findings stay open with the specific evidence needed to decide.
+Finding reviews use the title **Finding Review** and exactly two dispositions: TRUE POSITIVE
+or FALSE POSITIVE. FP requires evidence disproving the scanner claim beyond reasonable doubt.
+If that proof is missing, the finding remains open as a conservative TP with its actual
+confidence, evidence gaps and validation limits. A conservative TP is not a confirmed exploit.
+The `fp-review` command and filename suffix remain compatible with existing integrations.
+
+Eligible Semgrep false positives retain rule tuning. The tracker workflow validates complete
+rules and TP/FP fixtures before publication; missing or failed tuning is reported as incomplete.
+The findings-file CLI runner automatically validates eligible FP tuning before saving the
+report and records blocked tuning as an incomplete run. To validate an existing local/no-cloud
+report independently, include the full rule and fixtures in the review and run:
+
+```bash
+threatlint semgrep tune-report --report review.md --repo /path/to/checkout --output-dir /path/to/tuned-rules
+```
+
+This uses Pro to validate the exact FP location and retained TP fixtures, saves one cumulative
+replacement per original rule, and records a per-finding `tuning-manifest.json`. It never uploads
+findings or publishes rules. Only validated replacements are saved; blocked proposals return
+an unsuccessful exit status. Use the manifest to replace the listed original IDs in the local
+scan configuration. Adding both the original and replacement would keep the original noise.
+
+Semgrep token precedence is environment, native Semgrep settings, Threatlint saved login, then
+Parameter Store. The native login defaults to `~/.semgrep/settings.yml` and respects
+`SEMGREP_SETTINGS_FILE`. A token alone is not proof that Pro is installed: Threatlint checks the
+matching engine and does not silently downgrade. Reports preserve the input scan's actual
+engine provenance instead of inferring it from the installed CLI version.
 
 **A proposed test is not a passed test.** Look for actual execution evidence;
 otherwise validation remains **NOT RUN**. A report, clean guard run, or dashboard

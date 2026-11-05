@@ -34,6 +34,8 @@ REPORT = f"""# FP Review
 **Disposition**: FALSE POSITIVE
 **Severity**: INFO
 **Confidence**: CONFIRMED
+**Evidence**: `src/synthetic.py:12` — the inspected sink receives a bound value.
+**Verified Safe Behavior**: The binding treats the supplied value as data, never query syntax.
 """
 
 
@@ -297,7 +299,8 @@ def test_ambiguous_attaches_the_report_with_a_note_and_leaves_the_avit_open(monk
     monkeypatch.setattr("sys.stdout", io.StringIO())
     assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "AMBIGUOUS"))) == 0
     body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
-    assert "state" not in body and body["work_notes"] == ar.AMBIGUOUS_COMMENT
+    assert "state" not in body and body["work_notes"].startswith(ar.TRUE_POSITIVE_COMMENT)
+    assert "not proven beyond reasonable doubt" in body["work_notes"]
     assert any("attachment/file" in u for _m, u, _d in fake.calls)
 
 

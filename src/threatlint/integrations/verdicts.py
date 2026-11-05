@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from threatlint.finding_review import FindingReviewError, normalize_verdict
+
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
 
 
@@ -24,15 +26,20 @@ def candidates(report: str, *, disposition_pattern: re.Pattern[str] = _DISPOSITI
             match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
             return match.group(1).replace("*", "").strip() if match else ""
 
-        disposition = disposition_pattern.search(field("Disposition|Verdict"))
+        stated = re.findall(r"(?im)^\**(?:Disposition|Verdict)\**\s*:\s*(.+)$", body)
+        values = [value if disposition_pattern.search(value) else "" for value in stated]
+        normalized = [normalize_verdict({"disposition": value}) for value in values]
+        if len({item["disposition"] for item in normalized}) > 1:
+            raise FindingReviewError("The finding has conflicting dispositions; resolve it manually")
         identifier = re.match(r"\[([A-Z][A-Z0-9]*-\d+)\]", header)
         verdict = {
             "id": identifier.group(1) if identifier else "",
             "title": re.sub(r"^\[[^\]]+\]\s*[—–:-]?\s*", "", header).strip(),
-            "disposition": disposition.group(0).upper() if disposition else "",
+            "disposition": "AMBIGUOUS" if any(item.get("decision_basis") for item in normalized)
+                           else normalized[0]["disposition"] if normalized else "",
             "confidence": field("Confidence").split()[0] if field("Confidence") else "",
         }
-        parsed.append((original.group(1) if original else header, verdict))
+        parsed.append((original.group(1) if original else header, normalize_verdict(verdict, body=body)))
     return parsed
 
 

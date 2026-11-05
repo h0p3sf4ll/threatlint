@@ -12,6 +12,7 @@ const { field } = require('../reports.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
 const semgrep = require('../semgrep-cloud.cjs');
+const { reviewSemgrepAvit } = require('../scan-import.cjs');
 
 const FP_REVIEWER = 'appsec-fp-reviewer';
 const AVIT_TOKEN = /\bAVIT\d{7,15}\b/g;
@@ -36,7 +37,7 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     const located = typeof reportId === 'string' ? reports.find(reportId) : null;
     if (!located) throw new HttpError('Report not found', 404);
     const { report } = located;
-    if (report.agentId !== FP_REVIEWER) throw new HttpError('Only Findings triage reports can close AVITs or tune Semgrep');
+    if (report.agentId !== FP_REVIEWER) throw new HttpError('Only Finding Review reports can close AVITs or tune Semgrep');
     const finding = reports.read(report).findings.find(item => item.id === findingId);
     if (!finding) throw new HttpError('Finding not found in this report', 404);
     if (finding.disposition !== 'FALSE POSITIVE') throw new HttpError(`${finding.id} is ${finding.disposition || 'not triaged'}, not FALSE POSITIVE`);
@@ -50,7 +51,8 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     // The Word report is the one attachment.
     if (!report.docxPath || !fs.existsSync(report.docxPath)) throw new HttpError('The Word report is unavailable; install python-docx so the report can be attached', 409);
     const files = [{ name: `${avit}-threatlint-fp-review.docx`, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }];
-    return servicenow.closeAvitAsFalsePositive(credentials, avit, { note: closingNote(), files }, { fetchImpl });
+    return servicenow.resolveAvit(credentials, avit, { disposition: 'FALSE POSITIVE', files }, { fetchImpl,
+      reviewSemgrep: number => reviewSemgrepAvit(number, { body: req.body || {}, credentials, integrations }) });
   }));
 
   // Preview: the open Semgrep findings this tuning would ignore. Nothing changes until /ignore.

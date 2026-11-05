@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -12,12 +13,62 @@ from pathlib import Path
 from threatlint import semgrep_rule_text
 
 
+def _pro_candidates(executable: str) -> list[Path]:
+    """Common pip, pipx, Homebrew, and Windows package layouts, plus PATH."""
+    suffix = ".exe" if os.name == "nt" else ""
+    name = "semgrep-core-proprietary" + suffix
+    candidates = []
+    on_path = shutil.which(name)
+    if on_path:
+        candidates.append(Path(on_path))
+    entry = Path(executable).resolve()
+    for root in (entry.parent, entry.parent.parent):
+        candidates.append(root / name)
+        for pattern in ("lib/python*/site-packages/semgrep/bin/" + name,
+                        "libexec/lib/python*/site-packages/semgrep/bin/" + name,
+                        "Lib/site-packages/semgrep/bin/" + name):
+            candidates.extend(root.glob(pattern))
+    return list(dict.fromkeys(candidates))
+
+
+def engine_status(*, environment) -> dict:
+    """Inspect installed binaries only; no login check, download, or repository scan."""
+    executable = shutil.which("semgrep")
+    status = {"cli_version": None, "pro_ready": False}
+    if not executable:
+        return status
+    env = environment()
+    env.update(SEMGREP_SEND_METRICS="off", SEMGREP_ENABLE_VERSION_CHECK="0")
+    try:
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True,
+                                timeout=15, check=False, env=env, shell=False)
+        if result.returncode or not result.stdout.strip():
+            return status
+        version = result.stdout.strip().splitlines()[0]
+        status["cli_version"] = version
+        for binary in _pro_candidates(executable):
+            stamp = binary.parent / "pro-installed-by.txt"
+            if not binary.is_file() or not os.access(binary, os.X_OK) or not stamp.is_file():
+                continue
+            if stamp.read_text(encoding="utf-8").strip() != version:
+                continue
+            check = subprocess.run([str(binary), "-pro_version"], capture_output=True, text=True,
+                                   timeout=15, check=False, env=env, shell=False)
+            if check.returncode == 0:
+                status["pro_ready"] = True
+                break
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        pass
+    return status
+
+
 def run(args, cwd=None, token=None, *, environment, error_type):
     executable = shutil.which("semgrep")
     if not executable:
-        raise error_type("Semgrep Community Edition is required to validate the tuned rule")
+        raise error_type("Semgrep CLI is required to validate the tuned rule")
     env = environment()
     env["SEMGREP_SEND_METRICS"] = "off"
+    env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
     if env.get("AWS_CA_BUNDLE"):
         env.setdefault("REQUESTS_CA_BUNDLE", env["AWS_CA_BUNDLE"])
     if token:
@@ -30,9 +81,15 @@ def run(args, cwd=None, token=None, *, environment, error_type):
 
 
 def matches(config, target, line, exact=False, *, run, pro_flags, error_type):
-    result = run(["scan", *pro_flags(), "--config", config, "--json", "--quiet", "--metrics", "off", target])
+    result = run(["scan", *pro_flags(), "--config", config, "--json", "--quiet", "--metrics", "off",
+                  "--disable-version-check", "--no-secrets-validation", target])
+    if result.returncode != 0:
+        raise error_type("Semgrep scan failed; no tuning coverage or engine fallback was assumed")
     try:
-        found = [item["start"]["line"] for item in json.loads(result.stdout).get("results", [])]
+        payload = json.loads(result.stdout)
+        if payload.get("errors"):
+            raise error_type("Semgrep reported scan errors; tuning coverage is not established")
+        found = [item["start"]["line"] for item in payload.get("results", [])]
     except (ValueError, KeyError):
         raise error_type(f"Semgrep could not scan with {config}: {(result.stderr or result.stdout).strip()[-300:]}") from None
     return [value for value in found if line is None or (value == line if exact else abs(value - line) <= 3)]

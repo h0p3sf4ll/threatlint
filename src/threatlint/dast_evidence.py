@@ -93,22 +93,23 @@ def review_request(state: dict) -> str:
     finding = state["finding"]
     location = f"{finding['method']} {finding['path']}" + (f" ({finding['parameter']})" if finding.get("parameter") else "")
     return "\n".join([
-        f"# FP review request — {state['avit']} (Invicti DAST)", "",
-        f"Triage {state['avit']} as TRUE POSITIVE, FALSE POSITIVE, or AMBIGUOUS. The source is the checkout at `{state.get('checkout')}`"
+        f"# Finding review request — {state['avit']} (Invicti DAST)", "",
+        f"Triage {state['avit']} as TRUE POSITIVE or FALSE POSITIVE. The source is the checkout at `{state.get('checkout')}`"
         f" ({state['target']['web_url']}, branch {state['target']['branch']}). Analysis only: do not modify it.", "",
         "Decide from the source and the sandbox evidence together:",
         "- Trace the flagged route and parameter to the sink in the source; find any encoding, validation or control on the path.",
         "- The sandbox is the same branch with synthetic config, not production: proxies, WAF, TLS edge and production config are absent.",
         "- A scanner label, a missing header, a banner or a status code alone is an observation, not a verified vulnerability.",
         "- Observed exploit behaviour in the sandbox plus a source path to the sink supports TRUE POSITIVE. Behaviour not observed plus a",
-        "  source control that explains why supports FALSE POSITIVE. A failed deployment, unhealthy app or untested route is AMBIGUOUS",
-        "  unless the source alone decides it; name the missing evidence.", "",
+        "  verified source control that disproves the specific claim beyond reasonable doubt supports FALSE POSITIVE.",
+        "- Otherwise use TRUE POSITIVE with Decision basis: CONSERVATIVE DEFAULT; name the missing evidence and preserve confidence.",
+        "  A failed deployment, unhealthy app or untested route does not prove exploitation or safety.", "",
         "Write a complete report (header, executive summary, one finding FP-001, evidence with file:line and request IDs, proposed fix,",
         "owner/effort, regression assertions and acceptance criteria for a TRUE POSITIVE). Head the finding `#### [FP-001] — <title>`;",
         "under it the report must contain these exact lines:", "",
         f"    **Original finding**: {state['avit']}; {finding.get('vulnerability') or finding['kind']}; Invicti DAST; {location}",
-        "    **Disposition**: <TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS>",
+        "    **Disposition**: <TRUE POSITIVE|FALSE POSITIVE>",
         "    **Severity**: <CRITICAL|HIGH|MEDIUM|LOW|INFO>",
-        "    **Confidence**: <CONFIRMED|LIKELY|POSSIBLE>", "",
+        "    **Confidence**: <CONFIRMED|PLAUSIBLE|THEORETICAL>", "",
         "Never reproduce secret values. No tuned Semgrep rule: this is not a Semgrep finding.", "",
         "---", "", evidence_markdown(state)])

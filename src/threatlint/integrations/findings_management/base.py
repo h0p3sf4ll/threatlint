@@ -17,6 +17,7 @@ note, describe, auth_headers, validate_token).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from threatlint import avit_semgrep, servicenow as sn
 from threatlint.integrations.common import IntegrationError, ReviewableIntegration, report_line
@@ -48,6 +49,26 @@ class FindingsManagementPlatform(ReviewableIntegration):
     def after_resolve(self, item: dict, verdict: dict, markdown: str, args) -> None:
         if verdict["disposition"] == "FALSE POSITIVE" and self.semgrep_applicable(item) and not getattr(args, "skip_semgrep", True):
             semgrep_step(item, verdict, markdown, args)
+
+    def before_resolve(self, item: dict, verdict: dict, markdown: str, args) -> None:
+        """Reject missing tuning prerequisites before closing or attaching to the tracker."""
+        if verdict["disposition"] != "FALSE POSITIVE" or not self.semgrep_applicable(item) or getattr(args, "skip_semgrep", False):
+            return
+        from threatlint import semgrep_rule_text
+        from threatlint.integrations.verbs import finding_kind
+        if finding_kind(item) not in ("sast", "secrets") or getattr(args, "skip_rule_tuning", False):
+            return
+        context = item.get("context", {})
+        checkout = getattr(args, "checkout", None)
+        if not checkout or not context.get("file_path") or not context.get("rule"):
+            raise IntegrationError("Semgrep rule tuning requires the exact finding checkout, rule and file before closure")
+        root = Path(checkout).resolve()
+        relative = Path(context["file_path"])
+        target = (root / relative).resolve()
+        if relative.is_absolute() or not target.is_relative_to(root) or not target.is_file():
+            raise IntegrationError("The Semgrep finding file is unavailable in the checkout; tracker unchanged")
+        if not semgrep_rule_text.tuned_rule_from_report(markdown) or not semgrep_rule_text.fixtures_from_report(markdown):
+            raise IntegrationError("Semgrep false positives require complete tuned rule and TP/FP fixtures before closure")
 
     def cleanup(self, args) -> None:
         # The checkout holds a copy of someone else's source (possibly live secrets); never leave it on disk.
@@ -88,8 +109,7 @@ def semgrep_step(item: dict, verdict: dict, markdown: str, args) -> None:
         target_file = os.path.join(args.checkout, path) if getattr(args, "checkout", None) and path else ""
         line = int(context["line"]) if context.get("line", "").isdigit() else report_line(markdown, reference)
         if not (context.get("rule") and target_file and os.path.exists(target_file)):
-            print("  ! Rule not tuned: pass --checkout <checkout> so the tuned rule can be validated against the flagged file")
-            return
+            raise IntegrationError("Rule not tuned: pass --checkout <checkout> so the tuned rule can be validated against the flagged file; the workflow is incomplete")
         try:
             sp.tune_rule(markdown, kind, context["rule"], target_file, line, sg_token, {"id": dep["id"], "slug": dep["slug"]},
                          project=avit_semgrep.tuning_project(target, matches))

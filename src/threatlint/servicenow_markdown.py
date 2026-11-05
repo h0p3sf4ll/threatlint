@@ -57,7 +57,7 @@ def context_lines(
     else:
         lines += ["", "This AVIT comes from another tool or view, so Semgrep is not involved. Validate it from its own evidence: the",
                   "scan details, affected asset or URL, request/response or proof, the vulnerability definition, and the code when a",
-                  "repository is named. Decide TRUE / FALSE POSITIVE only when the evidence supports it; otherwise AMBIGUOUS."]
+                  "repository is named. Use FALSE POSITIVE only when inspected evidence disproves the rule claim beyond reasonable doubt; otherwise use TRUE POSITIVE with Decision basis: CONSERVATIVE DEFAULT and preserve the evidence gaps."]
     return lines
 
 

@@ -3,6 +3,9 @@
 import configparser
 import io
 import subprocess
+import types
+
+import pytest
 
 from threatlint import aws_login
 
@@ -75,3 +78,38 @@ def test_error_messages_with_aws_urls_never_open_a_browser(monkeypatch):
 def test_region_is_detected_from_the_portal(monkeypatch):
     monkeypatch.setattr(aws_login, "portal_accepts", lambda url, region: region == "us-east-1")
     assert aws_login.detect_region("https://console-example.awsapps.com/start", "us-east-2") == "us-east-1"
+
+
+@pytest.mark.parametrize("saved_profile", [None, {"sso_start_url": "https://example.awsapps.com/start"}])
+def test_missing_aws_cli_stops_before_prompts_or_network(monkeypatch, capsys, saved_profile):
+    monkeypatch.setattr(aws_login.shutil, "which", lambda name: None)
+    monkeypatch.setattr(aws_login.sys, "platform", "win32")
+    monkeypatch.setattr(aws_login, "existing_profile", lambda profile: saved_profile)
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("AWS CLI preflight must stop before prompts or network calls")
+
+    for name in ("_ask", "detect_region", "portal_accepts", "sso_login", "caller_identity"):
+        monkeypatch.setattr(aws_login, name, unexpected)
+    args = types.SimpleNamespace(profile="appsec", start_url="", sso_region="", account_id=None, role=None)
+
+    assert aws_login.cmd_aws(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not found on PATH" in captured.err
+    assert "close and reopen PowerShell" in captured.err
+    assert "aws --version" in captured.err
+
+
+def test_available_aws_cli_reuses_existing_sso_profile(monkeypatch, capsys):
+    monkeypatch.setattr(aws_login, "_aws", lambda: "aws")
+    monkeypatch.setattr(aws_login, "existing_profile", lambda profile: {"sso_session": "threatlint"})
+    monkeypatch.setattr(aws_login, "existing_session", lambda session: {})
+    signed_in = []
+    monkeypatch.setattr(aws_login, "sso_login", signed_in.append)
+    monkeypatch.setattr(aws_login, "caller_identity", lambda profile: {"Arn": "test-identity"})
+    args = types.SimpleNamespace(profile="appsec", start_url="", sso_region="", account_id=None, role=None)
+
+    assert aws_login.cmd_aws(args) == 0
+    assert signed_in == ["appsec"]
+    assert "Signed in as test-identity" in capsys.readouterr().out

@@ -24,7 +24,8 @@ import json
 import re
 import urllib.parse
 
-from threatlint.integrations.common import (AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, IntegrationError,
+from threatlint.finding_review import CONSERVATIVE_REASON, FindingReviewError, is_conservative, normalize_disposition, normalize_verdict
+from threatlint.integrations.common import (CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, IntegrationError,
                                            context_from_repository_url, multipart, request, search_limit)
 from threatlint.integrations.findings_management.base import FindingsManagementPlatform
 
@@ -196,8 +197,7 @@ class DefectDojo(FindingsManagementPlatform):
     # Writes -----------------------------------------------------------------
     def describe(self, disposition: str) -> str:
         return {"FALSE POSITIVE": "attach the report, add the closing note, and mark it false positive (false_p, inactive)",
-                "TRUE POSITIVE": "attach the report, add the true-positive note, and mark it verified (it stays active)",
-                "AMBIGUOUS": "attach the report and add the ambiguous note (nothing else changes)"}[disposition]
+                "TRUE POSITIVE": "attach the report, add the true-positive note, and keep the finding active"}[normalize_disposition(disposition)]
 
     def attached_titles(self, url: str, token: str, finding_id: int) -> set[str]:
         try:
@@ -222,7 +222,13 @@ class DefectDojo(FindingsManagementPlatform):
                        headers={**self.auth_headers(token), "Content-Type": "application/json"}, hints=_HINTS) or {}
 
     def resolve(self, url: str, token: str, item: dict, verdict: dict, *, files: list[tuple[str, bytes, str]], args=None) -> dict:
+        try:
+            verdict = normalize_verdict(verdict)
+        except FindingReviewError as exc:
+            raise IntegrationError(str(exc)) from None
         disposition = verdict["disposition"]
+        if not disposition:
+            raise IntegrationError("A TRUE POSITIVE or FALSE POSITIVE disposition is required")
         finding_id = int(item["id"])
         existing = self.attached_titles(url, token, finding_id)
         attached = []
@@ -235,7 +241,9 @@ class DefectDojo(FindingsManagementPlatform):
             self.attach(url, token, finding_id, name, content, content_type)
             print(f"  ✓ Attached {name}")
             attached.append({"name": name})
-        note = CLOSING_COMMENT if disposition == "FALSE POSITIVE" else AMBIGUOUS_COMMENT if disposition == "AMBIGUOUS" else TRUE_POSITIVE_COMMENT
+        note = CLOSING_COMMENT if disposition == "FALSE POSITIVE" else TRUE_POSITIVE_COMMENT
+        if is_conservative(verdict):
+            note += " " + CONSERVATIVE_REASON
         self.note(url, token, item, note)
         print("  ✓ Note added")
         result = {"reference": item["reference"], "disposition": disposition, "note": note, "attachments": attached, "closed": False, "url": item.get("web_url")}
@@ -245,6 +253,11 @@ class DefectDojo(FindingsManagementPlatform):
             result["closed"] = bool(stored.get("false_p")) and not stored.get("active")
             result["action"] = "closed" if result["closed"] else "close not applied"
             print("  ✓ Marked false positive (inactive)" if result["closed"] else f"  ! DefectDojo kept false_p={stored.get('false_p')} active={stored.get('active')}")
+        elif is_conservative(verdict):
+            if item.get("state", {}).get("false_p"):
+                self.patch(url, token, finding_id, {"false_p": False, "active": True})
+            result["action"] = "noted"
+            print("  ✓ Conservative true-positive decision recorded; no verification claim added")
         elif disposition == "TRUE POSITIVE":
             values = {"verified": True}
             if item.get("state", {}).get("false_p"):

@@ -14,11 +14,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { HttpError } = require('./http.cjs');
-const { CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT } = require('./servicenow.cjs');
+const { CLOSING_COMMENT, TRUE_POSITIVE_COMMENT } = require('./servicenow.cjs');
+
+const { dispositionState, CONSERVATIVE_NOTE } = require('./finding-disposition.cjs');
 
 const HTTP_TIMEOUT_MS = 30_000;
 const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const DISPOSITIONS = ['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'];
+const LEGACY_DISPOSITIONS = ['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'];
 
 const TOOLS = {
   dojo: { id: 'dojo', name: 'defectdojo', kind: 'findings-management', label: 'DefectDojo', file: 'defectdojo.json', urlEnv: 'THREATLINT_DOJO_URL', tokenEnv: 'THREATLINT_DOJO_TOKEN', example: 'DOJO-123', attachments: true },
@@ -139,11 +141,12 @@ function mentions(text, reference) {
 
 /**
  * DefectDojo: attach the Word report (skipping one already attached), add the Threatlint note, then
- * FALSE POSITIVE -> false_p / inactive; TRUE POSITIVE -> verified; AMBIGUOUS -> note only.
+ * FALSE POSITIVE -> false_p / inactive; verified TRUE POSITIVE -> verified; unverified TRUE POSITIVE -> note only.
  */
-async function resolveDojo(conn, reference, { disposition, files = [] }, { fetchImpl = fetch } = {}) {
+async function resolveDojo(conn, reference, { disposition, unverified = false, files = [] }, { fetchImpl = fetch } = {}) {
   const [ref] = parseReferences('dojo', reference);
-  if (!DISPOSITIONS.includes(disposition)) throw new HttpError(`${ref} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition`);
+  if (!LEGACY_DISPOSITIONS.includes(disposition)) throw new HttpError(`${ref} has no TRUE POSITIVE / FALSE POSITIVE disposition`);
+  ({ disposition, unverified } = dispositionState(disposition, unverified));
   const findingId = Number(ref.slice(5));
   const base = `${conn.url}/api/v2/findings/${findingId}`;
   const headers = authHeaders('dojo', conn.token);
@@ -163,32 +166,33 @@ async function resolveDojo(conn, reference, { disposition, files = [] }, { fetch
     attachments.push({ name: file.name });
   }
   const falsePositive = disposition === 'FALSE POSITIVE';
-  const note = falsePositive ? CLOSING_COMMENT : disposition === 'AMBIGUOUS' ? AMBIGUOUS_COMMENT : TRUE_POSITIVE_COMMENT;
+  const note = falsePositive ? CLOSING_COMMENT : unverified ? CONSERVATIVE_NOTE : TRUE_POSITIVE_COMMENT;
   await requestJson(fetchImpl, 'dojo', `${base}/notes/`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: note, private: false }) });
-  const patch = falsePositive ? { false_p: true, active: false, verified: false } : disposition === 'TRUE POSITIVE' ? { verified: true, ...(finding?.false_p ? { false_p: false, active: true } : {}) } : null;
+  const patch = falsePositive ? { false_p: true, active: false, verified: false } : !unverified ? { verified: true, ...(finding?.false_p ? { false_p: false, active: true } : {}) } : null;
   const stored = patch ? await requestJson(fetchImpl, 'dojo', `${base}/`, { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }) || {} : {};
   const closed = falsePositive && stored.false_p === true && !stored.active;
-  return { reference: ref, disposition, note, attachments, closed, leftOpen: !falsePositive, url: `${conn.url}/finding/${findingId}`,
-    action: falsePositive ? (closed ? 'closed' : 'close not applied') : disposition === 'TRUE POSITIVE' ? (stored.verified ? 'verified' : 'verify not applied') : 'noted' };
+  return { reference: ref, disposition, unverified, note, attachments, closed, leftOpen: !falsePositive, url: `${conn.url}/finding/${findingId}`,
+    action: falsePositive ? (closed ? 'closed' : 'close not applied') : !unverified ? (stored.verified ? 'verified' : 'verify not applied') : 'noted' };
 }
 
-function sonarComment(disposition, summary, where) {
-  return `${SONAR_SUMMARY[disposition]} Summary: ${String(summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)}. Full report: ${String(where || 'the Threatlint report kept by the reviewer').slice(0, 500)}.`.slice(0, 4000);
+function sonarComment(disposition, summary, where, unverified = false) {
+  return `${unverified ? CONSERVATIVE_NOTE : SONAR_SUMMARY[disposition]} Summary: ${String(summary || '').replace(/\s+/g, ' ').trim().slice(0, 300)}. Full report: ${String(where || 'the Threatlint report kept by the reviewer').slice(0, 500)}.`.slice(0, 4000);
 }
 
 /**
  * SonarQube: no attachments, so a comment carries a summary and names where the full report lives.
  * Issues: comment, then FALSE POSITIVE -> falsepositive; TRUE POSITIVE -> confirm when offered. Hotspots: FALSE POSITIVE -> REVIEWED/SAFE; else comment.
  */
-async function resolveSonar(conn, reference, { disposition, summary = '', where = '' }, { fetchImpl = fetch } = {}) {
+async function resolveSonar(conn, reference, { disposition, unverified = false, summary = '', where = '' }, { fetchImpl = fetch } = {}) {
   const [ref] = parseReferences('sonar', reference);
-  if (!DISPOSITIONS.includes(disposition)) throw new HttpError(`${ref} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition`);
+  if (!LEGACY_DISPOSITIONS.includes(disposition)) throw new HttpError(`${ref} has no TRUE POSITIVE / FALSE POSITIVE disposition`);
+  ({ disposition, unverified } = dispositionState(disposition, unverified));
   const hotspot = ref.startsWith('SONAR-HOTSPOT-');
   const key = ref.slice(hotspot ? 14 : 6);
   const headers = { ...authHeaders('sonar', conn.token), 'Content-Type': 'application/x-www-form-urlencoded' };
   const post = (route, params) => requestJson(fetchImpl, 'sonar', `${conn.url}${route}`, { method: 'POST', headers, body: new URLSearchParams(params).toString() });
-  const comment = sonarComment(disposition, summary, where);
-  const result = { reference: ref, disposition, note: comment, attachments: [], closed: false, leftOpen: disposition !== 'FALSE POSITIVE' };
+  const comment = sonarComment(disposition, summary, where, unverified);
+  const result = { reference: ref, disposition, unverified, note: comment, attachments: [], closed: false, leftOpen: disposition !== 'FALSE POSITIVE' };
   try {
     if (hotspot) {
       if (disposition === 'FALSE POSITIVE') { await post('/api/hotspots/change_status', { hotspot: key, status: 'REVIEWED', resolution: 'SAFE', comment }); return { ...result, closed: true, action: 'closed' }; }
@@ -197,7 +201,7 @@ async function resolveSonar(conn, reference, { disposition, summary = '', where 
     }
     await post('/api/issues/add_comment', { issue: key, text: comment });
   } catch (error) { if (error.upstreamStatus === 404) throw Object.assign(new HttpError(`${ref} was not found or is not readable with this token`, 404), { code: 'finding_unreadable' }); throw error; }
-  const transition = { 'FALSE POSITIVE': 'falsepositive', 'TRUE POSITIVE': 'confirm' }[disposition];
+  const transition = unverified ? null : { 'FALSE POSITIVE': 'falsepositive', 'TRUE POSITIVE': 'confirm' }[disposition];
   if (!transition) return { ...result, action: 'noted' };
   try {
     const stored = await post('/api/issues/do_transition', { issue: key, transition });

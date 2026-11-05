@@ -10,6 +10,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { AGENTS, DATA_DIR } = require('./agents.cjs');
 const { parseReport } = require('./reports.cjs');
+const { normalizeReviewMarkdown } = require('./finding-disposition.cjs');
 
 const execFileAsync = promisify(execFile);
 const CONVERSION_TIMEOUT_MS = 60_000;
@@ -36,6 +37,7 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
   /** options.title: a descriptive report title (e.g. for an imported scan); options.source: where the findings came from. */
   async function save(agentId, markdown, sessionId, { title = null, source = null } = {}) {
     if (!markdown.trim()) throw new Error('The model returned no final report');
+    if (agentId === 'appsec-fp-reviewer') markdown = normalizeReviewMarkdown(markdown);
     const session = store.sessions.get(sessionId);
     const directory = directoryFor(sessionId);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -45,7 +47,7 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
     fs.writeFileSync(mdPath, markdown, { mode: 0o600 });
     const hasDocx = await writeWord(mdPath, docxPath);
     const parsed = parseReport(markdown, agentId);
-    const report = { id: crypto.randomUUID(), agentId, label: AGENTS[agentId].label, timestamp, mdPath, docxPath: hasDocx ? docxPath : null,
+    const report = { id: crypto.randomUUID(), agentId, label: agentId === 'appsec-fp-reviewer' ? 'Finding Review' : AGENTS[agentId].label, timestamp, mdPath, docxPath: hasDocx ? docxPath : null,
       sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE,
       ...(title ? { title: String(title).slice(0, 300) } : {}), ...(source ? { source } : {}) };
     session.reports.push(report);

@@ -3,10 +3,12 @@
 import contextlib
 import os
 from pathlib import Path
+import subprocess
 import types
 
 import pytest
 
+from threatlint import parameter_store
 from threatlint import semgrep_platform as sp
 
 REPORT = """#### [FP-001] — safe
@@ -29,9 +31,11 @@ rules:
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.setenv("SEMGREP_SETTINGS_FILE", str(tmp_path / "native-settings.yml"))
     monkeypatch.delenv("SEMGREP_APP_TOKEN", raising=False)
     monkeypatch.setattr(sp, "_keyring", lambda: None)
     monkeypatch.setattr(sp, "existing_tuning", lambda *a: [])
+    monkeypatch.setattr(sp, "engine_status", lambda: {"cli_version": "1.0", "pro_ready": True})
 
 
 def test_token_is_saved_privately_and_resolved_first(monkeypatch):
@@ -39,6 +43,44 @@ def test_token_is_saved_privately_and_resolved_first(monkeypatch):
     assert sp.resolve_token() == ("t" * 64, str(sp.store_path()))
     monkeypatch.setenv("SEMGREP_APP_TOKEN", "env-token-value-123456")
     assert sp.resolve_token()[1] == "SEMGREP_APP_TOKEN"
+
+
+def test_parameter_store_token_is_optional_when_no_parameter_is_configured(monkeypatch):
+    monkeypatch.delenv("THREATLINT_SEMGREP_TOKEN_PARAMETER", raising=False)
+    monkeypatch.setattr(parameter_store, "read_parameter", lambda *a, **k: pytest.fail("an unset parameter must not be fetched"))
+    assert sp.parameter_store_token("appsec") == ""
+
+
+def test_parameter_store_token_uses_the_configured_region_and_profile(monkeypatch):
+    monkeypatch.setenv("THREATLINT_SEMGREP_TOKEN_PARAMETER", "/org/semgrep-token")
+    monkeypatch.setenv("THREATLINT_AWS_REGION", "eu-west-1")
+    monkeypatch.setattr(parameter_store.shutil, "which", lambda name: "/usr/bin/aws")
+
+    def fake_run(command, **_kwargs):
+        assert command[command.index("--region") + 1] == "eu-west-1"
+        assert command[command.index("--profile") + 1] == "appsec"
+        assert command[command.index("--name") + 1] == "/org/semgrep-token"
+        return subprocess.CompletedProcess(command, 0, '{"Parameter":{"Value":"synthetic-token"}}', "")
+
+    monkeypatch.setattr(parameter_store.subprocess, "run", fake_run)
+    assert sp.resolve_token("appsec") == ("synthetic-token", "Parameter Store /org/semgrep-token")
+
+
+def test_configured_parameter_store_token_failures_are_reported_without_secrets(monkeypatch):
+    monkeypatch.setenv("THREATLINT_SEMGREP_TOKEN_PARAMETER", "/org/semgrep-token")
+    monkeypatch.setattr(parameter_store.shutil, "which", lambda name: "/usr/bin/aws")
+    monkeypatch.setattr(parameter_store.subprocess, "run", lambda command, **kwargs:
+                        subprocess.CompletedProcess(command, 255, "", "An error occurred (AccessDeniedException): synthetic-secret-value"))
+    with pytest.raises(sp.SemgrepError, match="AccessDenied") as error:
+        sp.resolve_token("appsec")
+    assert "synthetic-secret-value" not in str(error.value)
+
+
+def test_configured_parameter_store_token_requires_aws_on_path(monkeypatch):
+    monkeypatch.setenv("THREATLINT_SEMGREP_TOKEN_PARAMETER", "/org/semgrep-token")
+    monkeypatch.setattr(parameter_store.shutil, "which", lambda name: None)
+    with pytest.raises(sp.SemgrepError, match="AWS CLI"):
+        sp.parameter_store_token("appsec")
 
 
 def test_the_tuned_rule_block_is_read_from_the_report():

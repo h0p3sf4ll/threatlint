@@ -56,6 +56,7 @@ def test_instance_must_be_a_servicenow_https_origin(bad):
 def test_parameter_store_uses_the_aws_cli_and_reports_access_help(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.delenv("THREATLINT_AWS_REGION", raising=False)
     monkeypatch.setenv("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "/org/snow/client-id")
     monkeypatch.setenv("THREATLINT_SNOW_CLIENT_SECRET_PARAMETER", "/org/snow/client-secret")
     monkeypatch.setenv("THREATLINT_AWS_SSO_PORTAL_URL", "https://sso.example.com/aws")
@@ -78,6 +79,57 @@ def test_parameter_store_uses_the_aws_cli_and_reports_access_help(monkeypatch, t
     assert "https://sso.example.com/aws" in str(error.value)
 
 
+def test_parameter_store_uses_the_configured_region_in_requests_and_help(monkeypatch, tmp_path):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.setenv("THREATLINT_AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "/org/snow/client-id")
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_SECRET_PARAMETER", "/org/snow/client-secret")
+    monkeypatch.setattr(servicenow.shutil, "which", lambda name: "/usr/bin/aws")
+
+    def fake_run(command, **kwargs):
+        assert command[command.index("--region") + 1] == "eu-west-1"
+        assert kwargs["shell"] is False
+        payload = {"Parameters": [{"Name": "/org/snow/client-id", "Value": "id"},
+                                  {"Name": "/org/snow/client-secret", "Value": "secret"}]}
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(servicenow.subprocess, "run", fake_run)
+    assert servicenow.read_parameter_store("appsec") == ("id", "secret")
+    assert "https://eu-west-1.console.aws.amazon.com/" in servicenow.access_help()
+
+
+@pytest.mark.parametrize("failure", ["stderr", "timeout", "oserror"])
+def test_parameter_store_failures_do_not_echo_credentials(monkeypatch, tmp_path, failure):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "/org/snow/client-id")
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_SECRET_PARAMETER", "/org/snow/client-secret")
+    monkeypatch.setattr(servicenow.shutil, "which", lambda name: "/usr/bin/aws")
+
+    def fake_run(command, **_kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 60, stderr="synthetic-secret-value")
+        if failure == "oserror":
+            raise OSError("synthetic-secret-value")
+        return subprocess.CompletedProcess(command, 255, "", "An error occurred (AccessDeniedException): synthetic-secret-value")
+
+    monkeypatch.setattr(servicenow.subprocess, "run", fake_run)
+    with pytest.raises(ServiceNowError) as error:
+        servicenow.read_parameter_store("appsec")
+    assert "synthetic-secret-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("setting,value", [("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "--debug"),
+                                            ("THREATLINT_AWS_REGION", "--debug")])
+def test_parameter_store_rejects_option_like_settings_before_running_aws(monkeypatch, tmp_path, setting, value):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "/org/snow/client-id")
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_SECRET_PARAMETER", "/org/snow/client-secret")
+    monkeypatch.setenv(setting, value)
+    monkeypatch.setattr(servicenow.subprocess, "run", lambda *a, **k: pytest.fail("must reject invalid settings before invoking AWS"))
+    with pytest.raises(ServiceNowError):
+        servicenow.read_parameter_store("appsec")
+
+
 def test_parameter_store_is_not_read_without_configured_names(monkeypatch, tmp_path):
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
     for name in ("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "THREATLINT_SNOW_CLIENT_SECRET_PARAMETER"):
@@ -87,6 +139,22 @@ def test_parameter_store_is_not_read_without_configured_names(monkeypatch, tmp_p
         servicenow.read_parameter_store()
     (tmp_path / "org.json").write_text('{"snowClientIdParameter": "/a", "snowClientSecretParameter": "/b"}', encoding="utf-8")
     assert servicenow.client_parameters() == ("/a", "/b")
+
+
+@pytest.mark.parametrize("payload", [
+    [], None, {"Parameters": None}, {"Parameters": [None]},
+    {"Parameters": [{"Name": "/example/id", "Value": ["synthetic-secret"]}]},
+    {"Parameters": [{"Name": "/example/id", "Value": 123}]},
+])
+def test_malformed_parameter_response_has_safe_error(monkeypatch, tmp_path, payload):
+    monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_ID_PARAMETER", "/example/id")
+    monkeypatch.setenv("THREATLINT_SNOW_CLIENT_SECRET_PARAMETER", "/example/secret")
+    monkeypatch.setattr(servicenow.shutil, "which", lambda _: "/synthetic/aws")
+    monkeypatch.setattr(servicenow.subprocess, "run", lambda command, **_: subprocess.CompletedProcess(command, 0, json.dumps(payload), ""))
+    with pytest.raises(ServiceNowError, match="Unexpected AWS CLI response") as caught:
+        servicenow.read_parameter_store("appsec")
+    assert "synthetic-secret" not in str(caught.value)
 
 
 def test_avits_become_one_untrusted_findings_artifact(monkeypatch):

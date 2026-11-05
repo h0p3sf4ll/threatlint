@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { dispositionState, normalizeReviewMarkdown } = require('./finding-disposition.cjs');
 
 function plain(text) { return text.replaceAll(/[*_`]/g, '').trim(); }
 
@@ -58,13 +59,16 @@ function findingFromHeading(heading, text, headings, agentId) {
   const body = text.slice(heading.after, following?.offset ?? text.length).trim();
   const severity = /\b(CRITICAL|HIGH|MEDIUM|LOW|INFO(?:RMATIONAL)?)\b/i.exec(field(body, 'Severity'))?.[1]?.toUpperCase().replace('INFORMATIONAL', 'INFO') || 'UNSPECIFIED';
   const confidence = /\b(CONFIRMED|PLAUSIBLE|THEORETICAL)\b/i.exec(field(body, 'Confidence'))?.[1]?.toUpperCase() || 'UNSPECIFIED';
-  const disposition = /TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS|PARTIALLY FIXED|STILL PRESENT|REMEDIATED|REGRESSED|RESOLVED|NEW|CANT ASSESS/i.exec(field(body, 'Disposition|Verdict'))?.[0]?.toUpperCase() || '';
+  let disposition = /TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS|PARTIALLY FIXED|STILL PRESENT|REMEDIATED|REGRESSED|RESOLVED|NEW|CANT ASSESS/i.exec(field(body, 'Disposition|Verdict'))?.[0]?.toUpperCase() || '';
+  const rawDisposition = field(body, 'Disposition|Verdict');
+  const reviewState = agentId === 'appsec-fp-reviewer' ? dispositionState(rawDisposition, /CONSERVATIVE DEFAULT|UNVERIFIED/i.test(field(body, 'Decision basis|Validation status'))) : {};
+  if (agentId === 'appsec-fp-reviewer') disposition = reviewState.disposition;
   const evidence = evidenceLocations(body);
   // Runtime and mobile scanner findings locate by URL or manifest/config file rather than path:line.
   const located = evidence.length > 0 || /^- Location: `[^`\n]+`/m.test(body);
   const title = plain(heading.title.slice(match[0].length).trim().replace(/^[—–:-][ \t]*/, ''));
   const id = match[1];
-  return { id, title, severity, confidence, disposition, evidence, located, body,
+  return { id, title, severity, confidence, disposition, ...reviewState, evidence, located, body,
     fingerprint: crypto.createHash('sha256').update(`${agentId}|${id}|${title}|${evidence.join('|')}`).digest('hex').slice(0, 20) };
 }
 
@@ -80,12 +84,13 @@ function findingIssues(finding, agentId) {
   if (!finding.disposition) add('a triage disposition is missing.');
   if (finding.disposition === 'TRUE POSITIVE' && !/acceptance|regression/i.test(finding.body)) add('acceptance or regression criteria were not detected.');
   if (finding.disposition === 'FALSE POSITIVE' && !/blast radius|coverage|exact rule required/i.test(finding.body)) add('suppression impact needs review.');
-  if (finding.disposition === 'AMBIGUOUS' && !/blocking|resolution plan|evidence gap/i.test(finding.body)) add('the blocking evidence or resolution plan is missing.');
+  if (finding.unverified && !/blocking|resolution plan|evidence gap/i.test(finding.body)) add('the blocking evidence or resolution plan is missing.');
   return issues;
 }
 
 function parseReport(markdown, agentId = '') {
-  const text = String(markdown || '').replaceAll('\r\n', '\n');
+  const raw = String(markdown || '').replaceAll('\r\n', '\n');
+  const text = agentId === 'appsec-fp-reviewer' && raw.trim() ? normalizeReviewMarkdown(raw) : raw;
   const headings = scanHeadings(text);
   const findings = headings.map(heading => findingFromHeading(heading, text, headings, agentId)).filter(Boolean);
   const executive = headings.find(heading => /^TIER\s*1\b|^EXECUTIVE SUMMARY/i.test(heading.title));

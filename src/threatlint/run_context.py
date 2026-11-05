@@ -94,7 +94,7 @@ def _resolve_agent_file(mode: str) -> tuple[str, Path] | None:
 _SEMGREP_AGENTS = frozenset({"appsec-fp-reviewer"})
 
 
-_SEMGREP_INSTALL = ("Install Semgrep Community Edition before running this review, then retry:\n"
+_SEMGREP_INSTALL = ("Install Semgrep CLI before running this review, then retry:\n"
                     "  python3 -m pip install semgrep     (or: brew install semgrep)\n"
                     "  semgrep --version")
 
@@ -130,7 +130,12 @@ def _build_run_message(args: argparse.Namespace, repo_root: str, avits: tuple[st
         message += ("\nTriage every AVIT above as one finding in a single cohesive report, keeping each AVIT number"
                     " as the original finding ID. Locate the flagged code in this repository from the AVIT fields.\n")
     if getattr(args, "semgrep_version", None):
-        message += f"\nSemgrep Community Edition is installed for the user ({args.semgrep_version}); write validation commands for it.\n"
+        message += (f"\nInstalled Semgrep CLI version: {args.semgrep_version}. "
+                    "Use Semgrep Pro (--pro) for new scans and rule validation; never silently fall back to OSS. "
+                    "CLI installation does not establish the engine used by an imported scan. "
+                    "Report the original scan engine only from its execution evidence or artifact metadata; "
+                    "when unavailable, say engine not recorded. For local scans use `semgrep scan`, "
+                    "--metrics=off --disable-version-check --no-secrets-validation; do not upload findings.\n")
     if getattr(args, "target", ""):
         message += f"\nFocus area / target: {args.target}\n"
     if getattr(args, "deep", False) or mode == "threat-model-deep":

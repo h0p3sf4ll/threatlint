@@ -6,6 +6,7 @@ Semgrep writes after a complete report has been checked and converted to Word.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -18,18 +19,18 @@ from types import SimpleNamespace
 
 from . import avit_repositories, avit_resolve, servicenow as sn
 from .avit_report import ResolveError, report_line, verdict_for
+from .finding_review import normalize_report
 from .run_context import _build_run_message
 
 
 _CREDENTIAL_ASSIGNMENT = re.compile(r"^\s*#?\s*[\"']?[\w.-]+[\"']?\s*[:=]\s*[\"']?([^\"'\s#,]{16,})")
 _KNOWN_SECRET = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b")
 _RULE_GUIDANCE = (
-    "Be decisive and aggressive: when the evidence shows the flagged code cannot be exploited "
-    "(the sink is unreachable, the input is not attacker-controlled, it is a test or fixture, or an "
-    "effective control is present), call it a FALSE POSITIVE and tune its rule rather than downgrading "
-    "a clear false positive to AMBIGUOUS out of caution. Reserve AMBIGUOUS for genuine evidence "
-    "conflicts you cannot resolve from the source, and never mark a real, reachable vulnerability as a "
-    "false positive. "
+    "Use only TRUE POSITIVE or FALSE POSITIVE. A FALSE POSITIVE requires inspected evidence "
+    "that disproves the specific rule claim beyond reasonable doubt; include Evidence and Verified Safe Behavior. "
+    "Being internal, authenticated, constant-looking, or in tests does not establish safety. "
+    "If that standard cannot be met, choose TRUE POSITIVE and label the Decision basis as CONSERVATIVE DEFAULT. "
+    "Preserve the actual confidence and missing evidence; this classification does not prove exploitation. "
     "For a SAST or Secrets FALSE POSITIVE, include a complete tuned Semgrep rule "
     "based on the supplied live or original rule, preserving all existing exclusions. "
     "Use the original rule id plus `.tuned`. Put one fenced YAML block immediately "
@@ -259,6 +260,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 raise ResolveError("The flagged Secrets file is unavailable; no report was uploaded")
         redacted = 0
         for attempt in range(3):
+            output = normalize_report(output)
             output, count = redact_secrets(output, repo, file_path, source)
             redacted += count
             verdict = verdict_for(output, avit)
@@ -298,7 +300,8 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             skip_semgrep=False, skip_rule_tuning=False, require_complete_semgrep=True, yes=True,
         )
         completed = avit_resolve.cmd_resolve(resolve_args) == 0
-        return {"avit": avit, "disposition": verdict["disposition"], "completed": completed,
+        return {"avit": avit, "disposition": verdict["disposition"], "completed": completed, "kind": kind,
+                "unverified": bool(verdict.get("unverified")), "decision_basis": verdict.get("decision_basis", ""),
                 "attachment_name": resolve_args.attachment_name,
                 "report_bytes": docx.read_bytes() if verdict["disposition"] == "TRUE POSITIVE" else b""}
 
@@ -381,6 +384,12 @@ def run(args, system_prompt: str, model: str, semgrep_version: str, *,
             print(f"ERROR: {record['number']}: {_safe_error(exc)}", file=sys.stderr)
             summary_failed = True
     print(f"\nAVIT reviews: {len(numbers) - failures} completed, {failures} failed", flush=True)
+    # Explicit allowlist: never serialize report contents, source excerpts, tokens, or binary attachments.
+    public = [{key: item[key] for key in ("avit", "disposition", "completed", "kind", "unverified", "decision_basis")
+               if key in item} for item in outcomes]
+    print(json.dumps({"type": "finding_review_result", "outcomes": public,
+                      "completed": len(numbers) - failures, "failed": failures,
+                      "summary_failed": summary_failed}), flush=True)
     return 1 if failures or summary_failed else 0
 
 

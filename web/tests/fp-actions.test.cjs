@@ -112,17 +112,21 @@ describe('Semgrep false-positive tuning', () => {
 describe('False-positive action routes', () => {
   const report = ['# FP Review', '', '## TIER 1 — EXECUTIVE SUMMARY', 'Two findings.', '', '## TIER 2 — DETAILED FINDINGS', '',
     '#### [FP-001] — Escaped template output flagged as XSS', '**Original finding**: AVIT000000000010001; xss.direct-response-write; src/routes/view.js:42',
-    '**Disposition**: FALSE POSITIVE', '**Severity**: LOW', '**Confidence**: CONFIRMED', '**Evidence**: src/routes/view.js:42 — escaped', 'Blast radius: one rule.', '',
+    '**Disposition**: FALSE POSITIVE', '**Severity**: LOW', '**Confidence**: CONFIRMED', '**Evidence**: src/routes/view.js:42 — escaped', '**Verified Safe Behavior**: The template escapes this value for the HTML text context on every path.', 'Blast radius: one rule.', '',
     '#### [FP-002] — Real injection', '**Original finding**: AVIT000000000010002', '**Disposition**: TRUE POSITIVE', '**Severity**: HIGH', '**Confidence**: CONFIRMED',
     '**Evidence**: src/routes/view.js:50', '### Proposed Fix', 'x', '### Regression Tests', 'acceptance', ''].join('\n');
   let instance, base, root, storage, reportId;
-  const snowCalls = [], semgrepCalls = [];
+  const snowCalls = [], semgrepCalls = [], cliCalls = [];
+  let sharedFailure = false;
   before(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-triage-repo-'));
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-triage-store-'));
     const snow = fakeServiceNow(snowCalls), sg = fakeSemgrep(semgrepCalls);
     instance = createWorkbench({ storageDir: storage, runProvider: async args => { args.onEvent({ type: 'text_chunk', text: report }); return report; },
-      integrations: { convertToWord, semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
+      integrations: { convertToWord, threatlintCli: async (args, options) => {
+        cliCalls.push({ args, options });
+        return sharedFailure ? { code: 1, stdout: '', stderr: 'Synthetic tuning proof failed' } : { code: 0, stderr: '', stdout: '  ✓ Attached report\n  ✓ Closed as false positive\n  ✓ Published org-private rule acme.xss.tuned\n' + JSON.stringify({ type: 'finding_review_result', outcomes: [{ avit: 'AVIT000000000010001', completed: true, disposition: 'FALSE POSITIVE', kind: 'sast' }] }) + '\n' };
+      }, semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
         fetchImpl: (url, options) => (url.startsWith('https://semgrep.dev') ? sg : snow)(url, options) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
@@ -147,12 +151,26 @@ describe('False-positive action routes', () => {
     return response.ok ? body : Object.assign(new Error(body.error), { status: response.status });
   }
 
-  it('closes the AVIT with the report attached under an AVIT-prefixed name', async () => {
+  it('requires a shared-review provider before closing a code-scanner FP', async () => {
     const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS });
-    assert.equal(result.closed, true);
-    assert.deepEqual(result.attachments.map(item => item.name), ['AVIT000000000010001-threatlint-fp-review.docx'], 'only the Word report');
-    const patch = snowCalls.find(call => call.options.method === 'PATCH');
-    assert.equal(JSON.parse(patch.options.body).work_notes, 'Closed by Threatlint as a false positive, see attached report.');
+    assert.equal(result.status, 412); assert.match(result.message, /shared Finding Review/);
+    assert.equal(cliCalls.length, 0);
+    assert.equal(snowCalls.filter(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')).length, 0);
+  });
+  it('uses the shared executor to attach, close, and prove tuning before declaring success', async () => {
+    const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS, provider: 'claude-code' });
+    assert.equal(result.closed, true); assert.equal(result.tuned, true);
+    assert.deepEqual(cliCalls.at(-1).args.slice(0, 8), ['run', 'fp-review', '--provider', 'claude-code', '--avit', 'AVIT000000000010001', '--resolve-avits', '--yes']);
+    assert.match(result.detail, /tuning validated and applied/);
+    assert.equal(snowCalls.filter(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')).length, 0, 'no direct mutation bypasses the shared executor');
+  });
+  it('does not attempt extra closure after a shared tuning failure', async () => {
+    sharedFailure = true;
+    try {
+      const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS, provider: 'claude-code' });
+      assert.equal(result.status, 502); assert.match(result.message, /did not complete/);
+      assert.equal(snowCalls.filter(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')).length, 0);
+    } finally { sharedFailure = false; }
   });
   it('refuses findings that are not FALSE POSITIVE', async () => {
     const error = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-002', servicenow: CREDENTIALS });

@@ -99,7 +99,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if agent_name in _SEMGREP_AGENTS:
         args.semgrep_version = _semgrep_version()
         if not args.semgrep_version:
-            print(_red("ERROR: Semgrep Community Edition is not installed."))
+            print(_red("ERROR: Semgrep CLI is not installed."))
             print(_SEMGREP_INSTALL)
             return 1
 
@@ -115,6 +115,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         avits = _load_requested_avits(args, mode)
         user_msg = _build_run_message(args, repo_root, avits)
+        if mode == "fp-review" and getattr(args, "findings", None):
+            from .semgrep_review import rule_context
+            user_msg += rule_context(Path(args.findings))
     except ServiceNowError as exc:
         print(_red(f"ERROR: {exc}"))
         return 1
@@ -170,9 +173,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
     print()
 
-    saved = _save_report(output, Path(getattr(args, "output_dir", None) or repo_root), _report_basename(repo_root, mode), mode)
+    destination = Path(getattr(args, "output_dir", None) or repo_root)
+    basename = _report_basename(repo_root, mode)
+    tuning_complete = True
+    if mode == "fp-review" and getattr(args, "findings", None):
+        from .finding_review import normalize_report
+        from .semgrep_review import finish_review
+        output = normalize_report(output)
+        output, tuning_complete = finish_review(output, Path(repo_root), destination / f"{basename}-semgrep-tuning")
+    saved = _save_report(output, destination, basename, mode)
     print(_green(f"✓ Report saved to {saved}"))
-    return 0
+    if not tuning_complete:
+        print(_red("Semgrep rule tuning is incomplete; see the report's execution results."))
+    return 0 if tuning_complete else 1
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

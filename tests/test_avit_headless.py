@@ -43,7 +43,7 @@ def test_headless_batch_attaches_each_verdict_from_temporary_artifacts(monkeypat
         avit = AVIT_FP if AVIT_FP in prompt else AVIT_TP
         reviewed.append((avit, repo, prompt))
         disposition = "FALSE POSITIVE" if avit == AVIT_FP else "TRUE POSITIVE"
-        return f"# False Positive Review\n\n#### [FP-001] — Finding\n**Original finding**: {avit}; js.rule; Semgrep; src/flagged.js:2\n**Disposition**: {disposition}\n**Confidence**: CONFIRMED\n"
+        return f"# False Positive Review\n\n#### [FP-001] — Finding\n**Original finding**: {avit}; js.rule; Semgrep; src/flagged.js:2\n**Disposition**: {disposition}\n**Confidence**: CONFIRMED\n**Evidence**: `src/flagged.js:2` uses a literal.\n**Verified Safe Behavior**: The literal cannot be influenced by a caller.\n"
 
     monkeypatch.setattr(codex_cli, "run_agent", model)
     monkeypatch.setattr(dast, "to_docx", lambda _markdown, docx: Path(docx).write_bytes(b"word report"))
@@ -165,7 +165,7 @@ def test_headless_rule_repair_precedes_any_avit_write(monkeypatch):
     monkeypatch.setattr(avit_headless, "_checkout", checkout)
     monkeypatch.setattr(avit_headless, "_rule_base", lambda *_args: "original rule source")
     header = (f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; js.rule; Semgrep; src/flagged.js:2\n"
-              "**Disposition**: FALSE POSITIVE\n")
+              "**Disposition**: FALSE POSITIVE\n**Evidence**: `src/flagged.js:2` uses a literal.\n**Verified Safe Behavior**: The literal cannot be influenced by a caller.\n")
     complete = (header + "**Tuned rule**:\n```yaml\nrules:\n  - id: js.rule.tuned\n    pattern: foo(...)\n```\n"
                 "**Tuned rule fixtures**:\n```javascript\n// ruleid: js.rule.tuned\nfoo(user);\n"
                 "// ok: js.rule.tuned\nfoo(safe);\n```\n")
@@ -282,7 +282,7 @@ def test_deleted_avit_branch_cannot_auto_close_false_positive(monkeypatch):
     monkeypatch.setattr(avit_headless, "_checkout", lambda _item, _args, repo: repo.mkdir() or {"name": "repo", "branch_deleted": "develop"})
     monkeypatch.setattr(avit_headless, "_rule_base", lambda *_args: "")
     monkeypatch.setattr(codex_cli, "run_agent", lambda *_args, **_kwargs:
-                        f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; rule; scanner; src/flagged.js:2\n**Disposition**: FALSE POSITIVE\n")
+                        f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; rule; scanner; src/flagged.js:2\n**Disposition**: FALSE POSITIVE\n**Evidence**: `src/flagged.js:2` uses a literal.\n**Verified Safe Behavior**: The literal cannot be influenced by a caller.\n")
     monkeypatch.setattr(avit_resolve, "cmd_resolve", lambda *_args: pytest.fail("deleted-branch FP must stay open"))
     with pytest.raises(avit_headless.ResolveError, match="branch was deleted"):
         avit_headless._review_one(args, item, "https://test.service-now.com", "reviewer", "", "1.99")

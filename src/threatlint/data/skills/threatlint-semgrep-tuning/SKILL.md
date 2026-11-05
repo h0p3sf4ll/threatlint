@@ -32,3 +32,15 @@ For each proposal state affected IDs, patterns/paths suppressed, known TPs retai
 potential false negatives, validation status, reviewer/owner, and rollback trigger.
 Never invent coverage percentages or promise zero TP loss without a representative executed
 corpus. An FP verdict can stand while its proposed suppression remains unapproved.
+
+## Execution handoff
+
+A proved FALSE POSITIVE still requires rule tuning in an authorized finding-review workflow.
+The read-only reviewer supplies the original rule ID, exact source location, complete
+`**Tuned rule**:` YAML and `**Tuned rule fixtures**:` blocks. The executor validates these
+against the original rule, retained true-positive fixtures and the real false-positive location.
+An ignored finding is not evidence that its rule was tuned. Missing proof or rule source is
+BLOCKED tuning, not a successful run; keep the FP verdict separate from this execution status.
+For local/no-cloud reviews, use `threatlint semgrep tune-report` to save a validated local bundle.
+For authorized tracker write-back, the shared resolver publishes proven tuning and records
+policy results. Never silently skip eligible SAST/Secrets tuning or upload a local-only review.

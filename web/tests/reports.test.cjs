@@ -35,10 +35,10 @@ describe('Production report parser', () => {
     assert.equal(finding.confidence, 'PLAUSIBLE');
     assert.deepEqual(finding.evidence, ['src/query.js:21']);
   });
-  it('warns about missing evidence and fix criteria without rewriting the report', () => {
+  it('labels the Finding Review and warns about missing evidence and fix criteria', () => {
     const report = '#### [FP-001] — Unsubstantiated\n**Disposition**: TRUE POSITIVE\n**Severity**: HIGH';
     const parsed = parseReport(report, 'appsec-fp-reviewer');
-    assert.equal(parsed.markdown, report);
+    assert.equal(parsed.markdown, '# Finding Review\n\n' + report);
     assert.equal(parsed.quality.status, 'needs-review');
     assert.ok(parsed.quality.issues.some(issue => issue.includes('evidence')));
     assert.ok(parsed.quality.issues.some(issue => issue.includes('remediation')));

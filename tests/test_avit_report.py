@@ -14,10 +14,12 @@ def finding(disposition="FALSE POSITIVE", identifier="FP-001", avit=AVIT):
         f"**Original finding**: {avit}; rule; src/a.py:42\n"
         f"**Disposition**: {disposition}\n"
         "**Confidence**: HIGH (source traced)\n"
+        "**Evidence**: `src/a.py:42` binds the parameter.\n"
+        "**Verified Safe Behavior**: The bound value cannot change query syntax.\n"
     )
 
 
-@pytest.mark.parametrize("disposition", ["TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS"])
+@pytest.mark.parametrize("disposition", ["TRUE POSITIVE", "FALSE POSITIVE"])
 def test_numbered_verdicts_keep_metadata(disposition):
     assert avit_report.verdict_for(finding(disposition.lower()), AVIT) == {
         "id": "FP-001", "title": "Synthetic finding",
@@ -27,9 +29,12 @@ def test_numbered_verdicts_keep_metadata(disposition):
 
 def test_plain_single_finding_uses_report_title_and_verdict_alias():
     report = f"# Single finding\n\n**Original finding**: {AVIT}\n**Verdict**: **AMBIGUOUS**\n"
-    assert avit_report.verdict_for(report, AVIT) == {
-        "id": "", "title": "Single finding", "disposition": "AMBIGUOUS", "confidence": "",
+    verdict = avit_report.verdict_for(report, AVIT)
+    assert {key: verdict[key] for key in ("id", "title", "disposition", "confidence")} == {
+        "id": "", "title": "Single finding", "disposition": "TRUE POSITIVE", "confidence": "",
     }
+    assert verdict["unverified"] is True
+    assert verdict["decision_basis"] == "CONSERVATIVE DEFAULT"
 
 
 def test_heading_fallback_keeps_the_avit_without_an_original_finding_line():

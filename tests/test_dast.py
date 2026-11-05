@@ -376,6 +376,8 @@ def _report(disposition):
 **Disposition**: {disposition}
 **Severity**: HIGH
 **Confidence**: CONFIRMED
+**Evidence**: `src/synthetic.py:12` — the inspected sink receives a bound value.
+**Verified Safe Behavior**: The binding treats the supplied value as data, never query syntax.
 """
 
 

@@ -174,7 +174,12 @@ def cmd_resolve(integration, args) -> int:
             files.append((f"{reference}-threatlint-fp-review.docx", handle.read(), _DOCX))
     url, token = integration.session(args)
     item = integration.get(url, token, reference)
-    _confirm(f"{reference}: {integration.describe(verdict['disposition'])}?", args.yes)
+    from threatlint.finding_review import is_conservative  # noqa: PLC0415
+    action = ("record the conservative TRUE POSITIVE decision and retain its uncertainty without claiming verification"
+              if is_conservative(verdict) else integration.describe(verdict["disposition"]))
+    _confirm(f"{reference}: {action}?", args.yes)
+    if hasattr(integration, "before_resolve"):
+        integration.before_resolve(item, verdict, markdown, args)
     result = integration.resolve(url, token, item, verdict, files=files, args=args)
     integration.after_resolve(item, verdict, markdown, args)
     print(json.dumps({key: value for key, value in result.items() if key != "note"}))

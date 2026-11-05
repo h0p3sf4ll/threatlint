@@ -12,7 +12,7 @@ Endpoints used (token as HTTP Basic user with an empty password, which every Son
   POST /api/issues/add_comment       the Threatlint comment (issues)
   POST /api/issues/do_transition     FALSE POSITIVE: falsepositive; TRUE POSITIVE: confirm (when the server offers it)
   POST /api/hotspots/change_status   FALSE POSITIVE: REVIEWED / SAFE with the comment
-  POST /api/hotspots/add_comment     TRUE POSITIVE / AMBIGUOUS on a hotspot: comment only
+  POST /api/hotspots/add_comment     TRUE POSITIVE on a hotspot: comment only
   GET  /api/authentication/validate  token check for `threatlint sonar login`
 
 SonarQube cannot store attachments, so the comment carries a short summary and says where the full report lives.
@@ -26,6 +26,7 @@ import re
 import urllib.parse
 
 from threatlint.integrations.common import IntegrationError, context_from_repository_url, request, search_limit
+from threatlint.finding_review import CONSERVATIVE_REASON, FindingReviewError, is_conservative, normalize_disposition, normalize_verdict
 from threatlint.integrations.scanning.base import ScanningTool
 
 _KEY = r"[A-Za-z0-9_-]{6,64}"
@@ -38,7 +39,6 @@ _HINTS = {401: " Check the SonarQube token.", 403: " The token lacks permission 
           404: " The issue, hotspot, or project was not found; check the key and the base URL.", 400: " SonarQube rejected the request."}
 FP_SUMMARY = "Closed by Threatlint as a false positive."
 TP_SUMMARY = "True positive per Threatlint review; left open."
-AMBIGUOUS_SUMMARY = "Ambiguous per Threatlint review; left open pending the evidence the report names."
 
 
 def _text(value) -> str:
@@ -47,7 +47,10 @@ def _text(value) -> str:
 
 def comment_for(verdict: dict, where: str) -> str:
     """The SonarQube comment: outcome, a one-line summary, and where the full report lives (no attachments here)."""
-    outcome = {"FALSE POSITIVE": FP_SUMMARY, "TRUE POSITIVE": TP_SUMMARY}.get(verdict["disposition"], AMBIGUOUS_SUMMARY)
+    verdict = normalize_verdict(verdict)
+    outcome = {"FALSE POSITIVE": FP_SUMMARY, "TRUE POSITIVE": TP_SUMMARY}[verdict["disposition"]]
+    if is_conservative(verdict):
+        outcome += " " + CONSERVATIVE_REASON
     summary = " ".join(filter(None, (verdict.get("id"), f"({verdict['confidence']})" if verdict.get("confidence") else "")))
     title = re.sub(r"\s+", " ", verdict.get("title", "")).strip()[:200]
     return f"{outcome} Summary: {summary}{' — ' + title if title else ''}. Full report: {where}."[:4000]
@@ -273,8 +276,7 @@ class SonarQube(ScanningTool):
     # Writes -----------------------------------------------------------------
     def describe(self, disposition: str) -> str:
         return {"FALSE POSITIVE": "comment with a summary and mark it False Positive (hotspots: Reviewed / Safe)",
-                "TRUE POSITIVE": "comment with a summary and confirm it when the server offers Confirm (hotspots: comment only)",
-                "AMBIGUOUS": "comment with a summary (nothing else changes)"}[disposition]
+                "TRUE POSITIVE": "comment with a summary and confirm it when the server offers Confirm (hotspots: comment only)"}[normalize_disposition(disposition)]
 
     def note(self, url: str, token: str, item: dict, message: str) -> None:
         if item["kind"] == "hotspot":
@@ -283,7 +285,13 @@ class SonarQube(ScanningTool):
             self._post(url, token, "/api/issues/add_comment", {"issue": item["id"], "text": message})
 
     def resolve(self, url: str, token: str, item: dict, verdict: dict, *, files=None, args=None) -> dict:
+        try:
+            verdict = normalize_verdict(verdict)
+        except FindingReviewError as exc:
+            raise IntegrationError(str(exc)) from None
         disposition = verdict["disposition"]
+        if not disposition:
+            raise IntegrationError("A TRUE POSITIVE or FALSE POSITIVE disposition is required")
         comment = comment_for(verdict, self.report_location(args))
         result = {"reference": item["reference"], "disposition": disposition, "note": comment, "attachments": [], "closed": False, "url": item.get("web_url")}
         if item["kind"] == "hotspot":
@@ -299,6 +307,10 @@ class SonarQube(ScanningTool):
         # Comment first so a status change never lands without the reasoning.
         self.note(url, token, item, comment)
         print("  ✓ Comment added")
+        if is_conservative(verdict):
+            result["action"] = "noted"
+            print("  ✓ Conservative true-positive decision recorded; issue left unconfirmed")
+            return result
         transition = {"FALSE POSITIVE": "falsepositive", "TRUE POSITIVE": "confirm"}.get(disposition)
         if not transition:
             result["action"] = "noted"

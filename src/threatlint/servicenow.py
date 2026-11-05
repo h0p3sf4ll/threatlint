@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 from threatlint import servicenow_checkout, servicenow_cli, servicenow_markdown, servicenow_records
-from threatlint import servicenow_credentials
+from threatlint import org_config, servicenow_credentials
 from threatlint.servicenow_credentials import client_parameters, saved_config
 from threatlint.servicenow_checkout import _ADO_NAME, _ADO_ORG, _BRANCH, _GH_NAME
 from threatlint.servicenow_checkout import run_tool as _run_tool
@@ -61,8 +61,10 @@ _LABEL_TABLES = ("sn_vul_app_vulnerable_item", "sn_vul_app_vul_entry", "sn_vul_e
 _SKIPPED_FIELDS = servicenow_records.SKIPPED_FIELDS
 
 def access_help() -> str:
+    region = org_config.aws_region()
     return servicenow_credentials.access_help(
-        client_parameters=client_parameters, region=AWS_REGION, console_url=PARAMETER_STORE_URL,
+        client_parameters=client_parameters, region=region,
+        console_url=f"https://{region}.console.aws.amazon.com/systems-manager/parameters/?region={region}&tab=Table",
     )
 
 
@@ -103,7 +105,7 @@ def read_parameter_store(profile: str | None = None) -> tuple[str, str]:
     """Client ID and secret from Parameter Store via the AWS CLI and the caller's own credentials."""
     return servicenow_credentials.read_parameter_store(
         profile, client_parameters=client_parameters, access_help=access_help,
-        region=AWS_REGION, timeout=_AWS_TIMEOUT_S, error_type=ServiceNowError,
+        region=org_config.aws_region(), timeout=_AWS_TIMEOUT_S, error_type=ServiceNowError,
     )
 
 

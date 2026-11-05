@@ -129,8 +129,10 @@ The findings-triage specialist produces a handoff, not just a verdict:
 | Engineering | Proposed fixes, compatibility notes, regression assertions, acceptance criteria |
 | Scanner tuning | Rule prerequisites, narrow proposal, fixtures, blast radius, approval and rollback |
 
-**TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS** is separate from severity and confidence. Missing
-source revisions, callers, rules, or runtime evidence remain explicit limits. A false-positive
+**TRUE POSITIVE / FALSE POSITIVE** is separate from severity and confidence. If FALSE POSITIVE
+cannot be proved beyond reasonable doubt, the finding stays open as a conservative TRUE POSITIVE.
+Missing source revisions, callers, rules, or runtime evidence remain explicit limits; this
+classification is not a verified exploit. A false-positive
 verdict does not authorize suppression. Fixes are **NOT APPLIED** and suggested tests **NOT RUN**
 unless actual execution evidence is recorded.
 
@@ -265,7 +267,7 @@ verdict (true positive, false positive, or ambiguous) with its evidence, in a fi
    and supply the destination finding reference.
 3. Press **Triage findings** and inspect the saved findings/report. Every finding is retained and
    reviewed (no count limit; the model sees them in batches). Without a usable model, results are **NOT TRIAGED**, with
-   AMBIGUOUS placeholders—not model verdicts.
+   conservative TRUE POSITIVE placeholders marked unverified, not model-verified vulnerabilities.
 4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
    **Post to SonarQube…**. Posting requires confirmation and can change status.
 

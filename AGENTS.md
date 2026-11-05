@@ -7,7 +7,7 @@ This file configures AI coding agents to perform evidence-based application secu
 ## Routing
 
 **Findings triage** — "false positive", "triage findings", "review scanner results", "semgrep tuning".
-→ Use `appsec-fp-reviewer` and the [professional findings protocol](src/threatlint/data/agents/appsec-fp-reviewer.md). Produce evidence-backed dispositions, proposed fixes, regression assertions, and a remediation roadmap; never apply changes or suppressions.
+→ Use `appsec-fp-reviewer` and the [professional findings protocol](src/threatlint/data/agents/appsec-fp-reviewer.md). Produce a **Finding Review** with binary TRUE POSITIVE / FALSE POSITIVE dispositions, proposed fixes, regression assertions, and a remediation roadmap. FALSE POSITIVE requires proof beyond reasonable doubt; otherwise retain TRUE POSITIVE with a conservative decision basis and actual evidence limits. The reviewer remains read-only. The authorized host workflow validates eligible FP rule tuning, saves local replacements for no-cloud reviews, or applies proven tuning during authorized tracker write-back; never silently skip tuning.
 
 **Threat modeling** — "threat-model", "analyze security risks", "review security posture", "discover threats".
 → Follow the [Threat Modeling](#threat-modeling) instructions below.
@@ -179,9 +179,9 @@ git remote get-url origin 2>/dev/null | sed 's/.*[:/]\([^/]*\)\(\.git\)\{0,1\}$/
 **Reviewed by**: appsec-auth-reviewer
 ```
 
-**False positive review header:**
+**Finding review header:**
 ```
-# False Positive Review: <Repo Name>
+# Finding Review: <Repo Name>
 **Date**: YYYY-MM-DD
 **Input**: <path to SARIF file, Semgrep JSON, or threatlint report>
 **Findings reviewed**: N

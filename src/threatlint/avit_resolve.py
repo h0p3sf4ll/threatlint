@@ -7,8 +7,8 @@ from the report the FP reviewer wrote and then:
   FALSE POSITIVE -> attaches the Word report, closes the AVIT (state 3, substate 3) with the work note
                     "Closed by Threatlint as a false positive, see attached report.", and ignores the matching
                     open Semgrep finding(s) as false_positive (Code for SAST, Supply Chain for SCA, Secrets for Secrets).
-  AMBIGUOUS      -> attaches the Word report and adds the work note "Ambiguous, see attached report.
-                    Left open pending the evidence the report names."; stays open, Semgrep untouched.
+  Legacy AMBIGUOUS decisions become conservative TRUE POSITIVE decisions with uncertainty retained;
+                    they stay open, with Semgrep untouched and no claim of independent verification.
 `threatlint avit note <AVIT> --message TEXT` adds a work note only (e.g. why an AVIT could not be reviewed).
 Every write needs confirmation (--yes for non-interactive use). Tokens are used per run and never stored.
 """
@@ -32,12 +32,13 @@ from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_t
 from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
 from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
 from threatlint.avit_report import ResolveError, report_line as _report_line, verdict_for
+from threatlint.finding_review import CONSERVATIVE_REASON, is_conservative
 from threatlint.avit_semgrep import same_path as _same_path, tail as _tail
 
 # Work notes, exactly as AppSec asked for them.
 CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
 TRUE_POSITIVE_COMMENT = "True positive, see attached report."
-AMBIGUOUS_COMMENT = "Ambiguous, see attached report. Left open pending the evidence the report names."
+AMBIGUOUS_COMMENT = "Ambiguous, see attached report. Left open pending the evidence the report names."  # Legacy journal recognition only.
 REPO_REMOVED_COMMENT = "Closed by Threatlint, repo removed."
 # AVR Closed state / substate for a false positive (override with THREATLINT_SNOW_FP_STATE / _SUBSTATE).
 CLOSED_STATE, CLOSED_SUBSTATE = "3", "3"
@@ -216,7 +217,6 @@ def cmd_resolve(args) -> int:
         markdown = handle.read()
     verdict = verdict_for(markdown, avit)
     print(f"  {avit} : {verdict['id']} · {verdict['disposition']} ({verdict['confidence'] or 'confidence not stated'}) · {verdict['title']}")
-    ambiguous = verdict["disposition"] == "AMBIGUOUS"
     instance, token = _session(args)
     record = _record(instance, token, avit)
     if getattr(args, "semgrep_rule_hash_id", None):
@@ -232,7 +232,6 @@ def cmd_resolve(args) -> int:
     with open(os.path.expanduser(args.docx), "rb") as handle:
         files = [(name, handle.read(), _DOCX)]
     action = ("attach the report and close it as Closed / False Positive" if false_positive
-              else "attach the report and add an AMBIGUOUS work note (it stays open)" if ambiguous
               else "attach the report and add a TRUE POSITIVE work note (it stays open)")
     _confirm(f"{avit}: {action}?", args.yes)
     # Attach first so the AVIT is never closed without its evidence.
@@ -243,7 +242,9 @@ def cmd_resolve(args) -> int:
             continue
         attach(instance, token, record["sys_id"], name, content, content_type)
         print(f"  ✓ Attached {name}")
-    note = CLOSING_COMMENT if false_positive else AMBIGUOUS_COMMENT if ambiguous else TRUE_POSITIVE_COMMENT
+    note = CLOSING_COMMENT if false_positive else TRUE_POSITIVE_COMMENT
+    if is_conservative(verdict):
+        note += " " + CONSERVATIVE_REASON
     values = {"work_notes": note}
     if false_positive:
         state, substate = _false_positive_choices()

@@ -4,7 +4,8 @@
   threatlint semgrep status | logout
 
 Token resolution: SEMGREP_APP_TOKEN, then the saved token (OS credential store via `keyring`, else
-~/.threatlint/semgrep.json, owner-only; shared with the Workbench), then AWS Parameter Store
+~/.threatlint/semgrep.json, owner-only; shared with the Workbench), then the native Semgrep
+login in ~/.semgrep/settings.yml (or SEMGREP_SETTINGS_FILE), then AWS Parameter Store
 the Parameter Store name in THREATLINT_SEMGREP_TOKEN_PARAMETER (or ~/.threatlint/org.json) with the user's AWS CLI profile.
 
 Rule tuning (`tune_rule`) for a confirmed SAST or Secrets false positive. The public API cannot edit a
@@ -40,7 +41,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from threatlint import org_config
+from threatlint import org_config, parameter_store, semgrep_credentials
 from threatlint import servicenow as sn
 from threatlint import semgrep_rule_text
 from threatlint import semgrep_policies, semgrep_unified
@@ -125,25 +126,28 @@ def token_parameter() -> str:
 
 
 def parameter_store_token(profile: str | None) -> str:
-    aws = shutil.which("aws")
-    if not aws or not token_parameter():
+    parameter = token_parameter()
+    if not parameter:
         return ""
-    result = subprocess.run([aws, "ssm", "get-parameter", "--name", token_parameter(), "--with-decryption", "--region", sn.AWS_REGION,
-                             "--query", "Parameter.Value", "--output", "text", *(["--profile", profile] if profile else [])],
-                            capture_output=True, text=True, timeout=60, check=False, env=tool_env())
-    return result.stdout.strip() if result.returncode == 0 else ""
+    try:
+        return parameter_store.read_parameter(parameter, profile=profile, region=org_config.aws_region())
+    except parameter_store.ParameterStoreError as exc:
+        raise SemgrepError(str(exc)) from None
 
 
 def resolve_token(profile: str | None = None) -> tuple[str, str]:
     if os.environ.get("SEMGREP_APP_TOKEN"):
         return os.environ["SEMGREP_APP_TOKEN"], "SEMGREP_APP_TOKEN"
+    token, source = semgrep_credentials.native_token()
+    if token:
+        return token, source
     token, source = saved_token()
     if token:
         return token, source
     token = parameter_store_token(profile)
     if token:
         return token, f"Parameter Store {token_parameter()}"
-    raise SemgrepError("No Semgrep API token. Run `threatlint semgrep login` (or `threatlint setup`), set SEMGREP_APP_TOKEN, "
+    raise SemgrepError("No Semgrep API token. Run `semgrep login` or `threatlint semgrep login` (or `threatlint setup`), set SEMGREP_APP_TOKEN, "
                        "or sign in with `threatlint aws login` to read it from Parameter Store.")
 
 
@@ -219,12 +223,31 @@ def deployment(token: str, wanted: str = "") -> dict:
 # ── Rule tuning ───────────────────────────────────────────────────────────────
 
 def _semgrep(args: list[str], cwd: str | None = None, token: str | None = None) -> subprocess.CompletedProcess:
+    if token is None:
+        try:
+            token = resolve_token()[0]
+        except SemgrepError:
+            pass  # Explicit --pro scans still fail; never silently select the OSS engine.
     return semgrep_engine.run(args, cwd, token, environment=tool_env, error_type=SemgrepError)
 
 
 def _pro_flags() -> list[str]:
-    """Pro engine flags when it is installed (--pro also enables the Pro-only languages: Apex, Elixir, ...)."""
-    return ["--pro"] if _semgrep(["scan", "--pro", "--version"]).returncode == 0 else []
+    """Require Pro for rule proof; never silently downgrade to Community Edition."""
+    return engine_flags()
+
+
+def engine_status() -> dict:
+    return semgrep_engine.engine_status(environment=tool_env)
+
+
+def engine_flags(engine: str = "pro") -> list[str]:
+    if engine == "oss":
+        return ["--oss-only"]
+    if engine != "pro":
+        raise SemgrepError("Semgrep engine must be pro or oss")
+    if not engine_status().get("pro_ready"):
+        raise SemgrepError("Matching Semgrep Pro engine is unavailable. Run `semgrep install-semgrep-pro` using your Semgrep login; no Community Edition fallback was used.")
+    return ["--pro"]
 
 
 def _matches(config: str, target: str, line: int | None, exact: bool = False) -> list[int]:

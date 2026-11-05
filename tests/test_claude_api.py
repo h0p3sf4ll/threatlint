@@ -210,6 +210,6 @@ def test_dast_existing_claude_review_uses_native_transport(monkeypatch, tmp_path
     state = {"work": str(tmp_path), "checkout": str(tmp_path), "avit": "AVIT-SYNTHETIC"}
     args = types.SimpleNamespace(review_provider="claude", api_key="", base_url="", model="exact-model")
     assert dast.step_review(args, state)["report"] == str(tmp_path / dast.REPORT_FILE)
-    assert (tmp_path / dast.REPORT_FILE).read_text() == "# Final report\n"
+    assert (tmp_path / dast.REPORT_FILE).read_text() == "# Finding Review\n\n# Final report\n"
     assert seen[0][0][:2] == (claude_api.ANTHROPIC_MESSAGES_URL, "exact-model")
     assert seen[0][1]["api_key"] == "claude-key"

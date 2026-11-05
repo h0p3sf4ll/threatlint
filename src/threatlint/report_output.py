@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .installation import _SCRIPTS_SRC, _DOCX_SCRIPT, _CLAUDE_DIR
+from .finding_review import normalize_report
 
 
 def _git_output(*args: str) -> str:
@@ -24,6 +25,8 @@ def _report_basename(repo_root: str, mode: str) -> str:
 
 def _save_report(output: str, out_dir: Path, base_name: str, mode: str) -> Path:
     """Save as Word when the converter succeeds, otherwise as Markdown."""
+    if mode == "fp-review":
+        output = normalize_report(output)
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".md", delete=False, prefix=f"{mode}_") as tf:
         tf.write(output.encode())

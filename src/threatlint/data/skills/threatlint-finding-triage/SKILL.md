@@ -13,9 +13,11 @@ description: "Use for false-positive review of SARIF, Semgrep JSON, or security 
    duplicate, unreviewed, and invalid input totals; never silently drop a result.
 3. Read the flagged function, callers, relevant configuration, and sink implementation. Trace
    attacker source → transforms → control → sink. Verify controls on the same value/path/context.
-4. Assign TRUE POSITIVE, FALSE POSITIVE, or AMBIGUOUS independently of severity/confidence.
-   Reachable exploit evidence supports TP. A demonstrably incorrect match or effective
-   contextual defense supports FP. Missing rule/source/runtime evidence remains AMBIGUOUS.
+4. Assign only TRUE POSITIVE or FALSE POSITIVE independently of severity/confidence.
+   FP requires proof beyond reasonable doubt that the rule's claim is incorrect or an effective
+   contextual defense covers every relevant path. Otherwise choose TP. When evidence is missing,
+   mark `Decision basis: CONSERVATIVE DEFAULT`, retain uncertainty, and do not claim confirmed
+   exploitation. A conservative decision is not a verified vulnerability.
 5. Do not dismiss input because it is authenticated, admin-only, internal, constant-looking,
    or in tests/generated/vendor code. Verify the specific rule's claim and actual usage.
    Structural misconfiguration and secret rules may not require an attacker-controlled input.
@@ -23,7 +25,7 @@ description: "Use for false-positive review of SARIF, Semgrep JSON, or security 
    considerations, regression assertions, acceptance, suggested owner, and effort.
 7. For FPs separate the verdict from tuning safety. A correct FP verdict does not prove a
    broad suppression is safe. Require scanner-rule evidence before proposing an exact patch.
-8. For ambiguous results keep the finding open, identify the single decisive evidence gap,
+8. For conservative TP results keep the finding open, identify the single decisive evidence gap,
    who can resolve it, how to obtain it safely, and the conservative interim action.
 
 ## Report gate

@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 import types
 import urllib.error
 import urllib.parse
@@ -11,6 +12,7 @@ import pytest
 
 from threatlint import avit_resolve as ar
 from threatlint import cli
+from threatlint import parameter_store
 from threatlint import servicenow as sn
 from threatlint.integrations import common as base, reviewable, verbs
 from threatlint.integrations.findings_management import defectdojo
@@ -76,6 +78,8 @@ REPORT = """# FP Review
 **Original finding**: DOJO-123; python.lang.security.audit.formatted-sql-query; Semgrep; src/app/search.py:42
 **Disposition**: {disposition}
 **Confidence**: CONFIRMED
+**Evidence**: `src/synthetic.py:12` — the inspected sink receives a bound value.
+**Verified Safe Behavior**: The binding treats the supplied value as data, never query syntax.
 
 #### [FP-002] — Different finding
 
@@ -132,6 +136,28 @@ def test_token_comes_from_env_then_saved_config_then_parameter_store(monkeypatch
     assert adapter.token(interactive=False) == "saved-token" and adapter.default_url() == DOJO
     monkeypatch.setenv("THREATLINT_DOJO_TOKEN", "env-token")
     assert adapter.token(interactive=False) == "env-token"
+
+
+def test_parameter_store_reader_uses_the_configured_region_and_profile(monkeypatch):
+    monkeypatch.setenv("THREATLINT_AWS_REGION", "eu-west-1")
+    monkeypatch.setattr(parameter_store.shutil, "which", lambda name: "/usr/bin/aws")
+
+    def fake_run(command, **_kwargs):
+        assert command[command.index("--region") + 1] == "eu-west-1"
+        assert command[command.index("--profile") + 1] == "appsec"
+        return subprocess.CompletedProcess(command, 0, '{"Parameter":{"Value":"synthetic-token"}}', "")
+
+    monkeypatch.setattr(parameter_store.subprocess, "run", fake_run)
+    assert base.read_parameter("/org/dojo-token", "appsec") == "synthetic-token"
+
+
+def test_parameter_store_reader_reports_safe_errors(monkeypatch):
+    monkeypatch.setattr(parameter_store.shutil, "which", lambda name: "/usr/bin/aws")
+    monkeypatch.setattr(parameter_store.subprocess, "run", lambda command, **kwargs:
+                        subprocess.CompletedProcess(command, 255, "", "An error occurred (AccessDeniedException): synthetic-secret-value"))
+    with pytest.raises(IntegrationError, match="AccessDenied") as error:
+        base.read_parameter("/org/dojo-token", "appsec")
+    assert "synthetic-secret-value" not in str(error.value)
 
 
 def test_missing_token_explains_every_source(monkeypatch, tmp_path):
@@ -224,7 +250,7 @@ def test_dojo_false_positive_attaches_then_notes_then_closes(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("disposition, comment, patch", [("TRUE POSITIVE", ar.TRUE_POSITIVE_COMMENT, {"verified": True}),
-                                                          ("AMBIGUOUS", ar.AMBIGUOUS_COMMENT, None)])
+                                                          ("AMBIGUOUS", ar.TRUE_POSITIVE_COMMENT + " " + defectdojo.CONSERVATIVE_REASON, None)])
 def test_dojo_true_positive_is_verified_and_ambiguous_is_only_noted(monkeypatch, tmp_path, disposition, comment, patch):
     fake = Fake(dojo_routes({("GET", "/api/v2/findings/123/files/"): {"files": [{"title": "DOJO-123-threatlint-fp-review.docx"}]}}))
     monkeypatch.setattr(defectdojo, "request", fake)
@@ -387,7 +413,7 @@ def test_sonar_hotspots_are_marked_safe_or_commented(monkeypatch, tmp_path):
     assert (change["status"], change["resolution"], change["hotspot"]) == (["REVIEWED"], ["SAFE"], ["AYxExampleKey02"]) and "Full report" in change["comment"][0]
     assert run(_sonar_args(tmp_path, "SONAR-HOTSPOT-AYxExampleKey02", "AMBIGUOUS")) == 0
     assert fake.writes()[-1] == ("POST", "/api/hotspots/add_comment")
-    assert urllib.parse.parse_qs(fake.calls[-1]["data"].decode())["comment"][0].startswith("Ambiguous per Threatlint review")
+    assert urllib.parse.parse_qs(fake.calls[-1]["data"].decode())["comment"][0].startswith("True positive per Threatlint review")
 
 
 def test_sonar_checkout_uses_the_repo_url_override_and_the_recorded_branch(monkeypatch, tmp_path, capsys):

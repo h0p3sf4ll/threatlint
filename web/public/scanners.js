@@ -183,8 +183,8 @@
       const actions = node.querySelector('.avit-actions');
       actions.append(button('Read report ↗', 'button secondary small-button', () => document.dispatchEvent(new CustomEvent('threatlint:open-report', { detail: { sessionId: event.report.sessionId, previewUrl: event.report.previewUrl } }))));
       if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; actions.append(word); }
-      if (['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'].includes(event.disposition)) {
-        const post = button(`Post to ${TOOLS[event.tool].label}…`, 'button primary small-button', () => openPost({ kind: 'review', tool: event.tool, reference: event.reference, disposition: event.disposition, reportId: event.report.id, card: node }));
+      if (['TRUE POSITIVE', 'FALSE POSITIVE'].includes(event.disposition)) {
+        const post = button(`Post to ${TOOLS[event.tool].label}…`, 'button primary small-button', () => openPost({ kind: 'review', tool: event.tool, reference: event.reference, disposition: event.disposition, unverified: event.unverified, reportId: event.report.id, card: node }));
         post.dataset.post = 'true'; actions.append(post);
       }
     }
@@ -206,11 +206,9 @@
   // ── Confirmed posting (review results and imported scans) ────────────────
   const DESCRIBE = {
     dojo: { 'FALSE POSITIVE': ['Attach the Word report to the finding.', 'Add the note “Closed by Threatlint as a false positive, see attached report.”', 'Set false_p = true and active = false.'],
-      'TRUE POSITIVE': ['Attach the Word report to the finding.', 'Add the note “True positive, see attached report.”', 'Set verified = true; it stays active.'],
-      AMBIGUOUS: ['Attach the Word report to the finding.', 'Add the note “Ambiguous, see attached report. Left open pending the evidence the report names.”', 'Nothing else changes.'] },
+      'TRUE POSITIVE': ['Attach the Word report to the finding.', 'Add the note “True positive, see attached report.”', 'Keep it active. Mark verified only when the review establishes the finding; conservative true positives receive a note only.'] },
     sonar: { 'FALSE POSITIVE': ['Add a comment with a short summary and where the full report lives (SonarQube stores no attachments).', 'Mark the issue False Positive (a hotspot: Reviewed / Safe).'],
-      'TRUE POSITIVE': ['Add a comment with a short summary and where the full report lives.', 'Confirm the issue when the server offers Confirm (a hotspot keeps its status).'],
-      AMBIGUOUS: ['Add a comment with a short summary and where the full report lives.', 'Nothing else changes.'] },
+      'TRUE POSITIVE': ['Add a comment with a short summary and where the full report lives.', 'Confirm only an evidence-backed finding when the server offers Confirm. Conservative true positives receive a comment only.'] },
   };
   function openPost(post) {
     const spec = TOOLS[post.tool];
@@ -225,10 +223,10 @@
     } else {
       const job = post.job, counts = job.counts || {};
       const native = ({ defectdojo: 'dojo', sonarqube: 'sonar' })[job.source] === post.tool;
-      $('scanner-post-summary').textContent = `${text(job.title) || 'Scan import'} · ${Number(counts.total) || 0} findings (${Number(counts.tp) || 0} TP / ${Number(counts.fp) || 0} FP / ${Number(counts.ambiguous) || 0} ambiguous)`;
-      steps.append(el('li', '', native ? `Each finding is posted to its own ${spec.label} ${post.tool === 'dojo' ? 'finding' : 'issue or hotspot'}.` : `The verdicts are posted to the ${spec.label} reference you enter (several findings on one reference combine conservatively: any true positive wins, then ambiguous).`));
+      $('scanner-post-summary').textContent = `${text(job.title) || 'Scan import'} · ${Number(counts.total) || 0} findings (${Number(counts.tp) || 0} TP / ${Number(counts.fp) || 0} FP; ${Number(counts.unverified) || 0} unverified TP)`;
+      steps.append(el('li', '', native ? `Each finding is posted to its own ${spec.label} ${post.tool === 'dojo' ? 'finding' : 'issue or hotspot'}.` : `The verdicts are posted to the ${spec.label} reference you enter (several findings on one reference combine conservatively: any true positive wins).`));
       for (const line of DESCRIBE[post.tool]['FALSE POSITIVE']) steps.append(el('li', '', `False positives: ${line.charAt(0).toLowerCase()}${line.slice(1)}`));
-      steps.append(el('li', '', `True positives and ambiguous findings get the matching ${post.tool === 'dojo' ? 'note (true positives are also marked verified)' : 'comment (true positives are confirmed when offered)'}.`));
+      steps.append(el('li', '', `True positives receive the matching ${post.tool === 'dojo' ? 'note' : 'comment'}. Conservative true positives remain unverified.`));
       $('scanner-post-reference-row').hidden = false;
       $('scanner-post-reference-label').textContent = native ? `${spec.label} reference (optional)` : `${spec.label} reference`;
       $('scanner-post-reference').placeholder = post.tool === 'dojo' ? 'DOJO-123 or FP-001=DOJO-123' : 'AYxExampleKey01 or FP-001=AYxExampleKey01';
@@ -236,7 +234,7 @@
       $('scanner-post-reference').value = '';
     }
     $('scanner-post-url-row').hidden = post.tool !== 'sonar'; $('scanner-post-url').value = '';
-    $('scanner-post-semgrep-row').hidden = !(post.kind === 'review' && post.tool === 'dojo' && post.disposition === 'FALSE POSITIVE'); $('scanner-post-semgrep').checked = false;
+    $('scanner-post-semgrep-row').hidden = !(post.kind === 'review' && post.tool === 'dojo' && post.disposition === 'FALSE POSITIVE'); $('scanner-post-semgrep').checked = true;
     $('scanner-post-error').textContent = ''; $('scanner-post-result').replaceChildren();
     $('scanner-post-confirm').disabled = false; $('scanner-post-confirm').hidden = false; $('scanner-post-cancel').textContent = 'Cancel';
     $('scanner-post-footer').textContent = `Nothing changes in ${spec.label} until you confirm.`;

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from threatlint.finding_review import FindingReviewError, normalize_verdict
+
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
 _AVIT_TOKEN = re.compile(r"(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", re.IGNORECASE)
 
@@ -19,16 +21,24 @@ def _field(body: str, name: str) -> str:
 
 def _verdict(body: str, identifier: str, title: str) -> dict[str, str]:
     stated = re.findall(r"(?im)^\**(?:Disposition|Verdict)\**\s*:\s*(.+)$", body)
-    dispositions = [match.group(0).upper() if (match := _DISPOSITION.search(value)) else "" for value in stated]
+    try:
+        normalized = [normalize_verdict({"disposition": value}) for value in stated]
+    except FindingReviewError as exc:
+        raise ResolveError(str(exc)) from None
+    dispositions = [item["disposition"] for item in normalized]
     if len(set(dispositions)) > 1:
         raise ResolveError(f"{identifier or title} has conflicting dispositions; resolve it manually")
     confidence = _field(body, "Confidence").split()
-    return {
+    verdict = {
         "id": identifier,
         "title": title,
         "disposition": dispositions[0] if dispositions else "",
         "confidence": confidence[0] if confidence else "",
     }
+    legacy = any(item.get("decision_basis") for item in normalized)
+    if legacy:
+        verdict["disposition"] = "AMBIGUOUS"
+    return normalize_verdict(verdict, body=body)
 
 
 def _mentions_avit(text: str, avit: str) -> bool:
@@ -64,7 +74,7 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
     if len({match["disposition"] for match in matches}) > 1:
         raise ResolveError(f"The report gives {avit} conflicting dispositions; resolve it manually")
     if not matches[0]["disposition"]:
-        raise ResolveError(f"{matches[0]['id'] or avit} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition")
+        raise ResolveError(f"{matches[0]['id'] or avit} has no TRUE POSITIVE / FALSE POSITIVE disposition")
     return matches[0]
 
 

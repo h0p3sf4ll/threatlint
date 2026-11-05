@@ -19,6 +19,58 @@ threatlint --help
 Use the same Python environment for installation and execution. If `threatlint`
 is not on your path, try `python3 -m threatlint --help`.
 
+### Load shared setup settings from AWS
+
+For a team that keeps integration credentials in AWS Systems Manager Parameter
+Store, a new machine needs AWS CLI v2, an authorized AWS sign-in, and the names
+of the parameters to read. Install the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+and verify `aws --version` in a new terminal before running setup.
+
+An administrator can publish one JSON parameter containing connection settings
+and references to the credential parameters. For example (replace every example
+URL, organization, and parameter name with your own):
+
+```json
+{
+  "snowInstance": "https://your-instance.service-now.com",
+  "snowClientIdParameter": "/your-team/servicenow/client-id",
+  "snowClientSecretParameter": "/your-team/servicenow/client-secret",
+  "semgrepTokenParameter": "/your-team/semgrep/token",
+  "semgrepDeployment": "your-deployment",
+  "adoOrganizations": ["your-organization"],
+  "adoPatParameter": "/your-team/ado/pat"
+}
+```
+
+Keep credential values in the referenced parameters, using `SecureString` for
+secrets; do not put them in this settings JSON. The AWS identity needs permission
+to read the selected parameters and decrypt their KMS key where applicable.
+Threatlint does not list or guess parameter names across the AWS account.
+
+```powershell
+threatlint setup --org-parameter /your-team/threatlint/setup --aws-region us-west-2
+```
+
+Setup signs in to AWS, loads the shared settings, and retrieves and validates the
+configured ServiceNow, Azure DevOps, and Semgrep credentials before saving them
+for the CLI and Workbench. It reuses configured URLs and saved credentials.
+The Azure DevOps PAT is validated separately for every selected organization.
+All these parameters use the selected AWS region (`us-west-2` by default).
+
+`THREATLINT_ORG_PARAMETER` can supply the shared parameter name instead of the
+option. Setup remembers the name and region in `~/.threatlint/org.json`
+(`%USERPROFILE%\\.threatlint\\org.json` on Windows). Environment settings take
+precedence over local settings; imported metadata fills missing local settings.
+Remove a local override to accept that field from the shared parameter on the
+next setup. A successful fresh AWS sign-in also offers a shared parameter prompt
+when no integration parameter names have been configured.
+
+AWS sign-in or shared-settings failures stop setup before integration prompts.
+A configured credential lookup failure reports its cause rather than asking
+you to copy secrets manually. Manual setup remains available when no parameter
+references are configured. `threatlint setup --check` checks current configuration
+without prompting, importing shared settings, or saving credentials.
+
 ## Choose your workspace
 
 | You work in | Next step | First useful result |

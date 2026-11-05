@@ -159,7 +159,11 @@ def existing_session(name: str, path: Path | None = None) -> dict[str, str]:
 def _aws() -> str:
     aws = shutil.which("aws")
     if not aws:
-        raise AwsLoginError("The AWS CLI v2 is required: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html")
+        help_text = ("The AWS CLI v2 was not found on PATH. Install it or add it to PATH: "
+                     "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html\n")
+        if sys.platform == "win32":
+            help_text += "On Windows, close and reopen PowerShell after installation. "
+        raise AwsLoginError(help_text + "Verify `aws --version` succeeds in this terminal, then retry.")
     return aws
 
 
@@ -256,6 +260,7 @@ def cmd_aws(args) -> int:
         profile = args.profile
         if not _NAME.fullmatch(profile):
             raise AwsLoginError("Invalid profile name")
+        _aws()
         current = existing_profile(profile) or {}
         if not current.get("sso_session") and not current.get("sso_start_url"):
             start_url = _ask("AWS access portal URL (https://<name>.awsapps.com/start)", args.start_url, _START_URL)

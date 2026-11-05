@@ -25,9 +25,9 @@
       'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
       'scanimport-avit': 'The ServiceNow AVIT this scan belongs to: AVIT followed by 7 to 15 digits. Needed only to post the result to ServiceNow.',
       'scanimport-servicenow': 'Attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives and ambiguous findings. Asks first.',
-      'scanimport-disposition': 'TRUE POSITIVE = the evidence supports it. FALSE POSITIVE = the evidence rules it out. AMBIGUOUS = not enough evidence either way; a person decides.',
+      'scanimport-disposition': 'TRUE POSITIVE = supported or retained as unverified when safety is not proven. FALSE POSITIVE = evidence disproves the finding beyond reasonable doubt.',
     },
-    topics: [{ id: 'scan-import', title: 'Triage a scan report (false positive review)', minutes: 2, steps: [
+    topics: [{ id: 'scan-import', title: 'Triage a scan report (Finding Review)', minutes: 2, steps: [
       'Get the report: Invicti as XML, JSON, or its Detailed Scan Report PDF; MobSF as its JSON or PDF report (the PDF Report button, not a browser print).',
       'Open Test → Triage a scan report and drop the file, or press Choose file.',
       'Leave Scanner on Auto-detect, or pick Invicti or MobSF. Optionally pick a workspace so triage can read the matching source, and enter the AVIT number.',
@@ -253,11 +253,11 @@
   function openServiceNow() {
     const job = state.job; if (!job || job.status !== 'done') return;
     const counts = job.counts || {};
-    const fp = count(counts.fp), open = count(counts.tp) + count(counts.ambiguous);
+    const fp = count(counts.fp), open = count(counts.tp);
     const title = text(job.title) || 'Scan import', target = text(job.target);
     $('scanimport-snow-summary').textContent = `${title}${target && !title.includes(target.replace(/^https?:\/\//, '')) ? ` · ${target}` : ''}${/\bfindings?\b/i.test(title) ? '' : ` · ${count(counts.total)} findings`}`;
     $('scanimport-snow-fp').textContent = `Close ${fp} false positive${fp === 1 ? '' : 's'} as Closed / False Positive with the Threatlint comment.`;
-    $('scanimport-snow-open').textContent = `Add work notes to ${open} true positive and ambiguous finding${open === 1 ? '' : 's'} (${count(counts.tp)} true positive, ${count(counts.ambiguous)} ambiguous); they stay open.`;
+    $('scanimport-snow-open').textContent = `Add work notes to ${open} true positive finding${open === 1 ? '' : 's'} (${count(counts.unverified)} unverified); they stay open.`;
     $('scanimport-snow-avit').value = state.avit || job.avit || normalizeAvit($('scanimport-avit').value);
     $('scanimport-snow-error').textContent = ''; $('scanimport-snow-result').replaceChildren();
     $('scanimport-snow-confirm').disabled = false; $('scanimport-snow-confirm').hidden = false;

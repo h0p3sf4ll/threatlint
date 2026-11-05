@@ -32,7 +32,7 @@ def test_unresolved_outcomes_prevent_a_complete_decision(pending):
     assert not text.all_decided(outcomes)
     comment = text.closing_comment(outcomes, leave_open=True)
     assert "so this task can be closed" not in comment
-    assert "left open for AppSec follow-up" in comment
+    assert "left open for appsec follow-up" in comment.lower()
 
 
 def test_true_positive_comment_keeps_remediation_on_the_avit():
@@ -40,8 +40,8 @@ def test_true_positive_comment_keeps_remediation_on_the_avit():
         {"avit": "AVIT0042599", "disposition": "TRUE POSITIVE"},
         {"avit": "AVIT0042600", "disposition": "FALSE POSITIVE"},
     ])
-    assert "AVIT0042599 is a confirmed finding" in comment
-    assert "must be fixed in the AVIT itself" in comment
+    assert "AVIT0042599 requires action" in comment
+    assert "resolve stated evidence gaps before claiming verification" in comment
     assert sctask.closing_comment is text.closing_comment
 
 

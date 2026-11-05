@@ -20,6 +20,7 @@ import urllib.parse
 
 from threatlint import servicenow as sn
 from threatlint import sctask_cli, sctask_text
+from threatlint.finding_review import is_conservative, normalize_verdict
 from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, ResolveError, _confirm, _false_positive_choices, _session
 from threatlint.sctask_text import _SCTASK, closing_comment, parse_sctask_numbers
 from threatlint.sctask_cli import add_sctask_parser
@@ -80,9 +81,14 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
                if (match := valid_name.fullmatch(str(item.get("file_name", ""))))
                and re.fullmatch(r"[0-9a-f]{32}", str(item.get("sys_id", "")))]
     latest = max(reports, key=lambda pair: pair[0])[1] if reports else None
-    return {"avit": avit, "disposition": disposition, "state": row.get("state", ""),
-            "report": latest["sys_id"] if latest else None,
-            "report_name": latest["file_name"] if latest else None}
+    result = normalize_verdict({"avit": avit, "disposition": disposition, "state": row.get("state", ""),
+                                "report": latest["sys_id"] if latest else None,
+                                "report_name": latest["file_name"] if latest else None})
+    if not result["disposition"]:  # Workflow states are not finding decisions.
+        result["disposition"] = disposition
+    if "CONSERVATIVE DEFAULT" in notes or "False positive was not proven beyond reasonable doubt" in notes:
+        result["unverified"] = True
+    return result
 
 
 def _download(instance: str, token: str, attachment_id: str) -> bytes:

@@ -375,7 +375,7 @@ def _outcomes_with_reports(instance: str, token: str, avits: list[str]) -> list[
         recorded = sctask.avit_outcome(instance, token, avit)
         disposition = recorded["disposition"]
         item = {"avit": avit, "disposition": disposition,
-                "completed": disposition in ("TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS")}
+                "completed": disposition in ("TRUE POSITIVE", "FALSE POSITIVE")}
         if disposition == "TRUE POSITIVE":
             if not recorded.get("report"):
                 raise ResolveError(f"{avit} is a true positive but has no readable Threatlint report to attach; review the AVIT first")

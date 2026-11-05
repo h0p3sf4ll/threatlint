@@ -134,7 +134,7 @@ describe('DefectDojo and SonarQube JSON imports', () => {
 describe('Scanner Workbench routes', () => {
   let instance, base, socket;
   const calls = [], cliCalls = [], events = [];
-  const report = (reference, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${reference}; rule.x; Semgrep; src/app/search.py:42\n**Disposition**: ${disposition}\n**Severity**: LOW\n**Confidence**: CONFIRMED\n**Evidence**: src/app/search.py:42\n`;
+  const report = (reference, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${reference}; rule.x; Semgrep; src/app/search.py:42\n**Disposition**: ${disposition}\n**Severity**: LOW\n**Confidence**: CONFIRMED\n**Evidence**: src/app/search.py:42\n**Verified Safe Behavior**: The query value is parameterized on all paths.\n`;
   const threatlintCli = async args => {
     cliCalls.push(args);
     const [toolId, command] = args;
@@ -159,7 +159,7 @@ describe('Scanner Workbench routes', () => {
   before(async () => {
     instance = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-scanner-store-')),
       runProvider: async args => { const ref = /(DOJO-\d+|SONAR-[A-Za-z0-9_-]+)\.md/.exec(args.userMessage)?.[1]; return ref ? report(ref, ref === 'DOJO-1202' ? 'AMBIGUOUS' : 'FALSE POSITIVE')
-        : `\`\`\`json\n${JSON.stringify({ verdicts: [...new Set(args.userMessage.match(/"id":"FP-\d{3}"/g) || [])].map(item => ({ id: item.slice(6, -1), disposition: 'FALSE POSITIVE', confidence: 'CONFIRMED', rationale: 'stub' })) })}\n\`\`\``; },
+        : `\`\`\`json\n${JSON.stringify({ verdicts: [...new Set(args.userMessage.match(/"id":"FP-\d{3}"/g) || [])].map(item => ({ id: item.slice(6, -1), disposition: 'FALSE POSITIVE', confidence: 'CONFIRMED', rationale: 'The claim is disproved by the inspected implementation.', evidence: 'src/query.py:12 binds this value as a parameter.', verifiedSafeBehavior: 'The same value is parameterized on every route.' })) })}\n\`\`\``; },
       integrations: { convertToWord, fetchImpl: fakeServers(calls), threatlintCli } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
@@ -189,7 +189,7 @@ describe('Scanner Workbench routes', () => {
     assert.deepEqual(events.find(event => event.type === 'scanner_batch_start').references, ['DOJO-1201', 'DOJO-1202']);
     const final = Object.fromEntries(events.filter(event => event.type === 'scanner_item' && event.done).map(event => [event.reference, event]));
     assert.equal(final['DOJO-1201'].stage, 'reported'); assert.equal(final['DOJO-1201'].disposition, 'FALSE POSITIVE');
-    assert.equal(final['DOJO-1202'].stage, 'reported', 'a finding with no repository is still reviewed from its evidence'); assert.equal(final['DOJO-1202'].disposition, 'AMBIGUOUS');
+    assert.equal(final['DOJO-1202'].stage, 'reported', 'a finding with no repository is still reviewed from its evidence'); assert.equal(final['DOJO-1202'].disposition, 'TRUE POSITIVE');
     assert.ok(final['DOJO-1201'].report.docxUrl && final['DOJO-1201'].report.mdUrl, 'the report is kept in Findings');
     assert.deepEqual(cliCalls.filter(args => args[1] === 'resolve'), [], 'no write-back during the run');
     for (const args of cliCalls.filter(item => item[1] === 'checkout')) assert.ok(!fs.existsSync(args[args.indexOf('--dir') + 1]), 'checkouts are deleted');
@@ -201,7 +201,7 @@ describe('Scanner Workbench routes', () => {
     assert.equal(posted.status, 200); assert.equal(posted.body.outcome.closed, true);
     const [resolve] = cliCalls.filter(args => args[1] === 'resolve');
     assert.deepEqual(resolve.slice(0, 3), ['dojo', 'resolve', 'DOJO-1201']);
-    assert.ok(resolve.includes('--yes') && resolve.includes('--skip-semgrep') && fs.existsSync(resolve[resolve.indexOf('--docx') + 1]));
+    assert.ok(resolve.includes('--yes') && !resolve.includes('--skip-semgrep') && fs.existsSync(resolve[resolve.indexOf('--docx') + 1]));
   });
 
   it('posts an imported DefectDojo export back to DefectDojo, and SonarQube needs a reference for other uploads', async () => {

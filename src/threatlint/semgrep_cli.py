@@ -41,6 +41,11 @@ def add_semgrep_parser(sub, *, products):
     base.add_argument("-o", "--output", required=True, help="File to write the rule YAML to")
     base.add_argument("--aws-profile")
     base.add_argument("--project", help="Exact Semgrep project name (for project-scoped Unified exceptions)")
+    tune = actions.add_parser("tune-report", help="Validate FP rule tuning with Pro and save a local bundle; no cloud publication")
+    tune.add_argument("--report", required=True, help="Finding Review Markdown with complete tuned rules and fixtures")
+    tune.add_argument("--repo", required=True, help="Exact source checkout reviewed in the report")
+    tune.add_argument("--output-dir", required=True, help="Local tuned rules and per-finding execution manifest")
+    tune.add_argument("--aws-profile")
     actions.add_parser("logout", help="Remove the saved token")
 
 
@@ -56,7 +61,10 @@ def logout(*, keyring, store_path, service):
 
 def cmd_semgrep(args, *, login, resolve_token, rule_base, deployment, logout, error_type):
     try:
-        if args.semgrep_command == "login":
+        if args.semgrep_command == "tune-report":
+            from .semgrep_review import command
+            return command(args)
+        elif args.semgrep_command == "login":
             print(f"✓ Semgrep token validated and saved to {login('', args.deployment, args.token_stdin, args.aws_profile)}")
         elif args.semgrep_command == "rule-base":
             token = resolve_token(args.aws_profile)[0]

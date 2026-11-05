@@ -41,8 +41,8 @@ directory and removes them after the run. It writes a Word report to each
 reviewed AVIT. A true positive retains an open AVIT with the report attached.
 A false positive attaches the report, closes the AVIT, triages the matching
 Semgrep finding, and tunes eligible SAST or Secrets rules. SCA false positives
-receive Supply Chain triage; they have no code rule to tune. An ambiguous
-verdict attaches its report and stays open. ServiceNow and Semgrep are separate
+receive Supply Chain triage; they have no code rule to tune. A finding without proof of FP beyond reasonable doubt is TRUE POSITIVE with a conservative
+decision basis and stays open; it is not labeled a confirmed exploit. ServiceNow and Semgrep are separate
 writes, so check each record's printed result and report any partial failure.
 
 Use `threatlint setup --check` when credentials or prerequisites are missing.
@@ -53,7 +53,7 @@ AVIT or ISST workflow with manual ServiceNow or Semgrep calls.
 ## Findings-file report
 
 Give the selected file to `appsec-fp-reviewer` and require its full
-evidence-backed report: original ID mapping, code citations, disposition and
+**Finding Review**: original ID mapping, code citations, disposition and
 confidence for each finding, proposed fixes, Semgrep tuning proposals with
 false-negative analysis, regression assertions, and a remediation roadmap.
 The agent must keep the workspace read-only and label unrun validation
@@ -65,3 +65,14 @@ current directory when there is no repository. Use the filename
 `<repo-name>-<branch>-fp-review-YYYY-MM-DD.docx` and the bundled
 `md_to_docx.py` converter. Confirm the saved path. This local output rule does
 not apply to tracker reviews, whose reports are stored as AVIT attachments.
+
+
+The `threatlint run fp-review --findings <file>` runner performs local tuning validation
+automatically for eligible FPs and appends its execution results. For direct-agent reviews or
+to retry an existing report after completing rule evidence, run
+`threatlint semgrep tune-report --report <markdown> --repo <checkout> --output-dir <bundle>`
+after generating the report. It validates the supplied complete tuned rule and TP/FP fixtures
+with Pro, and saves local rule files plus an execution manifest. It does not publish to Semgrep
+or upload scan results. Report every BLOCKED tuning and do not call the workflow complete if
+an eligible FP still lacks validated tuning. Use the existing native Semgrep login; never ask
+for its token in chat. Preserve the actual input scan's engine in provenance.

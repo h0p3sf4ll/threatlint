@@ -16,7 +16,7 @@ let gate = { promise: Promise.resolve(), release: () => {} };
 const holdSlowFetch = () => { let release; gate = { promise: new Promise(resolve => { release = resolve; }), release: () => release() }; };
 let storage;
 const SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
-const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x.y; Semgrep Code; app.yaml:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: app.yaml:2 — value ${SECRET}\nBlast radius: one rule. Acceptance criteria: x. Proposed fix: y.\n`;
+const report = (avit, disposition) => `# FP Review\n\n#### [FP-001] — finding\n**Original finding**: ${avit}; rule.x.y; Semgrep Code; app.yaml:2\n**Disposition**: ${disposition}\n**Severity**: INFO\n**Confidence**: CONFIRMED\n**Evidence**: app.yaml:2 — value ${SECRET}\n**Verified Safe Behavior**: This synthetic fixture value is never used as a provider credential on any deployment path.\nBlast radius: one rule. Acceptance criteria: x. Proposed fix: y.\n`;
 
 it('reports the resolve failure instead of a successful checkout cleanup line', () => {
   const cleanup = '  ✓ Deleted the local checkout /tmp/threatlint-avit-example/repo\n';
@@ -31,7 +31,7 @@ it('reports the resolve failure instead of a successful checkout cleanup line', 
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [];
-  let adoMissing = false;
+  let adoMissing = false, omitTuning = false;
   const taskAvits = {};
   before(async () => {
     const threatlintCli = async args => {
@@ -58,7 +58,7 @@ describe('False positive review batch', () => {
         const md = fs.readFileSync(args[args.indexOf('--report') + 1], 'utf8');
         assert.ok(!md.includes(SECRET), 'the secret is redacted before the report is saved or uploaded');
         assert.ok(fs.existsSync(args[args.indexOf('--docx') + 1]));
-        return avit === FP ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n', stderr: '' }
+        return avit === FP ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning ? '' : '  ✓ Published org-private rule synthetic.rule.tuned\n'), stderr: '' }
           : { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
       }
       throw new Error(`unexpected ${args.join(' ')}`);
@@ -136,9 +136,20 @@ describe('False positive review batch', () => {
     assert.deepEqual(events.find(event => event.sctask === B && event.avits).shared, [FP], 'the AVIT shared with an earlier task is reported as reviewed once');
     assert.ok(events.every(event => typeof event.at === 'string' && !Number.isNaN(Date.parse(event.at))), 'every event is timestamped');
     const fp = events.filter(event => event.avit === FP && !event.tool).map(event => event.action || event.stage);
-    assert.deepEqual(fp, ['fetching', 'checkout', 'triage', 'reported', 'resolving', 'attached', 'closed', 'semgrep-ignored', 'done'], 'each step and ServiceNow action is its own event');
+    assert.deepEqual(fp, ['fetching', 'checkout', 'triage', 'reported', 'resolving', 'attached', 'closed', 'semgrep-ignored', 'tuned', 'done'], 'each step and ServiceNow action is its own event');
     assert.equal(events.filter(event => event.type === 'avit_item' && event.done).find(event => event.avit === TP).result, 'noted');
     for (const key of Object.keys(taskAvits)) delete taskAvits[key];
+  });
+  it('reports partial completion when an eligible FP closes without tuning', async () => {
+    omitTuning = true;
+    try {
+      const events = await runBatch(FP);
+      const result = events.find(event => event.avit === FP && event.done);
+      assert.equal(result.stage, 'error'); assert.equal(result.result, 'error');
+      assert.equal(result.outcome.closed, true); assert.equal(result.outcome.tuned, false);
+      assert.match(result.detail, /rule tuning did not complete/);
+      assert.match(result.detail, /tracker may already have changed/);
+    } finally { omitTuning = false; }
   });
   it('reviews every AVIT with no batch limit', async () => {
     calls.length = 0;

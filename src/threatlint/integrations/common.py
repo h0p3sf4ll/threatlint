@@ -21,14 +21,14 @@ import datetime
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
+from threatlint import org_config, parameter_store
+from threatlint.finding_review import DISPOSITIONS, FindingReviewError
 from threatlint import servicenow as sn
 from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT
 from threatlint.integrations.verdicts import _DISPOSITION, candidates, mentions, report_line
@@ -36,7 +36,6 @@ from threatlint.integrations.verdicts import _DISPOSITION, candidates, mentions,
 __all__ = ["IntegrationError", "Integration", "ConnectedIntegration", "ReviewableIntegration",
            "AMBIGUOUS_COMMENT", "CLOSING_COMMENT", "TRUE_POSITIVE_COMMENT", "DISPOSITIONS"]
 
-DISPOSITIONS = ("TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS")
 HTTP_TIMEOUT_S = 120
 
 
@@ -102,27 +101,10 @@ def save_config(filename: str, values: dict[str, str]) -> str:
 
 def read_parameter(name: str, profile: str | None = None) -> str:
     """One decrypted Parameter Store value via the caller's own AWS CLI credentials (never stored)."""
-    aws = shutil.which("aws")
-    if not aws:
-        raise IntegrationError("The AWS CLI is not installed, so Parameter Store cannot be read")
-    command = [aws, "ssm", "get-parameter", "--name", name, "--with-decryption", "--region", sn.AWS_REGION, "--output", "json"]
-    if profile:
-        command += ["--profile", profile]
     try:
-        from threatlint.tls import tool_env  # noqa: PLC0415
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=tool_env())
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise IntegrationError(f"AWS CLI could not run: {exc}") from exc
-    if result.returncode != 0:
-        reason = (result.stderr.strip().splitlines() or ["unknown error"])[-1][:300]
-        raise IntegrationError(f"Parameter Store access failed: {reason}")
-    try:
-        value = json.loads(result.stdout)["Parameter"]["Value"]
-    except (ValueError, KeyError, TypeError) as exc:
-        raise IntegrationError("Unexpected AWS CLI response from Parameter Store") from exc
-    if not isinstance(value, str) or not value:
-        raise IntegrationError(f"Parameter {name} is empty")
-    return value
+        return parameter_store.read_parameter(name, profile=profile, region=org_config.aws_region())
+    except parameter_store.ParameterStoreError as exc:
+        raise IntegrationError(str(exc)) from None
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
@@ -173,13 +155,16 @@ def request(url: str, *, label: str, headers: dict[str, str], method: str = "GET
 
 def verdict_for(report: str, reference: str) -> dict[str, str]:
     """The finding in an FP report whose Original finding names this reference: id, title, disposition, confidence."""
-    matches = [verdict for original, verdict in candidates(report, disposition_pattern=_DISPOSITION) if mentions(original, reference)]
+    try:
+        matches = [verdict for original, verdict in candidates(report, disposition_pattern=_DISPOSITION) if mentions(original, reference)]
+    except FindingReviewError as exc:
+        raise IntegrationError(str(exc)) from None
     if not matches:
         raise IntegrationError(f"The report has no finding whose Original finding is {reference}")
     if len({match["disposition"] for match in matches}) > 1:
         raise IntegrationError(f"The report gives {reference} conflicting dispositions; resolve it manually")
     if not matches[0]["disposition"]:
-        raise IntegrationError(f"{matches[0]['id'] or reference} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition")
+        raise IntegrationError(f"{matches[0]['id'] or reference} has no TRUE POSITIVE / FALSE POSITIVE disposition")
     return matches[0]
 
 
@@ -223,7 +208,7 @@ def review_target_lines(item: dict, tool_label: str) -> list[str]:
             lines.append(f"| {name} | {context[key].replace('|', chr(92) + '|')} |")
     lines += ["", "Review this file on this branch (and commit, when one is recorded). SAST: trace source to sink. SCA: decide",
               "whether the vulnerable package and version are resolved and the vulnerable code is reachable. Secrets: decide whether",
-              "the value is a real, usable credential. Decide TRUE / FALSE POSITIVE only when the evidence supports it; otherwise AMBIGUOUS."]
+              "the value is a real, usable credential. Use FALSE POSITIVE only when inspected evidence disproves the rule claim beyond reasonable doubt; otherwise use TRUE POSITIVE with Decision basis: CONSERVATIVE DEFAULT and preserve the evidence gaps."]
     return lines
 
 

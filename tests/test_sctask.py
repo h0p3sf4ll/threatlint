@@ -60,7 +60,7 @@ def test_task_closes_with_each_report_and_points_developers_at_true_positives(mo
 
 def test_task_stays_open_while_an_avit_is_undecided(monkeypatch):
     result, patch, _uploads = _run(monkeypatch, {"AVIT000000095891574": ar.CLOSING_COMMENT, "AVIT000000097930184": ar.AMBIGUOUS_COMMENT})
-    assert not result["closed"] and "state" not in patch and "could not be decided" in patch["comments"]
+    assert not result["closed"] and "state" not in patch and "conservative true positive" in patch["comments"]
 
 
 def test_leave_open_comments_that_the_task_can_be_closed(monkeypatch):

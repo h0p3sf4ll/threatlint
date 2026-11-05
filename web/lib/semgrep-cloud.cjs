@@ -10,6 +10,9 @@
  */
 
 const { HttpError } = require('./http.cjs');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { readSemgrep } = require('./threatlint-config.cjs');
 const { readParameters } = require('./servicenow.cjs');
 const { orgValue } = require('./org-config.cjs');
@@ -23,9 +26,25 @@ const MAX_NOTE = 3000;
 const SLUG = /^[\w.-]{1,100}$/;
 const REPO = /^[\w.@/-]{1,200}$/;
 
-/** SEMGREP_APP_TOKEN, then the token saved in Settings (or by `threatlint semgrep login`), then Parameter Store. */
+/** Native `semgrep login` stores one restricted top-level YAML scalar. No YAML execution or secret logging. */
+function nativeToken() {
+  const xdg = process.env.XDG_CONFIG_HOME && path.join(process.env.XDG_CONFIG_HOME, '.semgrep', 'settings.yml');
+  const explicit = process.env.SEMGREP_SETTINGS_FILE;
+  const file = explicit ? explicit.replace(/^~(?=[/\\])/, os.homedir()) : xdg && fs.existsSync(xdg) ? xdg : path.join(os.homedir(), '.semgrep', 'settings.yml');
+  try {
+    if (fs.statSync(file).size > 64 * 1024) return '';
+    const matches = [...fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').matchAll(/^api_token\s*:\s*([^\r\n]*)/gm)];
+    if (matches.length !== 1) return '';
+    const scalar = matches[0][1].match(/^\s*(?:'([A-Za-z0-9._~+/=-]{20,200})'|"([A-Za-z0-9._~+/=-]{20,200})"|([A-Za-z0-9._~+/=-]{20,200}))(?:\s+#.*)?\s*$/);
+    return scalar ? scalar[1] || scalar[2] || scalar[3] : '';
+  } catch { return ''; }
+}
+
+/** Environment, native Semgrep login, Threatlint Settings, then Parameter Store. */
 async function semgrepToken({ profile } = {}) {
   if (process.env.SEMGREP_APP_TOKEN) return process.env.SEMGREP_APP_TOKEN;
+  const native = nativeToken();
+  if (native) return native;
   const saved = readSemgrep().token;
   if (saved) return saved;
   const name = orgValue('semgrepTokenParameter');
@@ -104,4 +123,4 @@ async function ignoreAsFalsePositive(token, slug, issueIds, note, { fetchImpl = 
   return { triaged: result.num_triaged ?? 0, issueIds: result.triaged_issues || [] };
 }
 
-module.exports = { semgrepToken, validateTarget, matchFindings, ignoreAsFalsePositive, sameRule, samePath };
+module.exports = { semgrepToken, nativeToken, validateTarget, matchFindings, ignoreAsFalsePositive, sameRule, samePath };

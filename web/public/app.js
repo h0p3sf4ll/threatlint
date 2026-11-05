@@ -883,7 +883,7 @@
     if (!state.pipeline.some(id => (state.config.semgrepAgents || []).includes(id))) return true;
     try { state.config = await request('/api/config'); } catch { return true; /* the runner enforces it */ }
     if (state.config.semgrep) return true;
-    toast('Semgrep Community Edition is required for Findings triage. Install it with `python3 -m pip install semgrep` (or `brew install semgrep`), confirm `semgrep --version`, then run again.', true);
+    toast('Semgrep CLI is required for Finding Review. Install it with `python3 -m pip install semgrep` (or `brew install semgrep`), confirm `semgrep --version`, then run again.', true);
     return false;
   }
   async function startRun() {

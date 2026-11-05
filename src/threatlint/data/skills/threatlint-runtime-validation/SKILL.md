@@ -55,8 +55,9 @@ scanned production origin was never contacted. Judge it as follows:
   traced to the sink in source, supports TRUE POSITIVE. Encoding/parameterisation in source that
   explains why the behaviour was not observed supports FALSE POSITIVE.
 - The sandbox lacks the production edge (TLS, WAF, proxy headers, CDN). HSTS, Secure cookies and
-  edge-set headers cannot be judged from it; decide those from deployment configuration or stay
-  AMBIGUOUS. Passive header/cookie/banner observations are hardening signals, not the finding.
+  edge-set headers cannot be judged from it; decide those from deployment configuration. If FP
+  cannot be proven beyond reasonable doubt, retain TRUE POSITIVE with CONSERVATIVE DEFAULT
+  and explicit unverified deployment assumptions. Passive header/cookie/banner observations are hardening signals, not the finding.
 - Differences between the branch and what was scanned (revision, feature flags, configuration)
   are named limits. Write the report lines the evidence supplies and propose no Semgrep tuning.
 

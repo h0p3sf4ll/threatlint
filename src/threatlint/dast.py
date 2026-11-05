@@ -205,8 +205,9 @@ def step_review(args, state: dict, env: rt.EnvironmentProvider | None = None) ->
                     message + "\nBegin your analysis now and produce the complete report as specified.", state["checkout"], api_key=api_key)
     if not output.strip():
         raise ResolveError("The reviewer produced no report")
+    from threatlint.finding_review import normalize_report  # noqa: PLC0415
     with open(report, "w", encoding="utf-8") as handle:
-        handle.write(output)
+        handle.write(normalize_report(output))
     state["report"] = report
     save_state(state)
     print(f"  ✓ Report: {report}")

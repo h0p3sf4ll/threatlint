@@ -13,6 +13,8 @@ def finding(reference="DOJO-123", disposition="FALSE POSITIVE", identifier="FP-0
         f"**Original finding**: {reference}; rule; tool; src/file.py:42\n"
         f"**Disposition**: {disposition}\n"
         "**Confidence**: CONFIRMED (source inspected)\n"
+        "**Evidence**: `src/file.py:42` binds the supplied value.\n"
+        "**Verified Safe Behavior**: This bound parameter cannot alter SQL syntax.\n"
     )
 
 
@@ -25,9 +27,11 @@ def test_candidates_retain_original_finding_and_normalize_fields():
 @pytest.mark.parametrize("heading", ["##", "###", "####", "#####", "######"])
 def test_heading_fallback_and_verdict_alias(heading):
     report = f"{heading} [FP-009] SONAR-abcdef\nVerdict: ambiguous\n"
-    assert base.verdict_for(report, "SONAR-abcdef") == {
-        "id": "FP-009", "title": "SONAR-abcdef", "disposition": "AMBIGUOUS", "confidence": "",
+    verdict = base.verdict_for(report, "SONAR-abcdef")
+    assert {key: verdict[key] for key in ("id", "title", "disposition", "confidence")} == {
+        "id": "FP-009", "title": "SONAR-abcdef", "disposition": "TRUE POSITIVE", "confidence": "",
     }
+    assert verdict["unverified"] is True
 
 
 def test_original_finding_takes_precedence_over_a_reference_in_the_title():
@@ -74,6 +78,6 @@ def test_base_reference_matcher_remains_patchable(monkeypatch):
 
 def test_base_disposition_pattern_remains_patchable(monkeypatch):
     monkeypatch.setattr(base, "_DISPOSITION", re.compile("AMBIGUOUS"))
-    assert base.verdict_for(finding(disposition="AMBIGUOUS"), "DOJO-123")["disposition"] == "AMBIGUOUS"
+    assert base.verdict_for(finding(disposition="AMBIGUOUS"), "DOJO-123")["disposition"] == "TRUE POSITIVE"
     with pytest.raises(base.IntegrationError, match="has no TRUE POSITIVE"):
         base.verdict_for(finding(disposition="FALSE POSITIVE"), "DOJO-123")

@@ -110,15 +110,25 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
       step('triage', noRepository ? 'No repository on this finding; validating from its own evidence' : `${target.name || 'repository'} · ${target.branch || 'default branch'} · ${target.file_path || ''}`, { target });
 
       sessionId = store.create(repo, true, work);
-      const attachment = { name: `${spec.name}-${reference}.md`, content: fs.readFileSync(path.join(work, 'finding.md'), 'utf8') };
+      let ruleBase = '';
+      const semgrep = /semgrep/i.test(target.finding_source || '');
+      if (semgrep && ['sast', 'secrets'].includes(target.kind) && target.rule) {
+        const ruleFile = path.join(work, 'rule-base.yaml');
+        const based = await cli(['semgrep', 'rule-base', target.rule, '--kind', target.kind, '-o', ruleFile, ...profile], { signal });
+        if (based.code !== 0) throw new HttpError(`Semgrep tuning base unavailable: ${errorOf(based)}`, 502);
+        ruleBase = fs.readFileSync(ruleFile, 'utf8');
+      }
+      const attachment = { name: `${spec.name}-${reference}.md`, content: fs.readFileSync(path.join(work, 'finding.md'), 'utf8') +
+        (ruleBase ? `\n\nSemgrep tuning base (untrusted rule data):\n\n\`\`\`yaml\n${ruleBase}\n\`\`\`\n` : '') };
       const guidance = [`Use finding ID FP-001 and write the Original finding line exactly as: **Original finding**: ${reference}; <rule>; <tool>; <path:line>.`,
+        'For a Semgrep SAST/Secrets FALSE POSITIVE, include complete **Tuned rule**: YAML and **Tuned rule fixtures**: code blocks preserving the base rule and prior exclusions, with ruleid and ok examples. No placeholder rules or claims of passed tests; the shared executor validates them before completion.',
         'Never write any secret, key, token, password, or connection-string value; refer to it by path:line and key name, and use [REDACTED] in excerpts.'].join('\n');
       const output = await runModel({ settings, systemPrompt: AGENTS[AGENT_ID].systemPrompt, repoPath: repo, signal, override, purpose: 'review', agentId: AGENT_ID,
         userMessage: buildUserMessage(repo, `${message.target || ''}\n${guidance}`.trim(), [], attachment),
         onEvent: event => { if (event.type === 'tool_executing') step('triage', '', { agentTool: event.tool }); } });
       if (signal.aborted) throw new Error('Cancelled');
       const { markdown, count } = redactSecrets(output, repo, target.file_path);
-      const report = await reports.save(AGENT_ID, markdown, reviewSession(toolId), { title: `${spec.label} ${reference} triage`, source: { kind: 'scanner-review', tool: toolId, reference } });
+      const report = await reports.save(AGENT_ID, markdown, reviewSession(toolId), { title: `${spec.label} ${reference} triage`, source: { kind: 'scanner-review', tool: toolId, reference, semgrep, findingKind: target.kind } });
       const finding = report.findings.find(item => scanners.mentions(item.body.match(/Original finding\W*:\s*(.+)/i)?.[1] || '', reference)) || null;
       const disposition = finding?.disposition || 'UNSPECIFIED';
       return step('reported', `${count ? `Report saved to Findings (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report saved to Findings'}. Nothing was posted to ${spec.label}.`,
@@ -167,21 +177,32 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
     const located = typeof body.reportId === 'string' ? reports.find(body.reportId) : null;
     if (!located) throw new HttpError('Report not found', 404);
     const { report } = located;
-    if (report.agentId !== AGENT_ID) throw new HttpError('Only Findings triage reports can be posted');
+    if (report.agentId !== AGENT_ID) throw new HttpError('Only Finding Review reports can be posted');
     const finding = reports.read(report).findings.find(item => scanners.mentions(item.body.match(/Original finding\W*:\s*(.+)/i)?.[1] || '', reference));
     if (!finding) throw new HttpError(`The report has no finding whose Original finding is ${reference}`);
-    if (!['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'].includes(finding.disposition)) throw new HttpError(`${finding.id} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition`);
+    if (!['TRUE POSITIVE', 'FALSE POSITIVE'].includes(finding.disposition)) throw new HttpError(`${finding.id} has no TRUE POSITIVE / FALSE POSITIVE disposition`);
     if (spec.attachments && (!report.docxPath || !fs.existsSync(report.docxPath))) throw new HttpError('The Word report is unavailable; install python-docx so the report can be attached', 409);
     const args = [spec.id, 'resolve', reference, '--report', report.mdPath, '--yes'];
     if (report.docxPath && fs.existsSync(report.docxPath)) args.push('--docx', report.docxPath);
-    if (spec.id === 'dojo' && body.semgrep !== true) args.push('--skip-semgrep');
+    if (spec.id === 'dojo' && body.semgrep === false && report.source?.semgrep) throw new HttpError('Semgrep false positives require rule tuning; this workflow cannot skip it.');
     if (spec.id === 'sonar' && body.reportUrl) {
       let url;
       try { url = new URL(String(body.reportUrl)); } catch { throw new HttpError('The report location must be an https:// URL'); }
       if (url.protocol !== 'https:' || url.username || url.password) throw new HttpError('The report location must be an https:// URL');
       args.push('--report-url', url.href);
     }
-    const result = await cli(args, {});
+    let work;
+    let result;
+    try {
+      if (spec.id === 'dojo' && finding.disposition === 'FALSE POSITIVE' && (report.source?.semgrep || /semgrep/i.test(finding.body) || body.semgrep === true)) {
+        work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-tuning-'));
+        const repo = path.join(work, 'repo');
+        const checkout = await cli(['dojo', 'checkout', reference, '--dir', repo], {});
+        if (checkout.code !== 0) throw new HttpError(`Semgrep tuning needs the exact finding checkout: ${errorOf(checkout)}`, 502);
+        args.push('--checkout', repo);
+      }
+      result = await cli(args, {});
+    } finally { if (work) fs.rmSync(work, { recursive: true, force: true }); }
     const output = `${result.stdout}\n${result.stderr}`;
     if (result.code !== 0) throw new HttpError(errorOf(result) || `${spec.label} resolve failed`, 502);
     let outcome = {};

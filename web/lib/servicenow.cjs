@@ -14,9 +14,11 @@ const { readServiceNow } = require('./threatlint-config.cjs');
 const { ENV: ORG_ENV, orgValue } = require('./org-config.cjs');
 
 const execFileAsync = promisify(execFile);
+const { dispositionState, CONSERVATIVE_NOTE } = require('./finding-disposition.cjs');
 
-const PARAMETER_STORE_URL = 'https://us-west-2.console.aws.amazon.com/systems-manager/parameters/?region=us-west-2&tab=Table';
-const AWS_REGION = 'us-west-2';
+const DEFAULT_AWS_REGION = 'us-west-2';
+// Keep accepted references in step with src/threatlint/parameter_store.py.
+const PARAMETER_NAME = /^(?:[A-Za-z0-9_./][A-Za-z0-9_./-]*|arn:aws(?:-[a-z]+)*:ssm:[a-z0-9-]+:\d{12}:parameter\/[A-Za-z0-9_./-]+)$/;
 const AVIT_TABLE = 'sn_vul_app_vulnerable_item';
 // AVIT numbers per ServiceNow numberIN query. Not a review limit: longer lists are fetched in several queries.
 const AVIT_QUERY_CHUNK = 50;
@@ -93,13 +95,20 @@ async function aggregateColumns(credentials, fetchImpl, signal, token) {
   }
   return columns;
 }
-// Agents whose proposals are validated with Semgrep Community Edition.
+// Agents whose proposals are validated with Semgrep CLI.
 const SEMGREP_AGENTS = new Set(['appsec-fp-reviewer']);
-const SEMGREP_INSTALL = 'Install Semgrep Community Edition before running the Findings triage agent: `python3 -m pip install semgrep` (or `brew install semgrep`), confirm with `semgrep --version`, then retry.';
+const SEMGREP_INSTALL = 'Install Semgrep CLI before running the Finding Review agent: `python3 -m pip install semgrep` (or `brew install semgrep`), confirm with `semgrep --version`, then retry.';
 
 // Organization-specific values come from the environment or ~/.threatlint/org.json (see org-config.cjs); none are built in.
+function awsRegion() {
+  const region = orgValue('awsRegion') || DEFAULT_AWS_REGION;
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\d+$/.test(region)) throw new HttpError(`Invalid AWS region. Set ${ORG_ENV.awsRegion} to a valid region.`, 412);
+  return region;
+}
+
 function access() {
-  return { ssoUrl: orgValue('ssoUrl'), parameterStoreUrl: PARAMETER_STORE_URL, region: AWS_REGION,
+  const region = awsRegion();
+  return { ssoUrl: orgValue('ssoUrl'), parameterStoreUrl: `https://${region}.console.aws.amazon.com/systems-manager/parameters/?region=${region}&tab=Table`, region,
     clientIdParameter: orgValue('snowClientIdParameter'), clientSecretParameter: orgValue('snowClientSecretParameter'),
     semgrepTokenParameter: orgValue('semgrepTokenParameter') };
 }
@@ -135,7 +144,7 @@ function validateCredentials(value) {
   const sent = value && typeof value === 'object' ? value : {};
   const saved = readServiceNow();
   const pick = name => (typeof sent[name] === 'string' && sent[name].trim()) || saved[name];
-  const credentials = { instance: pick('instance'), clientId: pick('clientId'), clientSecret: pick('clientSecret') };
+  const credentials = { instance: pick('instance') || orgValue('snowInstance'), clientId: pick('clientId'), clientSecret: pick('clientSecret') };
   const { clientId, clientSecret } = credentials;
   if (typeof clientId !== 'string' || !clientId.trim() || typeof clientSecret !== 'string' || !clientSecret.trim() || clientId.length > 500 || clientSecret.length > 2000) {
     throw new HttpError('Add the ServiceNow client ID and secret in Settings. They are in AWS Parameter Store; sign in through SSO to request access.');
@@ -145,8 +154,12 @@ function validateCredentials(value) {
 
 /** Decrypted Parameter Store values by name, via the local AWS CLI and the user's own SSO-derived credentials. */
 async function readParameters(names, { profile } = {}) {
-  if (profile != null && (typeof profile !== 'string' || !/^[\w.@+-]{1,128}$/.test(profile))) throw new HttpError('Invalid AWS profile name');
-  const args = ['ssm', 'get-parameters', '--names', ...names, '--with-decryption', '--region', AWS_REGION, '--output', 'json',
+  const region = awsRegion();
+  if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== 'string' || name.length > 2048 || name !== name.trim() || !PARAMETER_NAME.test(name))) {
+    throw new HttpError('Invalid Parameter Store name. Supply a parameter name, path, or SSM parameter ARN.');
+  }
+  if (profile != null && (typeof profile !== 'string' || !/^[\w.@+][\w.@+-]{0,127}$/.test(profile))) throw new HttpError('Invalid AWS profile name');
+  const args = ['ssm', 'get-parameters', '--names', ...names, '--with-decryption', '--region', region, '--output', 'json',
     ...(profile ? ['--profile', profile] : [])];
   let stdout;
   try {
@@ -700,14 +713,20 @@ async function updateAvit(instance, headers, sysId, values, fetchImpl, signal) {
 
 /**
  * `threatlint avit resolve` for a report the Workbench wrote: attach the files (skipping ones already attached), then
- * FALSE POSITIVE -> close (state/substate 3/3) with CLOSING_COMMENT; TRUE POSITIVE / AMBIGUOUS -> work note, left open.
+ * FALSE POSITIVE -> close (state/substate 3/3) with CLOSING_COMMENT; TRUE POSITIVE (including unverified) -> work note, left open.
  */
-async function resolveAvit(credentials, number, { disposition, files = [] }, { fetchImpl = fetch, signal } = {}) {
+async function resolveAvit(credentials, number, { disposition, unverified = false, files = [] }, { fetchImpl = fetch, signal, reviewSemgrep } = {}) {
   const [avit] = parseAvitNumbers(number);
-  if (!['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'].includes(disposition)) throw new HttpError(`${avit} has no TRUE POSITIVE / FALSE POSITIVE / AMBIGUOUS disposition`);
+  if (!['TRUE POSITIVE', 'FALSE POSITIVE', 'AMBIGUOUS'].includes(disposition)) throw new HttpError(`${avit} has no TRUE POSITIVE / FALSE POSITIVE disposition`);
+  ({ disposition, unverified } = dispositionState(disposition, unverified));
   const { instance } = credentials;
   const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
-  const { sysId } = await avitRecord(instance, headers, avit, fetchImpl, signal);
+  const { sysId, fields } = await avitRecord(instance, headers, avit, fetchImpl, signal);
+  const source = ['source', 'scanner', 'u_security_finding_source', 'security_finding_source', 'finding_source'].map(name => fields[name] || '').join(' ');
+  if (disposition === 'FALSE POSITIVE' && (isCodeSecurity({ fields }) || /semgrep|\b(?:sast|sca|secrets)\b/i.test(source))) {
+    if (!reviewSemgrep) throw new HttpError('This code-scanner false positive requires the shared Finding Review workflow so Semgrep rule tuning is validated before completion.', 409);
+    return reviewSemgrep(avit, fields);
+  }
   const existing = await attachmentNames(instance, headers, sysId, fetchImpl, signal);
   const attachments = [];
   // Attach first so an AVIT is never closed without its evidence.
@@ -716,14 +735,14 @@ async function resolveAvit(credentials, number, { disposition, files = [] }, { f
     attachments.push({ name: file.name, sysId: (await attachFile(instance, headers, sysId, file, fetchImpl, signal)).sys_id || null });
   }
   const falsePositive = disposition === 'FALSE POSITIVE';
-  const note = falsePositive ? CLOSING_COMMENT : disposition === 'AMBIGUOUS' ? AMBIGUOUS_COMMENT : TRUE_POSITIVE_COMMENT;
+  const note = falsePositive ? CLOSING_COMMENT : unverified ? CONSERVATIVE_NOTE : TRUE_POSITIVE_COMMENT;
   const values = { work_notes: note };
   const choices = falsePositive ? await falsePositiveChoices() : null;
   if (choices) Object.assign(values, { state: choices.state, substate: choices.substate, close_notes: note });
   const stored = await updateAvit(instance, headers, sysId, values, fetchImpl, signal);
   // As in avit_resolve.py: the state decides whether it closed; a cleared substate is reported, not failed.
   const closed = choices ? String(stored.state) === String(choices.state) : false;
-  return { avit, disposition, action: falsePositive ? (closed ? 'closed' : 'close not applied') : 'noted', note, closed, leftOpen: !falsePositive,
+  return { avit, disposition, unverified, action: falsePositive ? (closed ? 'closed' : 'close not applied') : 'noted', note, closed, leftOpen: !falsePositive,
     sysId, url: `${instance}/nav_to.do?uri=${AVIT_TABLE}.do?sys_id=${sysId}`, attachments, state: stored.state ?? null, substate: stored.substate ?? null,
     ...(choices && closed && String(stored.substate) !== String(choices.substate) ? { substateNote: `ServiceNow stored substate ${stored.substate || 'blank'}, not ${choices.substate}` } : {}) };
 }

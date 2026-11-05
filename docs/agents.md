@@ -595,7 +595,7 @@ Executive summary, data inventory and flow summary, PD findings with quoted coll
 
 ### Purpose
 
-Produces a professionally written findings and remediation report from SARIF 2.1.0, Semgrep JSON, Threatlint Markdown, or pasted findings. The reviewer separates source-supported TRUE POSITIVE, FALSE POSITIVE, and AMBIGUOUS verdicts from severity/confidence, proposes concrete fixes, and evaluates scanner-tuning risk independently. It never applies proposals.
+Produces a professionally written **Finding Review** from SARIF 2.1.0, Semgrep JSON, Threatlint Markdown, or pasted findings. The reviewer separates binary TRUE POSITIVE and FALSE POSITIVE verdicts from severity/confidence, proposes concrete fixes, and evaluates scanner-tuning risk independently. The reviewer does not apply proposals; the authorized executor validates and applies eligible rule tuning.
 
 ### Required Skills
 
@@ -622,7 +622,7 @@ tuning, and runtime validation. Required skills for every agent are assigned in
 - **Tier 2 — Detailed Findings**: original IDs and source/scan provenance, path/line evidence, source-to-control-to-sink reasoning, verdict/severity/confidence, and alternative interpretations.
 - **True positives**: concrete proposed before/after or patch, implementation/compatibility notes, regression assertions, and closure criteria. Proposed changes are NOT APPLIED; proposed tests are NOT RUN.
 - **False positives**: verified contextual reason, narrow rule proposal only when the original rule is known, ruleid/ok fixtures, coverage/blast radius, approval and rollback. Missing rule details block exact tuning, not necessarily the FP verdict.
-- **Ambiguous findings**: remain open, with exact blocking evidence, a suggested owner, a safe resolution plan, and an interim action.
+- **Conservative true positives**: when FP cannot be proven beyond reasonable doubt, remain open with actual confidence, missing evidence, an owner, and a resolution plan. This classification does not assert verified exploitation.
 - **Tier 3 — Engineering Action Plan**: suppression impact, systemic root causes, remediation roadmap, acceptance matrix, limitations, and unresolved questions. No blanket suppressions or unsupported zero-false-negative promises.
 
 ---

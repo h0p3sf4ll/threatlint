@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 
-from threatlint import tls
+from threatlint import parameter_store, tls
 
 
 def client_parameters() -> tuple[str, str]:
@@ -33,9 +33,14 @@ def read_parameter_store(profile, *, client_parameters, access_help, region, tim
     id_parameter, secret_parameter = client_parameters()
     if not id_parameter or not secret_parameter:
         raise error_type(access_help())
+    try:
+        for name in (id_parameter, secret_parameter):
+            parameter_store.validate_reference(name, profile, region)
+    except parameter_store.ParameterStoreError as exc:
+        raise error_type(str(exc)) from None
     aws = shutil.which("aws")
     if not aws:
-        raise error_type("The AWS CLI is not installed, so Parameter Store cannot be read.\n" + access_help())
+        raise error_type("The AWS CLI v2 was not found on PATH, so Parameter Store cannot be read.\n" + access_help())
     command = [aws, "ssm", "get-parameters", "--names", id_parameter, secret_parameter,
                "--with-decryption", "--region", region, "--output", "json"]
     if profile:
@@ -44,15 +49,24 @@ def read_parameter_store(profile, *, client_parameters, access_help, region, tim
         # Pass arguments directly, without shell interpretation or shell quoting.
         result = subprocess.run(command, shell=False, capture_output=True, text=True,
                                 timeout=timeout, check=False, env=tls.tool_env())
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise error_type(f"AWS CLI could not run: {exc}\n{access_help()}") from exc
+    except subprocess.TimeoutExpired:
+        raise error_type("AWS CLI timed out while reading Parameter Store.\n" + access_help()) from None
+    except (OSError, subprocess.SubprocessError):
+        raise error_type("AWS CLI could not run while reading Parameter Store.\n" + access_help()) from None
     if result.returncode != 0:
-        reason = (result.stderr.strip().splitlines() or ["unknown error"])[-1][:300]
+        reason = parameter_store.safe_error(result.stderr)
         raise error_type(f"Parameter Store access failed: {reason}\n{access_help()}")
     try:
-        values = {item["Name"]: item["Value"] for item in json.loads(result.stdout).get("Parameters", [])}
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict) or not isinstance(payload.get("Parameters"), list):
+            raise TypeError
+        values = {}
+        for item in payload["Parameters"]:
+            if not isinstance(item, dict) or not isinstance(item.get("Name"), str) or not isinstance(item.get("Value"), str):
+                raise TypeError
+            values[item["Name"]] = item["Value"]
     except (ValueError, KeyError, TypeError) as exc:
-        raise error_type("Unexpected AWS CLI response from Parameter Store") from exc
+        raise error_type("Unexpected AWS CLI response from Parameter Store") from None
     client_id, client_secret = values.get(id_parameter, ""), values.get(secret_parameter, "")
     if not client_id or not client_secret:
         raise error_type("Your AWS identity cannot read both ServiceNow parameters.\n" + access_help())

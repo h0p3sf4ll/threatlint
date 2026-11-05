@@ -41,7 +41,7 @@ function validateAttachment(value) {
 function buildUserMessage(repoPath, target = '', chainContexts = [], attachment = null, { avits = null, semgrep = null } = {}) {
   let message = `Analyze the selected repository: ${repoPath}\n`;
   if (target) message += `\nUser-requested scope: ${target}\n`;
-  if (semgrep) message += `\nSemgrep Community Edition is installed for the user (${semgrep}); write validation commands for it.\n`;
+  if (semgrep) message += `\nSemgrep CLI version ${semgrep} is installed. Use Semgrep Pro (--pro) for new scans and validation; never fall back silently to OSS. Report the input scan engine from its actual provenance, not the installed CLI version.\n`;
   if (avits) message += `\nThe findings artifact contains ${avits.length} ServiceNow application vulnerable items (${avits.join(', ')}). Triage every AVIT as one finding in a single cohesive report, keeping each AVIT number as the original finding ID, and locate the flagged code in this repository from the AVIT fields.\n`;
   if (attachment) {
     message += `\nUSER-SUPPLIED FINDINGS ARTIFACT: ${JSON.stringify(attachment.name)}\n`;

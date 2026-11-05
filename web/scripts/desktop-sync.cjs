@@ -67,6 +67,8 @@ function stamp() {
 function stage(output) {
   const run = args => execFileSync(process.execPath, args, { cwd: WEB, stdio: 'inherit', env: process.env });
   fs.rmSync(output, { recursive: true, force: true });
+  // Electron 42+ downloads its runtime on demand; electron-builder uses electronDist directly.
+  run([require.resolve('electron/install.js', { paths: [WEB] })]);
   run([path.join(WEB, 'desktop/build-icon.cjs')]);
   stamp();
   run([require.resolve('electron-builder/cli.js', { paths: [WEB] }), '--dir', `--config.directories.output=${output}`]);

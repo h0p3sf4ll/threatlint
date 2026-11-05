@@ -11,11 +11,15 @@ const os = require('node:os');
 const path = require('node:path');
 
 const ENV = {
+  orgParameter: 'THREATLINT_ORG_PARAMETER',
+  awsRegion: 'THREATLINT_AWS_REGION',
   ssoUrl: 'THREATLINT_AWS_SSO_PORTAL_URL',
+  snowInstance: 'THREATLINT_SNOW_INSTANCE',
   snowClientIdParameter: 'THREATLINT_SNOW_CLIENT_ID_PARAMETER',
   snowClientSecretParameter: 'THREATLINT_SNOW_CLIENT_SECRET_PARAMETER',
   semgrepTokenParameter: 'THREATLINT_SEMGREP_TOKEN_PARAMETER',
   semgrepDeployment: 'THREATLINT_SEMGREP_DEPLOYMENT',
+  adoPatParameter: 'THREATLINT_ADO_PAT_PARAMETER',
   // Claude model policy (model-policy.cjs): scanning runs and chat/assistance defaults.
   scanModel: 'THREATLINT_SCAN_MODEL',
   generalModel: 'THREATLINT_GENERAL_MODEL',

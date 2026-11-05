@@ -169,7 +169,10 @@ describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
     assert.deepEqual(events.find(event => event.type === 'avit_loaded'), { type: 'avit_loaded', retrieved: 1, missing: ['AVIT000000000010002'], excluded: [] });
     const message = observed[before].userMessage;
     assert.match(message, /UNTRUSTED EVIDENCE/); assert.match(message, /AVIT000000000010001/); assert.match(message, /single cohesive report/);
-    assert.match(message, /Semgrep Community Edition is installed/);
+    assert.match(message, /Semgrep CLI version/);
+    assert.match(message, /Use Semgrep Pro/);
+    assert.match(message, /actual provenance/);
+    assert.doesNotMatch(message, /Community Edition is installed/);
     assert.ok(snowRequests.every(request => request.options.redirect === 'error'));
     assert.ok(snowRequests.some(request => /sn_vul_app_vulnerable_item\?sysparm_query=numberIN(AVIT000000000010001%2CAVIT000000000010002)&/.test(request.url)));
     assert.doesNotMatch(fs.readFileSync(path.join(storage, 'sessions.json'), 'utf8'), /secret|snow-token/);
