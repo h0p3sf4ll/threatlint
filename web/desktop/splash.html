@@ -5,19 +5,110 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
   <title>Threatlint</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #101617; color: #e6eeee; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-app-region: drag; user-select: none; }
-    main { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px; padding: 0 28px; box-sizing: border-box; text-align: center; }
-    h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+    :root {
+      --bg: #0c1213; --bg2: #101617; --panel: #16201f;
+      --accent: #3fb8a5; --accent-bright: #7af0dd; --grid: rgba(63, 184, 165, .10);
+      --text: #e6eeee; --muted: #8aa0a2;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-app-region: drag; user-select: none; cursor: default;
+    }
+    /* Depth + a subtle vignette so the radar reads as the focal point. */
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(120% 90% at 50% 38%, rgba(63,184,165,.08), transparent 60%),
+        radial-gradient(140% 120% at 50% 120%, #000 0%, transparent 55%),
+        linear-gradient(160deg, var(--bg2), var(--bg));
+    }
+    /* Drifting cyber grid. */
+    body::after {
+      content: ""; position: fixed; inset: -40px; z-index: 0; opacity: .6;
+      background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 26px 26px;
+      -webkit-mask-image: radial-gradient(90% 80% at 50% 40%, #000 30%, transparent 78%);
+      animation: drift 9s linear infinite;
+    }
+    @keyframes drift { from { transform: translate(0, 0); } to { transform: translate(26px, 26px); } }
+
+    main { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;
+      justify-content: center; align-items: center; gap: 11px; padding: 18px 28px; text-align: center; }
+
+    /* ── Radar / scanner emblem ─────────────────────────────── */
+    .radar { position: relative; width: 92px; height: 92px; border-radius: 50%; flex: none;
+      background: radial-gradient(circle, rgba(63,184,165,.10), transparent 70%);
+      box-shadow: inset 0 0 0 1px rgba(63,184,165,.28), 0 0 22px rgba(63,184,165,.12); }
+    /* Concentric range rings. */
+    .radar::before { content: ""; position: absolute; inset: 15px; border-radius: 50%;
+      box-shadow: inset 0 0 0 1px rgba(63,184,165,.22); }
+    .radar::after { content: ""; position: absolute; inset: 31px; border-radius: 50%;
+      box-shadow: inset 0 0 0 1px rgba(63,184,165,.20); }
+    /* Crosshair. */
+    .cross, .cross::before { position: absolute; background: rgba(63,184,165,.16); }
+    .cross { left: 50%; top: 6px; bottom: 6px; width: 1px; transform: translateX(-.5px); }
+    .cross::before { content: ""; top: 50%; left: -40px; right: -40px; height: 1px; transform: translateY(-.5px); }
+    /* Rotating sweep: a bright leading edge trailing into a wedge. */
+    .sweep { position: absolute; inset: 1px; border-radius: 50%; overflow: hidden; }
+    .sweep::before { content: ""; position: absolute; inset: 0;
+      background: conic-gradient(from 0deg, rgba(122,240,221,.55) 0deg, rgba(63,184,165,.18) 26deg, transparent 72deg);
+      animation: sweep 2.4s linear infinite; transform-origin: 50% 50%; }
+    @keyframes sweep { to { transform: rotate(360deg); } }
+    /* Expanding contact pulse. */
+    .ping { position: absolute; inset: 50%; width: 0; height: 0; border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(122,240,221,.5); animation: ping 2.4s ease-out infinite; }
+    @keyframes ping { 0% { inset: 50%; opacity: 0; } 15% { opacity: .9; } 100% { inset: 2px; opacity: 0; } }
+    /* Detected "blips" that flash as the sweep passes. */
+    .blip { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-bright);
+      box-shadow: 0 0 7px var(--accent-bright); opacity: 0; }
+    .blip.b1 { top: 26px; left: 60px; animation: blink 2.4s linear infinite; }
+    .blip.b2 { top: 58px; left: 32px; animation: blink 2.4s linear .9s infinite; }
+    .blip.b3 { top: 40px; left: 24px; animation: blink 2.4s linear 1.6s infinite; }
+    @keyframes blink { 0%, 10% { opacity: 1; transform: scale(1.25); } 45%, 100% { opacity: 0; transform: scale(.7); } }
+    .core { position: absolute; inset: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%;
+      background: var(--accent-bright); box-shadow: 0 0 8px var(--accent-bright); }
+
+    /* ── Wordmark ───────────────────────────────────────────── */
+    .wordmark { position: relative; font-size: 22px; font-weight: 700; letter-spacing: .18em;
+      padding-left: .18em; color: var(--text); }
+    .wordmark b { color: var(--accent-bright); font-weight: 700; }
+    /* A scan highlight that sweeps across the letters. */
+    .wordmark::after { content: ""; position: absolute; left: -6px; right: -6px; top: 0; bottom: 0;
+      background: linear-gradient(100deg, transparent 40%, rgba(122,240,221,.35) 50%, transparent 60%);
+      background-size: 220% 100%; animation: scan 3.6s ease-in-out infinite; pointer-events: none; }
+    @keyframes scan { 0% { background-position: 140% 0; } 55%, 100% { background-position: -40% 0; } }
+
     .bar { width: 220px; height: 3px; border-radius: 2px; background: #1f2b2d; overflow: hidden; }
-    .bar::after { content: ""; display: block; width: 40%; height: 100%; background: #3fb8a5; animation: slide 1.2s ease-in-out infinite; }
-    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
-    #title { font-weight: 500; }
-    #detail { color: #8aa0a2; font: 11px/1.4 ui-monospace, Menlo, monospace; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.4em; }
+    .bar::after { content: ""; display: block; width: 38%; height: 100%; border-radius: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+      box-shadow: 0 0 8px rgba(63,184,165,.6); animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-120%); } to { transform: translateX(360%); } }
+
+    #title { font-weight: 500; color: var(--text); }
+    #detail { color: var(--muted); font: 11px/1.4 ui-monospace, Menlo, monospace; max-width: 100%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.4em; }
+    /* A blinking cursor keeps the status line feeling live even before any text arrives. */
+    #detail::after { content: "_"; color: var(--accent); animation: caret 1s step-end infinite; }
+    @keyframes caret { 50% { opacity: 0; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      body::after, .sweep::before, .ping, .blip, .wordmark::after, .bar::after, #detail::after { animation: none; }
+      .blip { opacity: .85; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>Threatlint</h1>
+    <div class="radar" aria-hidden="true">
+      <span class="cross"></span>
+      <span class="sweep"></span>
+      <span class="ping"></span>
+      <span class="blip b1"></span><span class="blip b2"></span><span class="blip b3"></span>
+      <span class="core"></span>
+    </div>
+    <div class="wordmark">THREAT<b>LINT</b></div>
     <div class="bar"></div>
     <div id="title">Starting…</div>
     <div id="detail"></div>
