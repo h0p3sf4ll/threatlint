@@ -57,7 +57,7 @@ def test_run_is_read_only_keyless_and_returns_the_report(monkeypatch, tmp_path):
     assert fake.call["system_prompt"] == "You are the threat modeler." and fake.call["input"] == "Analyze the repo"
     env = fake.call["options"]["env"]
     assert not set(claude_code.STRIPPED_ENV).intersection(env)
-    assert env["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] == "1"
+    assert "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" not in env, "with it the CLI ignores the claude.ai login"
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "subscription-token" and env["HTTPS_PROXY"] == "https://proxy.invalid"
     assert fake.call["options"]["cwd"] == str(tmp_path)
     assert progress == ["  → Grep(pattern='app.get')"]
@@ -83,10 +83,11 @@ def test_login_status_reads_claude_auth_status(monkeypatch):
         monkeypatch.setenv(name, "provider-setting-should-not-pass")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "subscription-token")
     monkeypatch.setenv("SSL_CERT_FILE", "/synthetic/cert.pem")
+    monkeypatch.setenv("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1")  # inherited from a host process, it would hide the login
     def run(argv, **options):
         assert argv == ["/bin/claude", "auth", "status"]
         assert not set(claude_code.STRIPPED_ENV).intersection(options["env"])
-        assert options["env"]["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"] == "1"
+        assert "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" not in options["env"]
         assert options["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "subscription-token"
         assert options["env"]["SSL_CERT_FILE"] == "/synthetic/cert.pem"
         return types.SimpleNamespace(stdout='{"loggedIn": true, "authMethod": "claude.ai"}')

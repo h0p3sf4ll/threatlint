@@ -48,13 +48,14 @@ const CLOUD_ENV = {
   CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_MANTLE: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_USE_FOUNDRY: '1', CLAUDE_CODE_USE_ANTHROPIC_AWS: '1',
   ANTHROPIC_BASE_URL: 'https://different-provider.example', AWS_BEARER_TOKEN_BEDROCK: 'bedrock-key', BEDROCK_API_KEY: 'other-bedrock-key',
   AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime-override.example', AWS_ENDPOINT_URL_BEDROCK_MANTLE: 'https://mantle-override.example',
+  CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',  // inherited from a host process, it would hide the login
 };
 const LOGIN_ENV = { CLAUDE_CODE_OAUTH_TOKEN: 'subscription-token', NODE_EXTRA_CA_CERTS: '/company/ca.pem', HTTPS_PROXY: 'http://company-proxy:8080' };
 
 function assertLoginEnvironment(actual, original) {
   for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', ...Object.keys(CLOUD_ENV)]) assert.equal(actual[name], undefined, name);
   for (const name of ['PATH', 'HOME', ...Object.keys(LOGIN_ENV)]) assert.equal(actual[name], original[name], name);
-  assert.equal(actual.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, '1', 'settings cannot restore provider or auth overrides');
+  assert.equal(actual.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, undefined, 'never set: with it the CLI ignores the claude.ai login and reports not signed in');
   assert.equal(original.CLAUDE_CODE_USE_BEDROCK, '1', 'the parent environment is not modified');
 }
 

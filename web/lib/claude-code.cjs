@@ -13,6 +13,7 @@
  *   --no-session-persistence  nothing is saved to Claude Code's session history
  * API keys, provider-selection flags, and endpoint overrides are removed from the child environment so the
  * Claude Code login is used even when the parent process also has Bedrock or another cloud provider configured.
+ * CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST is never set: it tells the CLI the host owns authentication, so it ignores the user's claude.ai login.
  * The system prompt goes through a 0600 temp file and the user message through stdin, so neither appears in argv.
  */
 
@@ -44,11 +45,12 @@ function executable({ env = process.env, home = os.homedir() } = {}) {
   return dirs.filter(Boolean).map(dir => path.join(dir, name)).find(file => { try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; } }) || null;
 }
 
+// Never set CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: it tells the CLI the host owns authentication, so the CLI ignores
+// the user's claude.ai login and reports "not signed in". Settings-file overrides are already excluded from runs by
+// --restricted, which ignores user, project, and local settings.
 function childEnv(env = process.env) {
   const copy = { ...env };
-  for (const name of STRIPPED_ENV) delete copy[name];
-  // `auth status` also reads user settings. Prevent their env block from restoring provider/auth overrides.
-  copy.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1';
+  for (const name of [...STRIPPED_ENV, 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']) delete copy[name];
   return copy;
 }
 

@@ -12,7 +12,8 @@ The repository under review is untrusted, so every run is locked down (mirrors w
 
 API keys, provider route flags, and endpoint overrides are removed from the child environment so this provider
 uses the Claude Code subscription login even when the parent shell is configured for Bedrock, Mantle, Vertex, or Foundry.
-CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST also prevents global settings from reintroducing provider/auth/endpoint overrides.
+Global settings cannot reintroduce provider/auth/endpoint overrides into a run because --restricted ignores settings files.
+CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST is never set: it tells the CLI the host owns authentication, so it ignores the user's claude.ai login.
 CLAUDE_CODE_OAUTH_TOKEN and normal operating-system, proxy, and certificate settings are preserved.
 The system prompt goes through a 0600 temp file and the user message through stdin, so neither appears in argv.
 """
@@ -64,8 +65,10 @@ def executable() -> str | None:
 
 
 def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
-    return {**{name: value for name, value in (env if env is not None else os.environ).items() if name not in STRIPPED_ENV},
-            "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1"}
+    # Never pass CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: with it the CLI ignores the user's claude.ai login. Settings-file
+    # overrides are already excluded from runs by --restricted.
+    dropped = {*STRIPPED_ENV, "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"}
+    return {name: value for name, value in (env if env is not None else os.environ).items() if name not in dropped}
 
 
 def login_status(claude: str | None = None) -> LoginStatus:
