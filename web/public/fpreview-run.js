@@ -252,6 +252,7 @@
         }
         case 'avit_item': {
           const item = card('avit', event.avit);
+          if (event.target) item.target = event.target;
           if (event.url) linkAvit(item, event.avit, event.url);
           if (event.pullRequest || event.outcome?.pullRequest) renderPullRequest(item, event.pullRequest || event.outcome.pullRequest);
           const list = item.node.querySelector('.fp-history-list');
@@ -315,7 +316,19 @@
       if (result.status === 'skipped') { actions.append(el('span', 'small subtle', `Draft PR: ${result.reason}`)); return; }
       let url;
       try { url = new URL(result.url); } catch { return; }
-      if (url.protocol !== 'https:' || url.hostname !== 'dev.azure.com' || url.username || url.password || !/\/_git\/[^/]+\/pullrequest\/\d+$/i.test(url.pathname)) return;
+      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return;
+      const ado = url.hostname === 'dev.azure.com' && /\/_git\/[^/]+\/pullrequest\/\d+$/i.test(url.pathname);
+      let github = false;
+      if (item.target?.scm === 'github') {
+        try {
+          const repository = new URL(item.target.web_url);
+          const prefix = repository.pathname.replace(/\/$/, '') + '/pull/';
+          github = repository.protocol === 'https:' && !repository.username && !repository.password
+            && url.origin === repository.origin && url.pathname.startsWith(prefix)
+            && /^\d+$/.test(url.pathname.slice(prefix.length));
+        } catch { /* A GitHub PR link needs its reviewed repository URL. */ }
+      }
+      if (!ado && !github) return;
       const link = el('a', 'small', result.draft === false ? 'Open fix PR ↗' : 'Open draft fix PR ↗');
       link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
       actions.append(link);

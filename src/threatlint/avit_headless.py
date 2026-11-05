@@ -250,7 +250,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             "Never reproduce a secret, key, token, password, or connection-string value; "
             "use [REDACTED] in excerpts. " + _RULE_GUIDANCE
         )
-        if not getattr(args, "no_fix_pr", False) and target.get("scm") == "azure-devops":
+        if not getattr(args, "no_fix_pr", False) and target.get("scm") in ("azure-devops", "github"):
             from .avit_pr import FIX_PATCH_GUIDANCE  # noqa: PLC0415
             prompt += "\n" + FIX_PATCH_GUIDANCE
         print(f"  Reviewing {kind.upper()} with {provider}", flush=True)
@@ -304,7 +304,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
         )
         completed = avit_resolve.cmd_resolve(resolve_args) == 0
         pull_request = None
-        if completed and verdict["disposition"] == "TRUE POSITIVE" and target.get("scm") == "azure-devops" and not getattr(args, "no_fix_pr", False):
+        if completed and verdict["disposition"] == "TRUE POSITIVE" and target.get("scm") in ("azure-devops", "github") and not getattr(args, "no_fix_pr", False):
             from .avit_pr import create_fix_pr  # noqa: PLC0415
             try:
                 pull_request = create_fix_pr(avit, output, str(repo), target, profile=args.aws_profile, instance=instance)

@@ -253,9 +253,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--output-dir", metavar="DIR",
         help="Directory for the output report (default: repository root)")
     p_run.add_argument("--resolve-avits", action="store_true",
-        help="Review --avit/--isst findings, attach reports, apply verdicts, and open eligible ADO fix PRs (requires --yes)")
+        help="Review --avit/--isst findings, attach reports, apply verdicts, and open eligible fix PRs (requires --yes)")
     p_run.add_argument("--no-fix-pr", action="store_true",
-        help="Skip draft ADO pull requests for proposed fixes during --resolve-avits")
+        help="Skip draft pull requests for proposed fixes during --resolve-avits")
     p_run.add_argument("--isst", metavar="ISST", action="append", default=[],
         help="ServiceNow ISST record whose repository and branch identify associated AVITs (repeatable; with --resolve-avits)")
     p_run.add_argument("--yes", action="store_true",

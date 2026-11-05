@@ -44,8 +44,8 @@ def git_credential(scm: str, organization: str = "", *, run_tool) -> tuple[str, 
             return f"Bearer {token}", "az login"
         pat, source = load()
         return ("Basic " + base64.b64encode(f":{pat}".encode()).decode(), source) if pat else ("", "")
-    from threatlint.github_app import github_token
-    token, source = github_token(gh_cli=lambda: run_tool("gh", ["auth", "token"], 30))
+    from threatlint.github_repository import token as github_token
+    token, source = github_token()
     return ("Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode(), source) if token else ("", "")
 
 
@@ -61,11 +61,16 @@ def repository_target(context: dict[str, str], *, error_type) -> dict[str, str]:
         quote = lambda value: urllib.parse.quote(value, safe="")
         url = f"https://dev.azure.com/{quote(org)}/{quote(project)}/_git/{quote(repo)}"
         return {"scm": "azure-devops", "clone_url": url, "web_url": url, "branch": branch, "name": repo, "organization": org, "project": project}
-    if tool in ("github", "gh", "github enterprise cloud", "ghec"):
+    if tool in ("github", "gh", "github enterprise", "github enterprise cloud", "ghec", "github enterprise server", "ghes"):
         owner = org or project
         if not (_GH_NAME.fullmatch(owner) and _GH_NAME.fullmatch(repo)):
             raise error_type("The AVIT needs a valid Organization Name and Repository for GitHub")
-        return {"scm": "github", "clone_url": f"https://github.com/{owner}/{repo}.git", "web_url": f"https://github.com/{owner}/{repo}",
+        from threatlint.github_repository import GitHubAppError, endpoints
+        try:
+            origin = endpoints()["web_url"]
+        except GitHubAppError as exc:
+            raise error_type(str(exc)) from None
+        return {"scm": "github", "clone_url": f"{origin}/{owner}/{repo}.git", "web_url": f"{origin}/{owner}/{repo}",
                 "branch": branch, "name": repo, "organization": owner, "project": ""}
     raise error_type(f"Unsupported or missing SCM Tool on the AVIT: {context.get('scm_tool') or 'not set'} (ADO and GitHub are supported)")
 

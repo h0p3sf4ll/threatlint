@@ -162,7 +162,7 @@ def test_existing_pr_must_match_identity(checkout, api, change):
     (report(disposition="FALSE POSITIVE"), TARGET),
     (report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), TARGET),
     (report(patch=""), TARGET),
-    (report(), {**TARGET, "scm": "github"}),
+    (report(), {**TARGET, "scm": "unsupported"}),
     (report(), {**TARGET, "branch": ""}),
     (report(), {**TARGET, "branch_deleted": "release"}),
 ])
@@ -174,6 +174,12 @@ def test_ineligible_reviews_skip_without_credentials_or_network(checkout, monkey
 
 def test_folder_download_cannot_publish_a_pr(tmp_path):
     assert pr.create_fix_pr(AVIT, report(), str(tmp_path), TARGET)["status"] == "skipped"
+
+
+def test_conservative_true_positive_explains_why_no_pr_was_opened(checkout, api):
+    result = pr.create_fix_pr(AVIT, report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), str(checkout), TARGET)
+    assert result == {"status": "skipped", "reason": "The report marks this TRUE POSITIVE as unverified (conservative default); no automatic fix PR was opened"}
+    assert api.calls == []
 
 
 def test_patch_from_a_different_finding_is_not_published(checkout, api):

@@ -52,7 +52,7 @@ it('refuses unsafe ServiceNow record link origins', () => {
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [], modelCalls = [];
-  let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, adoTarget = false, prResult = null;
+  let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, prScm = '', prResult = null;
   const taskAvits = {};
   before(async () => {
     const threatlintCli = async args => {
@@ -73,7 +73,7 @@ describe('False positive review batch', () => {
       if (command === 'checkout') {
         const dir = args[args.indexOf('--dir') + 1];
         fs.mkdirSync(path.join(dir, '.git'), { recursive: true }); fs.writeFileSync(path.join(dir, 'app.yaml'), `name: svc\nAPI_KEY: "${SECRET}"\n`);
-        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml', ...(adoTarget ? { scm: 'azure-devops', organization: 'contoso', project: 'project' } : {}) })}\n`, stderr: '' };
+        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml', ...(prScm ? { scm: prScm, organization: 'contoso', project: 'project' } : {}) })}\n`, stderr: '' };
       }
       if (command === 'fix-pr') {
         assert.ok(fs.existsSync(args[args.indexOf('--checkout') + 1]), 'the checkout remains until the PR step completes');
@@ -100,13 +100,13 @@ describe('False positive review batch', () => {
   });
   after(() => wb.close());
 
-  it('opens proposed fix PRs after successful write-back and keeps failures visible', async t => {
-    adoTarget = true;
-    t.after(() => { adoTarget = false; prResult = null; calls.length = 0; });
-    const url = 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42';
+  for (const scm of ['azure-devops', 'github']) it(`opens ${scm} proposed fix PRs after successful write-back and keeps failures visible`, async t => {
+    prScm = scm;
+    t.after(() => { prScm = ''; prResult = null; calls.length = 0; });
+    const url = scm === 'azure-devops' ? 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42' : 'https://git.example.com/contoso/svc/pull/42';
     for (const status of ['created', 'existing', 'skipped', 'error', 'spawn-error', 'disabled']) {
       const start = calls.length;
-      prResult = status === 'error' ? { code: 1, stdout: '', stderr: 'ERROR: ADO denied draft PR creation' }
+      prResult = status === 'error' ? { code: 1, stdout: '', stderr: 'ERROR: Provider denied draft PR creation' }
         : { code: 0, stdout: JSON.stringify(status === 'skipped' ? { status, reason: 'No applicable proposed fix' } : { status, url }), stderr: '' };
       if (status === 'spawn-error') prResult = new Error('synthetic spawn failure');
       const socket = new WebSocket(base.replace('http:', 'ws:'), { origin: base });
@@ -118,16 +118,18 @@ describe('False positive review batch', () => {
       });
       socket.close();
       const current = calls.slice(start);
+      assert.equal(modelCalls.at(-1).userMessage.includes('**Proposed fix patch**:'), status !== 'disabled');
       const done = events.find(event => event.type === 'avit_item' && event.done);
       assert.ok(done, JSON.stringify(events));
       assert.equal(done.stage, ['error', 'spawn-error'].includes(status) ? 'error' : 'done');
       assert.equal(done.outcome.attached, true);
       if (status === 'disabled') {
         assert.equal(current.some(args => args[1] === 'fix-pr'), false);
+        assert.equal(current.find(args => args[1] === 'resolve').includes('--keep-checkout'), false);
       } else {
         assert.ok(current.find(args => args[1] === 'resolve').includes('--keep-checkout'));
         assert.ok(current.findIndex(args => args[1] === 'resolve') < current.findIndex(args => args[1] === 'fix-pr'));
-        if (status === 'error') assert.match(done.detail, /Report attached.*ADO denied/);
+        if (status === 'error') assert.match(done.detail, /Report attached.*Provider denied/);
         else if (status === 'spawn-error') assert.match(done.detail, /Report attached.*could not complete/);
         else assert.equal(done.outcome.pullRequest.status, status);
         if (['created', 'existing'].includes(status)) assert.ok(events.some(event => event.action === 'pull-request' && event.pullRequest.url === url));

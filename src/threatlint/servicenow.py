@@ -292,9 +292,10 @@ def git_credential(scm: str, organization: str = "") -> tuple[str, str]:
     Azure DevOps uses the PAT saved for the clone's organization; an organization with none uses the `az login`
     token (which spans every organization the user can reach) when one is available."""
     from threatlint.ado_login import AdoLoginError  # noqa: PLC0415
+    from threatlint.github_repository import GitHubAppError  # noqa: PLC0415
     try:
         return servicenow_checkout.git_credential(scm, organization, run_tool=_run_tool)
-    except AdoLoginError as exc:
+    except (AdoLoginError, GitHubAppError) as exc:
         raise ServiceNowError(str(exc)) from exc
 
 
@@ -303,7 +304,14 @@ def _git_auth_env(scm: str, organization: str = "") -> dict[str, str]:
     header, _source = git_credential(scm, organization)
     if not header:
         return {}
-    host = "https://dev.azure.com/" if scm == "azure-devops" else "https://github.com/"
+    if scm == "azure-devops":
+        host = "https://dev.azure.com/"
+    else:
+        from threatlint.github_repository import GitHubAppError, endpoints  # noqa: PLC0415
+        try:
+            host = endpoints()["web_url"] + "/"
+        except GitHubAppError as exc:
+            raise ServiceNowError(str(exc)) from None
     return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"http.{host}.extraHeader", "GIT_CONFIG_VALUE_0": f"Authorization: {header}", "GIT_TERMINAL_PROMPT": "0"}
 
 

@@ -417,9 +417,10 @@ API is called: `set_invicti_hook(fn)` supplies an optional callback; otherwise
 
 ## Draft pull requests for proposed fixes
 
-Finding triage opens a draft Azure DevOps PR after a true-positive report has
-been attached successfully. The Workbench's **Open draft Azure DevOps PRs for
-proposed fixes** option is enabled by default. Headless `run fp-review
+Finding triage opens a draft Azure DevOps or GitHub PR after a true-positive report
+has been attached successfully. GitHub Enterprise Cloud and Enterprise Server
+repositories are supported. The Workbench's **Open draft PRs for proposed fixes**
+option is enabled by default. Headless `run fp-review
 --resolve-avits --yes` includes the same step; pass `--no-fix-pr` to skip it.
 
 The reviewer supplies a `**Proposed fix patch**:` field followed by a fenced
@@ -430,15 +431,30 @@ engineering review. A retry reuses the matching PR or branch. The AVIT card and
 headless result include the PR link. Application tests are not run by this
 publishing step; the PR states that CI and engineering validation remain due.
 
-PR publishing requires the service-account PAT referenced by the existing
+Azure DevOps PR publishing requires the service-account PAT referenced by the existing
 `adoPatParameter`, access to the repository's organization in `adoOrganizations`,
 and ADO permissions to create branches, contribute code, and create pull
 requests. It never falls back to a personal PAT. Configure this source through
 **Settings → Azure DevOps → AWS Parameter Store**, or `threatlint ado
 service-account`; the shared secret is fetched at runtime and not saved locally.
 
-False positives, conservative-default decisions, absent patches, non-ADO
-repositories, and checkouts without the exact reviewed branch produce no source
+GitHub PR publishing uses the existing GitHub authentication settings. A configured
+GitHub App takes priority and never falls back to a personal credential if token
+creation fails. Without an App, public GitHub uses `GH_TOKEN` / `GITHUB_TOKEN`, and
+Enterprise Server or a data residency host uses `GH_ENTERPRISE_TOKEN` /
+`GITHUB_ENTERPRISE_TOKEN`; otherwise the flow uses GitHub CLI credentials for the
+configured host.
+The App installation needs **Contents: Read and write** and **Pull requests: Read
+and write** on the target repository; a PAT needs equivalent repository permissions.
+Its private key can use the existing `githubAppPrivateKeyParameter` in AWS Parameter
+Store. Configure `THREATLINT_GITHUB_API_URL` or the saved GitHub App API URL as
+`https://<enterprise-host>/api/v3` for Enterprise Server, or
+`https://api.<subdomain>.ghe.com` for Enterprise Cloud with data residency. The
+default is `https://api.github.com`. AVIT checkout and proposed-fix PR operations
+use that configured host. See [GitHub App setup](github-app.md).
+
+False positives, conservative-default decisions, absent patches, unsupported SCM
+providers, and checkouts without the exact reviewed branch produce no source
 PR. The flow shows why the PR step was skipped. If publishing fails after the
 report was attached, the completed ServiceNow work remains recorded and the PR
 failure is reported separately. The workflow never merges a PR.
@@ -465,7 +481,7 @@ publishing.
 | Report | Reviewer → local Markdown/Word → ServiceNow Word attachment; manual CLI stages retain their reports, while the headless Codex AVIT workflow and Workbench batch clean up temporary reports |
 | Semgrep token | Credential source → Semgrep API and rule publishing |
 | ADO service-account PAT | Configured AWS parameter → runtime memory → Azure DevOps; no local PAT copy |
-| Proposed fix | Reviewed diff → isolated applicability check → separate ADO branch and draft PR |
+| Proposed fix | Reviewed diff → isolated applicability check → separate Azure DevOps or GitHub branch and draft PR |
 | Model input | Prompts and inspected source → selected provider; use approved provider/data settings |
 
 ## Known limits

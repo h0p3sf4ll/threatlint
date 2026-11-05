@@ -1,7 +1,7 @@
-"""Publish a bounded reviewer proposal as an Azure DevOps draft PR.
+"""Publish a bounded reviewer proposal as an Azure DevOps or GitHub draft PR.
 
 The reviewer remains read-only. This host workflow proves the diff against an
-isolated Git index, then uses the service account for one branch and draft PR.
+isolated Git index, then uses the configured credential for one branch and draft PR.
 It never modifies the checkout, runs repository code, or merges a PR.
 """
 
@@ -205,12 +205,12 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
     if verdict["disposition"] != "TRUE POSITIVE":
         return _skip("False positives do not require a source-fix PR")
     if is_conservative(verdict):
-        return _skip("The finding needs more evidence before a source-fix PR can be prepared")
+        return _skip("The report marks this TRUE POSITIVE as unverified (conservative default); no automatic fix PR was opened")
     originals = re.findall(r"(?im)^\**Original finding\**[ \t]*:[ \t]*([^\n]+)$", report)
     if len(originals) != 1 or re.findall(r"(?i)(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", originals[0]) != [avit]:
         return _skip("Automatic fix PRs require a report for this AVIT alone")
-    if target.get("scm") != "azure-devops":
-        return _skip("Automatic fix PRs currently support Azure DevOps repositories")
+    if target.get("scm") not in ("azure-devops", "github"):
+        return _skip("Automatic fix PRs support Azure DevOps and GitHub repositories")
     if not target.get("branch") or target.get("branch_deleted"):
         return _skip("A fix PR requires the exact reviewed AVIT branch")
     patch = _patch(report)
@@ -219,10 +219,10 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
     repo = Path(checkout).resolve()
     if not (repo / ".git").is_dir() or (repo / ".git").is_symlink():
         return _skip("A fix PR requires a complete Git checkout")
-    canonical = sn.repository_target({"scm_tool": "ado", "organization": target.get("organization", ""),
+    canonical = sn.repository_target({"scm_tool": "ado" if target["scm"] == "azure-devops" else "github", "organization": target.get("organization", ""),
                                       "project": target.get("project", ""), "repository": target.get("renamed_to") or target.get("name", ""),
                                       "branch": target["branch"]})
-    if _git(repo, ["remote", "get-url", "origin"]).decode().strip().removesuffix(".git") != canonical["clone_url"]:
+    if _git(repo, ["remote", "get-url", "origin"]).decode().strip().removesuffix(".git") != canonical["clone_url"].removesuffix(".git"):
         raise ResolveError("The checkout origin does not match the AVIT repository")
     target_ref = "refs/heads/" + canonical["branch"]
     if _git(repo, ["symbolic-ref", "HEAD"]).decode().strip() != target_ref:
@@ -241,6 +241,9 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
         origin = sn.validate_instance_url(instance)
         uri = f"{sn.AVIT_TABLE}.do?sysparm_query=number={avit}"
         avit_label = f"[{avit}]({origin}/nav_to.do?uri={urllib.parse.quote(uri, safe='')})"
+    if canonical["scm"] == "github":
+        from .avit_github_pr import publish
+        return publish(avit, verdict, repo, canonical, patch, head, changes, tree, avit_label)
     from .ado_login import AdoLoginError, service_account_pat
     try:
         pat, _source = service_account_pat(canonical["organization"], profile)

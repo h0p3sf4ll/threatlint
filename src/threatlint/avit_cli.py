@@ -44,7 +44,7 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
-    fix = actions.add_parser("fix-pr", help="Open a draft ADO pull request for a reviewed AVIT fix using the Parameter Store service account")
+    fix = actions.add_parser("fix-pr", help="Open a draft Azure DevOps or GitHub pull request for a reviewed AVIT fix")
     fix.add_argument("number", metavar="AVIT")
     fix.add_argument("--report", required=True, help="Reviewed Markdown report containing a Proposed fix patch")
     fix.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
@@ -83,7 +83,7 @@ def cmd_fix_pr(args) -> int:
     if not isinstance(target, dict) or target.get("avit", avit) != avit:
         raise ResolveError("The repository target does not belong to this AVIT")
     report = Path(args.report).read_text(encoding="utf-8")
-    confirm(f"{avit}: publish its proposed fix as a draft ADO pull request?", args.yes)
+    confirm(f"{avit}: publish its proposed fix as a draft pull request?", args.yes)
     result = create_fix_pr(avit, report, args.checkout, target, profile=args.aws_profile, instance=args.snow_instance)
     print(json.dumps(result))
     return 0

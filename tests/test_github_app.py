@@ -240,13 +240,13 @@ def test_git_credential_uses_the_app_token(rsa_key, tmp_path, monkeypatch):
     key, _ = rsa_key
     monkeypatch.setenv("THREATLINT_HOME", str(tmp_path))
     monkeypatch.setenv("GH_TOKEN", "env-token")
-    _save(tmp_path, key)
+    _save(tmp_path, key, "https://git.example.test/api/v3")
     monkeypatch.setattr(github_app, "installation_token", lambda *a, **k: TOKEN)
     header, source = servicenow.git_credential("github", "example-org")
     assert source == "GitHub App"
     assert header == "Basic " + base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
     env = servicenow._git_auth_env("github")
-    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader" and env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://git.example.test/.extraHeader" and env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_no_app_keeps_existing_behaviour(monkeypatch):
@@ -254,7 +254,8 @@ def test_no_app_keeps_existing_behaviour(monkeypatch):
     assert servicenow.git_credential("github")[1] == "GH_TOKEN"
     for name in github_app.TOKEN_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(servicenow, "_run_tool", lambda *a, **k: "")
+    from threatlint import github_repository
+    monkeypatch.setattr(github_repository, "_gh_cli_token", lambda _host: "")
     assert servicenow.git_credential("github") == ("", "")
 
 
