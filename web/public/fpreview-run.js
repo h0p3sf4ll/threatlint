@@ -19,7 +19,7 @@
   const TASK_STAGES = { queued: 'Queued', expanding: 'Reading task', reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error', cancelled: 'Cancelled' };
   const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
   const RESULTS = ['closed', 'noted', 'error', 'skipped'];
-  const RUN_STATUS = { expanding: 'Reading SCTASKs', running: 'Reviewing', complete: 'Complete', cancelled: 'Stopped', error: 'Did not start', interrupted: 'Interrupted' };
+  const RUN_STATUS = { expanding: 'Expanding SCTASKs and ISSTs', running: 'Reviewing', complete: 'Complete', cancelled: 'Stopped', error: 'Did not start', interrupted: 'Interrupted' };
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -173,14 +173,17 @@
       const indeterminate = running && (run.status === 'expanding' || !total);
       bar.classList.toggle('indeterminate', indeterminate);
       bar.setAttribute('aria-valuemax', String(total));
-      if (indeterminate) { bar.removeAttribute('aria-valuenow'); bar.setAttribute('aria-valuetext', 'Reading the SCTASK descriptions'); }
+      if (indeterminate) { bar.removeAttribute('aria-valuenow'); bar.setAttribute('aria-valuetext', 'Expanding the submitted SCTASKs and ISSTs'); }
       else { bar.setAttribute('aria-valuenow', String(done)); bar.setAttribute('aria-valuetext', `${done} of ${plural(total, 'AVIT')} done`); }
       for (const result of RESULTS) segments[result].style.width = total ? `${(tally[result] / total) * 100}%` : '0%';
       counts.replaceChildren(el('strong', 'fp-count-done', `${done} / ${total}`),
         document.createTextNode(` · ${tally.closed} closed · ${tally.noted} noted · ${plural(tally.error, 'error')}${tally.skipped ? ` · ${tally.skipped} skipped` : ''}`));
       const taskTally = Object.fromEntries(RESULTS.map(result => [result, 0]));
       for (const item of run.tasks.values()) if (item.result) taskTally[item.result]++;
-      tasksLine.textContent = run.tasks.size ? `${plural(run.tasks.size, 'SCTASK')} · ${taskTally.closed} closed · ${taskTally.noted} left open · ${plural(taskTally.error, 'error')}${taskTally.skipped ? ` · ${taskTally.skipped} not updated` : ''}` : '';
+      const taskKeys = [...run.tasks.keys()];
+      const groupLabel = [plural(taskKeys.filter(key => key.startsWith('SCTASK')).length, 'SCTASK'), plural(taskKeys.filter(key => key.startsWith('ISST')).length, 'ISST')]
+        .filter(label => !label.startsWith('0 ')).join(' · ');
+      tasksLine.textContent = run.tasks.size ? `${groupLabel} · ${taskTally.closed} closed · ${taskTally.noted} left open · ${plural(taskTally.error, 'error')}${taskTally.skipped ? ` · ${taskTally.skipped} not updated` : ''}` : '';
       status.textContent = run.status === 'running' && total ? `${RUN_STATUS.running} ${Math.min(done + 1, total)} of ${total}` : RUN_STATUS[run.status] || '';
       status.className = `avit-stage stage-${{ running: 'triage', expanding: 'triage', complete: 'done', cancelled: 'cancelled', error: 'error', interrupted: 'cancelled' }[run.status] || 'queued'}`;
       section.classList.toggle('active', running);
@@ -200,9 +203,11 @@
       const at = event.at || new Date().toISOString();
       switch (event.type) {
         case 'fp_run_start': {
-          reset(); run.status = event.sctasks?.length ? 'expanding' : 'running'; run.startedAt = at; run.total = event.avits.length;
+          const groups = (event.sctasks?.length || 0) + (event.issts?.length || 0);
+          reset(); run.status = groups ? 'expanding' : 'running'; run.startedAt = at; run.total = event.avits.length;
           for (const avit of event.avits) queueAvit(avit, at);
-          runLog(at, '', 'Started', `${plural(event.avits.length, 'AVIT')}${event.sctasks?.length ? ` and ${plural(event.sctasks.length, 'SCTASK')}` : ''} submitted${event.model ? ` · ${event.model}` : ''}`);
+          const groupText = [plural(event.sctasks?.length || 0, 'SCTASK'), plural(event.issts?.length || 0, 'ISST')].filter(label => !label.startsWith('0 ')).join(' and ');
+          runLog(at, '', 'Started', `${plural(event.avits.length, 'AVIT')}${groupText ? ` and ${groupText}` : ''} submitted${event.model ? ` · ${event.model}` : ''}`);
           break;
         }
         case 'sctask_item': {
@@ -224,7 +229,8 @@
           run.status = 'running'; run.total = event.avits.length; run.truncated = event.truncated || null;
           for (const avit of event.avits) { const item = queueAvit(avit, at); avits.append(item.node); }
           for (const [avit, owners] of run.avitTasks) { const item = run.avits.get(avit); if (item) item.node.querySelector('.avit-tasks').textContent = `From ${owners.join(', ')}`; }
-          runLog(at, '', 'Queued', `${plural(event.avits.length, 'AVIT')} to review${event.sctasks?.length ? ` (including the AVITs of ${plural(event.sctasks.length, 'SCTASK')})` : ''}`);
+          { const owners = [plural(event.sctasks?.length || 0, 'SCTASK'), plural(event.issts?.length || 0, 'ISST')].filter(label => !label.startsWith('0 ')).join(' and ');
+            runLog(at, '', 'Queued', `${plural(event.avits.length, 'AVIT')} to review${owners ? ` (including the AVITs of ${owners})` : ''}`); }
           if (event.truncated) runLog(at, '', 'Limit', `Only the first ${event.truncated.reviewed} of ${event.truncated.total} AVITs are reviewed (maximum ${event.max || event.truncated.reviewed} per run); ${event.truncated.skipped.length} skipped: ${event.truncated.skipped.join(', ')}`, 'warning');
           for (const task of run.tasks.keys()) refreshTaskChips(task);
           break;
@@ -319,7 +325,7 @@
 
     reset();
     return {
-      start(plan) { handle({ type: 'fp_run_start', avits: plan.avits, sctasks: plan.sctasks, model: plan.model }); },
+      start(plan) { handle({ type: 'fp_run_start', avits: plan.avits, sctasks: plan.sctasks, issts: plan.issts, model: plan.model }); },
       handle,
       restore,
       interrupt(detail) { handle({ type: 'fp_interrupted', detail }); },
@@ -327,12 +333,12 @@
     };
   }
 
-  /** Mirrors the server's parseBatchInput: AVIT and SCTASK numbers in any mix, in input order, deduplicated. */
+  /** Mirrors the server's parseBatchInput: AVIT, SCTASK, and ISST numbers in any mix, in input order, deduplicated. */
   function parseInput(text) {
     const tokens = [...new Set(String(text || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))];
-    const invalid = tokens.filter(token => !/^AVIT\d{7,15}$/.test(token) && !/^SCTASK\d{7,10}$/.test(token));
-    if (invalid.length) throw new Error(`Not an AVIT or SCTASK number: ${invalid.slice(0, 5).join(', ')} (expected AVIT plus 7 to 15 digits, e.g. AVIT000000095938462, or SCTASK plus 7 to 10 digits, e.g. SCTASK14120565)`);
-    return { order: tokens, avits: tokens.filter(token => token.startsWith('AVIT')), sctasks: tokens.filter(token => token.startsWith('SCTASK')) };
+    const invalid = tokens.filter(token => !/^AVIT\d{7,15}$/.test(token) && !/^SCTASK\d{7,10}$/.test(token) && !/^ISST\d{7,15}$/.test(token));
+    if (invalid.length) throw new Error(`Not an AVIT, SCTASK, or ISST number: ${invalid.slice(0, 5).join(', ')} (expected AVIT plus 7 to 15 digits, e.g. AVIT000000095938462; SCTASK plus 7 to 10 digits, e.g. SCTASK14120565; or ISST plus 7 to 15 digits, e.g. ISST0012345)`);
+    return { order: tokens, avits: tokens.filter(token => token.startsWith('AVIT')), sctasks: tokens.filter(token => /^SCTASK\d{7,10}$/.test(token)), issts: tokens.filter(token => /^ISST\d{7,15}$/.test(token)) };
   }
 
   window.ThreatlintFpRun = { create, parseInput };

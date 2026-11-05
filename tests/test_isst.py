@@ -257,3 +257,36 @@ def test_isst_comment_requires_matching_stored_record(monkeypatch):
     with pytest.raises(ResolveError, match="did not confirm the comment"):
         isst.summarize(INSTANCE, "token", record, [{"avit": AVIT, "disposition": "FALSE POSITIVE", "completed": True}])
     assert any(method == "PATCH" for method, _url, _data in fake.calls)
+
+
+def test_summarize_number_reads_avit_outcomes_downloads_tp_reports_and_attaches(monkeypatch):
+    """`isst summarize` (CLI path): discover AVITs, read each one's disposition, download only the true-positive
+    report, and attach it to the ISST without closing it."""
+    from threatlint import sctask
+    record = {"number": ISST, "table": "u_isst_task", "sys_id": SYS_ID, "avits": [AVIT, OTHER_BRANCH]}
+    monkeypatch.setattr(isst, "discover", lambda instance, token, number: (record, [AVIT, OTHER_BRANCH]))
+    name = f"{AVIT}-threatlint-fp-review.docx"
+    outcomes = {AVIT: {"avit": AVIT, "disposition": "TRUE POSITIVE", "report": "att1", "report_name": name},
+                OTHER_BRANCH: {"avit": OTHER_BRANCH, "disposition": "FALSE POSITIVE", "report": None, "report_name": None}}
+    monkeypatch.setattr(sctask, "avit_outcome", lambda instance, token, avit: outcomes[avit])
+    monkeypatch.setattr(sctask, "_download", lambda instance, token, attachment_id: b"PKword")
+    captured = {}
+    def fake_summarize(instance, token, rec, items):
+        captured["items"] = items
+        return {"isst": ISST, "attachment_links": {AVIT: "u"}, "closure_ready": False, "comment": "ok"}
+    monkeypatch.setattr(isst, "summarize", fake_summarize)
+    result = isst.summarize_number(INSTANCE, "token", ISST, yes=True)
+    assert result["isst"] == ISST
+    tp = next(item for item in captured["items"] if item["avit"] == AVIT)
+    assert tp["report_bytes"] == b"PKword" and tp["attachment_name"] == name and tp["completed"]
+    fp = next(item for item in captured["items"] if item["avit"] == OTHER_BRANCH)
+    assert "report_bytes" not in fp and fp["completed"]
+
+
+def test_summarize_number_errors_when_a_true_positive_has_no_report(monkeypatch):
+    from threatlint import sctask
+    record = {"number": ISST, "table": "u_isst_task", "sys_id": SYS_ID, "avits": [AVIT]}
+    monkeypatch.setattr(isst, "discover", lambda *a, **k: (record, [AVIT]))
+    monkeypatch.setattr(sctask, "avit_outcome", lambda *a, **k: {"avit": AVIT, "disposition": "TRUE POSITIVE", "report": None, "report_name": None})
+    with pytest.raises(ResolveError, match="no readable Threatlint report"):
+        isst.summarize_number(INSTANCE, "token", ISST, yes=True)

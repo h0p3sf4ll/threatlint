@@ -149,13 +149,18 @@ describe('False positive review batch', () => {
     assert.match(events.find(event => event.sctask && event.avits).detail, /3 over the 50-AVIT limit/);
     delete taskAvits.SCTASK2000001;
   });
-  it('parses mixed AVIT/SCTASK lists and plans a deduplicated batch', () => {
-    const parsed = parseBatchInput(' sctask1000001, AVIT0000001;AVIT0000002\n\nSCTASK1000002\tavit0000001 SCTASK1000001 ');
+  it('parses mixed AVIT/SCTASK/ISST lists and plans a deduplicated batch', () => {
+    const parsed = parseBatchInput(' sctask1000001, AVIT0000001;AVIT0000002\n\nSCTASK1000002\tavit0000001 SCTASK1000001 isst0012345 ');
     assert.deepEqual(parsed.sctasks, ['SCTASK1000001', 'SCTASK1000002']);
+    assert.deepEqual(parsed.issts, ['ISST0012345']);
     assert.deepEqual(parsed.avits, ['AVIT0000001', 'AVIT0000002']);
-    assert.deepEqual(parsed.order, ['SCTASK1000001', 'AVIT0000001', 'AVIT0000002', 'SCTASK1000002']);
-    assert.throws(() => parseBatchInput('AVIT0000001, INC0001234'), /Not an AVIT or SCTASK number: INC0001234/);
+    assert.deepEqual(parsed.order, ['SCTASK1000001', 'AVIT0000001', 'AVIT0000002', 'SCTASK1000002', 'ISST0012345']);
+    assert.throws(() => parseBatchInput('AVIT0000001, INC0001234'), /Not an AVIT, SCTASK, or ISST number: INC0001234/);
     assert.throws(() => parseBatchInput(' ,; '), /at least one/);
+    // An ISST expands like a task: its AVITs join the plan in place and deduplicate against the rest.
+    const withIsst = planBatch(['ISST0012345', 'AVIT0000001'], { ISST0012345: ['AVIT0000001', 'AVIT0000005'] }, 5);
+    assert.deepEqual(withIsst.all, ['AVIT0000001', 'AVIT0000005']);
+    assert.deepEqual(withIsst.shared, {});
     const plan = planBatch(parsed.order, { SCTASK1000001: ['AVIT0000009', 'AVIT0000001'], SCTASK1000002: ['AVIT0000002', 'AVIT0000008'] }, 3);
     assert.deepEqual(plan.all, ['AVIT0000009', 'AVIT0000001', 'AVIT0000002', 'AVIT0000008']);
     assert.deepEqual(plan.shared, { SCTASK1000002: ['AVIT0000002'] });

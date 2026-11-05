@@ -28,7 +28,7 @@ const TOOLTIPS = {
   'metrics-kpi': 'Open risk score = Σ severity weight for findings not marked false positive or remediated (CRITICAL 10, HIGH 6, MEDIUM 3, LOW 1).',
   'dashboard-builder': 'Add widgets, pick a metric, a dimension, and a chart. Dashboards are saved locally.',
   'chat-context': 'What the conversation is about. Threatlint can still read the whole repository to answer.',
-  'fpreview-input': 'Paste AVIT and SCTASK numbers in any mix, separated by commas, spaces, semicolons, or new lines. Each SCTASK expands to the AVITs in its description; duplicates are reviewed once, up to 50 AVITs per run.',
+  'fpreview-input': 'Paste AVIT, SCTASK, and ISST numbers in any mix, separated by commas, spaces, semicolons, or new lines. Each SCTASK expands to the AVITs in its description; each ISST expands to the AVITs on its exact repository and branch; duplicates are reviewed once, up to 50 AVITs per run.',
   'evidence-coverage': 'Share of findings that cite a file:line location. Higher means easier to fix.',
 };
 
@@ -82,10 +82,11 @@ const HELP_TOPICS = [
     'Choose agents, a provider, and a severity threshold. By default findings warn (the build stays green); set gate-mode: fail to block merges.',
     'Findings are uploaded as SARIF and posted to the PR. Reply `/threatlint <question>` on the PR to converse with the configured model.',
   ], video: 'ci' },
-  { id: 'fp-review', title: 'Review AVITs and SCTASKs for false positives', minutes: 2, steps: [
+  { id: 'fp-review', title: 'Review AVITs, SCTASKs, and ISSTs for false positives', minutes: 2, steps: [
     'Open Test → False positive review and finish the required setup it lists (ServiceNow, Azure DevOps PAT, Semgrep token).',
-    'Paste AVIT and SCTASK numbers in any mix, separated by commas, spaces, semicolons, or new lines.',
-    'Each SCTASK is expanded into its AVITs; an AVIT named twice is reviewed once, and a task that cannot be read is reported without stopping the rest.',
+    'Paste AVIT, SCTASK, and ISST numbers in any mix, separated by commas, spaces, semicolons, or new lines.',
+    'Each SCTASK is expanded into the AVITs in its description; each ISST is expanded into the AVITs on its exact repository and branch; an AVIT named twice is reviewed once, and a record that cannot be read is reported without stopping the rest.',
+    'False positives are closed on the AVIT (with the Semgrep rule tuned); true-positive reports are attached to the AVIT and, when the AVIT came from an ISST, to the ISST too. Threatlint never closes an ISST — true positives are left open for remediation.',
     'The progress bar counts every AVIT that reached a final state (closed, noted, error, skipped); spinners mark what is still in progress.',
     'Every card keeps a timestamped history, and the activity log lists every event in the run. The history stays for this browser session after a reload.',
   ] },

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.parse
 
 from threatlint import servicenow as sn
@@ -366,3 +367,42 @@ def summarize(instance: str, token: str, record: dict, outcomes: list[dict]) -> 
                                                   or _value(response.get("sys_id")) == record["sys_id"]):
             raise ResolveError(f"ServiceNow did not confirm the comment on {record['number']}")
     return {"isst": record["number"], "attachment_links": links, "closure_ready": all_fp, "comment": "\n".join(lines)}
+
+
+def _outcomes_with_reports(instance: str, token: str, avits: list[str]) -> list[dict]:
+    """Read each associated AVIT's recorded disposition and, for true positives, its attached Word report bytes."""
+    from threatlint import sctask  # noqa: PLC0415
+    outcomes: list[dict] = []
+    for avit in avits:
+        recorded = sctask.avit_outcome(instance, token, avit)
+        disposition = recorded["disposition"]
+        item = {"avit": avit, "disposition": disposition,
+                "completed": disposition in ("TRUE POSITIVE", "FALSE POSITIVE", "AMBIGUOUS")}
+        if disposition == "TRUE POSITIVE":
+            if not recorded.get("report"):
+                raise ResolveError(f"{avit} is a true positive but has no readable Threatlint report to attach; review the AVIT first")
+            item["attachment_name"] = recorded["report_name"]
+            item["report_bytes"] = sctask._download(instance, token, recorded["report"])
+        outcomes.append(item)
+    return outcomes
+
+
+def summarize_number(instance: str, token: str, number: str, yes: bool, out=sys.stdout) -> dict:
+    """Discover the ISST's AVITs, attach every true-positive report to the ISST, and comment. The ISST is never
+    closed by Threatlint: true positives need remediation, so closure is left to the owner. False-positive reports
+    stay on their AVIT only (where the AVIT is closed and its rule tuned)."""
+    from threatlint.avit_resolve import _confirm  # noqa: PLC0415
+    record, avits = discover(instance, token, number)
+    if not avits:
+        raise ResolveError(f"{record['number']} has no associated AVITs on its repository and branch")
+    outcomes = _outcomes_with_reports(instance, token, avits)
+    positives = sum(1 for item in outcomes if item["disposition"] == "TRUE POSITIVE")
+    for item in outcomes:
+        print(f"  {item['avit']} : {item['disposition']}", file=out)
+    _confirm(f"{record['number']}: attach {positives} true-positive report(s) and comment on the ISST "
+             "(Threatlint does not close the ISST)?", yes)
+    result = summarize(instance, token, record, outcomes)
+    status = "all findings were false positives — the ISST and SCAN request can be closed" if result["closure_ready"] \
+        else "left open for remediation of the true positives"
+    print(f"  ✓ {record['number']}: {len(result['attachment_links'])} true-positive report(s) attached; {status}", file=out)
+    return result
