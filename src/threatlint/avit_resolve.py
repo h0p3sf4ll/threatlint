@@ -275,7 +275,9 @@ def cmd_resolve(args) -> int:
             dep, matches = semgrep_matches(sg_token, kind, target, {**record["context"], "avit": avit}, args.semgrep_deployment, markdown)
         except ResolveError as exc:
             # The AVIT stays closed; exit non-zero so callers (queue, CI) see that Semgrep was not updated.
-            print(f"  ! Semgrep unchanged: {exc}. The token's deployment may not scan this repository; pass --semgrep-deployment.")
+            # Only a 404 points at the deployment; other failures (ambiguous match, missing line) say what to fix.
+            hint = " The token's deployment may not scan this repository; pass --semgrep-deployment." if "HTTP 404" in str(exc) else ""
+            print(f"  ! Semgrep unchanged: {exc}.{hint}")
             return 1
         kind = dep.get("product", kind)
         unmatched = not matches

@@ -223,7 +223,11 @@ also cleans up. These CLI commands do not delete your report files.
 ### Semgrep tuning
 
 Finding triage comes first. Code/Supply Chain matching uses project, file,
-available rule ID, and line ±3; Secrets matching uses repository, path, and line.
+available rule ID, and line ±3; Secrets matching uses repository, branch, path, and line ±3.
+A Secrets AVIT names only a service type (for example AWS), which is never treated as a rule:
+when no `--semgrep-rule-hash-id` is given, the open Secrets finding at that exact location is
+matched and its own `ruleHashId` is used. If findings with different rules share the location,
+nothing is changed and you choose one with `--semgrep-rule-hash-id`.
 **No flagged line means no match**, not file-wide suppression. Put the line in the
 AVIT/report, or use `avit semgrep --line N`. Semgrep fingerprint triage can carry
 across later scans and branches.

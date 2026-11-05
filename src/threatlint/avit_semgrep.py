@@ -52,7 +52,8 @@ def tuning_project(target: dict[str, str], matches: list[dict]) -> str:
 
 
 def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status=None):
-    """Yield normalized findings without truncating pagination or trusting ignored filters."""
+    """Yield normalized findings without truncating pagination or trusting ignored filters. A Secrets search with
+    ``rule=None`` yields every finding on the repository and branch, for location-based correlation."""
     seen, cursors, cursor, page = set(), set(), "", 0
     while True:
         if kind == "secrets":
@@ -94,7 +95,7 @@ def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status
             if identity in seen:
                 raise ResolveError("Semgrep repeated a finding across pages; results are incomplete")
             seen.add(identity)
-            if ref != branch or name != rule or (status and stored_status != status):
+            if ref != branch or (rule is not None and name != rule) or (status and stored_status != status):
                 continue
             yield {"id": int(identifier), "rule": name, "path": path, "line": line, "ref": ref,
                    "project": repository, "product": kind, "status": stored_status}
@@ -141,10 +142,16 @@ def semgrep_matches(token, kind, target, context, deployment=None, report_text="
         matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule, query=query, status="ignored")
                    if same_path(found["path"], path) and near(found["line"])]
     if kind == "secrets" and not matches:
-        rule_hash = context.get("rule_hash_id", "")
-        if not rule_hash:
-            raise ResolveError("No matching Code finding; Secrets requires an authoritative rule_hash_id, not its service type")
         product = "secrets"
-        matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule_hash, query=query, status="open")
-                   if same_path(found["path"], path) and near(found["line"])]
+        rule_hash = context.get("rule_hash_id", "") or None
+        # Without a supplied ruleHashId, the location is the identity: the open Secrets finding on this exact
+        # repository, branch, and file, within the same ±3 lines as Code matching. The matched finding's own
+        # ruleHashId is then authoritative. The service type an AVIT names is never used as a rule.
+        candidates = [found for found in scoped_findings(token, dep, product, repository, branch, rule_hash, query=query, status="open")
+                      if same_path(found["path"], path) and near(found["line"])]
+        rules = sorted({found["rule"] for found in candidates})
+        if not rule_hash and len(rules) > 1:
+            raise ResolveError(f"{len(candidates)} open Semgrep Secrets findings at {path}:{line} have different rules "
+                               f"({', '.join(rules)}); pass --semgrep-rule-hash-id to choose one")
+        matches = candidates
     return {**dep, "project": repository, "product": product}, matches

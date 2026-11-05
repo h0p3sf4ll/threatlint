@@ -154,9 +154,37 @@ def test_secrets_match_requires_rule_hash_branch_repository_and_file(monkeypatch
     assert matches[0]["rule"] == "hash"
 
 
-def test_secrets_does_not_guess_a_rule_from_its_service_type(monkeypatch):
-    with pytest.raises(ar.ResolveError, match="rule_hash_id"):
-        match(monkeypatch, paged([]), kind="secrets")
+def _secrets(rows):
+    def query(path, token):
+        if "/findings?" in path:
+            return {"findings": []}  # no Semgrep Code finding: correlate in the Secrets product
+        base = {"repository": {"name": REPOSITORY}, "ref": "feature", "type": "AWS", "status": "FINDING_STATUS_OPEN"}
+        return {"findings": [{**base, **row} for row in rows]}
+    return query
+
+
+def test_secrets_without_a_rule_hash_matches_the_finding_at_the_avits_exact_location(monkeypatch):
+    query = _secrets([{"id": "1", "ruleHashId": "h-at-location", "findingPath": "file.py:43"},
+                      {"id": "2", "ruleHashId": "h-other-file", "findingPath": "other.py:42"},
+                      {"id": "3", "ruleHashId": "h-far-line", "findingPath": "file.py:90"},
+                      {"id": "4", "ruleHashId": "h-other-branch", "findingPath": "file.py:42", "ref": "main"},
+                      {"id": "5", "ruleHashId": "h-closed", "findingPath": "file.py:42", "status": "FINDING_STATUS_FIXED"}])
+    dep, matches = match(monkeypatch, query, kind="secrets")
+    assert dep["product"] == "secrets"
+    assert [row["id"] for row in matches] == [1], "only the open finding on this repository, branch, file, and line"
+    assert matches[0]["rule"] == "h-at-location", "the matched finding's own ruleHashId is used, never the service type"
+
+
+def test_secrets_refuses_to_guess_between_different_rules_at_one_location(monkeypatch):
+    query = _secrets([{"id": "1", "ruleHashId": "h-one", "findingPath": "file.py:42"},
+                      {"id": "2", "ruleHashId": "h-two", "findingPath": "file.py:41"}])
+    with pytest.raises(ar.ResolveError, match="different rules .*--semgrep-rule-hash-id"):
+        match(monkeypatch, query, kind="secrets")
+
+
+def test_secrets_with_nothing_at_the_location_matches_nothing(monkeypatch):
+    dep, matches = match(monkeypatch, _secrets([{"id": "1", "ruleHashId": "h", "findingPath": "elsewhere.py:42"}]), kind="secrets")
+    assert dep["product"] == "secrets" and matches == []
 
 
 @pytest.mark.parametrize("change", [{"line": ""}, {"line": "0"}, {"branch": ""}, {"rule": ""}])
