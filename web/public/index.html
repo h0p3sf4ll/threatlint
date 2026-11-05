@@ -30,7 +30,7 @@
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
       <button class="nav-item" data-view="sources" aria-controls="view-sources"><span class="nav-icon" aria-hidden="true">⑂</span>Connect source</button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span>Scan running app</button>
-      <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>False positive review</button>
+      <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>Finding triage</button>
       <button class="nav-item" data-view="scanimport" aria-controls="view-scanimport"><span class="nav-icon" aria-hidden="true">↥</span>Triage a scan report</button>
       <button class="nav-item" data-view="sonarreview" aria-controls="view-sonarreview"><span class="nav-icon" aria-hidden="true">◎</span>SonarQube review</button>
       <div class="sidebar-label">2 · FIX</div>
@@ -341,7 +341,7 @@
         <div class="sk-body" id="sk-actions-body"></div>
       </section>
       <section class="view" id="view-fpreview" aria-labelledby="fpreview-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SERVICENOW AVR · CODESECURITY</div><h1 id="fpreview-title">False positive review</h1><p class="page-description">Submit AVITs, SCTASKs, ISSTs, or a mixed list. Each AVIT is reviewed on its own repository and branch, gets its own Word report, and is closed or annotated on its own.</p></div></div>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>SERVICENOW AVR · CODESECURITY</div><h1 id="fpreview-title">Finding triage</h1><p class="page-description">Submit AVITs, SCTASKs, ISSTs, or a mixed list. Each AVIT is reviewed on its own repository and branch, gets its own Word report, and is closed or annotated on its own.</p></div></div>
         <form id="fpreview-form" class="settings-card fpreview-form">
           <label for="fpreview-avits">AVIT, SCTASK, and ISST numbers<span data-tip="fpreview-input"></span></label>
           <textarea id="fpreview-avits" rows="4" spellcheck="false" aria-describedby="fpreview-avits-note" placeholder="ISST0012345&#10;SCTASK14120565, SCTASK14120571&#10;AVIT000000092808580; AVIT000000095995078&#10;AVIT000000041277488 SCTASK14120590"></textarea>
@@ -362,7 +362,7 @@
         <div class="scanner-review" data-scanner-tool="sonar"></div>
       </section>
       <section class="view" id="view-scanimport" aria-labelledby="scanimport-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>FALSE POSITIVE REVIEW · INVICTI · MOBSF · DEFECTDOJO · SONARQUBE</div><h1 id="scanimport-title">Triage a scan report</h1><p class="page-description">Drop in a scanner's report and get a verdict on every finding: <strong>true positive</strong>, <strong>false positive</strong>, or <strong>ambiguous</strong>, with the evidence behind each. The result is a findings report you can read and download. Nothing is posted to ServiceNow, DefectDojo, or SonarQube until you confirm.</p></div><div class="heading-actions"><button class="button secondary" type="button" data-help-topic="scan-import">How triage works ▷</button><span class="small subtle">The file stays on this machine</span></div></div>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>FINDING TRIAGE · INVICTI · MOBSF · DEFECTDOJO · SONARQUBE</div><h1 id="scanimport-title">Triage a scan report</h1><p class="page-description">Drop in a scanner's report and get a verdict on every finding: <strong>true positive</strong>, <strong>false positive</strong>, or <strong>ambiguous</strong>, with the evidence behind each. The result is a findings report you can read and download. Nothing is posted to ServiceNow, DefectDojo, or SonarQube until you confirm.</p></div><div class="heading-actions"><button class="button secondary" type="button" data-help-topic="scan-import">How triage works ▷</button><span class="small subtle">The file stays on this machine</span></div></div>
         <form id="scanimport-form" class="settings-card scanimport-form" autocomplete="off" novalidate>
           <div class="scanimport-drop" id="scanimport-drop" aria-describedby="scanimport-file-note">
             <span class="scanimport-drop-symbol" aria-hidden="true">↥</span>

@@ -76,7 +76,7 @@ plus its specialist skills. Assignments come from
 - **Change review:** [Code Reviewer](#appsec-code-reviewer) · [Secure Codegen Reviewer](#appsec-secure-codegen-reviewer)
 - **Domain deep dives:** [API Security Reviewer](#appsec-api-security-reviewer) · [Auth Reviewer](#appsec-auth-reviewer) · [Business Logic Reviewer](#appsec-business-logic-reviewer) · [Client Security Reviewer](#appsec-client-security-reviewer) · [Crypto Reviewer](#appsec-crypto-reviewer) · [AI Security Reviewer](#appsec-ai-security-reviewer) · [Privacy Reviewer](#appsec-privacy-reviewer)
 - **Supply chain and platform:** [Dependency Auditor](#appsec-dependency-auditor) · [Secrets Scanner](#appsec-secrets-scanner) · [IaC Reviewer](#appsec-iac-reviewer) · [CI/CD Auditor](#appsec-cicd-auditor)
-- **Triage and lifecycle:** [False Positive Reviewer](#appsec-fp-reviewer) · [Verify Fix](#appsec-verify-fix) · [Threat Delta](#appsec-threat-delta) · [Compliance Checker](#appsec-compliance-checker)
+- **Triage and lifecycle:** [Finding Triager](#appsec-fp-reviewer) · [Verify Fix](#appsec-verify-fix) · [Threat Delta](#appsec-threat-delta) · [Compliance Checker](#appsec-compliance-checker)
 - **Runtime and testing:** [Runtime Reviewer](#appsec-runtime-reviewer) · [Security Test Planner](#appsec-security-test-planner)
 
 ### Threat Modeler
@@ -319,7 +319,7 @@ plus its specialist skills. Assignments come from
 | **Skills** | Shared + [Pipeline review](#threatlint-pipeline-review) |
 | **Guardrails** | Never triggers pipelines or publishes artifacts. Missing permissions are “unknown”, not write-all. |
 
-### False Positive Reviewer
+### Finding Triager
 
 <a id="appsec-fp-reviewer"></a>`appsec-fp-reviewer` · Triage and lifecycle
 
@@ -600,7 +600,7 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 - TRUE POSITIVE, FALSE POSITIVE or AMBIGUOUS; ambiguous names the missing evidence.
 
 **Produces:** Per-finding verdicts with fixes and an ordered remediation plan.  
-**Used by:** [False Positive Reviewer](#appsec-fp-reviewer)
+**Used by:** [Finding Triager](#appsec-fp-reviewer)
 
 ### Semgrep tuning
 
@@ -611,7 +611,7 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 - Ship ruleid/ok fixtures; validation commands are NOT RUN until run.
 
 **Produces:** A tuned rule with blast radius, retained TPs and rollback trigger.  
-**Used by:** [False Positive Reviewer](#appsec-fp-reviewer)
+**Used by:** [Finding Triager](#appsec-fp-reviewer)
 
 ### Runtime validation
 
@@ -622,7 +622,7 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 - Judge DAST sandbox evidence: healthy build, flagged route, traced sink.
 
 **Produces:** DX findings labeled SUPPLIED EVIDENCE or NOT RUN.  
-**Used by:** [False Positive Reviewer](#appsec-fp-reviewer), [Runtime Reviewer](#appsec-runtime-reviewer)
+**Used by:** [Finding Triager](#appsec-fp-reviewer), [Runtime Reviewer](#appsec-runtime-reviewer)
 
 ### Runtime auth workflows
 

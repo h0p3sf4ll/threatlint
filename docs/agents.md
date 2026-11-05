@@ -18,7 +18,7 @@ every skill, see [Threatlint architecture](architecture.md).
 | Trace endpoint access or identity decisions | [API reviewer](#appsec-api-security-reviewer) · [Auth reviewer](#appsec-auth-reviewer) |
 | Check workflows, clients, cryptography, or AI boundaries | [Business logic](#appsec-business-logic-reviewer) · [Client](#appsec-client-security-reviewer) · [Crypto](#appsec-crypto-reviewer) · [AI](#appsec-ai-security-reviewer) |
 | Trace sensitive data or map technical controls | [Privacy](#appsec-privacy-reviewer) · [Compliance](#appsec-compliance-checker) |
-| Decide whether scanner findings need action | [False positive reviewer](#appsec-fp-reviewer) |
+| Decide whether scanner findings need action | [Finding triager](#appsec-fp-reviewer) |
 | Turn a threat into attack paths or defensive exercises | [Attack tree](#appsec-attack-tree) · [Red team](#appsec-red-team) |
 | Compare reports or check one claimed fix | [Threat delta](#appsec-threat-delta) · [Verify fix](#appsec-verify-fix) |
 | Interpret supplied runtime captures or plan regression tests | [Runtime reviewer](#appsec-runtime-reviewer) · [Security test planner](#appsec-security-test-planner) |
@@ -590,7 +590,7 @@ Executive summary, data inventory and flow summary, PD findings with quoted coll
 
 **Finding prefix**: `FP-NNN`  
 **Slash command**: `/fp-review`  
-**GitHub Copilot Chat**: `@AppSec False Positive Reviewer`  
+**GitHub Copilot Chat**: `@AppSec Finding Triager`  
 **AGENTS.md routing**: "triage findings", "false positive", "semgrep tuning"
 
 ### Purpose

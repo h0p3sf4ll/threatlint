@@ -82,8 +82,8 @@ const HELP_TOPICS = [
     'Choose agents, a provider, and a severity threshold. By default findings warn (the build stays green); set gate-mode: fail to block merges.',
     'Findings are uploaded as SARIF and posted to the PR. Reply `/threatlint <question>` on the PR to converse with the configured model.',
   ], video: 'ci' },
-  { id: 'fp-review', title: 'Review AVITs, SCTASKs, and ISSTs for false positives', minutes: 2, steps: [
-    'Open Test → False positive review and finish the required setup it lists (ServiceNow, Azure DevOps PAT, Semgrep token).',
+  { id: 'fp-review', title: 'Triage findings from AVITs, SCTASKs, and ISSTs', minutes: 2, steps: [
+    'Open Test → Finding triage and finish the required setup it lists (ServiceNow, Azure DevOps PAT, Semgrep token).',
     'Paste AVIT, SCTASK, and ISST numbers in any mix, separated by commas, spaces, semicolons, or new lines.',
     'Each SCTASK is expanded into the AVITs in its description; each ISST is expanded into the AVITs on its exact repository and branch; an AVIT named twice is reviewed once, and a record that cannot be read is reported without stopping the rest.',
     'False positives are closed on the AVIT (with the Semgrep rule tuned); true-positive reports are attached to the AVIT and, when the AVIT came from an ISST, to the ISST too. Threatlint never closes an ISST — true positives are left open for remediation.',

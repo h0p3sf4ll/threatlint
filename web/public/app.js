@@ -86,7 +86,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { fpreview: 'False positive review', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();

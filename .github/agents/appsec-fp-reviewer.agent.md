@@ -1,5 +1,5 @@
 ---
-name: "AppSec False Positive Reviewer"
+name: "AppSec Finding Triager"
 description: "Use to adjudicate SARIF, Semgrep JSON, security-report findings, and ServiceNow AVITs or ISSTs. Produces an evidence-based findings report with proposed fixes, safe scanner tuning, regression tests, and a remediation plan."
 tools: [read, search, execute]
 argument-hint: "Scanner report or findings to review, with the source repository available"

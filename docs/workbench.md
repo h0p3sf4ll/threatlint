@@ -138,7 +138,7 @@ Format checks assess structure, not citation accuracy, exploitability, rule sema
 success. Human review is required. See the [synthetic example](../web/examples/fp-review.md) and
 [canonical reviewer](../src/threatlint/data/agents/appsec-fp-reviewer.md).
 
-For ServiceNow items, **Test → False positive review** accepts AVITs, SCTASKs, and ISSTs in any mix
+For ServiceNow items, **Test → Finding triage** accepts AVITs, SCTASKs, and ISSTs in any mix
 and reviews AVITs one at a time. A SCTASK expands into the AVITs named in its description; an ISST
 expands into the AVITs on its exact repository and branch. A false positive is closed on its AVIT
 only (with the Semgrep rule tuned); a true-positive report is attached to its AVIT and, when the

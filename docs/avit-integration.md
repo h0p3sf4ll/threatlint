@@ -59,7 +59,7 @@ AVIT completes as a false positive, it comments that the ISST and SCAN request
 can be closed; it does not change the ISST state. A partial review or any true
 positive keeps that closure suggestion out of the comment.
 
-Or open **Test → False positive review** in the Workbench, enter an AVIT or SCTASK,
+Or open **Test → Finding triage** in the Workbench, enter an AVIT, SCTASK, or ISST,
 and start the review with the configured model. **These workflows can write to
 ServiceNow and Semgrep**; use records and credentials you are authorized to change.
 
@@ -316,7 +316,7 @@ Semgrep rule is tuned. The ISST's concrete task table is resolved through
 `task.sys_class_name` (override with `THREATLINT_SNOW_ISST_TABLE`); OAuth access must
 include that table and its attachments.
 
-## Workbench: False positive review
+## Workbench: Finding triage
 
 The Workbench processes up to 50 AVITs sequentially, including AVITs expanded from
 SCTASKs and ISSTs. Each card shows fetch, checkout, model review, report, and

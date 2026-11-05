@@ -1,4 +1,4 @@
-# False Positive Review: Example Payments API
+# Finding Triage: Example Payments API
 
 **Status**: SYNTHETIC EXAMPLE — not an analysis of your repository
 **Date**: 2026-10-17
