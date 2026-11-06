@@ -15,12 +15,21 @@
   const DAYBREAK_MODELS = { daybreak: 'gpt-6-sol', 'daybreak-bedrock': 'openai.gpt-daybreak-blue-5.6-sol' };
   const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', bedrock: '', daybreak: DAYBREAK_MODELS.daybreak, 'daybreak-bedrock': DAYBREAK_MODELS['daybreak-bedrock'], openai: '', codex: '', copilot: '' }, codexDaybreak: false, bedrockRegion: '', lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
+  function modelPreferences(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const models = { ...DEFAULTS.models };
+    for (const provider of Object.keys(models)) if (typeof source.models?.[provider] === 'string') models[provider] = source.models[provider];
+    return { provider: Object.hasOwn(models, source.provider) ? source.provider : DEFAULTS.provider, models,
+      codexDaybreak: source.codexDaybreak === true, bedrockRegion: typeof source.bedrockRegion === 'string' ? source.bedrockRegion : '',
+      lmstudioUrl: typeof source.lmstudioUrl === 'string' ? source.lmstudioUrl : DEFAULTS.lmstudioUrl };
+  }
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
+  const legacyModelPreferences = saved && typeof saved === 'object' && Object.keys(saved).some(key => Object.hasOwn(modelPreferences({}), key));
   const state = {
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
-    preferences: { ...DEFAULTS, ...saved, models: { ...DEFAULTS.models, ...saved.models } },
+    preferences: { ...DEFAULTS, ...modelPreferences(saved), snowInstance: typeof saved?.snowInstance === 'string' ? saved.snowInstance : '' },
     credentials: { claude: '', bedrock: '', daybreak: '', 'daybreak-bedrock': '', openai: '', copilot: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
     view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
@@ -685,7 +694,7 @@
     if (local) { try { remote = !['localhost', '127.0.0.1', '[::1]'].includes(new URL($('model-url').value).hostname); } catch { remote = true; } }
     $('cloud-consent-label').classList.toggle('hidden', !remote);
   }
-  function saveSettings(event) {
+  async function saveSettings(event) {
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
     const model = DAYBREAK_MODELS[provider] || $('model-id').value.trim();
@@ -701,20 +710,42 @@
       if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Remote servers require HTTPS');
     } catch { $('settings-error').textContent = 'Use an HTTP(S) model-server URL without credentials. Remote servers require HTTPS.'; return; }
     $('settings-error').textContent = '';
-    state.preferences.provider = provider;
-    state.preferences.models[provider] = model;
-    state.preferences.model = model;
-    if (provider === 'codex') state.preferences.codexDaybreak = $('codex-daybreak').checked;
-    state.preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
-    if (provider === 'bedrock') state.preferences.bedrockRegion = bedrockRegion;
-    if (provider !== 'lmstudio' && provider !== 'codex' && provider !== 'claude-code') state.credentials[provider] = $('api-key').value.trim();
-    if ($('cloud-consent').checked) state.consent.add(consentKey()); else state.consent.delete(consentKey());
-    savePreferences();
-    updateProviderDisplay(); toast('Model settings saved. Credentials remain in memory only.');
+    const preferences = modelPreferences(state.preferences);
+    preferences.provider = provider;
+    preferences.models[provider] = model;
+    if (provider === 'codex') preferences.codexDaybreak = $('codex-daybreak').checked;
+    preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
+    if (provider === 'bedrock') preferences.bedrockRegion = bedrockRegion;
+    const key = $('api-key').value.trim(), consent = $('cloud-consent').checked;
+    const submit = $('settings-form').querySelector('button[type=submit]');
+    if (submit.disabled) return;
+    submit.disabled = true;
+    try {
+      const result = await request('/api/model-preferences', { method: 'PUT', body: JSON.stringify(preferences) });
+      state.preferences = { ...state.preferences, ...modelPreferences(result.preferences), model };
+      if (provider !== 'lmstudio' && provider !== 'codex' && provider !== 'claude-code') state.credentials[provider] = key;
+      if (consent) state.consent.add(consentKey()); else state.consent.delete(consentKey());
+      cachePreferences();
+      updateProviderDisplay(); toast('Model settings saved for the next launch. Credentials remain in memory only.');
+    } catch (error) { $('settings-error').textContent = `Model settings could not be saved: ${error.message}`; }
+    finally { submit.disabled = false; }
   }
-  function savePreferences() {
+  function cachePreferences() {
     const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
     try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+  }
+  async function restoreModelPreferences() {
+    try {
+      let { preferences } = await request('/api/model-preferences');
+      // Migrate this origin's old non-secret selections only when no durable settings exist.
+      if (preferences === null && legacyModelPreferences) {
+        ({ preferences } = await request('/api/model-preferences', { method: 'PUT', body: JSON.stringify(modelPreferences(state.preferences)) }));
+      }
+      if (preferences !== null) {
+        state.preferences = { ...state.preferences, ...modelPreferences(preferences) };
+        cachePreferences();
+      }
+    } catch (error) { toast(`Saved model preferences could not be restored: ${error.message}`, true); }
   }
   async function saveServiceNow(event) {
     event.preventDefault();
@@ -732,7 +763,7 @@
     state.preferences.snowInstance = snowInstance;
     // The server now holds the credentials; requests send blanks and it fills them in.
     state.credentials.snowClientId = ''; state.credentials.snowClientSecret = '';
-    savePreferences(); fillServiceNowForm(); toast('ServiceNow settings saved to the Threatlint config. The secret is never shown again.');
+    cachePreferences(); fillServiceNowForm(); toast('ServiceNow settings saved to the Threatlint config. The secret is never shown again.');
   }
   // The dropdown is the normal path; the manual field remains for IDs a list omits. Selecting one fills the other.
   function fillModelSelect(models, selected) {
@@ -1047,7 +1078,10 @@
 
   async function initialize() {
     // Retire secret-bearing preferences used by the old UI; do not migrate stored credentials.
-    for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) localStorage.removeItem(key);
+    try {
+      for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) localStorage.removeItem(key);
+    } catch { /* durable model settings also work when browser storage is unavailable */ }
+    await restoreModelPreferences();
     wireEvents(); renderPresets(); renderPipeline(); renderReports(); updateProviderDisplay();
     // The last false positive review of this browser session, as far as it got (see fpreview-run.js).
     try { fpRun()?.restore(); } catch (error) { console.error('Could not restore the false positive review history', error.message); }
@@ -1067,7 +1101,8 @@
       for (const category of [...new Set(state.agents.map(agent => agent.category))].sort((a, b) => a.localeCompare(b))) { const option = el('option', '', category); option.value = category; $('agent-category').append(option); }
       renderPipeline(); renderAgents(); renderSkills();
       await refreshSessions();
-      const last = localStorage.getItem('threatlint.last-session.v2');
+      let last;
+      try { last = localStorage.getItem('threatlint.last-session.v2'); } catch { /* browser session history is optional */ }
       if (last && state.sessions.some(session => session.id === last)) await openSession({ id: last });
       connectSocket();
     } catch (error) { toast(`Workbench could not initialize: ${error.message}`, true); $('connection-status').textContent = 'Unavailable'; }

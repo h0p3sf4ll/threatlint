@@ -380,7 +380,12 @@ async function fpReviewRun(page) {
   const shot = async name => { if (shots) { await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); }); await page.waitForTimeout(400); fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true }); } };
   await page.route(/\/api\/servicenow\/settings$/, route => route.request().method() === 'GET'
     ? route.fulfill({ json: { instance: 'https://example.service-now.com', clientId: 'synthetic-client', hasSecret: true, path: '/tmp/servicenow.json' } }) : route.continue());
-  await page.evaluate(() => localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider: 'lmstudio', models: { lmstudio: 'fixture-local-model' }, lmstudioUrl: 'http://localhost:1234/v1', snowInstance: 'https://example.service-now.com' })));
+  await page.evaluate(async () => {
+    const preferences = { provider: 'lmstudio', models: { lmstudio: 'fixture-local-model' }, codexDaybreak: false, bedrockRegion: '', lmstudioUrl: 'http://localhost:1234/v1' };
+    const response = await fetch('/api/model-preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preferences) });
+    if (!response.ok) throw new Error('Could not initialize model preferences for the browser fixture');
+    localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ ...preferences, snowInstance: 'https://example.service-now.com' }));
+  });
   await page.goto(`${base(page)}/#fpreview`); await page.reload(); await page.locator('#connection-status.online').waitFor();
   await page.locator('#view-fpreview:not([hidden])').waitFor();
   assert.match(await page.locator('#fpreview-avits').getAttribute('placeholder'), /SCTASK\d+, SCTASK\d+/);

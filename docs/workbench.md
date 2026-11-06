@@ -58,8 +58,10 @@ model overrides both; `THREATLINT_SCAN_MODEL` / `THREATLINT_GENERAL_MODEL` or `s
 
 **Before sending source:** cloud providers, Copilot, and remote compatible servers require explicit
 UI consent. Prompts, attached findings, and inspected source/tool results go to that provider.
-Session model keys are not saved to browser storage, reports, or history. Non-secret preferences
-may persist; consent does not survive a restart.
+**Save model settings** stores the selected provider, each provider's model, Codex Daybreak option,
+Bedrock region, and local model-server URL in the Workbench's local settings. These choices restore
+after exiting and reopening the desktop app, including when its local port changes. Session model
+keys are not saved to browser storage, settings, reports, or history; consent does not survive a restart.
 
 Integration credentials are different: **Settings** saves ServiceNow, Semgrep, Azure DevOps,
 GitHub App, DefectDojo, and SonarQube configuration through their respective setup flows.
