@@ -312,6 +312,35 @@ describe('False positive review batch', () => {
     assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
   });
 
+  for (const followup of [false, true]) for (const label of ['- **Verified Safe Behavior**:', '- **Verified Safe Behavior:**']) {
+    it(`preserves canonical FP proof through ${followup ? 'evidence follow-up' : 'initial review'} with ${label}`, async t => {
+      setupRefinement(t);
+      const firstModel = modelCalls.length;
+      const disproved = `# Finding Review: synthetic fixture\n\nThe reported value is a FALSE POSITIVE; no source-fix patch is warranted.\n\n` +
+        `#### [FP-001] — Synthetic expected value\n**Original finding**: ${TP}; fixture.rule; scanner; app.yaml:2\n` +
+        `**Disposition**: FALSE POSITIVE\n**Confidence**: CONFIRMED\n##### Evidence\n\n` +
+        `| Stage | Inspected evidence |\n|---|---|\n| Test setup | app.yaml:2 — synthetic fixture data used only by a mocked client. |\n\n` +
+        `${label} The expected value is fixture data in a mocked assertion and never reaches a real client.\n` +
+        `- **Proposed Tuning**: Preserve live-client detections while excluding the proven fixture expression.\n`;
+      const fpReady = { status: 'skipped', issues: [], prompt: '', reason: 'False positives use scanner-tuning validation' };
+      preparationResults = followup ? [refine('Inspect the actual control'), fpReady] : [fpReady];
+      modelReports = followup ? [uncertain(), disproved] : [disproved];
+
+      const events = await runBatch(TP);
+      const final = events.find(event => event.avit === TP && event.done);
+      assert.equal(modelCalls.length - firstModel, followup ? 2 : 1);
+      assert.match(preparedReports.at(-1), /Disposition\*\*: FALSE POSITIVE/);
+      assert.doesNotMatch(preparedReports.at(-1), /CONSERVATIVE DEFAULT/);
+      assert.equal(resolvedReports.length, 1);
+      assert.match(resolvedReports[0], /Disposition\*\*: FALSE POSITIVE/);
+      assert.doesNotMatch(resolvedReports[0], /CONSERVATIVE DEFAULT/);
+      assert.equal(final.stage, 'done'); assert.equal(final.disposition, 'FALSE POSITIVE');
+      assert.equal(final.outcome.closed, true); assert.equal(final.outcome.tuned, true);
+      assert.equal(events.some(event => event.stage === 'error'), false);
+      assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
+    });
+  }
+
   for (const failure of ['assessment', 'model']) it(`stops before tracker writes if ${failure} fails during evidence investigation`, async t => {
     setupRefinement(t);
     if (failure === 'assessment') preparationResults = [{ code: 1, stdout: '', stderr: 'ERROR: Synthetic assessment failure' }];

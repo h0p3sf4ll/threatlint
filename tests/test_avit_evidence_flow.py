@@ -113,3 +113,33 @@ def test_investigation_can_disprove_finding_and_use_fp_path(monkeypatch, workflo
     assert "pull_request" not in outcome and workflow["api"].calls == []
     assert proven == ["guard", "proof"]
     assert workflow["resolved"] == [normalize_report(disproved)]
+
+
+@pytest.mark.parametrize("followup", [False, True], ids=["initial-review", "evidence-followup"])
+@pytest.mark.parametrize("safe_label", ["- **Verified Safe Behavior**:", "- **Verified Safe Behavior:**"])
+def test_canonical_fp_proof_keeps_tuning_path_without_demanding_source_fix(monkeypatch, workflow, followup, safe_label):
+    disproved = (
+        "# Finding Review: synthetic fixture\n\n"
+        "The reported expression is a FALSE POSITIVE; no source-fix patch is warranted.\n\n"
+        "#### [FP-001] — Synthetic expected value\n"
+        f"**Original finding**: {AVIT}; fixture-rule; scanner; app.py:2\n"
+        "**Disposition**: FALSE POSITIVE\n**Confidence**: CONFIRMED\n"
+        "##### Evidence\n\n"
+        "| Stage | Inspected evidence |\n|---|---|\n"
+        "| Test setup | `app.py:1-2` — the synthetic expected value belongs to the mocked call. |\n\n"
+        f"{safe_label} The expected value is fixture data in a mocked assertion and never reaches a real client.\n"
+        "- **Proposed Tuning**: Keep live-client detections while excluding the proven fixture expression.\n"
+    )
+    validated = []
+    monkeypatch.setattr(avit_headless, "_guard_fp_rule", lambda *_: validated.append("rule guard"))
+    monkeypatch.setattr(avit_headless, "_prove_tuned_rule", lambda *_: validated.append("tuning proof"))
+    initial = report(patch="", basis="**Decision basis**: CONSERVATIVE DEFAULT\n")
+    outcome = run_workflow(monkeypatch, workflow, [initial, disproved] if followup else [disproved])
+
+    assert outcome["completed"] is True and outcome["disposition"] == "FALSE POSITIVE"
+    assert len(workflow["reviews"]) == (2 if followup else 1)
+    assert validated == ["rule guard", "tuning proof"]
+    assert workflow["resolved"] == [normalize_report(disproved)]
+    assert "CONSERVATIVE DEFAULT" not in workflow["resolved"][0]
+    assert "pull_request" not in outcome and workflow["api"].calls == []
+    assert not workflow["repo"].exists()

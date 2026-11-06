@@ -189,6 +189,26 @@ def test_patch_from_a_different_finding_is_not_published(checkout, api):
     assert api.calls == []
 
 
+@pytest.mark.parametrize("marker", ["**Proposed fix patch:**", "- **Proposed fix patch**:", "### Proposed fix patch"])
+def test_formatted_patch_label_creates_the_same_validated_draft(checkout, api, marker):
+    content = report().replace("**Proposed fix patch**:", marker).replace("**Original finding**:", "- **Original finding:**")
+    assert pr.create_fix_pr(AVIT, content, str(checkout), TARGET)["status"] == "created"
+    assert any(body and body.get("isDraft") is True for _, _, body in api.calls)
+
+
+def test_example_patch_markers_are_not_executable_proposals():
+    content = "````md\n" + report() + "````\n"
+    assert pr._patch(content) == ""
+    assert pr._patch(content + report()) == PATCH
+    assert pr._patch("\n".join("    " + line for line in report().splitlines())) == ""
+
+
+def test_duplicate_or_incomplete_formatted_patch_is_rejected():
+    for content in (report() + "\n### Proposed fix patch\n", report().removesuffix("```\n")):
+        with pytest.raises(ResolveError, match="exactly one complete"):
+            pr._patch(content)
+
+
 @pytest.mark.parametrize("path", ["../outside.py", ".git/config", "folder/.git/config", ".gitattributes", "folder/../../out.py"])
 def test_patch_paths_cannot_escape_or_change_git_controls(checkout, api, path):
     with pytest.raises(ResolveError, match="path"):

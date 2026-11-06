@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
-from threatlint.finding_review import FindingReviewError, normalize_verdict
+from threatlint.finding_review import (
+    FindingReviewError, _field_pattern, _structure, normalize_verdict, report_fields,
+)
 
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
 _AVIT_TOKEN = re.compile(r"(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", re.IGNORECASE)
@@ -15,12 +17,12 @@ class ResolveError(RuntimeError):
 
 
 def _field(body: str, name: str) -> str:
-    match = re.search(rf"(?im)^\**(?:{name})\**\s*:\s*(.+)$", body)
-    return match.group(1).replace("*", "").strip() if match else ""
+    values = report_fields(body, name)
+    return values[0] if values else ""
 
 
 def _verdict(body: str, identifier: str, title: str) -> dict[str, str]:
-    stated = re.findall(r"(?im)^\**(?:Disposition|Verdict)\**\s*:\s*(.+)$", body)
+    stated = report_fields(body, "Disposition") + report_fields(body, "Verdict")
     try:
         normalized = [normalize_verdict({"disposition": value}) for value in stated]
     except FindingReviewError as exc:
@@ -48,24 +50,27 @@ def _mentions_avit(text: str, avit: str) -> bool:
 
 def verdict_for(report: str, avit: str) -> dict[str, str]:
     """Find this AVIT's verdict, rejecting absent or conflicting dispositions."""
-    sections = re.split(r"(?m)^#{2,6}\s+(?=\[?[A-Z][A-Z0-9]*-\d+\b)", report)
+    structural = _structure(report)
+    boundaries = list(re.finditer(r"(?m)^#{2,6}[ \t]+(?=\[?[A-Z][A-Z0-9]*-\d+\b)", structural))
     matches = []
-    for section in sections[1:]:
+    for index, boundary in enumerate(boundaries):
+        end = boundaries[index + 1].start() if index + 1 < len(boundaries) else len(report)
+        section = report[boundary.end():end]
         header, _, body = section.partition("\n")
-        original = re.search(r"(?im)^\**Original finding\**\s*:\s*(.+)$", body)
-        if not _mentions_avit(original.group(1) if original else header, avit):
+        original = _field(body, "Original finding")
+        if not _mentions_avit(original or header, avit):
             continue
         identifier = re.match(r"\[?([A-Z][A-Z0-9]*-\d+)\]?", header)
         title = re.sub(r"^\[?[A-Z][A-Z0-9]*-\d+\]?\s*[—–:-]?\s*", "", header).strip()
         matches.append(_verdict(body, identifier.group(1) if identifier else "", title))
     if not matches:
         # A plain single-finding heading has no FP identifier; its original-finding line decides.
+        all_originals = list(_field_pattern("Original finding").finditer(structural))
         originals = [
-            match for match in re.finditer(r"(?im)^\**Original finding\**\s*:\s*(.+)$", report)
-            if _mentions_avit(match.group(1), avit)
+            match for match in all_originals if _mentions_avit(match.group(2), avit)
         ]
-        if len(originals) == 1 and len(re.findall(r"(?im)^\**Original finding\**\s*:", report)) == 1:
-            title = re.search(r"(?m)^#\s+(.+)$", report)
+        if len(originals) == 1 and len(all_originals) == 1:
+            title = re.search(r"(?m)^#[ \t]+(.+)$", structural)
             matches.append(_verdict(
                 report[originals[0].start():], "", title.group(1).strip() if title else avit,
             ))
@@ -91,8 +96,8 @@ def report_line(report: str, avit: str, expected_path: str = "") -> int | None:
         return value.replace("\\", "/").removeprefix("./").lstrip("/")
 
     locations = set()
-    for field in re.finditer(r"(?im)^[ \t]*\**Original finding\**[ \t]*:[ \t]*([^\n]+)$", report):
-        parts = field.group(1).split(";")
+    for field in report_fields(report, "Original finding"):
+        parts = field.split(";")
         if unquote(parts[0]).upper() != avit.upper():
             continue
         if len(parts) < 2:

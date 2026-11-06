@@ -77,3 +77,82 @@ def test_real_evidence_section_can_contain_quoted_code():
                            '**Verified Safe Behavior**: The parameters are bound as data.\n')
     assert review.has_fp_evidence(source)
     assert '**Disposition**: FALSE POSITIVE' in review.normalize_report(source)
+
+
+@pytest.mark.parametrize('label', ['**{}**:', '**{}:**', '- **{}**:', '- **{}:**', '* **{}:**'])
+def test_proof_accepts_markdown_bold_and_bullet_formatting(label):
+    proof = (label.format('Evidence') + ' `src/query.py:12` binds the input as data.\n'
+             + label.format('Verified Safe Behavior') + ' The bound parameter cannot change query syntax.\n')
+    source = '# Finding Review\n' + section(proof=proof)
+    assert review.has_fp_evidence(source)
+    assert review.normalize_report(source) == source
+    assert avit_report.verdict_for(source, AVIT)['disposition'] == 'FALSE POSITIVE'
+
+
+def test_canonical_fp_with_evidence_table_and_bulleted_safe_behavior_stays_fp():
+    source = '# Finding Review\n' + section(proof=(
+        '##### Evidence\n'
+        '| Location | Inspected behavior |\n| --- | --- |\n'
+        '| `tests/test_client.py:12` | The test builds a synthetic header assertion. |\n'
+        '| `tests/test_client.py:18` | The HTTP client is mocked; the assertion is not production output. |\n'
+        '- **Verified Safe Behavior**: This synthetic assertion reaches only the mocked client and exposes no real credential.\n'
+        '- **Proposed Tuning**: Narrow the rule to exclude this proven synthetic test case.\n'
+    ))
+    assert review.normalize_report(source) == source
+    assert avit_report.verdict_for(source, AVIT)['disposition'] == 'FALSE POSITIVE'
+
+
+def test_evidence_table_and_colon_inside_bold_safe_behavior_stay_false_positive():
+    source = '# Finding Review\n' + section(proof=(
+        '**Evidence**\n'
+        '| Location | Inspected behavior |\n| --- | --- |\n'
+        '| `tests/test_client.py:12` | The header assertion uses a synthetic value. |\n'
+        '| `tests/test_client.py:18` | The client is mocked and makes no real request. |\n'
+        '**Verified Safe Behavior:** The inspected test data reaches only a mocked client, with no real credential exposure.\n'
+        '**Proposed Tuning:** Exclude only the independently verified synthetic test fixture.\n'
+    ))
+    assert review.normalize_report(source) == source
+    assert avit_report.verdict_for(source, AVIT)['disposition'] == 'FALSE POSITIVE'
+
+
+@pytest.mark.parametrize('missing', ['Evidence', 'Verified Safe Behavior'])
+@pytest.mark.parametrize('placeholder', ['', 'unknown', 'N/A'])
+def test_adjacent_bulleted_fields_do_not_supply_missing_proof(missing, placeholder):
+    proof = (f'**Evidence:** {placeholder if missing == "Evidence" else "src/query.py:12 was inspected."}\n'
+             f'- **Verified Safe Behavior:** {placeholder if missing == "Verified Safe Behavior" else "The driver binds input as data."}\n'
+             '- **Proposed Tuning:** A substantive proposal does not substitute for missing proof.\n')
+    source = section(proof=proof)
+    assert not review.has_fp_evidence(source)
+    assert avit_report.verdict_for(source, AVIT).get('unverified') is True
+
+
+def test_fenced_conservative_basis_does_not_overwrite_the_actual_decision():
+    source = section() + '```markdown\n- **Decision basis:** CONSERVATIVE DEFAULT\n```\n'
+    assert not avit_report.verdict_for(source, AVIT).get('unverified')
+    assert review.report_fields(source, 'Decision basis') == []
+    assert review.normalize_verdict({'disposition': 'AMBIGUOUS'}, body=source)['unverified']
+
+
+def test_real_conservative_basis_remains_unverified_with_bold_bullet_formatting():
+    source = section(disposition='TRUE POSITIVE') + '- **Decision basis:** CONSERVATIVE DEFAULT\n'
+    assert avit_report.verdict_for(source, AVIT)['unverified'] is True
+
+
+def test_section_heading_must_match_the_whole_alias():
+    source = section(proof='##### Evidence to obtain\nInspect the missing source file.\n' + PROOF.splitlines()[1] + '\n')
+    assert not review.has_fp_evidence(source)
+
+
+def test_crlf_report_keeps_actual_fields_and_conservative_defaults():
+    source = '# Finding Review\r\n' + section().replace('\n', '\r\n')
+    assert review.normalize_report(source) == source
+    assert review.report_fields(source, 'Disposition') == ['FALSE POSITIVE']
+    ambiguous = source.replace('FALSE POSITIVE', 'AMBIGUOUS')
+    normalized = review.normalize_report(ambiguous)
+    assert avit_report.verdict_for(normalized, AVIT)['unverified'] is True
+
+
+def test_indented_code_examples_cannot_supply_missing_proof():
+    source = section(proof=''.join('    ' + line + '\n' for line in PROOF.splitlines()))
+    assert not review.has_fp_evidence(source)
+    assert avit_report.verdict_for(source, AVIT)['unverified'] is True

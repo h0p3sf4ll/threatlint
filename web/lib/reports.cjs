@@ -1,14 +1,15 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { dispositionState, normalizeReviewMarkdown } = require('./finding-disposition.cjs');
+const { dispositionState, normalizeReviewMarkdown, structure } = require('./finding-disposition.cjs');
 
 function plain(text) { return text.replaceAll(/[*_`]/g, '').trim(); }
 
 function field(body, name) {
   const names = new Set(name.toLowerCase().split('|'));
-  for (const raw of body.split('\n')) {
-    const line = plain(raw);
+  for (const raw of structure(body).split('\n')) {
+    if (/^(?: {4}| {0,3}\t)/.test(raw)) continue;
+    const line = plain(raw.replace(/^[ \t]*[-*+][ \t]+/, ''));
     const colon = line.indexOf(':');
     if (colon > 0 && names.has(line.slice(0, colon).trim().toLowerCase())) return line.slice(colon + 1).trim();
     if (line.startsWith('|')) {
@@ -56,7 +57,8 @@ function findingFromHeading(heading, text, headings, agentId) {
     /^\[[A-Z][A-Z0-9]*-\d+\]/.test(next.title) || next.level <= 2 ||
     (next.level === 3 && /^(?:TIER\s+[123]|Suppression Impact Assessment|(?:Prioritized )?Remediation Roadmap|Patterns and Systemic|Residual Risk|Security-Positive Changes)/i.test(next.title))
   ));
-  const body = text.slice(heading.after, following?.offset ?? text.length).trim();
+  // Preserve leading indentation: stripping it can turn a code example into metadata.
+  const body = text.slice(heading.after, following?.offset ?? text.length).replace(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/g, '');
   const severity = /\b(CRITICAL|HIGH|MEDIUM|LOW|INFO(?:RMATIONAL)?)\b/i.exec(field(body, 'Severity'))?.[1]?.toUpperCase().replace('INFORMATIONAL', 'INFO') || 'UNSPECIFIED';
   const confidence = /\b(CONFIRMED|PLAUSIBLE|THEORETICAL)\b/i.exec(field(body, 'Confidence'))?.[1]?.toUpperCase() || 'UNSPECIFIED';
   let disposition = /TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS|PARTIALLY FIXED|STILL PRESENT|REMEDIATED|REGRESSED|RESOLVED|NEW|CANT ASSESS/i.exec(field(body, 'Disposition|Verdict'))?.[0]?.toUpperCase() || '';

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .avit_pr import _SECRET, _SHA, _git, _patch, _path, _prepare
 from .avit_report import ResolveError, verdict_for
-from .finding_review import _structure, is_conservative
+from .finding_review import is_conservative, report_fields, report_section
 
 _LOCATION = re.compile(r"(?<![\w/\\.-])([\w.@/-]+):([0-9]{1,9})(?:[-–]([0-9]{1,9}))?")
 _MAX_FILE = 1024 * 1024
@@ -37,14 +37,7 @@ def _redact(value: str) -> str:
 
 
 def _section(report: str, aliases: tuple[str, ...]) -> str:
-    names = "|".join(re.escape(name) for name in aliases)
-    masked = _structure(report)
-    match = re.search(rf"(?im)^(?:[-*][ \t]+)?(?:\*\*(?:{names})\*\*[ \t]*:?|#{{2,6}}[ \t]+(?:{names})[ \t]*:?)", masked)
-    if not match:
-        return ""
-    rest = masked[match.end():]
-    following = re.search(r"(?m)^(?:[-*][ \t]+)?\*\*[^*\n]+\*\*[ \t]*:|^#{2,6}[ \t]", rest)
-    return report[match.end():match.end() + following.start() if following else len(report)].strip()
+    return report_section(report, aliases)
 
 
 def _substantive(value: str) -> bool:
@@ -109,10 +102,10 @@ def assess_review(avit: str, report: str, checkout: str, target: dict) -> dict:
         issues.append("Return one complete finding for this AVIT with an unambiguous disposition")
     if verdict.get("disposition") == "FALSE POSITIVE":
         return _result("skipped", ["A false positive follows the existing scanner-tuning validation flow, not a source-fix PR"])
-    originals = re.findall(r"(?im)^\**Original finding\**[ \t]*:[ \t]*([^\n]+)$", _structure(report))
+    originals = report_fields(report, "Original finding")
     if len(originals) != 1 or re.findall(r"(?i)(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", originals[0]) != [avit]:
         issues.append("Keep exactly one Original finding for this AVIT alone")
-    if is_conservative(verdict) or re.search(r"(?im)^\**Validation status\**\s*:\s*UNVERIFIED\b", _structure(report)):
+    if is_conservative(verdict) or any(re.match(r"UNVERIFIED\b", value, re.I) for value in report_fields(report, "Validation status")):
         issues.append("Investigate the report's blocking evidence and resolution plan; the true positive is still unverified")
     if verdict.get("confidence", "").upper() != "CONFIRMED":
         issues.append("Confirm the actual rule claim from inspected evidence, or state the precise remaining blocker")

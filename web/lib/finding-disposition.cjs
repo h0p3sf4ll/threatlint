@@ -21,11 +21,13 @@ function structure(body) {
 
 function hasFpEvidence(body) {
   const structural = structure(body);
+  const fieldStart = String.raw` {0,3}(?:[-*+][ \t]+)?`;
+  const ending = String.raw`(?:[ \t]*:[ \t]*\*\*|\*\*[ \t]*:|\*\*(?=[ \t]*\r?$))`;
   const section = name => {
-    const match = new RegExp(`^(?:\\*\\*${name}\\*\\*[ \\t]*:?|#{2,6}[ \\t]+${name}[ \\t]*:?)`, 'im').exec(structural);
+    const match = new RegExp(String.raw`^${fieldStart}(?:\*\*${name}${ending}|#{2,6}[ \t]+${name}[ \t]*:?[ \t]*(?:#+[ \t]*)?\r?$)`, 'im').exec(structural);
     if (!match) return false;
     const start = match.index + match[0].length;
-    const following = /^\*\*[^*\n]+\*\*[ \t]*:|^#{2,6}[ \t]/m.exec(structural.slice(start));
+    const following = new RegExp(String.raw`^${fieldStart}(?:\*\*[^*\r\n]+?${ending}|#{1,6}[ \t])`, 'm').exec(structural.slice(start));
     const value = body.slice(start, following ? start + following.index : body.length).trim();
     return value && !/^(?:none|n\/a|unknown|not available|not inspected|unverified|tbd)[.!]?$/i.test(value);
   };
@@ -50,7 +52,7 @@ function normalizeReviewMarkdown(markdown) {
       renamed = true;
       return line.replace(/^(#\s+)(?:false[ -]+positive review|fp review|findings? triage|finding review)\b/i, '$1Finding Review');
     }
-    const match = /^(\**(?:Disposition|Verdict)\**\s*:\s*)(.+)$/i.exec(line);
+    const match = /^( {0,3}(?:[-*+][ \t]+)?(?:\*\*(?:Disposition|Verdict)(?:\*\*[ \t]*:|[ \t]*:\*\*)|(?:Disposition|Verdict)[ \t]*:)[ \t]*)(.+)$/i.exec(line);
     if (!match) return line;
     const raw = match[2].replaceAll('*', '').trim();
     if (raw.toUpperCase() !== 'AMBIGUOUS' && !(raw.toUpperCase() === 'FALSE POSITIVE' && !hasFpEvidence(finding || text))) return line;
@@ -59,4 +61,4 @@ function normalizeReviewMarkdown(markdown) {
   return renamed ? text : `# Finding Review\n\n${text}`;
 }
 
-module.exports = { dispositionState, normalizeReviewMarkdown, CONSERVATIVE_NOTE, hasFpEvidence };
+module.exports = { dispositionState, normalizeReviewMarkdown, CONSERVATIVE_NOTE, hasFpEvidence, structure };

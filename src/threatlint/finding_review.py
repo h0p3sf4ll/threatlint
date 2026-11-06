@@ -7,7 +7,18 @@ import re
 TITLE = "Finding Review"
 DISPOSITIONS = ("TRUE POSITIVE", "FALSE POSITIVE")
 _LABEL = re.compile(r"\b(?:TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS)\b", re.IGNORECASE)
-_DECLARATION = re.compile(r"(?im)^(\**(?:Disposition|Verdict)\**\s*:\s*)(.+)$")
+_FIELD_START = r" {0,3}(?:[-*+][ \t]+)?"
+
+
+def _field_pattern(names: str) -> re.Pattern:
+    """Match a labeled metadata line, preserving its prefix and value separately."""
+    return re.compile(
+        rf"(?im)^({_FIELD_START}(?:\*\*(?:{names})(?:[ \t]*:[ \t]*\*\*|\*\*[ \t]*:)"
+        rf"|(?:{names})[ \t]*:)[ \t]*)([^\r\n]+)\r?$"
+    )
+
+
+_DECLARATION = _field_pattern("Disposition|Verdict")
 CONSERVATIVE_BASIS = "CONSERVATIVE DEFAULT"
 CONSERVATIVE_REASON = (
     "False positive was not proven beyond reasonable doubt, so the finding is treated as TRUE POSITIVE. "
@@ -51,15 +62,34 @@ def _structure(body: str) -> str:
     return "".join(lines)
 
 
-def _proof_section(body: str, name: str) -> str:
-    """Require substantive report sections; semantic adjudication remains the reviewer's job."""
+def report_fields(body: str, name: str) -> list[str]:
+    """Read actual metadata declarations without treating fenced examples as decisions."""
+    return [match.group(2).replace("*", "").strip()
+            for match in _field_pattern(re.escape(name)).finditer(_structure(body))]
+
+
+def report_section(body: str, aliases: tuple[str, ...]) -> str:
+    """Read a Markdown field or heading, retaining quoted code inside its section."""
     structural = _structure(body)
-    match = re.search(rf"(?im)^(?:\*\*{name}\*\*[ \t]*:?|#{{2,6}}[ \t]+{name}[ \t]*:?)", structural)
+    names = "|".join(re.escape(name) for name in aliases)
+    ending = r"(?:[ \t]*:[ \t]*\*\*|\*\*[ \t]*:|\*\*(?=[ \t]*\r?$))"
+    match = re.search(
+        rf"(?im)^{_FIELD_START}(?:\*\*(?:{names}){ending}"
+        rf"|#{{2,6}}[ \t]+(?:{names})[ \t]*:?[ \t]*(?:#+[ \t]*)?\r?$)", structural,
+    )
     if not match:
         return ""
-    next_field = re.search(r"(?m)^\*\*[^*\n]+\*\*[ \t]*:|^#{2,6}[ \t]", structural[match.end():])
+    next_field = re.search(
+        rf"(?m)^{_FIELD_START}(?:\*\*[^*\r\n]+?{ending}|#{{1,6}}[ \t])",
+        structural[match.end():],
+    )
     end = match.end() + next_field.start() if next_field else len(body)
-    value = body[match.end():end].strip()
+    return body[match.end():end].strip()
+
+
+def _proof_section(body: str, name: str) -> str:
+    """Require substantive report sections; semantic adjudication remains the reviewer's job."""
+    value = report_section(body, (name,))
     return "" if re.fullmatch(r"(?:none|n/a|unknown|not available|not inspected|unverified|tbd)[.!]?", value, re.I) else value
 
 
@@ -73,11 +103,11 @@ def normalize_verdict(verdict: dict, *, body: str | None = None) -> dict:
     result = dict(verdict)
     raw = str(result.get("disposition", ""))
     result["disposition"] = normalize_disposition(raw)
-    basis = re.search(r"(?im)^\**Decision basis\**\s*:\s*(.+)$", body or "")
+    bases = report_fields(body or "", "Decision basis")
     unsupported_fp = result["disposition"] == "FALSE POSITIVE" and body is not None and not has_fp_evidence(body)
-    conservative = bool(re.search(r"\bAMBIGUOUS\b", raw, re.IGNORECASE)) or bool(
-        basis and basis.group(1).replace("*", "").strip().upper().startswith(CONSERVATIVE_BASIS)
-    ) or is_conservative(result) or unsupported_fp
+    conservative = (bool(re.search(r"\bAMBIGUOUS\b", raw, re.IGNORECASE))
+                    or any(basis.upper().startswith(CONSERVATIVE_BASIS) for basis in bases)
+                    or is_conservative(result) or unsupported_fp)
     if conservative:
         result["disposition"] = "TRUE POSITIVE"
         result["unverified"] = True

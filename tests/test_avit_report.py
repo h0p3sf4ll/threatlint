@@ -145,3 +145,52 @@ def test_original_imports_keep_the_parser_and_error_identity():
     assert avit_resolve.ResolveError is avit_report.ResolveError
     assert avit_resolve.verdict_for is avit_report.verdict_for
     assert avit_resolve._report_line is avit_report.report_line
+
+
+@pytest.mark.parametrize('label', ['**{}**:', '**{}:**', '- **{}**:', '- **{}:**', '* **{}:**', '{}:'])
+def test_metadata_fields_accept_consistent_markdown_formatting(label):
+    report = (f'# Finding Review\n{label.format("Original finding")} {AVIT}; rule; src/a.py:42\n'
+              f'{label.format("Disposition")} TRUE POSITIVE\n'
+              f'{label.format("Confidence")} CONFIRMED\n')
+    parsed = avit_report.verdict_for(report, AVIT)
+    assert parsed['disposition'] == 'TRUE POSITIVE'
+    assert parsed['confidence'] == 'CONFIRMED'
+    assert not parsed.get('unverified')
+    assert avit_report.report_line(report, AVIT, 'src/a.py') == 42
+
+
+@pytest.mark.parametrize('fence', ['```', '~~~'])
+def test_fenced_example_decisions_and_finding_headings_cannot_override_real_verdict(fence):
+    example = (f'{fence}markdown\n#### [FP-999] — Quoted example\n'
+               f'**Original finding**: {AVIT}; rule; src/other.py:99\n'
+               '**Disposition**: AMBIGUOUS\n**Confidence**: THEORETICAL\n'
+               '**Decision basis**: CONSERVATIVE DEFAULT\n' + fence + '\n')
+    report = example + finding() + example
+    assert avit_report.verdict_for(report, AVIT) == avit_report.verdict_for(finding(), AVIT)
+    assert avit_report.report_line(report, AVIT) == 42
+
+
+def test_only_fenced_original_finding_cannot_identify_a_report():
+    report = '```markdown\n' + finding() + '```\n'
+    with pytest.raises(avit_report.ResolveError, match='no finding'):
+        avit_report.verdict_for(report, AVIT)
+    assert avit_report.report_line(report, AVIT) is None
+
+
+def test_real_conflicting_bulleted_verdict_still_fails_closed():
+    with pytest.raises(avit_report.ResolveError, match='conflicting dispositions'):
+        avit_report.verdict_for(finding() + '- **Verdict:** TRUE POSITIVE\n', AVIT)
+
+
+def test_crlf_metadata_is_parsed_the_same_as_lf():
+    report = finding().replace('\n', '\r\n')
+    assert avit_report.verdict_for(report, AVIT) == avit_report.verdict_for(finding(), AVIT)
+    assert avit_report.report_line(report, AVIT) == 42
+
+
+@pytest.mark.parametrize('indent', ['    ', '\t'])
+def test_indented_code_examples_cannot_supply_a_missing_verdict(indent):
+    report = (f'#### [FP-001] — Synthetic finding\n**Original finding**: {AVIT}; src/a.py:42\n'
+              f'\n{indent}**Disposition**: TRUE POSITIVE\n{indent}**Confidence**: CONFIRMED\n')
+    with pytest.raises(avit_report.ResolveError, match='has no TRUE POSITIVE'):
+        avit_report.verdict_for(report, AVIT)

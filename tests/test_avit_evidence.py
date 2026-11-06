@@ -1,6 +1,7 @@
 """Evidence refinement uses real local source/Git and never calls cloud services."""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -119,6 +120,35 @@ def test_protocol_aliases_are_accepted(checkout):
     text = confirmed().replace("**Exploit path**", "**Assessment and alternative interpretation**").replace(
         "**Fix rationale**", "**Implementation Notes**").replace("**Regression assertions**", "**Regression Tests**")
     assert assess(checkout, text)["status"] == "ready"
+
+
+@pytest.mark.parametrize("prefix", ["", "- ", "  + "])
+def test_formatted_confirmed_proposal_is_ready(checkout, prefix):
+    text = re.sub(r"(?m)^\*\*([^*\n]+)\*\*:", rf"{prefix}**\1:**", confirmed())
+    assert assess(checkout, text)["status"] == "ready"
+
+
+def test_fenced_metadata_examples_do_not_block_confirmed_proposal(checkout):
+    text = confirmed() + (
+        "\n```md\n**Original finding**: AVIT000000000000002\n"
+        "**Disposition**: AMBIGUOUS\n**Decision basis**: CONSERVATIVE DEFAULT\n"
+        "**Validation status**: UNVERIFIED\n```\n"
+    )
+    assert assess(checkout, text)["status"] == "ready"
+
+
+def test_formatted_unverified_status_still_requires_investigation(checkout):
+    result = assess(checkout, confirmed() + "\n- **Validation status:** UNVERIFIED\n")
+    assert result["status"] == "refine"
+    assert any("still unverified" in issue for issue in result["issues"])
+
+
+def test_placeholder_section_cannot_borrow_the_next_field(checkout):
+    text = re.sub(r"(?m)^\*\*Exploit path\*\*:.*$", "**Exploit path:** unknown", confirmed())
+    text = text.replace("**Fix rationale**:", "- **Fix rationale:**")
+    result = assess(checkout, text)
+    assert result["status"] == "refine"
+    assert "Provide substantive Exploit path grounded in the reviewed source" in result["issues"]
 
 
 def test_untrusted_source_and_prior_report_are_bounded_and_redacted(checkout):

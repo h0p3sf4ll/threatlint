@@ -21,7 +21,7 @@ from pathlib import Path, PurePosixPath
 
 from . import servicenow as sn, tls
 from .avit_report import ResolveError, verdict_for
-from .finding_review import is_conservative
+from .finding_review import _structure, is_conservative, report_fields
 
 FIX_PATCH_GUIDANCE = (
     "Use repository read/search tools to resolve evidence gaps before preparing a fix: inspect the "
@@ -84,13 +84,19 @@ def _git(repo: Path, args: list[str], *, data: bytes | None = None, extra: dict 
 
 
 def _patch(report: str) -> str:
-    markers = re.findall(r"(?im)^\*\*Proposed fix patch\*\*:[ \t]*$", report)
+    markers = list(re.finditer(
+        r"(?im)^ {0,3}(?:[-*+][ \t]+)?(?:\*\*Proposed fix patch(?:\*\*[ \t]*:|[ \t]*:\*\*)"
+        r"|#{2,6}[ \t]+Proposed fix patch[ \t]*:?)[ \t]*$", _structure(report),
+    ))
     if not markers:
         return ""
-    matches = re.findall(r"(?ms)^\*\*Proposed fix patch\*\*:[ \t]*\n[ \t]*```diff[ \t]*\n(.*?)^```[ \t]*$", report)
-    if len(markers) != 1 or len(matches) != 1:
+    if len(markers) != 1:
         raise ResolveError("The report needs exactly one complete Proposed fix patch diff block")
-    patch = matches[0]
+    match = re.match(r"\n[ \t]*(?P<fence>`{3,}|~{3,})diff[ \t]*\n(?P<patch>.*?)^(?P=fence)[ \t]*$",
+                     report[markers[0].end():], re.M | re.S)
+    if not match:
+        raise ResolveError("The report needs exactly one complete Proposed fix patch diff block")
+    patch = match["patch"]
     if not patch.strip() or len(patch.encode()) > _MAX_PATCH or "\x00" in patch:
         raise ResolveError("The proposed fix patch is empty, binary, or too large")
     if _SECRET.search(patch) or "[REDACTED]" in patch:
@@ -212,7 +218,7 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
         return _skip("False positives do not require a source-fix PR")
     if is_conservative(verdict):
         return _skip("The report marks this TRUE POSITIVE as unverified (conservative default); no automatic fix PR was opened")
-    originals = re.findall(r"(?im)^\**Original finding\**[ \t]*:[ \t]*([^\n]+)$", report)
+    originals = report_fields(report, "Original finding")
     if len(originals) != 1 or re.findall(r"(?i)(?<![A-Z0-9])AVIT\d{7,15}(?![A-Z0-9])", originals[0]) != [avit]:
         return _skip("Automatic fix PRs require a report for this AVIT alone")
     if target.get("scm") not in ("azure-devops", "github"):
