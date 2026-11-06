@@ -19,6 +19,22 @@ function fixture(t, converter) {
 describe('Report conversion boundary', () => {
   const markdown = '# Review — synthetic fixture\nNo material findings.\n';
 
+  it('reserves unique paths before concurrent same-agent conversions yield', async t => {
+    const gates = [];
+    const { writer, sessionId } = fixture(t, (mdPath, docxPath) => new Promise(resolve => {
+      gates.push(() => { fs.writeFileSync(docxPath, fs.readFileSync(mdPath)); resolve(); });
+    }));
+    t.mock.method(Date, 'now', () => 123456789);
+    const first = writer.save('appsec-fp-reviewer', '# First\nNo material findings.', sessionId);
+    const second = writer.save('appsec-fp-reviewer', '# Second\nNo material findings.', sessionId);
+    assert.equal(gates.length, 2);
+    gates[1](); gates[0]();
+    const [a, b] = await Promise.all([first, second]);
+    assert.notEqual(a.mdPath, b.mdPath); assert.notEqual(a.docxPath, b.docxPath);
+    assert.match(fs.readFileSync(a.mdPath, 'utf8'), /First/);
+    assert.match(fs.readFileSync(b.mdPath, 'utf8'), /Second/);
+  });
+
   it('uses the injected converter without a shell or Python dependency', async t => {
     const calls = [];
     const { writer, sessionId } = fixture(t, async (...args) => { calls.push(args); await convertToWord(...args); });

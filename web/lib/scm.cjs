@@ -73,6 +73,7 @@ const ERRORS = Object.freeze({
   SCM_CONNECTION_NOT_FOUND: [404, 'Source connection not found or disconnected.'],
   SCM_REPOSITORY_NOT_FOUND: [400, 'Select a repository discovered by this connection first.'],
   SCM_BRANCH_NOT_FOUND: [400, 'The selected branch is unavailable. Refresh the repository and branch lists.'],
+  SCM_BRANCH_MOVED: [409, 'The selected branch changed during checkout. Refresh it and try again. No workspace was opened.'],
   SCM_AUTHORIZATION_FAILED: [403, 'Source provider authentication or repository access failed. Check the token and read permissions.'],
   SCM_PROVIDER_FAILED: [502, 'Source provider request failed. Check read access and service availability.'],
   SCM_INVALID_RESPONSE: [502, 'Source provider returned an unsupported response.'],
@@ -597,6 +598,7 @@ options = {}) {
       commit = arrayBody(data, 'value').find(ref => ref?.name === `refs/heads/${branch}`)?.objectId;
     }
     if (typeof commit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit)) throw failure('SCM_BRANCH_NOT_FOUND');
+    return commit.toLowerCase();
   }
 
   async function runGit(connection, tempDir, cwd, args, env, timeoutMs = 10_000) {
@@ -628,7 +630,7 @@ options = {}) {
     activeCheckouts++;
     let tempDir;
     try {
-      await confirmBranch(connection, repo, branch);
+      const expectedCommit = await confirmBranch(connection, repo, branch);
       const host = new URL(repo.cloneUrl).hostname;
       const addresses = await deadline(connection, API_TIMEOUT_MS, signal => resolveHost(lookup, host, signal));
       const resolve = pinnedResolve(host, addresses);
@@ -643,6 +645,10 @@ options = {}) {
       const commit = (await runGit(connection, tempDir, repoPath, ['rev-parse', '--verify', 'HEAD^{commit}'], cleanEnv)).trim();
       const actualBranch = (await runGit(connection, tempDir, repoPath, ['symbolic-ref', '--quiet', '--short', 'HEAD'], cleanEnv)).trim();
       if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit) || actualBranch !== branch) throw failure('SCM_CHECKOUT_FAILED');
+      if (commit.toLowerCase() !== expectedCommit) throw failure('SCM_BRANCH_MOVED');
+      // Pin the local review to the verified object, never to a moving branch ref.
+      // This host-owned setup does not grant an agent permission to mutate source.
+      await runGit(connection, tempDir, repoPath, ['checkout', '--quiet', '--detach', expectedCommit, '--'], cleanEnv);
       assertNonsecret(connection, commit);
       assertActive(connection);
       return { repoPath, tempDir, provenance: { provider: connection.provider, repository: repo.fullName, branch, commit, webUrl: repo.webUrl } };

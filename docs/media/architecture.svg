@@ -1,127 +1,67 @@
-<svg width="1240" height="800" viewBox="0 0 1240 800" role="img" aria-labelledby="archT archD" xmlns="http://www.w3.org/2000/svg">
-<title id="archT">Threatlint architecture</title>
-<desc id="archD">Entry points feed a read-only analysis core of commands, 22 specialist agents and 26 skills. The core reads repository and scanner evidence, calls a cloud or local model, and writes reports. Separate approval-gated workflows write back to systems of record.</desc><style>svg { --fg:#1A2230; --muted:#5B6779; --line:#D4DCE7; --accent:#0F6CBD; --accent-soft:#E7F1FB;
-  --zone:#EEF3F9; --core:#E9F2FC; --warn:#B85A00; --warn-soft:#FFF5E8; --danger:#C4314B; --surface:#FFFFFF; --bg:#F5F7FA; --on-accent:#FFFFFF;
-  --sans:"Segoe UI","Source Sans 3",system-ui,-apple-system,sans-serif; --mono:"Cascadia Code",Consolas,ui-monospace,monospace; }
-@media (prefers-color-scheme: dark) { svg { --fg:#E5EBF2; --muted:#98A6B8; --line:#2A3544; --accent:#5AAEF5; --accent-soft:#13283E;
-  --zone:#121922; --core:#12233A; --warn:#F3A64D; --warn-soft:#2A1E0F; --danger:#F27D90; --surface:#151C26; --bg:#0E131A; --on-accent:#0E131A; } }
-.bgr { fill: var(--bg); }
-/* SVG styles */
-.zone { fill: var(--zone); stroke: var(--line); stroke-width: 1.2; }
-.zone.core { fill: var(--core); stroke: var(--accent); stroke-opacity: .45; }
-.zone.write { fill: var(--warn-soft); stroke: var(--warn); stroke-dasharray: 7 5; stroke-width: 1.5; }
-.zt { font: 600 12.5px var(--sans); fill: var(--muted); letter-spacing: .02em; }
-.lbl { font: 600 12.5px var(--sans); fill: var(--fg); }
-.sub { font: 11px var(--sans); fill: var(--muted); }
-.fl { font: 600 11px var(--sans); fill: var(--muted); paint-order: stroke; stroke: var(--zone); stroke-width: 4px; }
-.note { font: italic 11.5px var(--sans); fill: var(--warn); }
-.flow { fill: none; stroke: var(--muted); stroke-width: 1.6; }
-.flow.warn { stroke: var(--warn); stroke-width: 1.8; }
-.flow.untrusted { stroke: var(--danger); stroke-dasharray: 6 4; }
-.bus { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .7; }
-.arrowhead { fill: var(--muted); } .arrowhead-w { fill: var(--warn); }
-.tb { fill: none; stroke: var(--danger); stroke-width: 1.6; stroke-dasharray: 8 6; }
-.tbt { font: 600 12px var(--sans); fill: var(--danger); }
-.ent { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
-.proc { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
-.pn { font: 700 11px var(--mono); fill: var(--accent); }
-.store { fill: none; stroke: var(--fg); stroke-width: 1.4; }
-.badge { fill: var(--accent); }
-.bn { font: 700 10.5px var(--sans); fill: var(--on-accent); }
-
-</style><defs>
-<linearGradient id="gB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5EA0EF"/><stop offset="1" stop-color="#0063B1"/></linearGradient>
-<linearGradient id="gP" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B796F9"/><stop offset="1" stop-color="#6B2FCE"/></linearGradient>
-<linearGradient id="gT" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6BE9FF"/><stop offset="1" stop-color="#1C9DC0"/></linearGradient>
-<linearGradient id="gG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8FDB3E"/><stop offset="1" stop-color="#4E8A1E"/></linearGradient>
-<linearGradient id="gO" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFC266"/><stop offset="1" stop-color="#E8780C"/></linearGradient>
-<linearGradient id="gK" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7A8594"/><stop offset="1" stop-color="#3B4350"/></linearGradient>
-<linearGradient id="gR" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F26B74"/><stop offset="1" stop-color="#B8232F"/></linearGradient>
-<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrowhead"/></marker>
-<marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrowhead-w"/></marker>
-
-<symbol id="i-user" viewBox="0 0 48 48"><circle cx="24" cy="15" r="9" fill="url(#gB)"/><path d="M7 43c0-10 7.6-16 17-16s17 6 17 16z" fill="url(#gB)"/></symbol>
-<symbol id="i-ide" viewBox="0 0 48 48"><rect x="3" y="7" width="42" height="34" rx="3" fill="url(#gB)"/><rect x="3" y="7" width="42" height="7" rx="3" fill="#003A70" opacity=".55"/><g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21l-6 6 6 6M31 21l6 6-6 6M26.5 19l-5 16"/></g></symbol>
-<symbol id="i-assistant" viewBox="0 0 48 48"><path d="M5 10a5 5 0 0 1 5-5h28a5 5 0 0 1 5 5v20a5 5 0 0 1-5 5H21l-9 8v-8h-2a5 5 0 0 1-5-5z" fill="url(#gP)"/><path d="M24 10l2.4 6.3L33 19l-6.6 2.4L24 28l-2.4-6.6L15 19l6.6-2.7z" fill="#fff"/></symbol>
-<symbol id="i-cli" viewBox="0 0 48 48"><rect x="3" y="7" width="42" height="34" rx="3" fill="url(#gK)"/><g fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 18l7 6-7 6M22 32h14"/></g></symbol>
-<symbol id="i-web" viewBox="0 0 48 48"><rect x="3" y="6" width="42" height="36" rx="3" fill="url(#gB)"/><rect x="3" y="6" width="42" height="8" rx="3" fill="#003A70" opacity=".55"/><circle cx="8.5" cy="10" r="1.6" fill="#fff"/><circle cx="13.5" cy="10" r="1.6" fill="#fff"/><g fill="none" stroke="#fff" stroke-width="2"><circle cx="24" cy="28" r="9"/><path d="M15 28h18M24 19c-4 5-4 13 0 18M24 19c4 5 4 13 0 18"/></g></symbol>
-<symbol id="i-pipeline" viewBox="0 0 48 48"><path d="M10 34L24 14L38 34" fill="none" stroke="url(#gB)" stroke-width="4"/><path d="M10 34h28" stroke="#0063B1" stroke-width="4" stroke-dasharray="3 3"/><circle cx="10" cy="34" r="7" fill="url(#gT)"/><circle cx="24" cy="14" r="7" fill="url(#gB)"/><circle cx="38" cy="34" r="7" fill="url(#gG)"/></symbol>
-<symbol id="i-teams" viewBox="0 0 48 48"><circle cx="31" cy="13" r="6" fill="url(#gP)" opacity=".75"/><path d="M22 41c0-8 4-13 10-13s11 5 11 13z" fill="url(#gP)" opacity=".75"/><circle cx="18" cy="15" r="7.5" fill="url(#gP)"/><path d="M4 43c0-9 6-15 14-15s14 6 14 15z" fill="url(#gP)"/></symbol>
-<symbol id="i-router" viewBox="0 0 48 48"><rect x="10" y="10" width="28" height="28" rx="4" transform="rotate(45 24 24)" fill="url(#gT)"/><g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M24 15v18M15 24h18M20 19l4-4 4 4M20 29l4 4 4-4"/></g></symbol>
-<symbol id="i-agent" viewBox="0 0 48 48"><path d="M24 4v7" stroke="#0063B1" stroke-width="3"/><circle cx="24" cy="5" r="3" fill="url(#gP)"/><rect x="6" y="11" width="36" height="30" rx="8" fill="url(#gB)"/><rect x="11" y="18" width="26" height="13" rx="6.5" fill="#002B55" opacity=".6"/><circle cx="18" cy="24.5" r="3" fill="#6BE9FF"/><circle cx="30" cy="24.5" r="3" fill="#6BE9FF"/><path d="M18 36h12" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
-<symbol id="i-skills" viewBox="0 0 48 48"><rect x="6" y="9" width="9" height="33" rx="1.5" fill="url(#gB)"/><rect x="17" y="6" width="9" height="36" rx="1.5" fill="url(#gT)"/><rect x="29" y="11" width="9" height="32" rx="1.5" transform="rotate(-14 33 27)" fill="url(#gP)"/><path d="M8.5 15h4M19.5 12h4M8.5 35h4M19.5 36h4" stroke="#fff" stroke-width="2"/></symbol>
-<symbol id="i-tools" viewBox="0 0 48 48"><circle cx="20" cy="20" r="12" fill="url(#gT)" opacity=".35"/><circle cx="20" cy="20" r="12" fill="none" stroke="url(#gB)" stroke-width="5"/><path d="M29 29l12 12" stroke="url(#gK)" stroke-width="7" stroke-linecap="round"/><path d="M15 19h10M15 23h7" stroke="#0063B1" stroke-width="2.4" stroke-linecap="round"/></symbol>
-<symbol id="i-guard" viewBox="0 0 48 48"><path d="M24 3l17 6.5V22c0 10.5-7.3 19-17 23C14.3 41 7 32.5 7 22V9.5z" fill="url(#gG)"/><path d="M16 24l6 6 11-12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-<symbol id="i-policy" viewBox="0 0 48 48"><circle cx="24" cy="24" r="15" fill="none" stroke="url(#gK)" stroke-width="8" stroke-dasharray="6.2 5.6"/><circle cx="24" cy="24" r="12" fill="url(#gK)"/><circle cx="24" cy="24" r="6" fill="url(#gB)"/></symbol>
-<symbol id="i-cloud" viewBox="0 0 48 48"><path d="M13 39a9.5 9.5 0 0 1-1.4-18.9A13 13 0 0 1 36.6 17 11 11 0 0 1 35 39z" fill="url(#gB)"/><path d="M18 30l4-6 4 4 5-7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-<symbol id="i-server" viewBox="0 0 48 48"><rect x="8" y="5" width="32" height="11" rx="2" fill="url(#gK)"/><rect x="8" y="18.5" width="32" height="11" rx="2" fill="url(#gK)"/><rect x="8" y="32" width="32" height="11" rx="2" fill="url(#gK)"/><circle cx="34" cy="10.5" r="2" fill="#8FDB3E"/><circle cx="34" cy="24" r="2" fill="#8FDB3E"/><circle cx="34" cy="37.5" r="2" fill="#8FDB3E"/><path d="M13 10.5h12M13 24h12M13 37.5h12" stroke="#C8D1DC" stroke-width="2"/></symbol>
-<symbol id="i-repo" viewBox="0 0 48 48"><path d="M4 12a3 3 0 0 1 3-3h11l4 4h19a3 3 0 0 1 3 3v22a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z" fill="url(#gO)"/><g fill="none" stroke="#fff" stroke-width="2.4"><circle cx="18" cy="21" r="2.6"/><circle cx="18" cy="35" r="2.6"/><circle cx="30" cy="24" r="2.6"/><path d="M18 23.6v8.8M30 26.6c0 5-12 2-12 5.8"/></g></symbol>
-<symbol id="i-scanner" viewBox="0 0 48 48"><circle cx="24" cy="24" r="20" fill="url(#gT)"/><g fill="none" stroke="#fff" stroke-width="1.8" opacity=".85"><circle cx="24" cy="24" r="13"/><circle cx="24" cy="24" r="6.5"/></g><path d="M24 24L37 13" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="31" cy="30" r="2.6" fill="#F26B74"/><circle cx="16" cy="17" r="2.2" fill="#FFC266"/></symbol>
-<symbol id="i-ticket" viewBox="0 0 48 48"><path d="M5 12a3 3 0 0 1 3-3h32a3 3 0 0 1 3 3v6a6 6 0 0 0 0 12v6a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-6a6 6 0 0 0 0-12z" fill="url(#gG)"/><path d="M15 18h18M15 24h14M15 30h10" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
-<symbol id="i-db" viewBox="0 0 48 48"><path d="M8 11v26c0 3.3 7.2 6 16 6s16-2.7 16-6V11z" fill="url(#gB)"/><ellipse cx="24" cy="11" rx="16" ry="6" fill="#9CC8F5"/><path d="M8 20c0 3.3 7.2 6 16 6s16-2.7 16-6M8 29c0 3.3 7.2 6 16 6s16-2.7 16-6" fill="none" stroke="#fff" stroke-width="1.6" opacity=".7"/></symbol>
-<symbol id="i-doc" viewBox="0 0 48 48"><path d="M10 4h20l10 10v28a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="url(#gB)"/><path d="M30 4v8a2 2 0 0 0 2 2h8z" fill="#9CC8F5"/><path d="M14 22h20M14 28h20M14 34h13" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
-<symbol id="i-chart" viewBox="0 0 48 48"><rect x="4" y="5" width="40" height="38" rx="3" fill="url(#gK)" opacity=".18"/><rect x="9" y="26" width="7" height="13" rx="1" fill="url(#gT)"/><rect x="20.5" y="16" width="7" height="23" rx="1" fill="url(#gB)"/><rect x="32" y="10" width="7" height="29" rx="1" fill="url(#gP)"/></symbol>
-<symbol id="i-queue" viewBox="0 0 48 48"><rect x="5" y="8" width="30" height="8" rx="2" fill="url(#gB)"/><rect x="5" y="20" width="30" height="8" rx="2" fill="url(#gB)" opacity=".8"/><rect x="5" y="32" width="30" height="8" rx="2" fill="url(#gB)" opacity=".6"/><path d="M40 10v26m-4-4l4 4 4-4" fill="none" stroke="url(#gT)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-<symbol id="i-container" viewBox="0 0 48 48"><path d="M24 4l18 9v22l-18 9-18-9V13z" fill="url(#gB)"/><path d="M24 24L6 13M24 24l18-11M24 24v20" stroke="#fff" stroke-width="1.6" opacity=".75"/><path d="M24 4l18 9-18 11L6 13z" fill="#9CC8F5" opacity=".9"/></symbol>
-<symbol id="i-key" viewBox="0 0 48 48"><rect x="4" y="6" width="40" height="36" rx="4" fill="url(#gO)" opacity=".22"/><circle cx="17" cy="24" r="8" fill="none" stroke="url(#gO)" stroke-width="5"/><path d="M25 24h16M35 24v6M40 24v4" stroke="#E8780C" stroke-width="4" stroke-linecap="round"/></symbol>
-<symbol id="i-comment" viewBox="0 0 48 48"><path d="M5 9a4 4 0 0 1 4-4h30a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H22l-9 8v-8H9a4 4 0 0 1-4-4z" fill="url(#gB)"/><path d="M13 15h22M13 21h22M13 27h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></symbol>
-<symbol id="i-capture" viewBox="0 0 48 48"><rect x="4" y="9" width="40" height="30" rx="3" fill="url(#gK)"/><path d="M8 32l9-10 7 7 6-5 10 8" fill="none" stroke="#6BE9FF" stroke-width="2.6" stroke-linejoin="round"/><circle cx="35" cy="17" r="3" fill="#FFC266"/></symbol>
-<symbol id="i-rules" viewBox="0 0 48 48"><path d="M10 4h28a2 2 0 0 1 2 2v36a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="url(#gT)"/><path d="M14 14l3 3 5-6M14 26l3 3 5-6M26 14h9M26 27h9M14 37h21" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-</defs><rect class="bgr" width="1240" height="800"/>
-<rect class="zone" x="16" y="52" width="200" height="732" rx="10"/><text class="zt" x="30" y="74">Where people work</text>
-<rect class="zone core" x="256" y="52" width="600" height="478" rx="10"/><text class="zt" x="270" y="74">Threatlint core · analysis only (read-only)</text>
-<rect class="zone write" x="256" y="560" width="600" height="224" rx="10"/><text class="zt" x="270" y="582">Operational workflows · explicit, approval-gated writes</text>
-<rect class="zone" x="896" y="52" width="328" height="188" rx="10"/><text class="zt" x="910" y="74">AI models</text>
-<rect class="zone" x="896" y="268" width="328" height="262" rx="10"/><text class="zt" x="910" y="290">Evidence sources (untrusted input)</text>
-<rect class="zone" x="896" y="560" width="328" height="224" rx="10"/><text class="zt" x="910" y="582">Systems of record</text>
-<g class="node"><use href="#i-user" x="96.0" y="82" width="40" height="40"/><text class="lbl" x="116" y="137" text-anchor="middle">Developer / AppSec</text><text class="sub" x="116" y="151" text-anchor="middle">asks one question</text></g>
-<g class="node"><use href="#i-ide" x="96.0" y="182" width="40" height="40"/><text class="lbl" x="116" y="237" text-anchor="middle">IDE + guard hooks</text><text class="sub" x="116" y="251" text-anchor="middle">VS Code, Cursor, Windsurf</text></g>
-<path class="bus" d="M176 202H236"/>
-<g class="node"><use href="#i-assistant" x="96.0" y="282" width="40" height="40"/><text class="lbl" x="116" y="337" text-anchor="middle">AI coding assistants</text><text class="sub" x="116" y="351" text-anchor="middle">Claude Code, Copilot, Codex</text></g>
-<path class="bus" d="M176 302H236"/>
-<g class="node"><use href="#i-cli" x="96.0" y="382" width="40" height="40"/><text class="lbl" x="116" y="437" text-anchor="middle">Threatlint CLI</text><text class="sub" x="116" y="451" text-anchor="middle">threatlint run · guard · avit</text></g>
-<path class="bus" d="M176 402H236"/>
-<g class="node"><use href="#i-web" x="96.0" y="482" width="40" height="40"/><text class="lbl" x="116" y="537" text-anchor="middle">Workbench</text><text class="sub" x="116" y="551" text-anchor="middle">browser + desktop app</text></g>
-<path class="bus" d="M176 502H236"/>
-<g class="node"><use href="#i-pipeline" x="96.0" y="582" width="40" height="40"/><text class="lbl" x="116" y="637" text-anchor="middle">CI/CD templates</text><text class="sub" x="116" y="651" text-anchor="middle">GitHub Actions, Azure Pipelines</text></g>
-<path class="bus" d="M176 602H236"/>
-<g class="node"><use href="#i-teams" x="96.0" y="682" width="40" height="40"/><text class="lbl" x="116" y="737" text-anchor="middle">Teams bot</text><text class="sub" x="116" y="751" text-anchor="middle">discuss supplied evidence</text></g>
-<path class="bus" d="M176 702H236"/>
-<path class="bus" d="M236 202V722"/>
-<path class="flow" d="M236 124H318" marker-end="url(#arr)"/><text class="fl" x="277" y="116" text-anchor="middle">request</text>
-<g class="node"><use href="#i-router" x="334.0" y="92" width="44" height="44"/><text class="lbl" x="356" y="151" text-anchor="middle">Commands + routing</text><text class="sub" x="356" y="165" text-anchor="middle">42 slash commands</text><text class="sub" x="356" y="178" text-anchor="middle">CLAUDE.md / AGENTS.md</text></g>
-<g class="node"><use href="#i-agent" x="534.0" y="92" width="44" height="44"/><text class="lbl" x="556" y="151" text-anchor="middle">Specialist agents (22)</text><text class="sub" x="556" y="165" text-anchor="middle">Opus 5.5 · plan mode</text><text class="sub" x="556" y="178" text-anchor="middle">Write/Edit disallowed</text></g>
-<g class="node"><use href="#i-skills" x="734.0" y="92" width="44" height="44"/><text class="lbl" x="756" y="151" text-anchor="middle">Skill registry (26)</text><text class="sub" x="756" y="165" text-anchor="middle">agent-skills.json</text><text class="sub" x="756" y="178" text-anchor="middle">2 shared + 24 domain</text></g>
-<path class="flow" d="M402 114H508" marker-end="url(#arr)"/><text class="fl" x="455" y="106" text-anchor="middle">route</text>
-<path class="flow" d="M708 114H604" marker-end="url(#arr)"/><text class="fl" x="656" y="106" text-anchor="middle">load skills</text>
-<g class="node"><use href="#i-tools" x="334.0" y="262" width="44" height="44"/><text class="lbl" x="356" y="321" text-anchor="middle">Read-only tools</text><text class="sub" x="356" y="335" text-anchor="middle">Read · Grep · Glob</text><text class="sub" x="356" y="348" text-anchor="middle">allowlisted git/ls/find</text></g>
-<g class="node"><use href="#i-policy" x="534.0" y="262" width="44" height="44"/><text class="lbl" x="556" y="321" text-anchor="middle">Agent runner</text><text class="sub" x="556" y="335" text-anchor="middle">tool-use loop, streaming</text><text class="sub" x="556" y="348" text-anchor="middle">agent_runner / agents.cjs</text></g>
-<g class="node"><use href="#i-rules" x="734.0" y="262" width="44" height="44"/><text class="lbl" x="756" y="321" text-anchor="middle">Model policy + config</text><text class="sub" x="756" y="335" text-anchor="middle">models.py · org.json</text><text class="sub" x="756" y="348" text-anchor="middle">env overrides</text></g>
-<path class="flow" d="M556 190V256" marker-end="url(#arr)"/>
-<path class="flow" d="M512 284H402" marker-end="url(#arr)" marker-start="url(#arr)"/><text class="fl" x="457" y="276" text-anchor="middle">tool calls</text>
-<path class="flow" d="M710 284H602" marker-end="url(#arr)"/><text class="fl" x="656" y="276" text-anchor="middle">model</text>
-<g class="node"><use href="#i-guard" x="334.0" y="412" width="44" height="44"/><text class="lbl" x="356" y="471" text-anchor="middle">Offline guard</text><text class="sub" x="356" y="485" text-anchor="middle">deterministic patterns</text><text class="sub" x="356" y="498" text-anchor="middle">no model, exit-code gate</text></g>
-<g class="node"><use href="#i-doc" x="534.0" y="412" width="44" height="44"/><text class="lbl" x="556" y="471" text-anchor="middle">Report writer</text><text class="sub" x="556" y="485" text-anchor="middle">Markdown → Word</text><text class="sub" x="556" y="498" text-anchor="middle">NOT APPLIED / NOT RUN</text></g>
-<g class="node"><use href="#i-db" x="734.0" y="412" width="44" height="44"/><text class="lbl" x="756" y="471" text-anchor="middle">Local report store</text><text class="sub" x="756" y="485" text-anchor="middle">~/.threatlint/workbench</text><text class="sub" x="756" y="498" text-anchor="middle">outside the repo</text></g>
-<path class="flow" d="M556 360V406" marker-end="url(#arr)"/>
-<path class="flow" d="M602 434H708" marker-end="url(#arr)"/>
-<g class="node"><use href="#i-queue" x="309.0" y="604" width="44" height="44"/><text class="lbl" x="331" y="663" text-anchor="middle">AVIT orchestrator</text><text class="sub" x="331" y="677" text-anchor="middle">ServiceNow queues</text></g>
-<g class="node"><use href="#i-rules" x="459.0" y="604" width="44" height="44"/><text class="lbl" x="481" y="663" text-anchor="middle">Semgrep tuning</text><text class="sub" x="481" y="677" text-anchor="middle">proof-gated, monitor mode</text></g>
-<g class="node"><use href="#i-container" x="609.0" y="604" width="44" height="44"/><text class="lbl" x="631" y="663" text-anchor="middle">DAST sandbox</text><text class="sub" x="631" y="677" text-anchor="middle">no-egress branch deploy</text></g>
-<g class="node"><use href="#i-chart" x="759.0" y="604" width="44" height="44"/><text class="lbl" x="781" y="663" text-anchor="middle">Sidekick + dashboards</text><text class="sub" x="781" y="677" text-anchor="middle">vReports, trends</text></g>
-<text class="note" x="556" y="756" text-anchor="middle">Each action needs its own confirmation. Asking a reviewer for a fix never grants write access.</text>
-<path class="flow warn" d="M556 486V598" marker-end="url(#arrW)"/><text class="fl" x="566" y="548" text-anchor="start">approved report</text>
-<g class="node"><use href="#i-cloud" x="968.0" y="92" width="44" height="44"/><text class="lbl" x="990" y="151" text-anchor="middle">Cloud models</text><text class="sub" x="990" y="165" text-anchor="middle">Claude · OpenAI</text><text class="sub" x="990" y="178" text-anchor="middle">Copilot · Codex</text></g>
-<g class="node"><use href="#i-server" x="1118.0" y="92" width="44" height="44"/><text class="lbl" x="1140" y="151" text-anchor="middle">Local model</text><text class="sub" x="1140" y="165" text-anchor="middle">LM Studio :1234</text><text class="sub" x="1140" y="178" text-anchor="middle">source stays on box</text></g>
-<path class="flow" d="M804 270C850 270 860 160 932 140" marker-end="url(#arr)" marker-start="url(#arr)"/><text class="fl" x="846" y="196" text-anchor="start">prompt + inspected source</text>
-<g class="node"><use href="#i-repo" x="968.0" y="304" width="44" height="44"/><text class="lbl" x="990" y="363" text-anchor="middle">Repository / SCM</text><text class="sub" x="990" y="377" text-anchor="middle">source, diff, history</text><text class="sub" x="990" y="390" text-anchor="middle">GitHub · Azure DevOps</text></g>
-<g class="node"><use href="#i-scanner" x="1118.0" y="304" width="44" height="44"/><text class="lbl" x="1140" y="363" text-anchor="middle">Scanner results</text><text class="sub" x="1140" y="377" text-anchor="middle">SARIF · Semgrep · Sonar</text><text class="sub" x="1140" y="390" text-anchor="middle">DefectDojo · PDF reports</text></g>
-<g class="node"><use href="#i-ticket" x="968.0" y="420" width="44" height="44"/><text class="lbl" x="990" y="479" text-anchor="middle">ServiceNow AVITs</text><text class="sub" x="990" y="493" text-anchor="middle">vulnerability records</text></g>
-<g class="node"><use href="#i-capture" x="1118.0" y="420" width="44" height="44"/><text class="lbl" x="1140" y="479" text-anchor="middle">Runtime captures</text><text class="sub" x="1140" y="493" text-anchor="middle">redacted, authorized</text></g>
-<path class="flow" d="M896 380H858" marker-end="url(#arr)"/><text class="fl" x="877" y="372" text-anchor="middle">evidence</text>
-<g class="node"><use href="#i-comment" x="968.0" y="600" width="44" height="44"/><text class="lbl" x="990" y="659" text-anchor="middle">PR / pipeline</text><text class="sub" x="990" y="673" text-anchor="middle">comments, gates</text></g>
-<g class="node"><use href="#i-ticket" x="1118.0" y="600" width="44" height="44"/><text class="lbl" x="1140" y="659" text-anchor="middle">ServiceNow</text><text class="sub" x="1140" y="673" text-anchor="middle">work note, attachment, closure</text></g>
-<g class="node"><use href="#i-scanner" x="972.0" y="692" width="36" height="36"/><text class="lbl" x="990" y="743" text-anchor="middle">Semgrep platform</text><text class="sub" x="990" y="757" text-anchor="middle">ignore + tuned rule</text></g>
-<g class="node"><use href="#i-key" x="1122.0" y="692" width="36" height="36"/><text class="lbl" x="1140" y="743" text-anchor="middle">Secret sources</text><text class="sub" x="1140" y="757" text-anchor="middle">env · org.json · Parameter Store</text></g>
-<path class="flow warn" d="M856 652H932" marker-end="url(#arrW)"/><text class="fl" x="894" y="644" text-anchor="middle">write-back</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1050" viewBox="0 0 1440 1050" role="img" aria-labelledby="title desc">
+<title id="title">Threatlint: shared contracts, separate runtimes</title><desc id="desc">The package shares specialist protocols and skills across separate clients. Native clients, Python CLI, Node Workbench, and CI or Teams have distinct runtime boundaries. Local evidence and selected models feed advisory outputs; operational writes use separate authorization.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0L8 4L0 8" fill="#456475"/></marker><marker id="amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#9b6017"/></marker></defs>
+<style>text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#163542}.title{font-size:30px;font-weight:700;letter-spacing:-.5px}.sub{font-size:17px;fill:#486472}.head{font-size:19px;font-weight:700}.body{font-size:16px;fill:#355662}.small{font-size:14px;fill:#486472}.tag{font-size:13px;font-weight:700;letter-spacing:1px;fill:#087967}.line{fill:none;stroke:#456475;stroke-width:2;marker-end:url(#arrow)}.write{fill:none;stroke:#9b6017;stroke-width:2;marker-end:url(#amber)}.edge{font-size:14px;fill:#355662;paint-order:stroke;stroke:#f7fafb;stroke-width:6px;stroke-linejoin:round}.boundary{fill:#fff;stroke:#c95353;stroke-width:1.5;stroke-dasharray:8 6}</style>
+<rect width="1440" height="1050" rx="18" fill="#f7fafb"/>
+<text x="48" y="56" class="title">Shared contracts. Separate runtimes. Explicit authority.</text>
+<text x="48" y="87" class="sub">Component map · implementation-oriented · model and native-client behavior depend on configuration</text>
+<rect x="48" y="123" width="1344" height="125" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
+<text x="68" y="152" class="head">Canonical review material</text>
+<text x="68" y="177" class="body">22 specialist protocols + 26 skills + agent-skills.json + agent-contracts.json</text>
+<text x="68" y="202" class="body">Installers and prompt assembly share contracts; CI and conversation adapters also use purpose-specific prompt packs.</text>
+<path d="M198 248V295" class="line"/>
+<path d="M546 248V295" class="line"/>
+<path d="M894 248V295" class="line"/>
+<path d="M1242 248V295" class="line"/>
+<rect x="48" y="298" width="300" height="216" rx="12" fill="#ffffff" stroke="#c5d5dc" stroke-width="1.5"/>
+<text x="68" y="327" class="tag">CLIENT RUNTIME</text>
+<text x="68" y="354" class="head">Native coding clients</text>
+<text x="68" y="379" class="body">Claude / Copilot / Codex</text>
+<text x="68" y="404" class="body">Installed agents + skills</text>
+<text x="68" y="429" class="body">Client-owned tool loop</text>
+<text x="68" y="454" class="body">Client permissions apply</text>
+<rect x="396" y="298" width="300" height="216" rx="12" fill="#ffffff" stroke="#c5d5dc" stroke-width="1.5"/>
+<text x="416" y="327" class="tag">PYTHON RUNTIME</text>
+<text x="416" y="354" class="head">Python CLI</text>
+<text x="416" y="379" class="body">cli.py + run_context.py</text>
+<text x="416" y="404" class="body">Provider-specific API loops</text>
+<text x="416" y="429" class="body">agent_tools.py or CLI adapter</text>
+<text x="416" y="454" class="body">report_output.py</text>
+<rect x="744" y="298" width="300" height="216" rx="12" fill="#ffffff" stroke="#c5d5dc" stroke-width="1.5"/>
+<text x="764" y="327" class="tag">NODE RUNTIME</text>
+<text x="764" y="354" class="head">Workbench</text>
+<text x="764" y="379" class="body">Browser + Electron UI</text>
+<text x="764" y="404" class="body">Same local Node backend</text>
+<text x="764" y="429" class="body">pipeline.cjs + providers.cjs</text>
+<text x="764" y="454" class="body">tools.cjs + report-writer.cjs</text>
+<rect x="1092" y="298" width="300" height="216" rx="12" fill="#ffffff" stroke="#c5d5dc" stroke-width="1.5"/>
+<text x="1112" y="327" class="tag">HOSTED WORKFLOWS</text>
+<text x="1112" y="354" class="head">CI and conversations</text>
+<text x="1112" y="379" class="body">GitHub / Azure / Teams</text>
+<text x="1112" y="404" class="body">Snapshot or supplied evidence</text>
+<text x="1112" y="429" class="body">Workflow-specific permissions</text>
+<text x="1112" y="454" class="body">Not the Workbench process</text>
+<rect x="48" y="552" width="1344" height="118" rx="12" fill="#edf2f5"/>
+<text x="72" y="581" class="tag">EVIDENCE + PROVIDER BOUNDARIES</text>
+<text x="72" y="611" class="body">Repository source, diffs, scanner artifacts, supplied design documents, and runtime captures are untrusted evidence.</text>
+<text x="72" y="641" class="body">Selected local or cloud providers receive the context each runner sends. A shared prompt is not a shared sandbox.</text>
+<path d="M198 514V548" class="line"/>
+<path d="M546 514V548" class="line"/>
+<path d="M894 514V548" class="line"/>
+<path d="M1242 514V548" class="line"/>
+<path d="M420 670V719" class="line"/>
+<path d="M1068 670V719" class="line"/>
+<rect x="48" y="722" width="744" height="156" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
+<text x="68" y="751" class="head">Advisory analysis and report persistence</text>
+<text x="68" y="776" class="body">Findings + assumptions + proposed changes + validation status</text>
+<text x="68" y="801" class="body">Format checks are not a factual verifier. Output locations vary by host.</text>
+<text x="68" y="826" class="body">Source analysis is read-only; host-owned report persistence can write files.</text>
+<rect x="824" y="722" width="568" height="156" rx="12" fill="#fff5e4" stroke="#d9b06b" stroke-width="1.5"/>
+<text x="844" y="751" class="head">Separate operational workflows</text>
+<text x="844" y="776" class="body">Tracker closure · rule publishing · PR comments · runtime</text>
+<text x="844" y="801" class="body">Require authorized targets/actions and workflow-specific controls.</text>
+<text x="844" y="826" class="body">A finding or downstream agent cannot grant that authority.</text>
+<text x="48" y="930" class="tag">SOURCE MAP</text>
+<text x="48" y="961" class="body">Contracts: src/threatlint/data/  ·  Python: src/threatlint/  ·  Workbench: web/lib/  ·  CI: .github/scripts/</text>
+<text x="48" y="993" class="small">Offline guard: a separate deterministic scanner, with no model call. See docs/architecture.md for source links and limits.</text>
 </svg>

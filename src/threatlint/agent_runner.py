@@ -6,6 +6,7 @@ import http.client
 import json as _json
 
 from .agent_tools import _TOOLS, _execute_tool
+from .inspection_batch import run_inspections
 
 
 _MAX_AGENT_ITERATIONS = 80
@@ -35,7 +36,7 @@ class _StreamTurn:
     def __init__(self) -> None:
         self.text = ""
         self.calls: dict[int, dict] = {}
-        self.finish_reason = "stop"
+        self.finish_reason = None
         self.done = False
 
     def feed_line(self, line: str) -> None:
@@ -94,20 +95,21 @@ def _stream_turn(base_url: str, model: str, messages: list[dict], api_key: str) 
                     turn.feed_line(line)
     except (OSError, http.client.HTTPException) as exc:
         raise RuntimeError(f"Model request failed: {exc}") from exc
+    if turn.finish_reason not in ("stop", "tool_calls"):
+        raise RuntimeError("Model stream did not complete successfully; no final report was saved")
     return turn
 
 
 def _run_tool_calls(turn: _StreamTurn, repo_root: str) -> list[dict]:
-    results = []
+    calls = []
     for call in turn.calls.values():
         try:
             args = _json.loads(call["args"] or "{}")
         except _json.JSONDecodeError:
-            args = {}
-        short = ", ".join(f"{k}={repr(v)[:40]}" for k, v in list(args.items())[:2])
-        print(f"  → {call['name']}({short})", flush=True)
-        results.append({"role": "tool", "tool_call_id": call["id"], "content": str(_execute_tool(repo_root, call["name"], args))})
-    return results
+            raise RuntimeError("Model returned invalid inspection tool arguments") from None
+        calls.append((call["id"], call["name"], args))
+    results = run_inspections(calls, repo_root, _execute_tool, lambda text: print(text, end="", flush=True))
+    return [{"role": "tool", "tool_call_id": call[0], "content": result} for call, result in zip(calls, results)]
 
 
 def _user_content(text: str, images=()) -> str | list[dict]:
@@ -126,14 +128,14 @@ def _run_agent(base_url: str, model: str, system_prompt: str,
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": _user_content(user_message, images)},
     ]
-    full_text = ""
     for _iteration in range(_MAX_AGENT_ITERATIONS):
         turn = _stream_turn(base_url, model, messages, api_key)
-        full_text += turn.text
         messages.append(turn.assistant_message())
+        if turn.finish_reason == "stop" and not turn.calls:
+            return turn.text
         if turn.finish_reason != "tool_calls" or not turn.calls:
-            break
+            raise RuntimeError("Model returned an incomplete analysis; no final report was saved")
         if turn.text:
             print()
         messages.extend(_run_tool_calls(turn, repo_root))
-    return full_text
+    raise RuntimeError("Inspection budget reached; analysis is incomplete and was not saved as a final report")

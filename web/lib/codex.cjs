@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { StringDecoder } = require('node:string_decoder');
+const { superviseChild } = require('./child-lifecycle.cjs');
 
 const STATUS_TIMEOUT_MS = 15_000;
 const RUN_TIMEOUT_MS = Number(process.env.THREATLINT_CODEX_TIMEOUT_MS) || 60 * 60_000;
@@ -90,6 +91,7 @@ async function runCodex({ systemPrompt, userMessage, images = [], history = [], 
   onEvent = () => {}, signal, daybreakBlue = false, env = process.env,
   spawnImpl = spawn, codexPath = executable({ env }) }) {
   if (!codexPath) throw new Error('Codex CLI is not installed. Install Codex, run `codex login`, then retry.');
+  if (signal?.aborted) throw Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
   const imageDir = images.length ? fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-codex-images-')) : null;
   const imagePaths = images.map((image, index) => {
     const file = path.join(imageDir, `${index + 1}-${path.basename(image.name || 'image').replace(/[^\w.-]/g, '_')}`);
@@ -100,11 +102,9 @@ async function runCodex({ systemPrompt, userMessage, images = [], history = [], 
     return await new Promise((resolve, reject) => {
       const child = spawnImpl(codexPath, command({ repoPath, model, daybreakBlue, images: imagePaths }),
         { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-      let buffer = '', stderr = '', lastMessage = '', completed = false, failed = false, settled = false;
+      let buffer = '', stderr = '', lastMessage = '', completed = false, failed = false;
       const decoder = new StringDecoder('utf8');
-      const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener?.('abort', abort); error ? reject(error) : resolve(value); };
-      const abort = () => { child.kill('SIGTERM'); finish(Object.assign(new Error('Run cancelled'), { name: 'AbortError' })); };
-      const invalidStream = message => { child.kill('SIGTERM'); finish(new Error(message)); };
+      const invalidStream = message => lifecycle.stop(new Error(message));
       const consume = line => {
         if (!line.trim()) return;
         if (line.length > MAX_EVENT_LINE) return invalidStream('Codex returned an oversized event');
@@ -117,28 +117,26 @@ async function runCodex({ systemPrompt, userMessage, images = [], history = [], 
           if (result?.failed) failed = true;
         } catch { invalidStream('Codex returned an invalid event stream'); }
       };
-      const timer = setTimeout(() => { child.kill('SIGTERM'); finish(new Error('Codex did not finish within the configured timeout')); }, RUN_TIMEOUT_MS);
-      if (signal?.aborted) return abort();
-      signal?.addEventListener?.('abort', abort, { once: true });
+      const lifecycle = superviseChild(child, { signal, timeoutMs: RUN_TIMEOUT_MS,
+        timeoutMessage: 'Codex did not finish within the configured timeout', startMessage: 'Codex could not start. Check the installed CLI.', resolve, reject,
+        onClose(code, finish) {
+          buffer += decoder.end();
+          if (buffer.trim()) consume(buffer);
+          if (lifecycle.settled) return;
+          if (code === 0 && completed && !failed && lastMessage.trim()) return finish(null, lastMessage);
+          const login = /login|auth/i.test(stderr) ? ' Run `codex login` and retry.' : '';
+          finish(new Error(`Codex run did not complete.${login}`));
+        },
+      });
       child.stdout.on('data', chunk => {
-        if (settled) return;
+        if (lifecycle.settled || lifecycle.stopping) return;
         buffer += decoder.write(chunk);
         const lines = buffer.split('\n'); buffer = lines.pop();
         if (buffer.length > MAX_EVENT_LINE) return invalidStream('Codex returned an oversized event');
-        for (const line of lines) { if (settled) break; consume(line); }
+        for (const line of lines) { if (lifecycle.settled || lifecycle.stopping) break; consume(line); }
       });
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-MAX_STDERR); });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') invalidStream('Codex could not receive the review request'); });
-      child.on('error', () => finish(new Error('Codex could not start. Check the installed CLI.')));
-      child.on('close', code => {
-        if (settled) return;
-        buffer += decoder.end();
-        if (buffer.trim()) consume(buffer);
-        if (settled) return;
-        if (code === 0 && completed && !failed && lastMessage.trim()) return finish(null, lastMessage);
-        const login = /login|auth/i.test(stderr) ? ' Run `codex login` and retry.' : '';
-        finish(new Error(`Codex run did not complete.${login}`));
-      });
       child.stdin.end(promptText(systemPrompt, history, userMessage));
     });
   } finally {

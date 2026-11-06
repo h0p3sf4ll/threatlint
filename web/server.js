@@ -112,6 +112,7 @@ function createWorkbench(options = {}) {
     pipeline.abortAll();
     avitRuns.close();
     unsubscribe();
+    await scanImports.close();
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));

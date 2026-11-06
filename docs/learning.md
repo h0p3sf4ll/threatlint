@@ -1,0 +1,186 @@
+# Learn Threatlint by taking one review around the track
+
+You do not need to train a model to use Threatlint well. You need to understand what evidence
+it saw, which decisions it can make, and which actions its host allows. This guide starts with
+a small review and then explains the machinery. All exercises use synthetic or authorized
+source. No exercise requires attacking a live service.
+
+## 1. Take a sighting lap: inspect the sample report
+
+Start the [Workbench](workbench.md#requirements-and-first-launch) and choose **See a sample
+findings report**. No provider or source checkout is required for that preview.
+
+Look for five things:
+
+1. **Location:** a file and line, or a precise runtime artifact reference.
+2. **Path:** how attacker-controlled input could reach an important operation.
+3. **Control:** what prevents the path, or what is missing.
+4. **Proposed change:** the smallest correction, with compatibility caveats.
+5. **Acceptance check:** an observable result, clearly labeled NOT RUN unless execution is recorded.
+
+The sample is synthetic. A polished dashboard is like a convincing simulator lap: useful for
+learning the controls, but not evidence that your own car passed scrutineering.
+
+**Checkpoint:** explain one finding without reading its severity badge. If you cannot say what
+the attacker controls and what changes for them, the report needs more evidence.
+
+## 2. Choose the right crew member
+
+A race engineer, tire engineer, and engine specialist study different problems. Threatlint's
+specialists similarly have different questions, evidence requirements, and report contracts.
+They may use the same underlying model. Twenty-two specialists are not twenty-two independently
+trained security models, and asking more of them does not guarantee a correct result.
+
+| You want to know… | Start with | Follow with, only if needed |
+| --- | --- | --- |
+| What could go wrong in this system? | Threat modeler | Attack tree for one asset; domain review for a particular boundary |
+| Did this change remove a control? | Code reviewer | Auth/API/business logic for the affected behavior |
+| Does this scanner claim survive source inspection? | Findings triager | A domain specialist when its root cause needs deeper analysis |
+| Is this AI feature giving documents too much authority? | AI security reviewer | Privacy for data recipients; client security for rendering |
+| Is the proposed repair enough? | Verify fix | Security test planner, then a separately authorized test runner |
+
+Use the [assignment boundaries](agents.md#define-the-assignment-before-choosing-more-agents)
+to distinguish the specialists. Avoid “audit everything” when you actually need a decision
+about one route, role, finding, or change.
+
+**Checkpoint:** write a one-sentence assignment with target, question, and expected decision.
+Example: “Review the change to invoice downloads for cross-tenant access; explain any newly
+reachable path and propose a denial test plus the legitimate allowed case.”
+
+## 3. Give the reviewer a setup sheet and telemetry
+
+For a threat model, select the repository and branch through **Sources**, or open a local
+checkout. Add a design diagram, specification, or architecture note through the review's
+**Add supporting docs** control. Consult [Design inputs](workbench.md#design-inputs) for supported formats
+and limits.
+
+The design is the setup sheet: what the team intended. The source is evidence of the car that
+was actually assembled. Neither alone tells you how it behaved at full load. Runtime captures
+are telemetry, useful only with provenance: which version, account/role, environment, action,
+and time produced them?
+
+- Record the selected revision when comparing runs. A branch name can move.
+- Keep design assumptions separate from source facts. A box labeled “authenticated” is not
+  proof the implementation enforces authentication.
+- Upload only material permitted for the selected model/provider. A local UI can still send
+  source and documents to a remote model.
+- Use synthetic examples and redact sensitive evidence. Do not upload passwords or session tokens.
+- Check truncation disclosures. A context window is finite; omitted files are not reviewed files.
+
+**Checkpoint:** identify one design claim and the source location that supports or contradicts it.
+If there is no corresponding source, record “not verified” rather than treating the diagram as truth.
+
+## 4. Understand the model's role
+
+A language model predicts token sequences from context. It can interpret source, propose a
+hypothesis, choose an available inspection tool, and revise its reasoning when a result arrives.
+It does not automatically know your repository, execute the code it describes, or establish
+that a security conclusion is correct.
+
+| Term | Plain meaning | Track-side comparison and its limit |
+| --- | --- | --- |
+| Token | A unit of text representation consumed/generated by the model | Pieces of a radio message; not one token per word |
+| Context window | The bounded input/output capacity of a model request | The notes currently on the pit wall, not a complete permanent memory |
+| Prompt | Instructions and evidence supplied to the model | A briefing; it can guide judgment but cannot enforce physical safety rules |
+| Agent | Model + task + tools + control loop, under a host's authority | An engineer who can ask for telemetry; not an unrestricted mechanic |
+| Skill | Reusable instructions for how to perform a type of analysis | A setup procedure, not a newly trained engine or an executable permission |
+| Tool | A host-implemented operation with validated arguments | An instrument or inspection rig; the host controls what it can actually do |
+| Retrieval | Selecting evidence to add to context | Finding the relevant lap trace; retrieval does not establish its truth or access rights |
+| RAG | Retrieval-augmented generation | Consulting selected records before answering; not a claim that Threatlint uses a vector database |
+| Hallucination | Unsupported or false generated detail | A plausible diagnosis with no matching telemetry |
+| Evaluation | Tests measuring specified behavior on defined cases | A repeatable test session, not a claim of universal performance |
+
+In Threatlint's owned API loops, the basic sequence is **build context → request model output →
+validate/execute permitted inspection → return tool results → repeat → save final report**.
+Native-client runs delegate parts of this loop to Claude Code or Codex. CI snapshot workflows
+may supply bounded source up front rather than using the same interactive loop. See the
+[implementation map](architecture.md#components-and-source-of-truth).
+
+**Checkpoint:** find a tool result in a review and distinguish what the tool observed from
+what the model inferred from it.
+
+## 5. Parallelize the pit stop, not the dependencies
+
+Four mechanics can work on independent wheels. One cannot tighten a wheel that has not been
+fitted. In an agent workflow, dependency edges are the same kind of constraint.
+
+- **Independent work:** API and dependency inspection can often begin from the same source
+  and scope without using each other's reports.
+- **Dependent work:** an attack tree based on a threat model must wait for that model; a test
+  plan based on findings must wait for the reports it is expected to cover.
+- **A join:** a downstream task starts only after its required predecessors finish successfully.
+- **A failure:** missing upstream evidence should remain a visible gap, not a fabricated empty result.
+- **A cancellation:** stop dispatching new work, cancel supported requests, and account for tasks
+  already running. “Stop requested” is not the same as proof every external effect was undone.
+
+A directed acyclic graph (DAG) represents these dependencies without loops. The scheduler
+runs eligible nodes up to a concurrency limit. A separate admission limit can cap model work
+across multiple workflows. Tool-call concurrency is another level: several independent reads
+in one model turn can overlap even when the specialist pipeline is sequential.
+
+Parallelism changes latency and resource demand, not the amount of evidence required. More
+concurrency can trigger provider quotas, use more memory, or make the result slower. Measure
+wall time, active requests, cancellation latency, errors, cost/token use, and unchanged report
+coverage against the **same** source and task. Record cache/provider variability and avoid
+unsubstantiated “N× faster” claims.
+
+**Checkpoint:** draw a small graph for threat model → attack tree → test plan, with an independent
+dependency audit. Explain whether the test plan should also depend on that audit before running it.
+
+## 6. Secure the agent like a safety-critical pit lane
+
+An LLM can encounter attacker-controlled instructions in a source comment, scanner result,
+PDF, web response, or earlier report. The risk is not merely that it reads those words. The
+risk is that those words influence a privileged action the attacker could not authorize.
+
+| Boundary | Example failure | Deterministic control to inspect |
+| --- | --- | --- |
+| Evidence → instructions | A README asks the agent to reveal secrets | Data/instruction separation plus host restrictions that still deny secret access or transmission |
+| Model → tool | A proposed path escapes the selected repository | Path resolution/confinement and argument validation in the executor |
+| Tool → process | An apparently read-only shell command invokes a hook | Allowlisted executable/flags, no shell interpolation, isolated execution for untrusted repositories |
+| Retrieval → user | One tenant's document appears in another tenant's context | Authorization at retrieval and consumption, tenant-bound storage and caches |
+| Output → application | A report contains active HTML or a command | Safe rendering and no automatic evaluation of model-generated code |
+| Advisory result → write | An FP verdict closes a ticket without approved scope | Separate write executor, action/target authorization, proof checks, and audit records |
+| Workflow → budget | Fan-out exhausts quota or never stops | Bounded loops, concurrency/admission limits, cancellation, and observable failures |
+
+Prompts saying “be safe” are like asking the driver to be careful. Path restrictions, isolated
+processes, and separate write capabilities are closer to barriers and interlocks. Even these
+need testing; a command allowlist is not an OS sandbox, and a read-only agent can still expose
+information to an approved-but-inappropriate destination.
+
+**Checkpoint:** for a hypothetical malicious design document, identify an untrusted entry,
+a possible privileged sink, and the host control that must deny the unauthorized action.
+Do not execute an attack to complete this exercise.
+
+## 7. Close the engineering loop
+
+1. Review the evidence and state the decision being made.
+2. Assign an owner and a small proposed change.
+3. Have the authorized development workflow implement it.
+4. Use fix verification to assess the current source and residual bypasses.
+5. Run appropriate tests in an authorized environment with synthetic fixtures.
+6. Preserve the actual revision, command, result, and artifact reference.
+7. Close or suppress findings only through the separately authorized operational workflow.
+
+The security test planner's assertion is a test plan, not telemetry. The report parser's
+“required fields present” check is formatting QA, not an independent inspection of the car.
+Severity describes impact/priority; confidence describes strength of evidence. Neither should
+be silently upgraded because multiple agents repeated the same conclusion.
+
+## Suggested learning sessions
+
+| Session | Exercise | Evidence you should produce |
+| --- | --- | --- |
+| 20 minutes | Explore the bundled report; explain one finding | A source/claim/next-action summary, explicitly synthetic |
+| 30–45 minutes | Review one authorized diff with one specialist | Scope, revision, inspected controls, qualified recommendation |
+| 45 minutes | Compare a design note with source | A fact/assumption/drift table, with both artifact references |
+| 45 minutes | Plan a dependent multi-agent review | Dependency graph, concurrency bound, failure and cancellation expectations |
+| 45 minutes | Trace one AI trust boundary in source | Attacker input → decision → host authorization → sink, with limits |
+| 30 minutes | Draft one regression acceptance case | Synthetic fixture, action, allowed/denied oracle, reset, owner, NOT RUN status |
+
+Next: [agent assignments](agents.md), [Workbench guide](workbench.md),
+[architecture and source](architecture.md), [report handoffs](reports.md), or
+[contributor checks](development.md). Use [OWASP's GenAI Security Project](https://genai.owasp.org/)
+and the [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)
+for broader AI-risk vocabulary. Those frameworks complement source inspection; they do not
+certify Threatlint or a reviewed application.

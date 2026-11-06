@@ -11,6 +11,7 @@
   <script src="/vendor/marked.js" defer></script>
   <script src="/vendor/purify.js" defer></script>
   <script src="/fpreview-run.js" defer></script>
+  <script src="/activity-log.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
   <script src="/scan-import.js" defer></script>
@@ -83,15 +84,28 @@
         <div class="workbench-grid">
           <section class="panel pipeline-panel" aria-labelledby="pipeline-title">
             <div class="panel-header"><div><span class="eyebrow">REVIEW BUILDER</span><h2 id="pipeline-title">Your agent pipeline <span id="pipeline-count" class="count-pill">0</span><span data-tip="pipeline"></span></h2></div><button class="text-button" id="clear-pipeline">Clear</button></div>
-            <div class="pipeline-context"><span class="mini-icon">⇢</span><p>Agents run in sequence and build on the previous report. Select a workflow or add specialists.</p></div>
+            <div class="review-source" aria-labelledby="review-source-title">
+              <div class="review-source-heading"><h3 id="review-source-title">Repository &amp; branch</h3><button class="button secondary small-button" id="review-select-source" type="button" data-go-view="sources">Select repo / branch</button></div>
+              <strong id="review-source-name">No repository selected</strong>
+              <p class="small subtle" id="review-source-revision">Choose a connected repository and branch, or open a local folder.</p>
+              <p class="micro subtle">Connected source is pinned to a verified commit. Local folders use the current working tree.</p>
+            </div>
+            <div class="pipeline-context"><span class="mini-icon">⇢</span><p>Independent specialists can review together. Synthesis agents wait for their required evidence. Every agent stays read-only.</p></div>
+            <div class="pipeline-execution-controls">
+              <label for="pipeline-execution-mode">Execution<select id="pipeline-execution-mode"><option value="auto">Auto · dependency-aware</option><option value="sequential">Sequential · one at a time</option></select></label>
+              <label for="pipeline-concurrency">Parallel agents<input id="pipeline-concurrency" type="number" min="1" max="8" step="1" value="3" inputmode="numeric" aria-describedby="pipeline-concurrency-note"></label>
+              <p class="micro subtle" id="pipeline-concurrency-note">Up to 8 concurrent agents. Lower this for local models or provider rate limits.</p>
+            </div>
             <ol id="pipeline-list" class="pipeline-list"></ol>
             <button class="add-agent-button" id="browse-agents">＋ Add a specialist</button>
             <div class="form-section">
               <label for="target">Review scope <span class="subtle">optional</span><span data-tip="scope"></span></label><textarea id="target" rows="3" placeholder="A component, path, commit range, or question. Leave blank for autonomous discovery."></textarea>
               <div class="attachment-row"><button class="button secondary small-button" id="attach-findings">↥ Attach findings</button><span data-tip="attach"></span><span class="small subtle" id="attachment-name">SARIF, JSON, Markdown, or text · up to 5 MB</span><button id="remove-attachment" class="icon-button hidden" aria-label="Remove findings attachment">×</button></div>
               <input type="file" id="findings-file" accept=".sarif,.json,.md,.txt" aria-label="Findings file" hidden>
-              <div class="attachment-row"><button class="button secondary small-button" id="add-design-inputs" type="button" title="Architecture or data-flow diagrams (draw.io, Mermaid, PlantUML, Visio, SVG, Threat Dragon, Threat Modeling Tool), design documents (PDF, Word, PowerPoint, Markdown), API specs (OpenAPI), images of whiteboards or exported diagrams, and code snippets. Agents treat them as evidence and verify every claim against the source.">↥ Add design inputs</button><span class="small subtle" id="design-inputs-note">Diagrams, design docs, specs, or images · up to 20 files, 25 MB</span></div>
+              <div class="supporting-context-heading"><h3>Supporting documentation</h3><p class="small subtle">Add architecture diagrams, design documents, API specs, or whiteboard images. Design claims are untrusted evidence, checked against the selected source. Text and images go to your selected model when you run the review.</p></div>
+              <div class="attachment-row"><button class="button secondary small-button" id="add-design-inputs" type="button" title="Architecture or data-flow diagrams (draw.io, Mermaid, PlantUML, Visio, SVG, Threat Dragon, Threat Modeling Tool), design documents (PDF, Word, PowerPoint, Markdown), API specs (OpenAPI), images of whiteboards or exported diagrams, and code snippets. Agents treat them as evidence and verify every claim against the source.">↥ Add supporting docs</button><span class="small subtle" id="design-inputs-note" aria-live="polite">Up to 20 files · 10 MB each · 25 MB total · images 5 MB each</span></div>
               <ul class="design-input-list" id="design-input-list" hidden></ul>
+              <p class="micro subtle" id="design-inputs-expiry" hidden></p>
               <input type="file" id="design-input-files" multiple aria-label="Design input files" hidden accept=".md,.markdown,.txt,.rst,.adoc,.asciidoc,.html,.htm,.pdf,.docx,.pptx,.vsdx,.drawio,.xml,.svg,.mmd,.mermaid,.puml,.plantuml,.pu,.iuml,.dot,.gv,.d2,.dsl,.c4,.tm7,.json,.yaml,.yml,.toml,.tf,.hcl,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.ts,.java,.go,.cs,.rb,.php,.kt,.swift,.rs,.c,.cpp,.h,.sql,.sh">
               <div id="avit-section" class="avit-section" hidden><label for="avit-list">ServiceNow AVITs <span class="subtle">optional · instead of a findings file</span></label><textarea id="avit-list" rows="2" placeholder="AVIT000000095938462, AVIT000000095938463 — commas, spaces, or one per line" spellcheck="false"></textarea><p class="field-note small subtle" id="avit-note">Only AVITs in the AVR CodeSecurity view are triaged (SAST, SCA, or Secrets); other views are skipped. Each AVIT is fetched from ServiceNow and triaged in one report. Configure ServiceNow access in Model &amp; settings.</p></div>
             </div>
@@ -160,7 +174,7 @@
                 <p class="small subtle operations-break" id="scm-selection">Select a repository to load its branches.</p>
                 <div class="operations-field"><label for="scm-branch">Branch</label><div class="operations-input-row"><select id="scm-branch" aria-describedby="scm-selection" disabled><option value="">Choose a repository first</option></select><button class="button secondary small-button" id="scm-branches-more" type="button" hidden>More branches</button></div></div>
                 <button class="button primary operations-full-button" id="scm-checkout" type="button" disabled>Check out & open workspace <span aria-hidden="true">→</span></button>
-                <p class="field-note subtle operations-break" id="scm-checkout-detail">The local runner creates the checkout. Specialist agents still inspect source without modifying it.</p>
+                <p class="field-note subtle operations-break" id="scm-checkout-detail">The local runner verifies the selected branch’s commit and opens a detached checkout. A branch that moves during checkout must be selected again. Specialists inspect source without modifying it.</p>
               </div>
             </div>
           </section>

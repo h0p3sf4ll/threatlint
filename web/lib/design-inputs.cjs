@@ -197,27 +197,31 @@ async function extract(name, buffer) {
 async function buildBundle(files) {
   if (!Array.isArray(files) || !files.length) fail('Add at least one design input');
   if (files.length > MAX_FILES) fail(`Add at most ${MAX_FILES} design inputs per review`);
-  const total = files.reduce((sum, file) => sum + (file.content?.length || 0), 0);
+  if (files.some(file => !file || typeof file !== 'object' || !Buffer.isBuffer(file.content))) fail('Each design input needs a file name and file content');
+  const total = files.reduce((sum, file) => sum + file.content.length, 0);
   if (total > MAX_TOTAL) fail(`Design inputs can total at most ${MAX_TOTAL / 1024 / 1024} MB`, 413);
-  const documents = [], images = [], summary = [];
+  const documents = [], images = [], summary = [], names = new Set();
   let budget = TOTAL_CHARS;
   for (const file of files) {
     const name = path.basename(String(file.name || 'design-input')).replace(/[^\w.() -]/g, '_').slice(0, 200) || 'design-input';
+    if (names.has(name)) fail(`Duplicate design input name: ${name}. Rename one file so evidence citations stay unambiguous.`);
+    names.add(name);
     if (!Buffer.isBuffer(file.content) || !file.content.length) fail(`${name} is empty`);
     if (file.content.length > MAX_FILE) fail(`${name} exceeds ${MAX_FILE / 1024 / 1024} MB`, 413);
     const extracted = await extract(name, file.content);
+    const sha256 = crypto.createHash('sha256').update(file.content).digest('hex');
     if (extracted.image) {
       if (images.length >= MAX_IMAGES) fail(`Add at most ${MAX_IMAGES} images`);
-      images.push({ name, ...extracted.image });
-      summary.push({ name, kind: extracted.kind, image: true, bytes: file.content.length });
+      images.push({ name, sha256, ...extracted.image });
+      summary.push({ name, sha256, kind: extracted.kind, image: true, bytes: file.content.length });
       continue;
     }
     const full = extracted.text.trim();
     const limit = Math.max(0, Math.min(DOCUMENT_CHARS, budget));
     const text = full.slice(0, limit);
     budget -= text.length;
-    documents.push({ name, kind: extracted.kind, text, truncated: full.length - text.length });
-    summary.push({ name, kind: extracted.kind, chars: text.length, truncated: full.length - text.length, bytes: file.content.length });
+    documents.push({ name, sha256, kind: extracted.kind, text, truncated: full.length - text.length });
+    summary.push({ name, sha256, kind: extracted.kind, chars: text.length, truncated: full.length - text.length, bytes: file.content.length });
   }
   return { documents, images, summary };
 }
@@ -232,9 +236,12 @@ function createDesignInputs({ ttlMs = TTL_MS, now = Date.now } = {}) {
   return {
     async create(files) {
       prune();
-      const bundle = { id: crypto.randomUUID(), createdAt: now(), ...(await buildBundle(files)) };
+      const extracted = await buildBundle(files);
+      for (const entries of Object.values(extracted)) { entries.forEach(Object.freeze); Object.freeze(entries); }
+      const bundle = Object.freeze({ id: crypto.randomUUID(), createdAt: now(), ...extracted });
       bundles.set(bundle.id, bundle);
-      return { id: bundle.id, files: bundle.summary };
+      prune();
+      return { id: bundle.id, files: structuredClone(bundle.summary), expiresAt: bundle.createdAt + ttlMs };
     },
     get(id) {
       prune();
@@ -264,4 +271,4 @@ function designContext(bundle, imageNote = (index, image) => `[Image ${index + 1
   return text;
 }
 
-module.exports = { createDesignInputs, buildBundle, extract, designContext, drawioPage, drawioPages, threatDragon, openApi, MAX_TOTAL, MAX_FILES };
+module.exports = { createDesignInputs, buildBundle, extract, designContext, drawioPage, drawioPages, threatDragon, openApi, MAX_TOTAL, MAX_FILES, MAX_FILE };

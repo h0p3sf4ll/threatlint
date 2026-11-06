@@ -1,6 +1,7 @@
 """Streaming and tool-loop policies can be tested without an HTTP server."""
 
 import json
+import pytest
 
 from threatlint import agent_runner, agent_tools, cli
 
@@ -42,6 +43,7 @@ def test_agent_loop_records_tool_response_then_finishes(monkeypatch, tmp_path):
     first.calls[0] = {"id": "read_1", "name": "Read", "args": '{"file_path":"app.py"}'}
     last = agent_runner._StreamTurn()
     last.text = "Report."
+    last.finish_reason = "stop"
     turns = iter([first, last])
     requests = []
 
@@ -52,7 +54,7 @@ def test_agent_loop_records_tool_response_then_finishes(monkeypatch, tmp_path):
     monkeypatch.setattr(agent_runner, "_stream_turn", stream)
     monkeypatch.setattr(agent_runner, "_execute_tool", lambda root, name, args: "source text")
     result = agent_runner._run_agent("http://unused", "synthetic-model", "system", "user", str(tmp_path))
-    assert result == "Inspecting.Report."
+    assert result == "Report."
     assert requests[1][-1] == {
         "role": "tool", "tool_call_id": "read_1", "content": "source text",
     }
@@ -62,10 +64,29 @@ def test_agent_iteration_budget_is_preserved(monkeypatch, tmp_path):
     turn = agent_runner._StreamTurn()
     turn.text = "partial"
     turn.finish_reason = "tool_calls"
-    turn.calls[0] = {"id": "unknown", "name": "Unknown", "args": "{}"}
+    turn.calls[0] = {"id": "read", "name": "Read", "args": '{"file_path":"app.py"}'}
     monkeypatch.setattr(agent_runner, "_MAX_AGENT_ITERATIONS", 2)
     monkeypatch.setattr(agent_runner, "_stream_turn", lambda *args: turn)
-    assert agent_runner._run_agent("http://unused", "synthetic", "", "", str(tmp_path)) == "partialpartial"
+    with pytest.raises(RuntimeError, match="budget reached"):
+        agent_runner._run_agent("http://unused", "synthetic", "", "", str(tmp_path))
+
+
+@pytest.mark.parametrize("arguments", ["not json", "[]", "null"])
+def test_invalid_tool_arguments_do_not_execute(monkeypatch, tmp_path, arguments):
+    turn = agent_runner._StreamTurn()
+    turn.calls[0] = {"id": "read", "name": "Read", "args": arguments}
+    monkeypatch.setattr(agent_runner, "_execute_tool", lambda *args: pytest.fail("invalid input executed"))
+    with pytest.raises(RuntimeError, match="invalid inspection tool"):
+        agent_runner._run_tool_calls(turn, str(tmp_path))
+
+
+@pytest.mark.parametrize("finish", [None, "length", "content_filter"])
+def test_incomplete_turn_is_not_returned_as_a_report(monkeypatch, tmp_path, finish):
+    turn = agent_runner._StreamTurn()
+    turn.text, turn.finish_reason = "unfinished", finish
+    monkeypatch.setattr(agent_runner, "_stream_turn", lambda *args: turn)
+    with pytest.raises(RuntimeError, match="incomplete"):
+        agent_runner._run_agent("http://unused", "synthetic", "", "", str(tmp_path))
 
 
 def test_cli_preserves_existing_tool_imports():

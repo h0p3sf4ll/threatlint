@@ -97,6 +97,7 @@ function fixture(t, settings = {}) {
     }
     if (args.includes('rev-parse')) return { stdout: `${settings.commit || COMMIT}\n`, stderr: '' };
     if (args.includes('symbolic-ref')) return { stdout: `${settings.actualBranch || branch}\n`, stderr: '' };
+    if (args.includes('checkout')) return { stdout: '', stderr: '' };
     throw new Error('Unexpected fake Git command');
   };
   const lookup = async (host, options) => {
@@ -416,8 +417,10 @@ describe('Credential-isolated, bounded shallow checkout', () => {
       assert.equal(result.repoPath, path.join(result.tempDir, 'repository'));
       assert.deepEqual(result.provenance, { provider, repository: repo.fullName, branch: 'main', commit: COMMIT, webUrl: repo.webUrl });
       noSecret(result);
-      assert.equal(f.executions.length, 3);
-      const [clone, revParse, symbolic] = f.executions;
+      assert.equal(f.executions.length, 4);
+      const [clone, revParse, symbolic, detach] = f.executions;
+      assert.deepEqual(detach.args.slice(2), ['checkout', '--quiet', '--detach', COMMIT, '--']);
+      noSecret(detach.options);
       assert.equal(clone.file, 'git');
       assert.equal(clone.options.shell, false);
       assert.equal(clone.options.timeout, CAPABILITIES.gitTimeoutMs);
@@ -524,6 +527,15 @@ describe('Credential-isolated, bounded shallow checkout', () => {
     for (const settings of [{ commit: `${TOKEN}\n` }, { commit: '--not-a-commit' }, { actualBranch: 'different' }]) {
       const f = fixture(t, settings), { connection } = await f.discovered();
       await rejectsCode(() => f.managers.checkout(connection.id, { repositoryId: '1' }), 'SCM_CHECKOUT_FAILED');
+      for (const directory of f.directories) await assert.rejects(() => fs.stat(directory), { code: 'ENOENT' });
+    }
+  });
+
+  it('rejects a branch that moves between provider confirmation and clone, without exposing a workspace', async t => {
+    for (const provider of ['github', 'azure-devops']) {
+      const f = fixture(t, { commit: OTHER_COMMIT }), { connection, repositories } = await f.discovered(provider);
+      await rejectsCode(() => f.managers.checkout(connection.id, { repositoryId: repositories[0].id }), 'SCM_BRANCH_MOVED');
+      assert.equal(f.executions.some(item => item.args.includes('--detach')), false);
       for (const directory of f.directories) await assert.rejects(() => fs.stat(directory), { code: 'ENOENT' });
     }
   });

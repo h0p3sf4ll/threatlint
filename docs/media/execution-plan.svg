@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="650" viewBox="0 0 1440 650" role="img" aria-labelledby="title desc">
+<title id="title">Dependency-aware review execution</title><desc id="desc">An example ordered pipeline begins with three independent source reviews: threat model, API review and dependency audit. The subsequent attack-tree review waits for those earlier reports; the final security test planner waits for all earlier reviews. Dependencies and bounded parallelism do not grant permission to execute tests.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0L8 4L0 8" fill="#456475"/></marker><marker id="amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#9b6017"/></marker></defs>
+<style>text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#163542}.title{font-size:30px;font-weight:700;letter-spacing:-.5px}.sub{font-size:17px;fill:#486472}.head{font-size:19px;font-weight:700}.body{font-size:16px;fill:#355662}.small{font-size:14px;fill:#486472}.tag{font-size:13px;font-weight:700;letter-spacing:1px;fill:#087967}.line{fill:none;stroke:#456475;stroke-width:2;marker-end:url(#arrow)}.write{fill:none;stroke:#9b6017;stroke-width:2;marker-end:url(#amber)}.edge{font-size:14px;fill:#355662;paint-order:stroke;stroke:#f7fafb;stroke-width:6px;stroke-linejoin:round}.boundary{fill:#fff;stroke:#c95353;stroke-width:1.5;stroke-dasharray:8 6}</style>
+<rect width="1440" height="650" rx="18" fill="#f7fafb"/>
+<text x="48" y="55" class="title">Parallel inspections. Ordered evidence handoffs.</text>
+<text x="48" y="86" class="sub">Example selected order: threat model → API review → dependencies → attack tree → test plan</text>
+<text x="48" y="145" class="tag">1 · SOURCE REVIEWS · UP TO 3 AT ONCE</text>
+<text x="546" y="145" class="tag">2 · UPSTREAM SYNTHESIS</text>
+<text x="1044" y="145" class="tag">3 · ACCEPTANCE PLAN</text>
+<rect x="48" y="180" width="350" height="92" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
+<text x="68" y="209" class="head">Threat model</text>
+<text x="68" y="234" class="body">System, boundaries, attack paths</text>
+<rect x="48" y="300" width="350" height="92" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
+<text x="68" y="329" class="head">API review</text>
+<text x="68" y="354" class="body">Roles, operations, object access</text>
+<rect x="48" y="420" width="350" height="92" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
+<text x="68" y="449" class="head">Dependency audit</text>
+<text x="68" y="474" class="body">Packages, applicability, upgrades</text>
+<rect x="546" y="283" width="350" height="126" rx="12" fill="#eef4fc" stroke="#8cadcf" stroke-width="1.5"/>
+<text x="566" y="312" class="head">Attack tree</text>
+<text x="566" y="337" class="body">Waits for all earlier selections</text>
+<text x="566" y="362" class="body">Re-checks supplied claims</text>
+<text x="566" y="387" class="body">No execution authority</text>
+<rect x="1044" y="283" width="350" height="126" rx="12" fill="#eef4fc" stroke="#8cadcf" stroke-width="1.5"/>
+<text x="1064" y="312" class="head">Security test planner</text>
+<text x="1064" y="337" class="body">Waits for the earlier reports</text>
+<text x="1064" y="362" class="body">Synthetic cases + observable oracles</text>
+<text x="1064" y="387" class="body">Proposed tests remain NOT RUN</text>
+<path d="M398 226H468V326H541" class="line"/>
+<path d="M398 346H541" class="line"/>
+<path d="M398 466H468V366H541" class="line"/>
+<path d="M896 346H1039" class="line"/>
+<text x="970" y="327" class="edge" text-anchor="middle">reports</text>
+<text x="48" y="568" class="body">Auto mode: source roles are independent; upstream roles depend on every earlier selected agent.</text>
+<text x="48" y="597" class="small">The drawing omits redundant direct edges. Failed prerequisites skip dependents. Sequential mode runs the full chain one at a time.</text>
+<text x="48" y="625" class="small">A bounded scheduler improves resource control; it does not prove a speedup, independent reasoning, or security coverage.</text>
+</svg>

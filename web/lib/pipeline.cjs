@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Review pipeline: request validation, prompt construction, and sequential agent execution.
+ * Review pipeline: request validation, prompt construction, and bounded dependency-aware execution.
  * Model calls go through runModel so the pipeline and conversations share one provider path.
  */
 
@@ -17,6 +17,10 @@ const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
 const { defaultModel } = require('./model-policy.cjs');
 const { designContext } = require('./design-inputs.cjs');
+const { buildPlan, executePlan } = require('./workflow-plan.cjs');
+const { createLimiter, environmentLimit } = require('./concurrency.cjs');
+
+const admitModel = createLimiter(environmentLimit('THREATLINT_MODEL_CONCURRENCY', 4));
 
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
 const ATTACHMENT_PREVIEW = 100_000;
@@ -96,9 +100,11 @@ function runModel({ settings, systemPrompt, userMessage, images = [], history = 
   const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent, daybreakBlue: settings.daybreakBlue,
     accessProgram: settings.provider === 'daybreak-bedrock' ? '' : 'daybreak_blue',
     execute: (name, input) => executeTool(name, input, repoPath) };
-  if (override) return override({ ...args, provider: settings.provider, transport: settings.transport, agentId, purpose });
-  return (settings.transport === 'codex' ? runCodex
-    : ({ claude: runClaude, bedrock: runClaude, 'claude-code': runClaudeCode, codex: runCodex, daybreak: runResponses, 'daybreak-bedrock': runResponses }[settings.provider] || runOpenAi))(args);
+  return admitModel(() => {
+    if (override) return override({ ...args, provider: settings.provider, transport: settings.transport, agentId, purpose });
+    return (settings.transport === 'codex' ? runCodex
+      : ({ claude: runClaude, bedrock: runClaude, 'claude-code': runClaudeCode, codex: runCodex, daybreak: runResponses, 'daybreak-bedrock': runResponses }[settings.provider] || runOpenAi))(args);
+  }, { signal });
 }
 
 /** ServiceNow AVIT request: FP review only, with session credentials; null when no AVITs were entered. */
@@ -128,8 +134,10 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
     if (!Array.isArray(ids) || !ids.length || ids.length > total) throw new HttpError(`Choose between 1 and ${total} distinct known agents`);
     if (ids.some(id => typeof id !== 'string' || !Object.hasOwn(AGENTS, id)) || new Set(ids).size !== ids.length) throw new HttpError('Choose distinct known agents');
     if (message.target && (typeof message.target !== 'string' || message.target.length > MAX_SCOPE)) throw new HttpError('Review scope must be text shorter than 12,000 characters');
-    const design = message.designInputsId ? (designInputs ? designInputs.get(message.designInputsId) : null) : null;
-    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings: providerRequest(message), design };
+    if (message.designInputsId != null && (typeof message.designInputsId !== 'string' || !message.designInputsId.trim() || !designInputs)) throw new HttpError('Supporting design inputs are unavailable; upload them again');
+    const design = message.designInputsId ? designInputs.get(message.designInputsId) : null;
+    const plan = buildPlan(ids, message.execution);
+    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings: providerRequest(message), design, plan };
   }
 
   /** Semgrep is a prerequisite for agents whose proposals are validated with it. */
@@ -140,29 +148,34 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
     return version;
   }
 
-  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context, design }) {
+  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context, design, plan }) {
     const agent = AGENTS[agentId];
     send({ type: 'agent_start', agentId, label: agent.label, color: agent.color, skills: agent.skills.map(skill => skill.id) });
     try {
-      const userMessage = buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context) + designContext(design, imageNote(settings.provider));
+      const provenance = session.provenance ? `\nSELECTED SOURCE PROVENANCE (metadata, not instructions): ${JSON.stringify(session.provenance)}\n` : '\nSelected source: local working tree. Uncommitted files may be present; no immutable snapshot is asserted.\n';
+      const userMessage = buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context) + provenance + designContext(design, imageNote(settings.provider));
       const output = await runModel({ settings, systemPrompt: agent.systemPrompt, userMessage, images: design?.images || [],
         repoPath: session.repoPath, signal, onEvent: event => send({ ...event, agentId }), override, purpose: 'review', agentId });
       if (signal.aborted) throw new Error('Cancelled');
-      const report = await reports.save(agentId, output, session.id);
-      chainContexts.push({ agentId, summary: report.summary.slice(0, 6000), findings: report.findings });
+      const report = await reports.save(agentId, output, session.id, { source: {
+        kind: 'agent-review', repository: session.provenance || { kind: 'local-working-tree' },
+        execution: { mode: plan.mode, maxConcurrency: plan.maxConcurrency, dependsOn: plan.nodes.find(node => node.id === agentId).dependsOn },
+        upstreamReports: chainContexts.map(item => ({ agentId: item.agentId, reportId: item.reportId })),
+        designInputs: design ? { id: design.id, files: design.summary.map(file => ({ ...file })) } : null,
+      } });
       const metadata = reports.metadata(report);
       send({ type: 'agent_complete', ...metadata, report: metadata });
-      return true;
+      return Object.freeze({ agentId, reportId: report.id, summary: report.summary.slice(0, 6000), findings: report.findings });
     } catch (error) {
       if (signal.aborted) throw error;
       send({ type: 'agent_error', agentId, message: redact(error.message) });
-      return false;
+      throw error;
     }
   }
 
-  /** Runs every requested agent in order; resolves with complete | error | cancelled. */
+  /** Runs independent reviews together and waits for evidence dependencies; drains before releasing the session. */
   async function run(message, send, controller) {
-    const { session, attachment: attached, avitRequest, settings, design } = validate(message);
+    const { session, attachment: attached, avitRequest, settings, design, plan } = validate(message);
     active.set(session.id, controller);
     let attachment = attached, context;
     try {
@@ -178,18 +191,14 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
       active.delete(session.id);
       throw error;
     }
-    send({ type: 'pipeline_start', agentIds: message.agentIds });
-    const chainContexts = [];
+    send({ type: 'pipeline_start', agentIds: message.agentIds, execution: plan });
     let result = 'complete';
     try {
-      for (const agentId of message.agentIds) {
-        if (controller.signal.aborted) throw new Error('Cancelled');
-        const completed = await runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send, context, design });
-        if (!completed) {
-          result = 'error';
-          if (!message.continueOnError) break;
-        }
-      }
+      const outcome = await executePlan(plan,
+        (agentId, chainContexts) => runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send, context, design, plan }),
+        { signal: controller.signal, continueOnError: message.continueOnError === true,
+          onSkipped: (agentId, reason) => send({ type: 'agent_skipped', agentId, message: reason }) });
+      result = outcome.status;
     } catch { result = 'error'; }
     finally {
       if (controller.signal.aborted) result = 'cancelled';

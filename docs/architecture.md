@@ -1,73 +1,175 @@
 # Threatlint architecture
 
-**Threatlint turns security noise into the next engineering decision.** It puts 22 read-only
-security specialists where developers already work. Each one answers one question with code
-evidence, a proposed fix, and a check that proves the fix.
+Threatlint connects a security question to inspected evidence, an advisory fix, and an
+acceptance check. The important boundary is not between two agent names. It is between
+**analysis that can propose an action** and **software that has authority to execute it**.
 
-## The pitch
+This is an implementation map, not a claim of security certification or measured performance.
+Read [the learning path](learning.md) first for a guided introduction, or
+[the agent reference](agents.md) to select a specialist.
 
-| Problem | Solution | How |
+## System context: shared contracts, separate runtimes
+
+The package ships **22 specialist definitions**, **26 skills**, a canonical agent-to-skill
+registry, and explicit execution/handoff contracts. Several entry points consume that material, but they do **not** all run through one
+Python or Node process. Installed native-client bundles, Python CLI runs, Workbench reviews,
+CI snapshots, and Teams conversations have different execution and storage boundaries.
+
+<p align="center"><img src="media/architecture.svg" alt="Threatlint component map: shared agent and skill contracts feed separate native-client, Python CLI, Node Workbench, and CI or Teams execution paths. Analysis and authorized operational workflows have separate authority." width="100%"></p>
+
+- **Contracts** describe the review method and required report. They are not a sandbox.
+- **Runners** build prompts, select providers, bound tool use, and handle cancellation.
+- **Tools** enforce path and command restrictions where Threatlint owns the execution loop.
+- **Host workflows** persist reports and, when separately authorized, operate integrations.
+- **Models** propose tool calls and produce analysis. Their output cannot grant new authority.
+
+The offline guard is a separate deterministic pattern scanner. It does not call an LLM and
+should not be confused with a complete vulnerability analysis.
+
+## Data flow and trust boundaries
+
+The drawing follows a **Workbench source review**. Native clients, CI, and the Python CLI
+have different input and storage paths; the table calls out those differences. Arrows show
+information flow, not proof that the information is correct.
+
+<p align="center"><img src="media/data-flow.svg" alt="Workbench review data flow: an authorized user selects source and optional design evidence; bounded inspection supplies a selected model; advisory reports are stored locally; separate authorized workflows can write to external systems." width="100%"></p>
+
+| Step | Data flow | Enforcement and limitations |
 | --- | --- | --- |
-| A scan returns hundreds of findings. Most are unreachable, some are critical, and each one has to be turned into engineering work by a scarce AppSec engineer. Reports go unread and false positives erode trust. | Evidence-led AI reviewers in the IDE, the AI assistant, the PR, the terminal, and a local Workbench. Ask one question; get the finding, why it is reachable, the smallest fix, and the acceptance test. | **Specialists:** one agent per security question. **Skills:** a required method per agent, so every claim cites `file:line`. **Guardrails:** analysis is read-only; write-back needs explicit approval. **Model choice:** cloud or fully local, per repository. |
+| 1 | User selects a workspace, review scope, specialists, and optional evidence | Session/agent IDs and request fields are validated by the host. A repository's text cannot authorize actions. |
+| 2 | Agent definitions + registry + assigned skills become the system prompt | Python `skills.py` and Node `agents.cjs` load the canonical files. Native clients use installed mirrors. Missing required skill files fail loading rather than silently reducing coverage. |
+| 3 | Source-manager selection becomes a local checkout | SCM records provider, repository, branch, and commit. Local source directories can change during a run; read-only access is not an immutable snapshot. Freeze or isolate the checkout for reproducible comparisons. |
+| 4 | Source, supplied findings, and design documents enter analysis as evidence | Findings/design inputs are size-bounded and framed as untrusted data. Design claims require comparison with current source. This framing reduces ambiguity; it is not a prompt-injection security boundary by itself. |
+| 5 | Runner exchanges prompts, selected evidence, and tool results with a model | Provider/model selection is explicit or follows provider-specific defaults. Workbench requires consent for cloud/remote model transmission. A local model avoids that model-provider crossing only if the configured endpoint is actually local. |
+| 6 | Model-requested inspection passes through the host's tool boundary | Node/Python inspection tools confine paths and allowlist commands. Claude Code/Codex adapters use restricted client execution. Native client behavior depends on that client's permissions. No tool allowlist is a complete OS sandbox. |
+| 7 | Final output becomes an advisory report and parsed findings | Report checks detect missing fields and formatting. They do not establish reachability, verify citations against source, or independently prove a finding true. |
+| 8 | Reports persist and can be exported | Workbench uses its local store; CLI defaults to the repository root unless `--output-dir` is supplied. Markdown/Word may contain sensitive code. Local file permissions and application redaction are not universal encryption or complete secret removal. |
+| 9 | An authorized operational workflow uses selected results | PR comments, tracker updates/closures, Semgrep publication, runtime actions, and optional auto-fix are separate write-capable paths. Authorization may be an explicit UI action, CLI flag, or configured CI job; there is not a universal interactive approval dialog. |
 
-## Architecture
+Before selecting a remote provider or sharing a report, check the evidence and destination.
+Do not assume code, secrets, personal data, or proprietary diagrams are fully redacted.
+Workbench is loopback-oriented and single-user, without multi-user authentication. Do not
+publish it through a public proxy. Use disposable OS/container isolation for untrusted source.
 
-Every entry point reaches the same read-only core. Writes to other systems happen only in the
-separate operational layer, after a person approves them.
+## Components and source of truth
 
-<p align="center"><img src="media/architecture.svg" alt="Threatlint architecture: entry points, read-only core, approval-gated operational workflows, AI models, evidence sources, and systems of record" width="100%"></p>
+Paths link to implementation. The detailed contracts below describe intended analysis behavior;
+tests and actual runner configuration determine what a particular entry point enforces.
 
-## Data flow
-
-Circles are processes, open boxes are data stores, rectangles are external entities, and red
-dashed lines are trust boundaries. Numbers match the table.
-
-<p align="center"><img src="media/data-flow.svg" alt="Threatlint data flow diagram with processes P1 to P5, stores D1 to D3, and trust boundaries TB1 to TB3" width="100%"></p>
-
-| # | Flow | Data | Boundary | Control |
-| --- | --- | --- | --- | --- |
-| 1 | Developer → P1 | Request: target, question, scope | — | No target? Threat modeler discovers the repo and explains the scope it picked. Code reviewer defaults to the working-tree diff. |
-| 2 | P1 → P2 | Selected specialist + task | — | Routing rules in CLAUDE.md / AGENTS.md; one specialist per question. |
-| 3 | D1 → P2 | Agent contract + assigned skills | — | Canonical registry agent-skills.json; every agent loads the 2 shared skills. |
-| 4 | Evidence systems → P2 | Scanner findings, AVIT records, runtime captures | TB3 → TB1 | Treated as untrusted data, never instructions. Secrets and personal data are redacted. |
-| 5 | P2 ↔ P3 | Tool calls / file:line evidence | — | Allowlisted Read, Grep, Glob and read-only git. Paths stay inside the repo. No pipes, interpreters or writes. |
-| 6 | D2 → P3 | Source, diffs, history | — | Read-only. Untrusted repos should run in a disposable container. |
-| 7 | P2 ↔ Cloud model | Prompt + inspected source / analysis | TB1 → TB2 | Use an approved provider. Model is set explicitly by policy (Opus 5.5 default). |
-| 7b | P2 ↔ Local model | Same as 7, stays on the machine | — | LM Studio at localhost:1234 for repos that must not leave the box. |
-| 8 | P2 → P4 | Findings + evidence ledger | — | Severity is kept separate from confidence (CONFIRMED / PLAUSIBLE / THEORETICAL). |
-| 9 | P4 → D3 | Markdown + Word report | — | Stored outside the repo. Not encrypted at rest; apply local retention. |
-| 10 | P4 → Developer | Report + next action + acceptance check | — | Fixes are labeled NOT APPLIED and tests NOT RUN until there is execution evidence. |
-| 11 | D3 → P5 | Report chosen for delivery | — | Each delivery needs explicit user confirmation. |
-| 12 | P5 → Systems of record | PR comment, ServiceNow note/attachment/closure, Semgrep ignore or tuned rule | TB1 → TB3 | Write paths are separate from analysis. Rule tuning is proof-gated, ships in monitor mode, and disables the original rule. |
-
-## Components
-
-| Component | Job | Lives in |
+| Boundary | Responsibility | Implementation |
 | --- | --- | --- |
-| **IDE + guard hooks** | Puts security instructions and the offline guard where code is written. | `ide/vscode, threatlint ide install` |
-| **Assistant bundles** | Installs the agents, skills and slash commands into Claude Code, Copilot and Codex. | `threatlint install · .claude · .github/agents · AGENTS.md` |
-| **CLI** | Runs any review headless with a cloud or local model; also drives AVIT, Semgrep, DAST and Sidekick. | `src/threatlint/cli.py` |
-| **Workbench** | Local web + desktop app: run reviews, triage scan reports, read reports, ask questions, see trends. | `web/ (server.js, lib/, desktop/)` |
-| **CI/CD templates** | Warn-first PR review and scheduled scans, plus /threatlint chat on PRs. | `.github/workflows · azure-pipelines` |
-| **Teams bot** | Answers questions about evidence someone supplies in Teams. | `teams-app/` |
-| **Commands + routing** | 42 slash commands (cloud and LM Studio variants) send each question to one specialist. | `src/threatlint/data/commands` |
-| **Specialist agents** | 22 read-only reviewers, each with one job and one report format. | `src/threatlint/data/agents` |
-| **Skill registry** | 26 skills: the method each agent must follow. Two are shared by all agents. | `data/agent-skills.json · data/skills` |
-| **Read-only tools** | The only way agents touch the repo: bounded, allowlisted, repo-confined inspection. | `agent_tools.py · web/lib/tools.cjs` |
-| **Agent runner** | Streams the model conversation and executes its tool calls. | `agent_runner.py · web/lib/agents.cjs` |
-| **Model policy** | Chooses the model: run setting, then env var, then org.json, then default. | `models.py · web/lib/model-policy.cjs` |
-| **Offline guard** | Fast, model-free pattern checks with secure alternatives and a fail threshold. | `src/threatlint/guard/` |
-| **Report writer** | Writes the Markdown report and converts it to Word. | `report_output.py · web/lib/report-writer.cjs` |
-| **AVIT orchestrator** | Pulls ServiceNow AVITs, checks out source, reviews, and writes back on approval. | `avit_*.py · avit_orchestrator/ · servicenow_*.py` |
-| **Semgrep tuning** | Ignores proven false positives and publishes narrow tuned rules. | `semgrep_*.py · avit_semgrep*.py` |
-| **DAST sandbox** | Builds a branch with synthetic config on a no-egress network to check dynamic findings. | `dast_*.py · runtime_*.py` |
-| **Sidekick + dashboards** | Portfolio view: loadouts, vReports, ownership, trends. | `src/threatlint/sidekick/ · web/lib/metrics.cjs` |
-| **Integrations** | Pluggable adapters for findings platforms, scanners and secret validators. | `src/threatlint/integrations/` |
+| Canonical contracts | Specialist protocols, shared methods, domain skills | [agents](../src/threatlint/data/agents/), [skills](../src/threatlint/data/skills/), [registry](../src/threatlint/data/agent-skills.json), [contracts](../src/threatlint/data/agent-contracts.json) |
+| Native bundles | Client-specific agents, skills, commands, installation | [installation.py](../src/threatlint/installation.py), `.claude/`, `.github/agents/`, `.codex/skills/` |
+| Python CLI | Parse request, select provider, assemble context, save report | [cli.py](../src/threatlint/cli.py), [run_context.py](../src/threatlint/run_context.py), [skills.py](../src/threatlint/skills.py) |
+| Python provider loops | Stream model output and dispatch tool requests | [agent_runner.py](../src/threatlint/agent_runner.py), [claude_api.py](../src/threatlint/claude_api.py), [responses_api.py](../src/threatlint/responses_api.py) |
+| Workbench host | Same local backend for browser and Electron, API and session composition | [server.js](../web/server.js), [lib/](../web/lib/), [desktop/](../web/desktop/) |
+| Workbench orchestration | Validate runs, schedule specialists, frame preceding evidence | [pipeline.cjs](../web/lib/pipeline.cjs) |
+| Workbench provider execution | Model transport/tool loop; separate CLI adapters | [providers.cjs](../web/lib/providers.cjs), [claude-code.cjs](../web/lib/claude-code.cjs), [codex.cjs](../web/lib/codex.cjs) |
+| Inspection boundary | Repo-confined Read/Grep/Glob and allowlisted commands | [agent_tools.py](../src/threatlint/agent_tools.py), [tools.cjs](../web/lib/tools.cjs) |
+| Design evidence | Bounded extraction and multimodal context; not document instruction execution | [design_inputs.py](../src/threatlint/design_inputs.py), [design-inputs.cjs](../web/lib/design-inputs.cjs) |
+| Model configuration | Provider defaults, explicit overrides, environment/organization policy | [models.py](../src/threatlint/models.py), [model-policy.cjs](../web/lib/model-policy.cjs) |
+| Reports | Persistence, conversion, parsing, and format warnings | [report_output.py](../src/threatlint/report_output.py), [report-writer.cjs](../web/lib/report-writer.cjs), [reports.cjs](../web/lib/reports.cjs) |
+| CI and conversations | Snapshot-oriented CI analysis and supplied-evidence chat | [.github/scripts/](../.github/scripts/), [azure-pipelines/](../azure-pipelines/), [teams-app/](../teams-app/) |
+| Offline guard | Model-free patterns, alternatives, severity threshold | [guard/](../src/threatlint/guard/), [IDE guide](ide.md) |
+| Integrations and operational work | Findings adapters, authorized write-back, queue/runtime execution | [integrations/](../src/threatlint/integrations/), [AVIT guide](avit-integration.md), [runtime guide](runtime-redteam.md) |
+| Portfolio analysis | Loadouts, vReports, ownership, local metrics | [sidekick/](../src/threatlint/sidekick/), [metrics.cjs](../web/lib/metrics.cjs) |
+
+## Execution controls
+
+Workbench's **Execution** selector offers **Auto · dependency-aware** and
+**Sequential · one at a time**. The adjacent parallel limit defaults to **3** and accepts **1–8**.
+This controls one review pipeline, not every process in the installation.
+
+In auto mode, source-oriented specialists can run independently. The contracts mark findings
+triage, compliance, attack tree, red team, threat delta, fix verification, and security test
+planning as **upstream** consumers. Each of those waits for **all earlier selected agents**, not later ones. Put the
+reports it should consume before it in the selected pipeline. A reviewer still needs genuine
+prior findings or a baseline when its contract requires them; ordering alone cannot invent one.
+This includes findings triage when it consumes earlier reviews instead of a separate uploaded
+findings artifact. Sequential mode sets concurrency to one and gives each agent all earlier
+selected reports.
+
+<p align="center"><img src="media/execution-plan.svg" alt="Example dependency-aware review: threat modeling, API review and dependency audit can overlap; the following attack tree waits for all three; a final test planner waits for the earlier results" width="100%"></p>
+
+For API clients, the existing run message can include:
+
+```json
+{
+  "execution": {
+    "mode": "auto",
+    "maxConcurrency": 3,
+    "dependencies": {
+      "appsec-api-security-reviewer": ["appsec-threat-modeler"]
+    }
+  }
+}
+```
+
+This is an execution fragment, not a complete run request. Both agents must also be selected.
+Explicit dependencies **add to** inferred prerequisites. Unknown agents, self-dependencies,
+invalid limits, and cycles are rejected before provider or integration work starts.
+
+| Limit | Default | Allowed values | Scope |
+| --- | --- | --- | --- |
+| `execution.maxConcurrency` | 3 | 1–8; forced to 1 in sequential mode | Specialists in one Workbench pipeline |
+| `THREATLINT_MODEL_CONCURRENCY` | 4 | 1–16 | Whole model runs admitted across Workbench review/chat/import/batch callers in one Node process |
+| `THREATLINT_TOOL_CONCURRENCY` | 4 | 1–16 | Independent same-turn inspection calls in Threatlint-owned Node/Python API loops |
+| `THREATLINT_BATCH_CONCURRENCY` | 3 | 1–8 | Read-only Workbench scan-import and scanner-review batch work |
+
+Environment limits are operator settings, not a provider quota negotiation. Configure them
+before starting the relevant process. Multiple Node processes do not share a distributed
+limiter. Native coding clients schedule their own tools; Python AVIT/Sidekick pools retain
+their existing controls. Write-enabled AVIT review/resolve sequences remain serialized.
+
+**Ordering and failures:** each task receives successful ancestor context in selected-agent
+order, not completion order. Parallel siblings do not read each other's partial reports.
+A failed prerequisite skips its dependents. By default, a failure also prevents pending
+independent tasks from starting; an explicit `continueOnError` request permits independent
+work to continue. Already-running tasks are accounted for before the pipeline settles.
+Cancellation stops new dispatch and signals active work; external tools/providers may have
+their own termination limits. Earlier completed reports remain available.
+
+The model admission queue is FIFO and bounded to **128 queued runs** per process. A full queue
+returns an error rather than accumulating unlimited work. Independent scan imports also use
+a bounded queue of **32 waiting jobs**, admitted at `THREATLINT_BATCH_CONCURRENCY`; orderly
+shutdown aborts and drains pending import work. Same-turn tools are capped at
+**64 calls** and preserve request/result identity and order. Parallel execution does not relax
+path restrictions, tool validation, report requirements, or write authorization.
+
+Native Codex, Claude Code, and Python-workflow subprocesses retain their temporary inputs and
+admission slots until the child closes. On cancellation/timeout, the host requests termination,
+then escalates from TERM to KILL after a five-second grace period if needed. This supervises
+the direct child; platform-specific behavior and complete descendant-process cleanup are not
+established by unit tests. See [child-lifecycle.cjs](../web/lib/child-lifecycle.cjs).
+
+**Implementation:** [workflow-plan.cjs](../web/lib/workflow-plan.cjs),
+[concurrency.cjs](../web/lib/concurrency.cjs), [agent-contracts.json](../src/threatlint/data/agent-contracts.json),
+[inspection_batch.py](../src/threatlint/inspection_batch.py). No fixed speedup or optimal
+concurrency is asserted; test against your provider, repository, and evidence workload.
+
+## Design decisions and trade-offs
+
+1. **Small specialist contracts, shared methods.** All specialists inherit evidence and actionable
+   reporting skills. A role name alone does not create an independent security control or new model.
+2. **Explicit dependencies before parallelism.** Independent inspections can overlap. An attack tree
+   based on a threat model or a test plan based on findings needs those upstream artifacts first.
+   Parallel siblings must not receive partial or timing-dependent copies of each other's reports.
+3. **Bounded fan-out, not unlimited workers.** Model quotas, context windows, tool processes, memory,
+   and report conversion all impose limits. Scheduling changes need cancellation, error, ordering,
+   and backpressure tests, not only a faster successful demo.
+4. **A report handoff is evidence, not delegated authority.** Downstream specialists re-check claims
+   and disclose omitted context. A predecessor's recommendation does not authorize closure or testing.
+5. **Preserve review and write separation.** Analysis defaults do not grant a write-capable executor
+   permission to act. Keep target/action authorization, idempotency, and audit trails in that executor.
+
+For runnable checks and contribution boundaries, see [Development](development.md). For report
+interpretation and actual output locations, see [Reports](reports.md).
 
 ## Agents
 
-All agents run on Opus 5.5 in plan mode with read-only tools (Read, Grep, Glob, allowlisted Bash;
-Write and Edit disallowed). Every agent loads the two shared skills,
+The canonical Claude agent definitions declare a model, plan mode, and read-only tools.
+Those metadata fields are not a universal execution policy: Workbench and CLI providers
+resolve their own model settings and enforce their own tool boundaries. Every agent loads the two shared skills,
 [Evidence analysis](#threatlint-evidence-analysis) and [Actionable reporting](#threatlint-actionable-reporting),
 plus its specialist skills. Assignments come from
 [agent-skills.json](../src/threatlint/data/agent-skills.json).
@@ -128,7 +230,7 @@ plus its specialist skills. Assignments come from
 
 <a id="appsec-code-reviewer"></a>`appsec-code-reviewer` · Change review
 
-**Decides whether a change is safe to merge.**
+**Recommends a merge decision from the inspected change and its coverage limits.**
 
 | | |
 | --- | --- |
@@ -338,7 +440,7 @@ plus its specialist skills. Assignments come from
 
 <a id="appsec-verify-fix"></a>`appsec-verify-fix` · Triage and lifecycle
 
-**Proves, with code, whether a specific finding is fixed.**
+**Assesses whether current code fixes the root cause and equivalent bypasses.**
 
 | | |
 | --- | --- |
@@ -383,7 +485,7 @@ plus its specialist skills. Assignments come from
 
 <a id="appsec-runtime-reviewer"></a>`appsec-runtime-reviewer` · Runtime and testing
 
-**Explains what supplied runtime captures actually prove, tied back to source.**
+**Explains what supplied runtime captures show, tied back to source and provenance.**
 
 | | |
 | --- | --- |

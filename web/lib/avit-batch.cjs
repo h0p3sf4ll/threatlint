@@ -24,6 +24,7 @@ const { readServiceNow } = require('./threatlint-config.cjs');
 const { orgValue } = require('./org-config.cjs');
 const { HttpError } = require('./http.cjs');
 const { normalizeReviewMarkdown } = require('./finding-disposition.cjs');
+const { superviseChild } = require('./child-lifecycle.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const CLI_TIMEOUT_MS = 20 * 60_000;
@@ -57,18 +58,20 @@ function python() {
   return chosenPython;
 }
 
-function runCli(args, { env = {}, signal, input } = {}) {
+function runCli(args, { env = {}, signal, input, spawnImpl = spawn } = {}) {
+  if (signal?.aborted) return Promise.reject(Object.assign(new Error('Run cancelled'), { name: 'AbortError' }));
   const python = module.exports.python();
   const pythonpath = [pythonPath(), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
   return new Promise((resolve, reject) => {
-    const child = spawn(python, ['-c', 'from threatlint.cli import main; main()', ...args],
-      { env: { ...process.env, PYTHONPATH: pythonpath, PYTHONIOENCODING: 'utf-8', ...env }, windowsHide: true, signal });
+    const child = spawnImpl(python, ['-c', 'from threatlint.cli import main; main()', ...args],
+      { env: { ...process.env, PYTHONPATH: pythonpath, PYTHONIOENCODING: 'utf-8', ...env }, windowsHide: true });
     let stdout = '', stderr = '';
-    const timer = setTimeout(() => child.kill(), CLI_TIMEOUT_MS);
+    const lifecycle = superviseChild(child, { signal, timeoutMs: CLI_TIMEOUT_MS, timeoutMessage: 'The Python workflow exceeded its time limit',
+      startMessage: `Python could not start (${python}). Check THREATLINT_PYTHON.`, resolve, reject,
+      onClose: (code, finish) => finish(null, { code, stdout, stderr }) });
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
-    child.on('error', error => { clearTimeout(timer); reject(error.code === 'ENOENT' ? new HttpError(`Python was not found (${python}). Set THREATLINT_PYTHON.`, 503) : error); });
-    child.on('close', code => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+    child.stdin.on?.('error', () => lifecycle.stop(new Error('The Python workflow could not receive its input')));
     // A secret such as a PAT goes to the CLI on stdin, never in argv.
     if (input !== undefined) child.stdin.end(`${input}\n`);
   });

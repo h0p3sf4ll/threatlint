@@ -72,7 +72,7 @@ and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands
 
 1. **Open code.** Choose a local source directory, or [connect a source manager](#source-code-managers).
    Desktop has a native picker; browser mode supports path entry and browsing.
-2. **Choose the decision.** Select **Security baseline**, **Pull request review**,
+2. **Choose the decision.** Select **Model a system**, **Security baseline**, **Pull request review**,
    **Find signal in the noise**, **Close the loop**, or an ordered custom pipeline.
 3. **Narrow the question.** For example: “Review the working-tree diff for tenant authorization
    changes.” Add a component, path, comparison, or finding ID when useful.
@@ -80,16 +80,45 @@ and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands
    supply a findings path, or use a preceding report. Attachments are limited to **5 MB**;
    only the first **100,000 characters** enter the prompt. Truncation must be disclosed.
    Pipeline Findings triage also requires Semgrep Community Edition on PATH (`semgrep --version`).
-5. **Add design inputs for a threat model (optional).** Press **Add design inputs** and choose
+5. **Add supporting documents for a threat model (optional).** Press **Add supporting docs** and choose
    diagrams, design documents, specs, or images. See [Design inputs](#design-inputs) for what is read.
-6. **Run and inspect.** Specialists use mapped skills and read-only inspection tools. Later
-   specialists receive bounded preceding-report context, which they must independently verify.
+6. **Run and inspect.** Specialists use mapped skills and read-only inspection tools. Dependent
+   specialists receive bounded upstream-report context, which they must independently verify.
+   Independent specialists can overlap; see [execution controls](architecture.md#execution-controls).
 7. **Use the report.** Filter findings by severity/disposition, inspect the full evidence and
    proposed fix, then download Markdown or Word. Missing fields produce format warnings.
 
 **Expected result:** a saved advisory report—not applied code, a security approval, or proof every
 finding was reviewed. **Stop** cancels model requests; completed reports remain. A lost connection
 is labelled interrupted and does not silently rerun. Next: [read and act on reports](reports.md).
+
+### Model a system from source and design
+
+1. Choose **Model a system** to select the threat-model specialist.
+2. In **Repository & branch**, press **Select repo / branch**. Connect an authorized GitHub or
+   Azure DevOps source, select its repository and branch, then choose **Check out & open workspace**.
+   A local folder is also supported; check out the intended branch yourself before review.
+3. Confirm the repository, branch, and commit displayed in the review. Connected source checkouts
+   verify the selected branch's advertised commit, then detach that commit. If the branch moves
+   during checkout, select it again; Threatlint does not silently review a different commit.
+4. In **Supporting documentation**, press **Add supporting docs** and choose the design artifacts.
+   Wait for extraction to finish and inspect the file list. Add a scope question such as
+   “Compare tenant isolation in this design with the implemented request path.”
+5. Confirm the selected model/provider and the permission to send it that evidence, then run.
+   A document upload must finish before the run starts; supporting inputs cannot be replaced
+   while the active review uses them.
+6. Inspect the report for implemented controls, design/source disagreements, assumptions, and
+   tests still marked **NOT RUN**. A document's assertion is not proof of an implemented control.
+
+The host records source provenance and a supporting-file manifest with content SHA-256 hashes
+when that information is available. Hashes identify uploaded bytes, not document truth or user
+approval. Locally opened folders do not acquire remote-source provenance automatically, and
+local edits during a review can still affect inspected source. Use a stable checkout for a
+repeatable comparison.
+
+The visible activity stream is bounded to 500 entries and 200,000 characters, with additional
+per-entry truncation. Earlier activity can be omitted as a review grows; use saved final reports
+rather than treating the on-screen activity log as a complete audit trail.
 
 ### Design inputs
 
@@ -119,6 +148,15 @@ Design inputs are **untrusted evidence**. XML is parsed without DTDs or entities
 size-capped, nothing is executed, and the prompt fences each document as data, never instructions. Every
 specialist in the pipeline receives them, and the threat modeler also looks for design artifacts already
 in the repository (`docs/`, ADRs, `*.drawio`, `*.mmd`, `*.puml`, OpenAPI specs).
+
+### Choose parallel or sequential review
+
+Use **Execution → Auto · dependency-aware** for independent inspections with a bounded
+parallel limit (default 3, maximum 8). Order report-consuming specialists after the evidence
+they need. **Sequential · one at a time** preserves the earlier full-chain behavior. A failed
+prerequisite is shown as a skipped dependent review, not a clean report. See the
+[execution controls](architecture.md#execution-controls) for dependency rules, process-wide
+budgets, error behavior, and API configuration.
 
 ## Professional findings reports
 

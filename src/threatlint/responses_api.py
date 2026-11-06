@@ -14,6 +14,7 @@ import urllib.request
 from collections.abc import Callable
 
 from .agent_tools import _TOOLS, _execute_tool
+from .inspection_batch import run_inspections
 
 _MAX_AGENT_ITERATIONS = 80
 _MAX_OUTPUT_TOKENS = 16000
@@ -129,7 +130,6 @@ def run_agent(endpoint: str, model: str, system_prompt: str, user_message: str, 
         raise ResponsesError("Unsupported Daybreak access program.")
 
     input_items: list[dict] = [_user_input(user_message, images)]
-    full_text = ""
     for _iteration in range(_MAX_AGENT_ITERATIONS):
         body = {"model": model, "instructions": system_prompt, "input": input_items,
                 "tools": _tools(), "max_output_tokens": _MAX_OUTPUT_TOKENS, "store": False}
@@ -138,15 +138,16 @@ def run_agent(endpoint: str, model: str, system_prompt: str, user_message: str, 
         response = _request(endpoint, body, api_key, opener)
         turn_text, calls = _inspect_output(response["output"])
         if turn_text:
-            full_text += turn_text
             progress(turn_text)
         if not calls:
-            return full_text
+            if turn_text.strip():
+                return turn_text
+            input_items.extend(response["output"])
+            continue
         # The complete output carries function calls and encrypted reasoning for
         # stateless continuation with store=false.
         input_items.extend(response["output"])
-        for call_id, name, arguments in calls:
-            progress(f"\n  → {name}\n")
-            result = _execute_tool(repo_root, name, arguments)
-            input_items.append({"type": "function_call_output", "call_id": call_id, "output": str(result)})
+        results = run_inspections(calls, repo_root, _execute_tool, progress)
+        input_items.extend({"type": "function_call_output", "call_id": call[0], "output": result}
+                           for call, result in zip(calls, results))
     raise ResponsesError("Model exceeded the inspection iteration limit. No complete report was saved.")

@@ -21,6 +21,7 @@ async function convertMarkdownToWord(mdPath, docxPath) {
 }
 
 function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {}) {
+  const reservedTimestamps = new Map();
   function directoryFor(sessionId) {
     return store.directory ? path.join(store.directory, 'reports', sessionId) : path.join(os.tmpdir(), `threatlint-reports-${sessionId}`);
   }
@@ -41,7 +42,10 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
     const session = store.sessions.get(sessionId);
     const directory = directoryFor(sessionId);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const timestamp = Math.max(Date.now(), (session.reports.at(-1)?.timestamp || 0) + 1);
+    // Reserve before Word conversion yields: parallel imports can save the same agent/session in one millisecond.
+    const previous = session.reports.reduce((maximum, report) => Math.max(maximum, report.timestamp), reservedTimestamps.get(sessionId) || 0);
+    const timestamp = Math.max(Date.now(), previous + 1);
+    reservedTimestamps.set(sessionId, timestamp);
     const mdPath = path.join(directory, `${agentId}-${timestamp}.md`);
     const docxPath = path.join(directory, `${agentId}-${timestamp}.docx`);
     fs.writeFileSync(mdPath, markdown, { mode: 0o600 });
@@ -51,6 +55,7 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
       sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE,
       ...(title ? { title: String(title).slice(0, 300) } : {}), ...(source ? { source } : {}) };
     session.reports.push(report);
+    session.reports.sort((a, b) => a.timestamp - b.timestamp);
     session.updatedAt = Date.now();
     store.save();
     return report;

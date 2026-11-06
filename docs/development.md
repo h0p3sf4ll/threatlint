@@ -109,6 +109,24 @@ Edit agent customizations deliberately: update their canonical definitions and
 check client mirrors and skill registration together. The
 [agent guide](agents.md) explains the user-facing contracts.
 
+## Validate workflow contracts and scheduling
+
+The [execution contracts](../src/threatlint/data/agent-contracts.json) define each specialist's
+inputs, outputs, boundaries, and `source`/`upstream` evidence mode. Keep them aligned with the
+canonical agents, skill registry, prompt assembly, installed-client exports, and the agent UI.
+A new specialist must not silently inherit an arbitrary scheduling dependency.
+
+Read [Execution controls](architecture.md#execution-controls) before changing concurrency.
+Test independent overlap, deterministic ancestor context, cycles and bad limits, failed
+prerequisites, queued/active cancellation, bounded admission, and stable tool-call identity.
+Use fake providers and temporary repositories so tests do not spend real quotas or mutate
+external findings. Preserve serialized write-capable workflows unless their authorization and
+idempotency contracts are explicitly redesigned.
+
+For documentation/media changes, validate relative links and SVG XML, render each changed
+figure, and inspect its pixels. Use the [current-UI capture procedure](media/README.md) for
+screenshots. Passing DOM tests is not a successful browser capture.
+
 ## Write docs that help someone act
 
 Start with the reader's problem and desired outcome. Show one concrete next step,

@@ -110,7 +110,9 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 | "Where should the portfolio focus?" | Sidekick | Loadouts, vReports, ownership, trends, and action history |
 
 Pick a [specialist by outcome](docs/agents.md). The 22 agents receive shared
-evidence/reporting workflows plus domain-specific skills—not just a role name.
+evidence/reporting workflows plus domain-specific skills, with explicit inputs, outputs,
+and boundaries for each assignment. Read the [agentic-workflow learning path](docs/learning.md)
+for a practical introduction using race-engineering metaphors.
 
 ## One workflow, several places to use it
 
@@ -131,10 +133,28 @@ evidence/reporting workflows plus domain-specific skills—not just a role name.
 [First review](web/public/media/first-review.mp4) ·
 [Authenticated runtime workflow](web/public/media/runtime-scan.mp4)
 
-The demonstrations use local fixtures and synthetic examples. More videos are
-available in the Workbench under **Learn & videos**.
+The demonstrations use local fixtures and synthetic examples, not results from your repository.
+They are existing recordings and may differ from the latest controls. More videos are available
+in the Workbench under **Learn & videos**; [media provenance and capture instructions](docs/media/README.md)
+explain how to refresh them from the real app.
 The existing voiceovers are synthetic; the [human narration workflow](docs/narration.md)
 provides scripts and recording guidance for their replacement.
+
+## Learn the system, not just the buttons
+
+Start with the [guided learning path](docs/learning.md): inspect a synthetic report, choose a
+specialist, connect source and design evidence, understand the model/tool loop, and plan safe
+parallel work. Each lesson has a small exercise and an observable checkpoint.
+
+For a threat model, choose **Model a system**, use **Select repo / branch**, and add architecture
+notes, specifications, or diagrams with **Add supporting docs**. The review compares design
+intent against the selected source. See the [step-by-step walkthrough](docs/workbench.md#model-a-system-from-source-and-design).
+
+<p align="center"><img src="docs/media/architecture.svg" alt="Threatlint architecture: shared specialist contracts, separate execution runtimes, advisory reports, and separately authorized operational workflows" width="100%"></p>
+
+The [architecture guide](docs/architecture.md) links each boundary to implementation and explains
+where evidence travels. Shared instructions are not a shared sandbox; a report-format check
+is not independent verification of a vulnerability.
 
 ## Clear boundaries build trust
 
@@ -162,6 +182,7 @@ engineering handoff without overstating what was verified.
 | Install for Claude, Copilot, Codex, or terminal use | [Setup](docs/setup.md) |
 | Review code visually or inspect authorized runtime evidence | [Workbench](docs/workbench.md) |
 | Choose one of the 22 specialists | [Agent guide](docs/agents.md) |
+| Learn AI, agentic workflows, parallelism, and AppSec through practical exercises | [Learning path](docs/learning.md) |
 | See the architecture, data flows, and every agent and skill on one page | [Architecture](docs/architecture.md) |
 | Add instructions, guard hooks, or the VS Code extension | [IDE guide](docs/ide.md) |
 | Start warn-first reviews in GitHub or Azure Pipelines | [CI templates](docs/ci-templates.md) |
