@@ -5,6 +5,27 @@ it saw, which decisions it can make, and which actions its host allows. This gui
 a small review and then explains the machinery. All exercises use synthetic or authorized
 source. No exercise requires attacking a live service.
 
+## New starting path: secure a small change
+
+Use **Guided** mode and **Security scanner** on a disposable copy of your project. Run the
+baseline, identify a finding's issue, impact and code location, then read its suggested fix.
+Check the engine coverage before assuming dependencies or infrastructure were evaluated.
+If a supported fix is offered, inspect its before/after, apply and rescan, then run your
+application tests. Observe the history on **Metrics**.
+
+**Checkpoint:** explain what the rescan established and what it did not test. An absent
+pattern is not proof of correct application behavior. Read the [scanner guide](security-scanner.md).
+
+For advanced exercises, compare one worker with two on the same sufficiently large source
+scope; record elapsed time, coverage and model cost instead of assuming speedup. Enable a
+second provider only after consenting to its data flow. Find one disagreement and identify
+the source evidence that would resolve it. See [review orchestration](review-orchestration.md).
+
+Finally, use **Repository risk** to connect two findings from the same revision. Record how
+the first effect enables the second step and what final impact follows. Keep a false positive
+as context unless new evidence refutes its dismissal. The [finding intelligence guide](finding-intelligence.md)
+explains why three medium findings do not automatically make one critical finding.
+
 ## 1. Take a sighting lap: inspect the sample report
 
 Start the [Workbench](workbench.md#requirements-and-first-launch) and choose **See a sample

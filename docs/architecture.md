@@ -1,5 +1,12 @@
 # Threatlint architecture
 
+The [security platform foundation](security-platform.md#architecture-and-trust-boundaries)
+extends these components with a unified scanner, a separate snapshot-bound fix service and
+a revision-aware evidence ledger. See [review orchestration](review-orchestration.md) for
+same-role primary file assignments, independent provider challenge, model-run budgets and
+conservative consolidation. Those advanced controls apply to Workbench review pipelines;
+they do not silently parallelize every host or write-capable integration.
+
 Threatlint connects a security question to inspected evidence, an advisory fix, and an
 acceptance check. The important boundary is not between two agent names. It is between
 **analysis that can propose an action** and **software that has authority to execute it**.

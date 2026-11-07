@@ -25,6 +25,19 @@ these workflows upload artifacts/SARIF, the PR workflow posts a comment, and bot
 can create issues and labels. They request write permissions for those actions.
 The generic [composite action](ci-templates.md) gives you finer opt-in control.
 
+The separate [Security scanner workflow](../.github/workflows/security-scanner.yml)
+provides a bounded, model-free baseline on PR open, reopen, synchronize, and
+ready-for-review events, or manual dispatch. It records SAST, dependency hygiene,
+secret, and selected infrastructure findings with explicit coverage limits. It
+does not install optional scanner engines or claim complete detection.
+
+It checks out the trusted tool revision separately from the PR revision and treats
+target code as data. Same-repository PRs receive a compact severity-sorted summary
+and, for eligible newly added diff lines, native GitHub suggestions tied to the
+current PR head. **Commit suggestion** changes the PR branch; the resulting
+`synchronize` event runs the scan again. Fork scans retain artifacts without an
+elevated comment-publishing step. See [Scanner coverage and remediation](security-scanner.md).
+
 ## Supported Providers
 
 | Provider | How it authenticates | Capability |
@@ -219,13 +232,42 @@ permission for reports without issue filing. For manual threat models, choose
 
 ### Auto-fix is a separate write path
 
-[`appsec-auto-fix.yml`](../.github/workflows/appsec-auto-fix.yml) enables editing,
-committing, pushing a fix branch, and opening a PR. It is not a read-only reviewer.
-Do not install it as part of the minimal analysis setup. Review its dispatch and
-`/appsec-fix` comment triggers, enforce caller authorization, approve its write
-credentials, and require human review of any resulting PR. A request to “suggest
-a fix” in [PR chat](ci-templates.md#conversing-with-threatlint-on-pull-requests)
-does not enable this workflow.
+[Apply security fix and rescan](../.github/workflows/appsec-auto-fix.yml) runs only
+through maintainer-initiated **workflow_dispatch**. Issue and PR comments do not
+trigger edits. The compact scanner comment links to this workflow for supported
+fixes that cannot be offered as a native diff suggestion.
+
+1. Open **Actions → Apply security fix and rescan → Run workflow**.
+2. Enter `base_branch`, the full `expected_sha`, and the exact `finding_id` from
+   the Security scanner JSON artifact.
+3. Leave both application checkboxes off to prepare a proposal artifact only.
+   After reviewing it, `apply_reviewed_fix` authorizes that edit. The separate
+   `auto_apply_debug_policy` checkbox explicitly permits only the supported
+   Python `DEBUG = True` → `False` transformation without per-edit approval.
+   Both default to `false`; other remediation remains advisory.
+4. Review the draft PR and run application checks before merging. The workflow
+   never merges automatically.
+
+The trusted implementation rechecks repository/branch/commit/current content,
+rejects protected and symlink paths, parses Python syntax, applies the single
+allowlisted edit, rescans, and checks the remote base head again before pushing.
+Only the validated file enters the commit. Application tests are **not run**.
+Configure required reviewers on the `security-fixes` environment and protect the
+destination branch. A draft PR opened with `GITHUB_TOKEN` may not start unrelated
+CI workflows automatically; use your approved CI trigger/token configuration
+before merging.
+
+Deploy the reviewed scanner implementation to the trusted base/default branch
+before enabling these workflows. The introduction PR cannot use its own new code
+as the trusted implementation: readiness checks explicitly fail **not evaluated**
+until that deployment. When adapting this to another repository, use a separate,
+reviewed, pinned Threatlint tool checkout and retain the application checkout as
+data. The [scanner guide](security-scanner.md#github-review-and-rescan) describes
+bootstrap and support-file requirements.
+
+Requests to “suggest a fix” in [PR chat](ci-templates.md#conversing-with-threatlint-on-pull-requests)
+remain advisory. `/threatlint <question>` still replies with explanations; it does
+not authorize or dispatch this write workflow.
 
 ### Update Action Pins
 
@@ -247,6 +289,9 @@ The `# v6` and `# v1` comments identify the release each SHA was resolved from. 
 | Agent does not find project instructions | Confirm `.claude/agents/` and `CLAUDE.md` are present on the branch checked out by the workflow. |
 | Report misses relevant context | Check the scoped inputs and snapshot limits; narrow the question or use Claude for repository traversal. No provider guarantees full coverage. |
 | Run takes too long or costs too much | Narrow the workflow trigger, reduce `--max-turns` in the Claude step, or give the manual workflow a precise target. |
+| Security scanner reports trusted implementation missing | Validate the introduction locally, deploy the reviewed implementation to the trusted base/default branch, then rerun. Coverage was not evaluated. |
+| Fix workflow rejects the expected revision | The branch changed after the scan. Scan its new head and review a fresh proposal; do not replace the expected SHA without reviewing the new snapshot. |
+| No native suggestion appears | Only the deterministic allowlist and newly added diff lines qualify. Use the advisory recommendation or the reviewed workflow link; arbitrary model-generated edits are not applied. |
 
 ## References
 

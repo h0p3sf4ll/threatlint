@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1240" viewBox="0 0 1600 1240" role="img" aria-labelledby="title description">
+  <title id="title">Threatlint security platform: evidence before action</title>
+  <desc id="description">Selected source and supporting design documents feed bounded read-only specialist reviews and a separate security scanner. Independent providers assess disjoint source scopes, then challenge evidence once before deterministic consolidation. Review and scan observations enter a revision-bound evidence ledger. Explicit reviewed remediation applies a narrow deterministic fix and rescans; results return to the ledger. ServiceNow chain-record and personal coaching outputs are offline previews, not live writes or employee rankings.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L11 6L1 11" fill="none" stroke="#497278" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      text {font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill:#173b42}
+      .title {font-size:40px;font-weight:750;letter-spacing:-1px}
+      .subtitle {font-size:21px;fill:#4c666d}
+      .section {font-size:25px;font-weight:720}
+      .body {font-size:20px;fill:#34545c}
+      .small {font-size:17px;fill:#4c666d}
+      .label {font-size:15px;font-weight:750;letter-spacing:1.4px;fill:#28636b}
+      .panel {fill:#fff;stroke:#c8dbdc;stroke-width:1.5}
+      .flow {fill:none;stroke:#497278;stroke-width:2.5;marker-end:url(#arrow);stroke-linejoin:round}
+      .pill {fill:#e5f3ef;stroke:#9bc8ba;stroke-width:1.2}
+      .pilltext {font-size:18px;font-weight:650;fill:#225c51}
+      .preview {fill:#fcfaf5;stroke:#d4c4a3;stroke-width:1.5;stroke-dasharray:7 5}
+    </style>
+  </defs>
+  <rect width="1600" height="1240" fill="#f3f7f7"/>
+  <text class="label" x="80" y="52">THREATLINT · SECURITY PLATFORM FOUNDATION</text>
+  <text class="title" x="80" y="105">Keep evidence traceable. Make action explicit.</text>
+  <text class="subtitle" x="80" y="142">Bounded source review, independent assessments, conservative decisions, and reviewed remediation.</text>
+
+  <rect class="panel" x="80" y="180" width="1440" height="112" rx="18"/>
+  <text class="label" x="108" y="210">SELECTED INPUTS</text>
+  <text class="section" x="108" y="245">Repository + branch / revision</text>
+  <text class="body" x="625" y="230">Design documents · architecture diagrams · scanner findings</text>
+  <text class="small" x="625" y="261">Source and documents are evidence, never instructions or write authorization.</text>
+
+  <path class="flow" d="M490 292V336"/>
+  <path class="flow" d="M1275 292V336"/>
+
+  <rect class="panel" x="80" y="344" width="900" height="306" rx="18"/>
+  <text class="label" x="108" y="378">READ-ONLY REVIEW PIPELINE</text>
+  <text class="section" x="108" y="414">Disjoint primary scopes, shared supporting context</text>
+  <text class="body" x="108" y="448">1–4 requested workers per role · dependency barriers · total call budget</text>
+  <rect class="pill" x="108" y="470" width="245" height="42" rx="12"/>
+  <rect class="pill" x="372" y="470" width="245" height="42" rx="12"/>
+  <rect class="pill" x="636" y="470" width="316" height="42" rx="12"/>
+  <text class="pilltext" x="126" y="497">Independent provider A</text>
+  <text class="pilltext" x="390" y="497">Independent provider B</text>
+  <text class="pilltext" x="654" y="497">Optional third provider</text>
+  <text class="body" x="108" y="551">Explicit consent and settings for each provider</text>
+  <text class="body" x="108" y="583">Assess → challenge evidence once → consolidate deterministically</text>
+  <text class="small" x="108" y="621">Default: one provider, one worker. Agreement is not proof; uncertainty remains.</text>
+
+  <rect class="panel" x="1020" y="344" width="500" height="306" rx="18"/>
+  <text class="label" x="1048" y="378">SECURITY SCANNER</text>
+  <text class="section" x="1048" y="414">Baseline + optional engines</text>
+  <text class="body" x="1048" y="455">Source · dependency hygiene</text>
+  <text class="body" x="1048" y="489">Secrets · infrastructure configuration</text>
+  <text class="body" x="1048" y="533">Installed Semgrep / Trivy: opt-in</text>
+  <text class="small" x="1048" y="578">Partial coverage stays visible.</text>
+  <text class="small" x="1048" y="608">Scanner matches are unverified observations.</text>
+
+  <path class="flow" d="M490 650V704"/>
+  <path class="flow" d="M1275 650V704"/>
+
+  <rect x="80" y="712" width="1440" height="172" rx="18" fill="#e5f1f2" stroke="#8eb7bb" stroke-width="1.5"/>
+  <text class="label" x="108" y="746">LOCAL EVIDENCE LEDGER</text>
+  <text class="section" x="108" y="784">Provenance + observations + reviewed decisions + trends</text>
+  <text class="body" x="108" y="821">Repository / branch / revision boundaries · deduplication · original findings retained</text>
+  <text class="small" x="108" y="855">Evidence-linked attack paths assess terminal impact. A missing scan result does not establish remediation.</text>
+
+  <path class="flow" d="M490 884V938"/>
+  <path class="flow" d="M1275 884V938"/>
+
+  <rect class="panel" x="80" y="946" width="900" height="190" rx="18"/>
+  <text class="label" x="108" y="980">SEPARATE WRITE-CAPABLE EXECUTOR</text>
+  <text class="section" x="108" y="1016">Review exact edit → explicitly apply → rescan</text>
+  <text class="body" x="108" y="1052">Narrow deterministic allowlist · source binding · rollback on failed validation</text>
+  <text class="small" x="108" y="1090">Local proposal or trusted draft-PR workflow; no automatic merge.</text>
+  <text class="small" x="108" y="1117">Syntax and scanner checks do not replace application tests or runtime review.</text>
+
+  <path class="flow" d="M80 1042H34V798H72"/>
+  <text class="small" x="23" y="1014" transform="rotate(-90 23 1014)">rescan evidence</text>
+
+  <rect class="preview" x="1020" y="946" width="500" height="190" rx="18"/>
+  <text class="label" x="1048" y="980">OFFLINE PREVIEW STUBS</text>
+  <text class="section" x="1048" y="1016">ServiceNow + personal coaching</text>
+  <text class="body" x="1048" y="1052">Parent / related chain-record payloads</text>
+  <text class="body" x="1048" y="1084">Opt-in evidence-based coaching preview</text>
+  <text class="small" x="1048" y="1117">No live writes, employee ranking, or score storage.</text>
+
+  <line x1="80" y1="1171" x2="1520" y2="1171" stroke="#d2e0e0" stroke-width="1"/>
+  <text class="small" x="80" y="1205">Scope: new controls apply to Workbench review pipelines. Python and integration workflows retain their existing execution limits.</text>
+</svg>

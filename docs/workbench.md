@@ -3,6 +3,13 @@
 Turn a security question into an engineering decision: inspect the source, read the evidence,
 and leave with a proposed fix and regression assertions. The Workbench brings Threatlint's
 specialists, scanner triage, runtime observations, and reports into one single-user interface.
+
+The [security platform foundation](security-platform.md) adds a Guided/Advanced mode switch,
+**Test → Security scanner**, **Repository risk**, and evidence history on **Metrics**.
+Start with the [scanner guide](security-scanner.md) for a model-free scan and a reviewed fix.
+Advanced [worker/provider controls](review-orchestration.md) are optional; the default remains
+one worker per role and one selected provider. [Finding intelligence](finding-intelligence.md)
+explains causal chains, explicit decisions and the offline ServiceNow/coaching previews.
 Browser and Electron desktop use the same local Node.js backend and agent definitions.
 
 ## Requirements and first launch

@@ -96,6 +96,24 @@ Small cohesive modules such as `models.py`, `skills.py`, `ide.py`, and
 
 ## Find the right source
 
+The new platform boundaries are documented in [Security platform](security-platform.md).
+Scanner code separates snapshotting, baseline checks, external adapters, normalization,
+fix policy and CLI transport. The Workbench evidence ledger separates normalization/storage,
+causal graph decisions and offline previews. Keep edits out of model transport and keep
+unverified scanner/model assertions distinct from explicit reviewer attestations.
+
+Run the end-to-end platform check with a supported Chromium installation:
+
+```bash
+THREATLINT_BROWSER_EXECUTABLE=/absolute/path/to/chromium node web/tests/security-platform-browser-smoke.cjs
+```
+
+`THREATLINT_TEST_PYTHON` optionally selects a Python interpreter. The check uses the actual
+Python baseline and fix service against a disposable Git repository; it calls no provider.
+Set `THREATLINT_SCREENSHOTS=docs/media` to refresh the documented screenshots. Inspect the
+pixels before committing. [Validation evidence](platform-validation.md) distinguishes unit,
+browser, live-provider and native-desktop coverage.
+
 | Area | Source |
 | --- | --- |
 | Python CLI and integrations | [src/threatlint/](../src/threatlint/) |

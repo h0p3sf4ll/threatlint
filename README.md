@@ -27,6 +27,27 @@ attacker path, and proposes a fix and a regression assertion.
 **Find. Explain. Act.** Less time translating security output into engineering work.
 More time making the next change with a clear reason.
 
+### Security platform foundation · branch preview
+
+The Workbench now connects **scan → understand → fix → measure**. Guided mode provides a
+starting path for developers who want help with their code; Advanced mode exposes scoped
+parallel workers, independent provider challenge and evidence-backed exploit chains.
+
+- **Security scanner:** local SAST/secret patterns, selected IaC checks and dependency hygiene,
+  with optional installed Semgrep and Trivy engines. Coverage and missing engines stay visible.
+- **Reviewed fixes:** inspect a supported change, apply it to the bound source snapshot and
+  rescan. The first automatic policy handles an exact Python `DEBUG=True` assignment; other
+  fixes remain recommendations. Application tests still need to run.
+- **Connected risk:** view findings by repository, branch and revision, review causal attack
+  paths, and track verified improvement. Component counts never automatically inflate severity.
+- **Independent perspectives:** opt into two or three providers, one challenge round and a
+  consolidated report with disagreements retained. More model votes are not proof.
+
+ServiceNow chain export and private developer coaching are explicitly **offline preview
+stubs**. This is a foundation for local testing, not a claim of complete scanner coverage.
+Read [what changed, benefits and limits](docs/security-platform.md) and
+[validation evidence](docs/platform-validation.md) before merging.
+
 ### What a useful answer looks like
 
 An illustrative finding, not a result from your repository:
@@ -73,7 +94,7 @@ npm --prefix web start
 ```
 
 Open `http://127.0.0.1:3000`. View the bundled sample report before configuring a
-model, or connect a provider and review a repository.
+model, run **Test → Security scanner** without a model, or connect a provider and review a repository.
 Claude supports your Claude Code login, an Anthropic API key, or an Amazon Bedrock API key.
 Choose the method in Settings; see [credential setup](docs/setup.md#cloud-providers).
 
@@ -102,6 +123,9 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 
 | Your question | Start here | The useful outcome |
 | --- | --- | --- |
+| "Where should I start securing this code?" | Guided mode → Security scanner | Ranked findings, visible coverage, supported fixes and a rescan |
+| "Could these findings combine?" | Repository risk → reviewed chain | A causal path with final impact, difficulty, evidence and preserved individual decisions |
+| "Are we improving?" | Metrics → repository progress | Historical observations, verified remediation and coverage context |
 | "What can go wrong in this feature?" | Threat model (optionally with design diagrams, data-flow/architecture diagrams, specs, and source as inputs) | Assets, trust boundaries, attack paths, priorities, and design-drift notes |
 | "Did this change weaken a control?" | Security code review | Source-backed findings and a merge recommendation |
 | "Is this scanner result actionable?" | False-positive review (AVITs, SCTASKs, ISSTs) or Triage a scan report (Invicti, MobSF, DefectDojo, SonarQube) | Disposition, missing evidence, proposed fixes, acceptance criteria |
@@ -149,6 +173,23 @@ parallel work. Each lesson has a small exercise and an observable checkpoint.
 For a threat model, choose **Model a system**, use **Select repo / branch**, and add architecture
 notes, specifications, or diagrams with **Add supporting docs**. The review compares design
 intent against the selected source. See the [step-by-step walkthrough](docs/workbench.md#model-a-system-from-source-and-design).
+
+The current browser captures use a disposable synthetic repository and model/source adapters;
+they are interface demonstrations, not results from production code.
+
+![Security scanner showing ranked findings and explicit coverage](docs/media/security-scanner.png)
+
+<details><summary>Explore the current review and remediation interface</summary>
+
+![Review a supported change before applying and rescanning](docs/media/security-fix-review.png)
+![Select a repository branch for a threat model](docs/media/threat-model-source.png)
+![Provide source, supporting documents and review context](docs/media/threat-model-setup.png)
+![Advanced scoped workers and independent provider controls](docs/media/parallel-provider-controls.png)
+![Repository-wide finding history and revision-aware review](docs/media/repository-risk.png)
+![An explicitly reviewed synthetic chain with complexity and priority rationale](docs/media/synthetic-composite-evidence.png)
+![Repository evidence history on the Metrics page](docs/media/repository-progress.png)
+
+</details>
 
 <p align="center"><img src="docs/media/architecture.svg" alt="Threatlint architecture: shared specialist contracts, separate execution runtimes, advisory reports, and separately authorized operational workflows" width="100%"></p>
 
