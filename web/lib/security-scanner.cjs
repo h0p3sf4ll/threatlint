@@ -91,6 +91,7 @@ function createSecurityScanner({ store, integrations = {}, onScanComplete = () =
     const record = plans.get(id);
     if (!record) throw new HttpError('Fix proposal not found', 404);
     if (record.applied) throw new HttpError('This fix has already been applied', 409);
+    if (record.plan.canApply === false) throw new HttpError(record.plan.applyUnavailableReason || 'Local application is unavailable; apply the reviewed diff manually and scan again. No files were changed.');
     const session = sessionFor(record.sessionId);
     checkIdle(session);
     const repo = repoFor(session);

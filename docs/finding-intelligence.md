@@ -224,7 +224,10 @@ A composite contains `title`, `contributors: [{findingId, role, rationale}]`,
 to the terminal finding and have `kind: "impact"`.
 
 The ledger is stored in `finding-intelligence.json` alongside Workbench state
-using an atomic replacement and mode 0600. Reads return detached copies;
+using an atomic replacement and POSIX mode 0600. On Windows, access follows the
+state directory's inherited ACLs; Node's POSIX mode option does not establish a
+Windows ACL. Keep the state directory in the current user's private profile.
+Reads return detached copies;
 ingestion and review actions retain history. This is a local audit trail, not a
 tamper-evident external compliance log. No dependency installation or customer
 data is needed for its tests:

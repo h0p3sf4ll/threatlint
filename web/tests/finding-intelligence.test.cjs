@@ -106,9 +106,18 @@ describe('Finding intelligence provenance and deduplication', () => {
       const store = createFindingIntelligenceStore({ directory });
       store.ingest(ingestion());
       review(store, store.snapshot().findings[0].id);
+      const expected = store.snapshot();
       const snapshot = store.snapshot(); snapshot.findings[0].reviewHistory.length = 0;
-      assert.equal(createFindingIntelligenceStore({ directory }).snapshot().findings[0].reviewHistory.length, 1);
-      assert.equal(fs.statSync(path.join(directory, 'finding-intelligence.json')).mode & 0o777, 0o600);
+      assert.deepEqual(store.snapshot(), expected, 'mutating a returned snapshot cannot change the live ledger');
+      assert.deepEqual(createFindingIntelligenceStore({ directory }).snapshot(), expected, 'a reopened ledger retains the full evidence and decision history');
+      const file = path.join(directory, 'finding-intelligence.json');
+      const metadata = fs.statSync(file);
+      assert.equal(metadata.isFile(), true);
+      fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+      assert.deepEqual(fs.readdirSync(directory), ['finding-intelligence.json'], 'atomic replacement leaves no temporary ledger files');
+      // Windows reports synthetic POSIX permission bits; access is governed by
+      // inherited ACLs. Keep the actual persistence checks above on every OS.
+      if (process.platform !== 'win32') assert.equal(metadata.mode & 0o777, 0o600);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
 });

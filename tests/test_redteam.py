@@ -99,7 +99,10 @@ def test_learning_persists_and_reorders(tmp_path):
     ruleset.record("RT-RT-XSS", endpoint, confirmed=False, signal="not reflected", run_id="r1")
     save_ruleset(ruleset, path)
     import os
-    assert oct(os.stat(path).st_mode)[-3:] == "600"
+    # Windows stat mode bits do not represent its ACLs; keep persistence checks on every OS.
+    if os.name != "nt":
+        assert os.stat(path).st_mode & 0o777 == 0o600
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["rs.json"]
     reloaded = load_ruleset(path)
     assert reloaded.rules["RT-RT-SQLI"].hits == 1 and reloaded.rules["RT-RT-SQLI"].runs == 1
     assert reloaded.rules["RT-RT-SQLI"].affinity.get("pay") == 1
@@ -171,11 +174,11 @@ def test_assessment_finds_issues_learns_drafts_avits_and_tears_down(tmp_path, fa
     env = FakeEnv()
     rc = assessment.run(_args(tmp_path, repo=str(tmp_path)), env=env)
     assert rc == 0
-    report_text = (tmp_path / "run" / assessment.REPORT_FILE).read_text()
+    report_text = (tmp_path / "run" / assessment.REPORT_FILE).read_text(encoding="utf-8")
     assert "Runtime Red Team Assessment" in report_text and "Ruleset coverage and learning" in report_text
     # Reflecting app with no headers → XSS, missing-headers, and CORS reflection observed.
     assert "Reflected cross-site scripting" in report_text
-    drafts = json.loads((tmp_path / "run" / assessment.AVITS_FILE).read_text())
+    drafts = json.loads((tmp_path / "run" / assessment.AVITS_FILE).read_text(encoding="utf-8"))
     assert drafts and all(item["posted"] is False for item in drafts)
     assert any(item["rule_id"] == "RT-RT-XSS" for item in drafts)
     # Isolation and probe bound held.
@@ -192,5 +195,5 @@ def test_assessment_redacts_resolved_credentials_from_outputs(tmp_path, fake_rep
     config.write_text(json.dumps({"store": "aws-parameter-store", "secrets": {"TOKEN": "/app/token"}}))
     monkeypatch.setattr(credentials, "resolve", lambda cfg, profile=None, **k: {"TOKEN": "supersecretvalue"})
     assessment.run(_args(tmp_path, repo=str(tmp_path), credentials=str(config)), env=FakeEnv())
-    report_text = (tmp_path / "run" / assessment.REPORT_FILE).read_text()
+    report_text = (tmp_path / "run" / assessment.REPORT_FILE).read_text(encoding="utf-8")
     assert "supersecretvalue" not in report_text and "resolved from aws-parameter-store" in report_text

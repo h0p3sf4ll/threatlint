@@ -50,6 +50,7 @@
     limits.append(node('summary', `Coverage: ${scan.coverage?.status || 'unknown'} · ${scan.coverage?.files ?? 'unknown'} files`));
     for (const limitation of scan.coverage?.limitations || []) limits.append(node('p', limitation, 'small subtle'));
     if (scan.binding) limits.append(node('p', `${scan.binding.branch || 'Unknown branch'} · ${scan.binding.commit || 'Unknown revision'} · snapshot ${scan.binding.contentDigest || 'not recorded'}`, 'micro subtle'));
+    if (scan.policy?.localApplySupported === false) limits.append(node('p', scan.policy.localApplyReason, 'small subtle'));
     coverage.append(limits);
     const findings = $('security-findings'); findings.replaceChildren();
     const sorted = [...(scan.findings || [])].sort((a, b) => (rank[a.severity] ?? 5) - (rank[b.severity] ?? 5));
@@ -79,7 +80,9 @@
       container.replaceChildren(node('p', plan.description, 'small'));
       const before = node('pre', undefined, 'platform-diff-before'); before.append(node('code', `− ${plan.before}`));
       const after = node('pre', undefined, 'platform-diff-after'); after.append(node('code', `+ ${plan.after}`));
-      container.append(before, after, node('p', 'This changes the selected workspace. The server verifies the original snapshot and rescans. Application tests remain your responsibility.', 'small subtle'),
+      container.append(before, after);
+      if (plan.canApply === false) container.append(node('p', plan.applyUnavailableReason, 'small subtle'));
+      else container.append(node('p', 'This changes the selected workspace. The server verifies the original snapshot and rescans. Application tests remain your responsibility.', 'small subtle'),
         button('Apply this change & rescan', () => { void applyPlan(plan, generation).catch(() => {}); }));
     } catch (error) { if (generation === state.generation) status(error.message, true); }
     finally { if (generation === state.generation) { state.busy = false; controls(); } }
@@ -132,7 +135,8 @@
       if (['failed', 'cancelled'].includes(scan.status)) throw new Error(scan.error || `Scan ${scan.status}. No clean result is claimed.`);
       render(scan); notifyEvidence();
       status(`Scan finished · ${scan.findings.length} findings · ${scan.coverage?.status || 'unknown'} coverage. Start with the highest severity and check its evidence.`);
-      if (automatic) {
+      if (automatic && scan.policy?.localApplySupported === false) status(scan.policy.localApplyReason);
+      if (automatic && scan.policy?.localApplySupported !== false) {
         let count = 0;
         while (count < 12 && generation === state.generation) {
           const eligible = scan.findings.find(item => item.fixAvailable && autoRules.includes(item.ruleId));

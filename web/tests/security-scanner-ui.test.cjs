@@ -72,3 +72,38 @@ test('scan cancellation waits for terminal evidence and never becomes a clean re
   assert.equal(app.nodes.get('security-scan-start').disabled, false);
   assert.match(app.nodes.get('security-status').textContent, /cancelled.*No clean result/);
 });
+
+test('unsupported local writer shows a useful manual diff without an Apply button', async () => {
+  const reason = 'Safe directory-relative replacement is unavailable; apply the reviewed diff manually and scan again. No files were changed.';
+  const result = { ...scan, policy: { localApplySupported: false, localApplyReason: reason } };
+  const app = fixture((url) => {
+    if (url.endsWith('/fixes')) return Promise.resolve(response({ id: 'manual-plan', canApply: false, applyUnavailableReason: reason, before: 'DEBUG = True', after: 'DEBUG = False', description: 'Review this setting.' }));
+    if (url.includes('?sessionId=')) return Promise.resolve(response([]));
+    if (url === '/api/security-scanner/scans') return Promise.resolve(response({ id: 'initial' }));
+    return Promise.resolve(response(result));
+  });
+  app.session('fixture'); await settle();
+  app.nodes.get('security-scan-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  app.nodes.get('security-findings').querySelectorAll('button').find(button => button.textContent === 'Review suggested change').dispatchEvent(new Event('click'));
+  await settle();
+  assert.match(app.nodes.get('security-findings').textContent, /DEBUG = False/);
+  assert.match(app.nodes.get('security-findings').textContent, /apply the reviewed diff manually/);
+  assert.equal(app.nodes.get('security-findings').querySelectorAll('button').some(button => button.textContent.includes('Apply this change')), false);
+});
+
+test('automatic authorization cannot trigger writes when the scan reports an unsupported writer', async () => {
+  const calls = [];
+  const reason = 'Apply the reviewed diff manually and scan again. No files were changed.';
+  const app = fixture((url) => {
+    calls.push(url);
+    if (url.includes('?sessionId=')) return Promise.resolve(response([]));
+    if (url === '/api/security-scanner/scans') return Promise.resolve(response({ id: 'initial' }));
+    return Promise.resolve(response({ ...scan, policy: { localApplySupported: false, localApplyReason: reason } }));
+  });
+  app.session('fixture'); await settle();
+  app.nodes.get('experience-mode').value = 'advanced'; app.nodes.get('security-auto-fix').checked = true;
+  app.nodes.get('security-scan-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  assert.equal(calls.some(url => url.endsWith('/fixes') || url.endsWith('/apply')), false);
+  assert.equal(app.nodes.get('security-status').textContent, reason);
+  assert.equal(app.nodes.get('security-scan-start').disabled, false);
+});

@@ -67,7 +67,7 @@ def test_missing_proof_or_fix_section_requests_substantive_work(checkout, field)
 @pytest.mark.parametrize("location", ["app.py:999", "app.py:0", "missing.py:1", "../outside.py:1", "linked.py:1"])
 def test_invalid_source_citation_does_not_confirm_a_finding(checkout, tmp_path, location):
     outside = tmp_path / "outside.py"
-    outside.write_text("outside-sensitive-evidence\n")
+    outside.write_bytes(b"outside-sensitive-evidence\n")
     (checkout / "linked.py").symlink_to(outside)
     git(checkout, "add", "linked.py")
     git(checkout, "commit", "-m", "symlink fixture")
@@ -112,7 +112,7 @@ def test_missing_checkout_prerequisites_are_concrete_blockers(checkout, change):
 
 def test_missing_git_checkout_and_dirty_checkout_are_skipped(checkout, tmp_path):
     assert assess(tmp_path, confirmed())["status"] == "skipped"
-    (checkout / "app.py").write_text("unreviewed edit\n")
+    (checkout / "app.py").write_bytes(b"unreviewed edit\n")
     assert "not clean" in assess(checkout, confirmed())["issues"][0]
 
 
@@ -153,7 +153,7 @@ def test_placeholder_section_cannot_borrow_the_next_field(checkout):
 
 def test_untrusted_source_and_prior_report_are_bounded_and_redacted(checkout):
     secret = "synthetic-secret-value-12345678901234567890"
-    (checkout / "app.py").write_text(SOURCE + f'password = "{secret}"\n')
+    (checkout / "app.py").write_bytes((SOURCE + f'password = "{secret}"\n').encode("utf-8"))
     git(checkout, "add", "app.py")
     git(checkout, "commit", "-m", "synthetic credential fixture")
     result = assess(checkout, confirmed("") + f'\npassword = "{secret}"\n' + "x " * 50_000)
@@ -188,9 +188,9 @@ def test_remaining_blocker_is_named_and_redacted_in_issues(checkout):
 
 def test_prepare_fix_cli_does_not_require_confirmation_or_authentication(checkout, tmp_path, monkeypatch, capsys):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
-    target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}))
+    target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}), encoding="utf-8")
     monkeypatch.setattr(avit_cli, "confirm", lambda *_: pytest.fail("Local inspection needs no confirmation"))
     args = SimpleNamespace(number=AVIT, report=str(markdown), checkout=str(checkout), target=str(target))
     assert avit_cli.cmd_prepare_fix(args) == 0
@@ -199,9 +199,9 @@ def test_prepare_fix_cli_does_not_require_confirmation_or_authentication(checkou
 
 def test_prepare_fix_cli_rejects_other_avit_target(checkout, tmp_path):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
-    target.write_text(json.dumps({**TARGET, "avit": "AVIT000000000000002"}))
+    target.write_text(json.dumps({**TARGET, "avit": "AVIT000000000000002"}), encoding="utf-8")
     args = SimpleNamespace(number=AVIT, report=str(markdown), checkout=str(checkout), target=str(target))
     with pytest.raises(evidence.ResolveError, match="does not belong"):
         avit_cli.cmd_prepare_fix(args)
@@ -209,9 +209,9 @@ def test_prepare_fix_cli_rejects_other_avit_target(checkout, tmp_path):
 
 def test_prepare_fix_command_dispatches_without_tracker_settings(checkout, tmp_path):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
-    target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}))
+    target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}), encoding="utf-8")
     result = subprocess.run([sys.executable, "-c", "from threatlint.cli import main; main()",
                              "avit", "prepare-fix", AVIT, "--report", str(markdown), "--checkout", str(checkout),
                              "--target", str(target), "--aws-profile", "no-authentication-needed"],

@@ -19,9 +19,11 @@ def scan_repository(repository: str, *, engines=None, external=external_scans) -
     baseline_count = len(findings)
     extra, statuses = external(files, engines)
     findings.extend(extra)
-    from .fixes import eligible, RULES
+    from .fixes import eligible, RULES, supports_safe_replacement, UNSUPPORTED_APPLY
+    local_apply_supported = supports_safe_replacement()
     for item in findings:
         item["fixAvailable"] = eligible(item, files)
+        item["localApplyAvailable"] = item["fixAvailable"] and local_apply_supported
     finding_limit = len(findings) >= MAX_FINDINGS
     findings = sort_findings(findings)[:MAX_FINDINGS]
     statuses.insert(0, {"id": "baseline", "categories": ["sast", "sca", "secrets", "iac"], "status": "completed",
@@ -40,4 +42,6 @@ def scan_repository(repository: str, *, engines=None, external=external_scans) -
     return {"schemaVersion": 1, "status": "partial", "binding": binding, "observedAt": datetime.now(timezone.utc).isoformat(),
             "findings": findings, "engines": statuses, "coverage": coverage,
             "summary": {severity: sum(item["severity"] == severity for item in findings) for severity in SEVERITIES},
-            "policy": {"mode": "review", "autoApply": False, "eligibleRules": list(RULES)}}
+            "policy": {"mode": "review", "autoApply": False, "eligibleRules": list(RULES),
+                       "localApplySupported": local_apply_supported,
+                       "localApplyReason": "" if local_apply_supported else UNSUPPORTED_APPLY}}

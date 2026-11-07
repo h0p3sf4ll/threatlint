@@ -114,3 +114,16 @@ test('automatic policy must explicitly name the proposed supported rule', async 
   assert.equal(result.status, 'applied');
   assert.deepEqual(JSON.parse(calls.find(call => call.args[1] === 'apply').input).policy, { autoApply: true, rules: ['TL-PY-YAML'] });
 });
+
+test('unsupported local application remains a reviewable proposal and never invokes mutation', async t => {
+  const { scanner, plan, calls } = fixture(t);
+  plan.canApply = false;
+  plan.applyUnavailableReason = 'Safe directory-relative replacement is unavailable; apply the reviewed diff manually. No files were changed.';
+  const { id } = scanner.start({ sessionId: 'session' }); await tick();
+  const proposed = await scanner.propose(id, { findingId: 'finding' });
+  assert.equal(proposed.after, 'DEBUG = False');
+  assert.equal(proposed.canApply, false);
+  await assert.rejects(scanner.apply(proposed.id, { confirm: true }), /apply the reviewed diff manually.*No files were changed/);
+  await assert.rejects(scanner.apply(proposed.id, { policy: { autoApply: true, rules: ['TL-DEBUG-ENABLED'] } }), /apply the reviewed diff manually/);
+  assert.equal(calls.filter(call => call.args[1] === 'apply').length, 0);
+});

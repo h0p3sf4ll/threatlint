@@ -14,6 +14,10 @@ const path = require('node:path');
 const PROBE_TIMEOUT_MS = 8000;
 const COMMON_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 
+// Windows environment names are case-insensitive, including copied plain objects.
+const pathKey = (env, platform) => platform === 'win32'
+  ? Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'PATH' : 'PATH';
+
 /** The login shell's PATH, or '' when it cannot be read (the shell is printed between markers to skip rc noise). */
 function loginShellPath({ shell = process.env.SHELL || '/bin/zsh', spawnSyncImpl = spawnSync } = {}) {
   const probe = spawnSyncImpl(shell, ['-ilc', 'printf "__PATH__%s__END__" "$PATH"'], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
@@ -22,16 +26,19 @@ function loginShellPath({ shell = process.env.SHELL || '/bin/zsh', spawnSyncImpl
 
 /** The user's PATH: login shell entries first, then the inherited ones and common install dirs, without duplicates. */
 function userPath({ env = process.env, platform = process.platform, ...probe } = {}) {
-  if (platform === 'win32') return env.PATH || '';
-  const entries = [loginShellPath(probe), env.PATH, ...COMMON_DIRS].filter(Boolean).flatMap(value => value.split(path.delimiter));
-  return [...new Set(entries.filter(Boolean))].join(path.delimiter);
+  if (platform === 'win32') return env[pathKey(env, platform)] || '';
+  // The supplied platform owns PATH syntax; it may differ from this process's host in tests.
+  const delimiter = path.posix.delimiter;
+  const entries = [loginShellPath(probe), env.PATH, ...COMMON_DIRS].filter(Boolean).flatMap(value => value.split(delimiter));
+  return [...new Set(entries.filter(Boolean))].join(delimiter);
 }
 
 /** Adopts the user's PATH for this process and everything it starts. */
 function adoptUserPath(options = {}) {
   const env = options.env || process.env;
-  env.PATH = userPath({ ...options, env });
-  return env.PATH;
+  const key = pathKey(env, options.platform || process.platform);
+  env[key] = userPath({ ...options, env });
+  return env[key];
 }
 
 module.exports = { loginShellPath, userPath, adoptUserPath };

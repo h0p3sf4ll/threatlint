@@ -23,4 +23,20 @@ describe('desktop user PATH', () => {
     adoptUserPath({ env, platform: 'darwin', spawnSyncImpl: shellSays('__PATH__/opt/tools__END__') });
     assert.equal(env.PATH, '/opt/tools:/usr/bin:/opt/homebrew/bin:/usr/local/bin');
   });
+
+  it('preserves Windows PATH separators, drive letters, and environment key casing without probing a shell', () => {
+    for (const key of ['PATH', 'Path', 'path']) {
+      const value = 'C:\\Users\\me\\bin;C:\\Windows\\System32;D:\\Tools';
+      const env = { [key]: value, TEMP: 'C:\\Temp' };
+      const options = { env, platform: 'win32', spawnSyncImpl: () => assert.fail('Windows must not launch a POSIX login shell') };
+      assert.equal(userPath(options), value);
+      assert.equal(adoptUserPath(options), value);
+      assert.deepEqual(env, { [key]: value, TEMP: 'C:\\Temp' });
+    }
+  });
+
+  it('uses POSIX syntax for Linux as well as macOS regardless of the test host', () => {
+    assert.equal(userPath({ env: { PATH: '/usr/bin:/bin' }, platform: 'linux', spawnSyncImpl: shellSays('__PATH__/home/me/.local/bin:/usr/bin__END__') }),
+      '/home/me/.local/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin');
+  });
 });

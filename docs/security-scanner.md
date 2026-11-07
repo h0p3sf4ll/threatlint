@@ -81,6 +81,13 @@ the browser cannot supply replacement code. Stale plans, symlinks, traversal,
 workflow/agent directories, credential/secret files, and secret-bearing proposal
 lines are rejected. Directory-relative replacement is required; hosts without
 that filesystem support retain manual review instead of an unsafe write fallback.
+This includes current Windows Python hosts. Reports distinguish a reviewable
+`fixAvailable` diff from `localApplyAvailable`; scan policy records
+`localApplySupported` and its reason. A proposal with `canApply: false` still
+shows the exact diff and manual instructions, but Workbench offers no Apply
+button and does not attempt automatic edits. Both the host and Python writer
+reject application explicitly without claiming a rescan or rollback happened.
+Native GitHub suggestions remain available through the trusted workflow.
 
 Application parses Python syntax without importing it, writes only the eligible
 file, and rescans. A failed, absent or finding-budget-truncated baseline validation restores the original content

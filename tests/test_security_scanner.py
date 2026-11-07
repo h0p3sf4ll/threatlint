@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import pytest
 
 from threatlint.security_scanner.scan import scan_repository
-from threatlint.security_scanner.snapshot import ScannerError
+from threatlint.security_scanner.snapshot import ScannerError, snapshot
 from threatlint.security_scanner.engines import external_scans, normalize_semgrep, normalize_trivy
-from threatlint.security_scanner.fixes import apply_fix, propose_fix
+from threatlint.security_scanner.fixes import apply_fix, propose_fix, supports_safe_replacement
 from threatlint.security_scanner.github import build_comment, suggestion_payload
 
 
@@ -30,6 +30,22 @@ def proposal(tmp_path):
     report = scan_repository(str(tmp_path))
     item = next(item for item in report['findings'] if item['ruleId'] == 'TL-DEBUG-ENABLED')
     return report, propose_fix(report, item['id'])
+
+
+def assert_advisory_if_unsupported(plan, **kwargs):
+    """Exercise the real platform's denied-write contract rather than skip tests."""
+    if supports_safe_replacement():
+        return False
+    repository = plan['binding']['repository']
+    before = snapshot(repository)
+    def unexpected_rescan(_repo):
+        pytest.fail('An unsupported writer must not reach the rescan callback')
+    assert plan['canApply'] is False
+    assert 'apply the reviewed diff manually' in plan['applyUnavailableReason']
+    with pytest.raises(ScannerError, match='apply the reviewed diff manually.*No files were changed'):
+        apply_fix(plan, scan=unexpected_rescan, **kwargs)
+    assert snapshot(repository) == before
+    return True
 
 
 def test_baseline_covers_categories_redacts_secrets_and_never_claims_full_coverage(tmp_path):
@@ -88,6 +104,8 @@ def test_fix_requires_review_then_validates_and_rescans(tmp_path):
     _report, plan = proposal(tmp_path)
     with pytest.raises(ScannerError, match='explicitly confirm'):
         apply_fix(plan)
+    if assert_advisory_if_unsupported(plan, confirm=True):
+        return
     result = apply_fix(plan, confirm=True)
     assert (tmp_path / 'settings.py').read_text() == 'DEBUG = False\nvalue = 3\n'
     assert result['validation'] == {'syntax': 'passed', 'baselineRescan': 'passed', 'applicationTests': 'not_run'}
@@ -115,6 +133,8 @@ def test_stale_or_tampered_plan_cannot_write(tmp_path, change):
 
 def test_failed_rescan_rolls_back_the_exact_original(tmp_path):
     _report, plan = proposal(tmp_path)
+    if assert_advisory_if_unsupported(plan, confirm=True):
+        return
     def fail_scan(_repo):
         raise ScannerError('synthetic rescan failed')
     with pytest.raises(ScannerError, match='restored'):
@@ -124,6 +144,9 @@ def test_failed_rescan_rolls_back_the_exact_original(tmp_path):
 
 def test_changed_repository_during_rescan_does_not_claim_validated_fix(tmp_path):
     _report, plan = proposal(tmp_path)
+    if assert_advisory_if_unsupported(plan, confirm=True):
+        assert not (tmp_path / 'other.py').exists()
+        return
     def changed_scan(repo):
         result = scan_repository(repo)
         (tmp_path / 'other.py').write_text('changed = True\n')
@@ -138,6 +161,8 @@ def test_auto_apply_requires_specific_explicit_policy(tmp_path):
     _report, plan = proposal(tmp_path)
     with pytest.raises(ScannerError):
         apply_fix(plan, policy={'autoApply': True, 'rules': ['arbitrary']})
+    if assert_advisory_if_unsupported(plan, policy={'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']}):
+        return
     assert apply_fix(plan, policy={'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']})['autoApplied'] is True
 
 
@@ -266,15 +291,18 @@ def test_supported_source_edits_are_precise_reviewable_and_rescanned(tmp_path, r
     assert plan['after'] == expected and plan['ruleId'] == rule
     with pytest.raises(ScannerError):
         apply_fix(plan, policy={'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']})
-    result = apply_fix(plan, policy={'autoApply': True, 'rules': [rule]})
-    assert result['autoApplied'] and result['validation']['baselineRescan'] == 'passed'
-    assert file.read_bytes() == source.replace(plan['before'], expected).encode()
     bound_plan = {**plan, 'binding': {**plan['binding'], 'commit': 'a' * 40}}
     payload = suggestion_payload(bound_plan, 'a' * 40)
     assert expected in payload['body'] and 'Commit this native suggestion' in payload['body']
     bound_plan['after'] += '; malicious()'
     with pytest.raises(ValueError):
         suggestion_payload(bound_plan, 'a' * 40)
+    if assert_advisory_if_unsupported(plan, policy={'autoApply': True, 'rules': [rule]}):
+        assert file.read_bytes() == source.encode()
+        return
+    result = apply_fix(plan, policy={'autoApply': True, 'rules': [rule]})
+    assert result['autoApplied'] and result['validation']['baselineRescan'] == 'passed'
+    assert file.read_bytes() == source.replace(plan['before'], expected).encode()
 
 
 @pytest.mark.parametrize('source', [
@@ -315,6 +343,8 @@ def test_local_library_shadowing_and_secret_bearing_lines_are_advisory(tmp_path)
 @pytest.mark.parametrize('change', ['failed', 'missing-baseline', 'finding-limit'])
 def test_incomplete_rescan_rolls_back_even_when_finding_is_absent(tmp_path, change):
     _report, plan = proposal(tmp_path)
+    if assert_advisory_if_unsupported(plan, confirm=True):
+        return
     def incomplete(repo):
         scan = scan_repository(repo)
         if change == 'failed':
@@ -379,3 +409,37 @@ def test_workflow_script_prepares_new_rule_without_publication(tmp_path, monkeyp
     plan = json.loads((output / 'proposal.json').read_text())
     assert plan['ruleId'] == 'TL-PY-YAML' and plan['after'] == 'parsed = yaml.load(data, Loader=yaml.SafeLoader)'
     assert len(calls) == 1 and 'yaml.Loader' in (repo / 'settings.py').read_text()
+
+
+@pytest.mark.parametrize('authorization', [{'confirm': True}, {'policy': {'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']}}])
+def test_missing_write_capability_preserves_proposal_and_denies_without_mutation(tmp_path, monkeypatch, authorization):
+    from threatlint.security_scanner import fixes
+    repository(tmp_path)
+    monkeypatch.setattr(fixes, 'supports_safe_replacement', lambda: False)
+    report = scan_repository(str(tmp_path))
+    finding = next(item for item in report['findings'] if item['ruleId'] == 'TL-DEBUG-ENABLED')
+    assert finding['fixAvailable'] and finding['localApplyAvailable'] is False
+    assert report['policy']['localApplySupported'] is False
+    plan = propose_fix(report, finding['id'])
+    assert plan['canApply'] is False and plan['after'] == 'DEBUG = False'
+    assert 'apply the reviewed diff manually' in plan['applyUnavailableReason']
+    before = snapshot(str(tmp_path))
+    monkeypatch.setattr(fixes, '_replace', lambda *_: pytest.fail('Unsupported platforms must never enter the writer'))
+    with pytest.raises(ScannerError, match='apply the reviewed diff manually.*No files were changed') as error:
+        apply_fix(plan, scan=lambda *_: pytest.fail('No rescan may run'), **authorization)
+    assert 'restored' not in str(error.value)
+    assert snapshot(str(tmp_path)) == before
+    # A reviewable diff remains useful for external native GitHub suggestions.
+    assert 'DEBUG = False' in suggestion_payload(plan, report['binding']['commit'])['body']
+
+
+@pytest.mark.parametrize('missing', ['open', 'rename', 'stat', 'unlink', 'follow_symlinks', 'O_NOFOLLOW', 'O_DIRECTORY', 'fchmod'])
+def test_safe_writer_requires_all_used_filesystem_capabilities(monkeypatch, missing):
+    from threatlint.security_scanner import fixes
+    if missing in {'open', 'rename', 'stat', 'unlink'}:
+        monkeypatch.setattr(fixes.os, 'supports_dir_fd', fixes.os.supports_dir_fd - {getattr(fixes.os, missing)})
+    elif missing == 'follow_symlinks':
+        monkeypatch.setattr(fixes.os, 'supports_follow_symlinks', fixes.os.supports_follow_symlinks - {fixes.os.stat})
+    else:
+        monkeypatch.delattr(fixes.os, missing, raising=False)
+    assert fixes.supports_safe_replacement() is False

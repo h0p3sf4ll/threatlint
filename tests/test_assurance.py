@@ -129,12 +129,12 @@ def test_critical_sast_disqualifies_but_dynamic_still_runs(tmp_path, fake_repo):
     args = _args(tmp_path, _sast_runner=_sast_returning("CRITICAL"))
     rc = pipeline.run(args, env=ReflectingEnv())
     assert rc == 1
-    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text())
+    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text(encoding="utf-8"))
     assert state["verdict"] == "DISQUALIFIED" and state["disqualified_at"] == "static analysis (SAST)"
     # The finish line was still crossed: the dynamic stage ran to completion despite the SAST disqualification.
     dynamic = next(stage for stage in state["stages"] if stage["kind"] == "dast")
     assert dynamic["status"] == "ran" and dynamic.get("endpoints", 0) >= 1 and "teardown" not in dynamic.get("note", "")
-    report_text = (tmp_path / "run" / pipeline.REPORT_FILE).read_text()
+    report_text = (tmp_path / "run" / pipeline.REPORT_FILE).read_text(encoding="utf-8")
     assert "DISQUALIFIED" in report_text and "Invicti submission is stubbed" in report_text
 
 
@@ -142,7 +142,7 @@ def test_clean_repo_qualifies(tmp_path, fake_repo):
     args = _args(tmp_path, _sast_runner=_sast_returning("LOW", "INFO"))
     rc = pipeline.run(args, env=QuietEnv())
     assert rc == 0
-    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text())
+    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text(encoding="utf-8"))
     assert state["verdict"] == "QUALIFIED" and state["disqualified_at"] is None
     assert all(stage["status"] == "ran" for stage in state["stages"])
 
@@ -152,6 +152,6 @@ def test_mobile_repo_routes_to_nowsecure(tmp_path, fake_repo, monkeypatch):
     args = _args(tmp_path, _sast_runner=_sast_returning("LOW"))
     rc = pipeline.run(args, env=None)  # no ephemeral build for mobile
     assert rc == 0
-    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text())
+    state = json.loads((tmp_path / "run" / pipeline.STATE_FILE).read_text(encoding="utf-8"))
     mobile = next(stage for stage in state["stages"] if stage["kind"] == "mast")
     assert mobile["provider"] == "nowsecure" and mobile["status"] == "ran"

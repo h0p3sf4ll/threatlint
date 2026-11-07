@@ -18,6 +18,19 @@ from .normalize import redacted
 from .source_edits import RULES, replacement
 
 PROTECTED = {".git", ".github", ".gitlab", ".circleci", ".codex", ".claude", ".agents"}
+UNSUPPORTED_APPLY = "Safe directory-relative replacement is unavailable on this platform; apply the reviewed diff manually and scan again. No files were changed."
+
+
+def supports_safe_replacement() -> bool:
+    """Require every filesystem primitive used by the anchored writer."""
+    return (all(function in os.supports_dir_fd for function in (os.open, os.rename, os.stat, os.unlink))
+            and os.stat in os.supports_follow_symlinks
+            and all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "fchmod")))
+
+
+def _require_safe_replacement() -> None:
+    if not supports_safe_replacement():
+        raise ScannerError(UNSUPPORTED_APPLY)
 
 
 def protected(path: str) -> bool:
@@ -69,19 +82,20 @@ def propose_fix(report: dict, finding_id: str) -> dict:
         raise ScannerError("This finding has no eligible deterministic fix; follow the advisory recommendation")
     before, after = edit
     line = item["line"]
+    can_apply = supports_safe_replacement()
     return {"schemaVersion": 1, "binding": binding, "findingId": finding_id, "ruleId": item["ruleId"], "path": item["path"],
             "line": line, "beforeSha256": hashlib.sha256(before).hexdigest(), "afterSha256": hashlib.sha256(after).hexdigest(),
             "before": before.decode("utf-8").splitlines()[line - 1], "after": after.decode("utf-8").splitlines()[line - 1],
             "description": RULES[item["ruleId"]],
             "validation": "Python syntax parsing and a fresh baseline security scan; application tests are not run.",
-            "status": "proposed", "requiresReview": True}
+            "status": "proposed", "requiresReview": True, "canApply": can_apply,
+            "applyUnavailableReason": "" if can_apply else UNSUPPORTED_APPLY}
 
 
 def _replace(root: Path, relative: str, data: bytes, expected: bytes) -> None:
     # Anchor traversal and replacement to open directories; parent symlink swaps
     # cannot redirect the write outside the reviewed checkout.
-    if os.open not in os.supports_dir_fd or os.rename not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
-        raise ScannerError("Safe directory-relative replacement is unavailable on this platform; apply the reviewed diff manually")
+    _require_safe_replacement()
     safe_file(root, relative)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     temporary = ".threatlint-fix-" + secrets.token_hex(12)
@@ -124,6 +138,9 @@ def apply_fix(plan: dict, *, confirm=False, policy=None, scan=None) -> dict:
             and all(isinstance(rule, str) and rule in RULES for rule in rules) and plan.get("ruleId") in rules)
     if confirm is not True and not auto:
         raise ScannerError("Review and explicitly confirm this fix, or opt in to its specific auto-apply rule")
+    # Capability denial is advisory, not a failed rescan or an asserted rollback.
+    # Check before any write and retain the independent gate in the writer itself.
+    _require_safe_replacement()
     repository = plan.get("binding", {}).get("repository", "")
     report = scan_repository(repository)
     canonical = propose_fix(report, plan.get("findingId", ""))

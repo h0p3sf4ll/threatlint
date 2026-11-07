@@ -47,7 +47,9 @@ def checkout(tmp_path):
     git(repo, "init", "-b", "main")
     git(repo, "config", "user.name", "Fixture")
     git(repo, "config", "user.email", "fixture@example.test")
-    (repo / "app.py").write_text(SOURCE)
+    # The reviewed Git blob and unified diff deliberately use exact UTF-8/LF bytes.
+    # Default text writes translate to CRLF on Windows without an autocrlf policy.
+    (repo / "app.py").write_bytes(SOURCE.encode("utf-8"))
     git(repo, "add", "app.py")
     git(repo, "commit", "-m", "fixture")
     git(repo, "remote", "add", "origin", ORIGIN)
@@ -238,7 +240,7 @@ def test_unsafe_or_inapplicable_proposal_never_publishes(checkout, api, patch):
 
 
 def test_dirty_checkout_is_not_published(checkout, api):
-    (checkout / "app.py").write_text("user edit\n")
+    (checkout / "app.py").write_bytes(b"user edit\n")
     with pytest.raises(ResolveError, match="clean"):
         pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
     assert api.calls == []
@@ -318,3 +320,39 @@ new file mode 100644
     assert changes[-1] == {"changeType": "add", "item": {"path": "/test_app.py"}, "newContent": {
         "content": "from app import parse\ndef test_parse():\n    assert parse('[1]') == [1]\n", "contentType": "rawtext"}}
     assert len(tree) == 40 and not (checkout / "test_app.py").exists()
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf-blob", "crlf-blob"])
+def test_cached_proposal_preserves_committed_line_endings_without_weakening_matching(checkout, newline):
+    git(checkout, "config", "core.autocrlf", "false")
+    source = SOURCE.replace("\n", newline).encode("utf-8")
+    (checkout / "app.py").write_bytes(source)
+    git(checkout, "add", "app.py")
+    git(checkout, "commit", "--allow-empty", "-m", "explicit line-ending fixture")
+    head = git(checkout, "rev-parse", "HEAD")
+    index = (checkout / ".git" / "index").read_bytes()
+    # Git diff headers stay LF; hunk content carries each source line's actual ending.
+    patch = "".join(line if line.startswith(("diff ", "index ", "--- ", "+++ ", "@@ "))
+                    else line.rstrip("\n") + newline for line in PATCH.splitlines(keepends=True))
+    if newline == "\r\n":
+        with pytest.raises(ResolveError, match="could not be validated"):
+            pr._prepare(checkout, PATCH, head)
+    changes, tree = pr._prepare(checkout, patch, head)
+    expected = "import ast\n\ndef parse(value):\n    return ast.literal_eval(value)\n".replace("\n", newline)
+    assert changes[0]["newContent"]["content"] == expected
+    assert len(tree) == 40
+    assert (checkout / "app.py").read_bytes() == source
+    assert (checkout / ".git" / "index").read_bytes() == index
+    assert git(checkout, "status", "--porcelain") == ""
+
+
+def test_lf_proposal_uses_index_content_for_an_autocrlf_checkout(checkout):
+    git(checkout, "config", "core.autocrlf", "true")
+    working_bytes = SOURCE.replace("\n", "\r\n").encode("utf-8")
+    (checkout / "app.py").unlink()
+    git(checkout, "checkout", "--", "app.py")
+    assert (checkout / "app.py").read_bytes() == working_bytes
+    assert git(checkout, "status", "--porcelain") == ""
+    changes, _tree = pr._prepare(checkout, PATCH, git(checkout, "rev-parse", "HEAD"))
+    assert changes[0]["newContent"]["content"] == "import ast\n\ndef parse(value):\n    return ast.literal_eval(value)\n"
+    assert (checkout / "app.py").read_bytes() == working_bytes
