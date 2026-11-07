@@ -2,10 +2,50 @@
 
 Date: 2026-11-07. Branch: `codex/security-platform-foundation`.
 Base: `02ac0fd96420d20c3a78ed08209a84f3d5409cfb`, plus the integrated handoff at `0441452`.
-Tested implementation commit: `1f7ee07` (documentation and captured media follow separately).
+Historical implementation commit: `1f7ee07` (the original preview checks below).
+The completion-audit results appear first; the earlier baseline is retained for comparison.
 This record distinguishes executed checks from future live validation.
 
-## Executed checks
+## Completion-audit validation
+
+Updated 2026-11-07 after auditing the recovered original request.
+
+Tested implementation: `5079f7d`; documentation-only updates follow it. Checks use Python
+3.13.2, installed Google Chrome and the local Node runtime. The three implementation/review
+subagents used requested Astra/ultra settings. Live provider smoke below uses native default
+effort and records the model as requested, not a server-reported identity.
+
+| Check | Actual result |
+| --- | --- |
+| Final Python suite | **1,593 passed** in 88.89 seconds; includes the final import-shadowing and exited-process-leader regressions |
+| Final Node suite | **738 passed**, 76 suites, zero failures/cancellations/skips; 5.84 seconds |
+| Browser acceptance | All three passed: threat-model source/branch/docs; scanner proposal/apply/rescan/ledger; intelligence review/reopening/chains/filters/coaching/export. Screenshots refreshed and visually inspected. |
+| Real scanner adapters | Semgrep **1.183.0 Pro** completed with 3 findings; Trivy **0.76.1** completed with 8; baseline 3. Generated synthetic Python/Docker/dependency fixture, 14 total observations, explicit partial coverage, 5.39 seconds on warmed databases. |
+| Engine/database provenance | Semgrep rule pack identified but unpinned; Trivy DB schema 2, updated `2026-11-07T12:52:01.765289267Z`; database and check-bundle download metadata recorded. No immutable rule revision asserted. |
+| Actual guarded fixes | Debug True→False, recognized YAML Loader→SafeLoader, requests verify=False→True all applied and passed Python parsing plus fresh baseline rescans. Application tests remain not run. |
+| Live Codex, one worker | Requested `gpt-6-astra`; 2 real calls (assessment/challenge), 95.257 seconds, 4 verified citations, 1 retained candidate. |
+| Live Codex, two workers | Same synthetic fixture/requested model; 3 calls, 90.038 seconds, 4 verified citations, 2 retained candidates; assessment calls visibly overlapped. |
+| macOS arm64 desktop | Unsigned Electron package built successfully; packaged-app smoke passed startup, 22 agents/26 skills, report preview, sandbox/isolation and settings across relaunch on a changed port. Build fingerprint `a544be2a2c2d09d0`, source `5079f7d`. |
+| Python wheel and desktop resources | Both packaged all **159 Python modules** byte-for-byte matching source. Wheel built using isolated `pip wheel --no-deps`. |
+| Static/quality | Organization-reference check and diff whitespace passed. 13 genuine dead-binding diagnostics removed; 149 intentional compatibility/facade warnings remain documented, so repository-wide Pyflakes is not labeled clean. |
+| Peer review | Fixed same-import alias shadowing in guarded edits and POSIX descendants surviving an exited CLI leader; dedicated regressions passed. |
+
+The live runs use generated synthetic source and the existing signed-in Codex client;
+no production repository, separate paid API credential, ServiceNow write, PR comment or
+suggestion was used. Two workers saved about five seconds in this single tiny comparison
+and cost one extra call. Candidate grouping differed. This is contract/concurrency evidence,
+not a statistically meaningful speedup, accuracy or cost benchmark. Both runs use one
+provider, so they do not establish independent-provider consensus.
+
+The reproducible opt-in harness is `web/scripts/live-review-smoke.cjs`. It records per-stage
+wall times, requested model, scope counts, literal citation validation and attribution in
+`acceptance.json`, `report.md` and `provenance.json`. Automatic tests remain synthetic/offline.
+Native package validation is local macOS arm64 only; signing/notarization and other operating
+systems are separate release checks. The full request mapping is in
+[request completion](request-completion.md).
+
+
+## Historical preview checks
 
 | Check | Result and evidence scope |
 | --- | --- |
@@ -28,8 +68,8 @@ Tests use Python 3.13 from the existing development environment, Node from the l
 and installed Google Chrome through Playwright. Playwright's default bundled Chromium was
 missing; the actual browser checks passed after selecting the installed Chrome executable.
 
-No paid model calls, production repositories, ServiceNow writes or live PR comments were used
-for validation. External scanner adapters and GitHub APIs use synthetic responses. The scanner
+For the historical preview checks, no paid model calls, production repositories, ServiceNow
+writes or live PR comments were used. External scanner adapters and GitHub APIs used synthetic responses. The scanner
 browser test executes the real baseline and real guarded source edit in a temporary repository.
 The source/document browser test uses synthetic source-manager and model collaborators.
 
@@ -65,23 +105,23 @@ source scopes, literal-quote validation, deterministic consolidation, fix allowl
 revision binding, ledger revision boundaries and explicit reviewer attestations. This is
 evidence for these changes, not certification that the entire existing project has no defects.
 
-## Remaining live validation
+## Remaining validation and next-phase boundaries
 
-- Exercise the advanced JSON assessment/challenge contract with the chosen real providers
-  and models. Measure cost, elapsed time and coverage on the same revisions; no production
-  performance improvement is claimed from synthetic concurrency tests.
-- Validate installed Semgrep Pro and Trivy/database behavior on authorized repositories.
-  Missing engines are explicitly unavailable; the baseline cannot replace their coverage.
+- Run a distinct-provider acceptance using authorized provider credentials; only signed-in
+  Codex has received a real synthetic assessment/challenge test here. Compare repeated
+  representative revisions, cost and finding quality before claiming performance gains.
+- Validate broader real-repository engine coverage, pin immutable rule packs and benchmark
+  precision/recall. Semgrep Pro and Trivy/database execution passed on synthetic source;
+  the baseline remains limited and coverage is explicitly partial.
 - Deploy trusted workflow code before testing the first scanner PR and native suggestion.
   The introducing PR cannot trust its own scanner implementation; missing trusted-base code
-  reports **not evaluated**. No live GitHub workflow or suggestion was exercised here.
-- Package and exercise the Electron app on supported operating systems. The browser and
-  desktop share the host, but browser checks do not establish desktop packaging success.
-  Safe automatic file replacement is unavailable on platforms without required directory
-  descriptor/no-follow operations; those platforms use manual edits.
-- Configure and validate ServiceNow field/table mappings before implementing live export.
-  Calibrate any coaching/chain priority rubric before broader organizational use. Both
-  current previews are explicit about their limitations and are not CVSS or employee scores.
+  reports **not evaluated**. No live PR comment, suggestion or draft remediation was published.
+- Test Windows/Linux native packaging and descendant cleanup. POSIX process-group cleanup
+  has regression coverage. Safe automatic file replacement is unavailable on platforms
+  without required directory descriptor/no-follow operations; use advisory/manual edits.
+- Configure and validate ServiceNow mappings before implementing transport. Calibrate the
+  coaching/chain priority rubric before broader use. Both requested stubs remain explicit
+  offline previews and are not CVSS or employee-performance scores.
 
 The [implementation provenance](security-platform.md#engineering-standards-and-model-provenance)
 records Astra/ultra subagent configuration and the original handoff's unverified model history.
