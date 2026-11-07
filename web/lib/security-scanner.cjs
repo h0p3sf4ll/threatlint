@@ -7,6 +7,7 @@ const { HttpError } = require('./http.cjs');
 const { runCli } = require('./avit-batch.cjs');
 
 const LIMIT = 25;
+const FIX_RULES = new Set(['TL-DEBUG-ENABLED', 'TL-PY-YAML', 'TL-TLS-VERIFY-OFF']);
 const copy = value => structuredClone(value);
 
 function createSecurityScanner({ store, integrations = {}, onScanComplete = () => {}, isSessionBusy = () => false }) {
@@ -96,7 +97,8 @@ function createSecurityScanner({ store, integrations = {}, onScanComplete = () =
     if (record.plan.binding.repository !== repo) throw new HttpError('The session repository changed; scan again', 409);
     // Auto-apply opt-in is explicit, narrow, and recorded. No global enablement or implied permission.
     const policy = body.policy;
-    const auto = policy?.autoApply === true && Array.isArray(policy.rules) && policy.rules.length === 1 && policy.rules[0] === 'TL-DEBUG-ENABLED';
+    const auto = policy?.autoApply === true && Array.isArray(policy.rules) && policy.rules.length > 0
+      && policy.rules.every(rule => FIX_RULES.has(rule)) && policy.rules.includes(record.plan.ruleId);
     if (body.confirm !== true && !auto) throw new HttpError('Review and confirm the proposed edit before applying');
     active.add(repo);
     const controller = new AbortController();

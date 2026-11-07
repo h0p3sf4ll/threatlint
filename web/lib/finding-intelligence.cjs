@@ -20,7 +20,9 @@ function text(value, name, max = 1000, required = false) {
     return '';
   }
   if (typeof value !== 'string' || value.length > max || /\u0000/.test(value)) throw new Error(`Invalid ${name}`);
-  return value.trim();
+  const normalized = value.trim();
+  if (required && !normalized) throw new Error(`${name} is required`);
+  return normalized;
 }
 function timestamp(value, fallback = Date.now()) {
   const time = value === undefined ? fallback : typeof value === 'number' ? value : Date.parse(value);
@@ -101,7 +103,11 @@ function observedSeverity(finding, at = Infinity) {
 }
 function selectedFindings(state, filters = {}, at = Infinity) {
   return state.findings.filter(finding => finding.firstObservedAt <= at &&
-    (!filters.repoId || finding.provenance.repo.id === filters.repoId) && (!filters.branch || finding.provenance.branch === filters.branch));
+    matchesScope(finding.provenance, filters));
+}
+function matchesScope(provenance, filters) {
+  return (!filters.repoId || provenance.repo.id === filters.repoId) &&
+    ['branch', 'commit', 'contentDigest'].every(key => !filters[key] || provenance[key] === filters[key]);
 }
 function latestFindings(state, filters = {}, at = Infinity) {
   const latest = new Map();
@@ -123,7 +129,7 @@ function summarize(findings) {
 }
 function overview(state, filters = {}) {
   const findings = latestFindings(state, filters);
-  const ingestions = state.ingestions.filter(item => (!filters.repoId || item.provenance.repo.id === filters.repoId) && (!filters.branch || item.provenance.branch === filters.branch));
+  const ingestions = state.ingestions.filter(item => matchesScope(item.provenance, filters));
   const repositories = [];
   for (const id of new Set(ingestions.map(item => item.provenance.repo.id))) {
     const records = ingestions.filter(item => item.provenance.repo.id === id);
@@ -138,10 +144,11 @@ function overview(state, filters = {}) {
   const trends = eventTimes.map(at => {
     const recent = ingestions.filter(item => item.observedAt <= at).sort((a, b) => a.observedAt - b.observedAt).at(-1);
     return { at, ...summarize(latestFindings(state, filters, at)), coverage: recent?.coverage.status || 'unknown',
-      resolutionPolicy: 'Only an evidence-backed remediation decision reduces unresolved findings. Absence is unknown.' };
+      resolutionPolicy: 'An evidence-backed remediation or false-positive decision closes a finding. Absence is unknown; false positives are not counted as verified fixes.' };
   });
   const ids = new Set(selectedFindings(state, filters).map(item => item.id));
-  const currentIds = new Set(findings.map(item => item.id));
+  // Selecting an older revision must not promote a historical chain back to current.
+  const currentIds = new Set(latestFindings(state, { repoId: filters.repoId, branch: filters.branch }).map(item => item.id));
   const composites = state.composites.filter(item => item.contributors.every(node => ids.has(node.findingId))).map(item => ({ ...item,
     assessmentStatus: item.contributors.some(node => state.findings.find(finding => finding.id === node.findingId)?.reviewHistory.at(-1)?.id !== node.reviewId)
       ? 'needs-reassessment' : item.contributors.some(node => !currentIds.has(node.findingId)) ? 'historical-revision' : 'current' }));
@@ -151,6 +158,7 @@ function overview(state, filters = {}) {
     maxContextualPriorityPoints: Math.max(0, ...activeChains.map(item => item.riskAssessment?.points || 0)),
     countingPolicy: 'Highest active chain priority is shown separately; chains and components are never summed together.' };
   return { summary: summarize(findings), repositories, findings,
+    observations: ingestions.map(({ id, provenance, observedAt, coverage }) => ({ id, provenance, observedAt, coverage })),
     revisionFindings: selectedFindings(state, filters).map(item => ({ ...item, ...observedSeverity(item), disposition: effectiveDisposition(item) })), composites, chainSummary, trends,
     riskModel: { label: 'Open finding priority points', weights: WEIGHTS, cvss: false, compositesAddedToStandaloneTotal: false },
     limitations: ['Reported scanner evidence is unverified until reviewed.', 'A scan missing a finding does not prove remediation.',

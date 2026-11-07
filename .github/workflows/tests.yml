@@ -3,7 +3,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, 'feature/**', 'codex/security-platform-foundation']
 permissions:
   contents: read
 jobs:

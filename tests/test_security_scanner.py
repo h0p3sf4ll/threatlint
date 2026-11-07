@@ -245,3 +245,137 @@ def test_semgrep_uses_shared_pro_policy_and_never_falls_back(monkeypatch):
     assert not findings and statuses[0]['status'] == 'unavailable'
     assert statuses[0]['mode'] == 'pro' and 'no Community Edition fallback' in statuses[0]['detail']
     assert len(captured) == 1
+
+
+@pytest.mark.parametrize(('rule', 'source', 'expected'), [
+    ('TL-PY-YAML', 'import yaml\nresult = yaml.load(data)\n', 'result = yaml.safe_load(data)'),
+    ('TL-PY-YAML', 'import yaml\nresult = yaml.unsafe_load(data)\n', 'result = yaml.safe_load(data)'),
+    ('TL-PY-YAML', 'import yaml\nresult = yaml.load_all(data)\n', 'result = yaml.safe_load_all(data)'),
+    ('TL-PY-YAML', 'import yaml\nresult = yaml.load(data, Loader=yaml.Loader)\n', 'result = yaml.load(data, Loader=yaml.SafeLoader)'),
+    ('TL-PY-YAML', 'import yaml\nresult = yaml.load_all(data, Loader=yaml.CUnsafeLoader)\n', 'result = yaml.load_all(data, Loader=yaml.CSafeLoader)'),
+    ('TL-TLS-VERIFY-OFF', 'import requests\ndef fetch(url):\n    return requests.get(url, verify=False)\n', '    return requests.get(url, verify=True)'),
+    ('TL-TLS-VERIFY-OFF', 'import requests\r\nresponse = requests.get("https://example.invalid/é", verify=False) # keep\r\n', 'response = requests.get("https://example.invalid/é", verify=True) # keep'),
+])
+def test_supported_source_edits_are_precise_reviewable_and_rescanned(tmp_path, rule, source, expected):
+    file = tmp_path / 'app.py'
+    file.write_bytes(source.encode())
+    report = scan_repository(str(tmp_path))
+    item = next(item for item in report['findings'] if item['ruleId'] == rule)
+    assert item['fixAvailable']
+    plan = propose_fix(report, item['id'])
+    assert plan['after'] == expected and plan['ruleId'] == rule
+    with pytest.raises(ScannerError):
+        apply_fix(plan, policy={'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']})
+    result = apply_fix(plan, policy={'autoApply': True, 'rules': [rule]})
+    assert result['autoApplied'] and result['validation']['baselineRescan'] == 'passed'
+    assert file.read_bytes() == source.replace(plan['before'], expected).encode()
+    bound_plan = {**plan, 'binding': {**plan['binding'], 'commit': 'a' * 40}}
+    payload = suggestion_payload(bound_plan, 'a' * 40)
+    assert expected in payload['body'] and 'Commit this native suggestion' in payload['body']
+    bound_plan['after'] += '; malicious()'
+    with pytest.raises(ValueError):
+        suggestion_payload(bound_plan, 'a' * 40)
+
+
+@pytest.mark.parametrize('source', [
+    'yaml.load(data)',
+    'import yaml\nyaml = unknown\nyaml.load(data)',
+    'import yaml, alternate as yaml\nyaml.load(data)',
+    'import yaml\ndef f(yaml):\n    return yaml.load(data)',
+    'import yaml\nyaml.load(data, Loader=CustomLoader)',
+    'import yaml\nyaml.load(data, yaml.Loader)',
+    'import yaml\nyaml.load(data, **options)',
+    'import yaml\nyaml.load(a); yaml.load(b)',
+    'import yaml\n"""\nyaml.load(data)\n"""',
+    'import yaml\nsetattr(yaml, "load", replacement)\nyaml.load(data)',
+    'import requests\nrequests.get = replacement\nrequests.get(url, verify=False)',
+    'import requests, alternate as requests\nrequests.get(url, verify=False)',
+    'import requests\nrequests.__dict__["get"] = replacement\nrequests.get(url, verify=False)',
+    'import requests\ndef f(requests):\n    return requests.get(url, verify=False)',
+    'import requests\nother.get(url, verify=False)',
+    'import requests\nrequests.get(url, verify=False, **options)',
+    'import requests\nrequests.get(\n    url, verify=False\n)',
+])
+def test_ambiguous_source_calls_remain_advisory(tmp_path, source):
+    (tmp_path / 'app.py').write_text(source + '\n')
+    report = scan_repository(str(tmp_path))
+    assert report['findings']
+    assert not any(item['fixAvailable'] for item in report['findings'])
+
+
+def test_local_library_shadowing_and_secret_bearing_lines_are_advisory(tmp_path):
+    (tmp_path / 'requests.py').write_text('# local module\n')
+    (tmp_path / 'app.py').write_text('import requests\nrequests.get(url, verify=False)\n')
+    assert not any(item['fixAvailable'] for item in scan_repository(str(tmp_path))['findings'])
+    (tmp_path / 'requests.py').unlink()
+    (tmp_path / 'app.py').write_text('import requests\nrequests.get(url, verify=False) # ghp_' + 'A' * 40 + '\n')
+    assert not any(item['fixAvailable'] for item in scan_repository(str(tmp_path))['findings'])
+
+
+@pytest.mark.parametrize('change', ['failed', 'missing-baseline', 'finding-limit'])
+def test_incomplete_rescan_rolls_back_even_when_finding_is_absent(tmp_path, change):
+    _report, plan = proposal(tmp_path)
+    def incomplete(repo):
+        scan = scan_repository(repo)
+        if change == 'failed':
+            scan['status'] = 'failed'
+        elif change == 'missing-baseline':
+            scan['engines'] = []
+        else:
+            scan['coverage']['findingLimitReached'] = True
+        return scan
+    with pytest.raises(ScannerError, match='restored'):
+        apply_fix(plan, confirm=True, scan=incomplete)
+    assert (tmp_path / 'settings.py').read_text().startswith('DEBUG = True')
+
+
+def test_engine_provenance_records_only_supported_fields():
+    from threatlint.security_scanner.engines import engine_provenance
+    semgrep = engine_provenance('semgrep', json.dumps({'version': '1.183.0', 'token': 'never-display'}))
+    assert semgrep['engineVersion'] == '1.183.0'
+    assert semgrep['rulePack'] == {'source': 'p/security-audit', 'revision': 'unrecorded', 'pinned': False}
+    trivy = engine_provenance('trivy', json.dumps({'Version': '0.76.1', 'VulnerabilityDB': {
+        'Version': 2, 'UpdatedAt': '2026-11-07T12:00:00Z', 'DownloadedAt': '2026-11-07T13:00:00.123Z',
+        'secret': 'never-display', 'NextUpdate': 'not-a-timestamp'}}))
+    assert trivy['databases']['VulnerabilityDB'] == {'schemaVersion': 2, 'updatedAt': '2026-11-07T12:00:00Z', 'downloadedAt': '2026-11-07T13:00:00.123Z'}
+    assert 'never-display' not in json.dumps([semgrep, trivy])
+    assert engine_provenance('trivy', '{bad')['engineVersion'] == 'unrecorded'
+
+
+def test_branch_and_packaged_python_changes_trigger_validation():
+    root = Path(__file__).resolve().parents[1]
+    unit = (root / '.github/workflows/tests.yml').read_text()
+    desktop = (root / '.github/workflows/desktop-build.yml').read_text()
+    assert "'codex/security-platform-foundation'" in unit and "'codex/security-platform-foundation'" in desktop
+    assert desktop.count("- 'src/threatlint/**'") == 2
+    assert desktop.count("- 'pyproject.toml'") == 2
+    workflow = (root / '.github/workflows/security-scanner.yml').read_text()
+    assert 'github.event.pull_request.base.sha || github.event.repository.default_branch' in workflow
+    fix = (root / '.github/workflows/appsec-auto-fix.yml').read_text()
+    assert 'default: none' in fix and 'options: [none, TL-DEBUG-ENABLED, TL-PY-YAML, TL-TLS-VERIFY-OFF]' in fix
+
+
+def test_workflow_script_prepares_new_rule_without_publication(tmp_path, monkeypatch):
+    repo = repository(tmp_path / 'repo')
+    (repo / 'settings.py').write_text('import yaml\nparsed = yaml.load(data, Loader=yaml.Loader)\n')
+    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Synthetic', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Synthetic loader'], check=True, capture_output=True)
+    report = scan_repository(str(repo))
+    finding = next(item for item in report['findings'] if item['ruleId'] == 'TL-PY-YAML')
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location('security_scanner_fix_preview_test', root / '.github/scripts/security_scanner_fix.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    calls = []
+    original_run = module.run
+    def run(args, **kwargs):
+        calls.append(args)
+        assert args[:2] == ['git', 'check-ref-format']
+        return original_run(args, **kwargs)
+    monkeypatch.setattr(module, 'run', run)
+    output = tmp_path / 'output'
+    assert module.main(['--repo', str(repo), '--repository', 'fixture/repo', '--base-branch', 'main',
+                        '--expected-sha', report['binding']['commit'], '--finding-id', finding['id'], '--output-dir', str(output)]) == 0
+    plan = json.loads((output / 'proposal.json').read_text())
+    assert plan['ruleId'] == 'TL-PY-YAML' and plan['after'] == 'parsed = yaml.load(data, Loader=yaml.SafeLoader)'
+    assert len(calls) == 1 and 'yaml.Loader' in (repo / 'settings.py').read_text()

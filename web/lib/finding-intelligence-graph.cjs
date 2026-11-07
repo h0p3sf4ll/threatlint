@@ -42,7 +42,8 @@ function reviewFinding(finding, input) {
   if (previous && ['FALSE POSITIVE', 'REMEDIATED'].includes(previous.disposition) && input.disposition !== previous.disposition) {
     const closedRun = finding.reviewHistory.slice(finding.reviewHistory.findLastIndex(event => event.disposition !== previous.disposition) + 1);
     const originalBasis = closedRun[0].basis;
-    const substantive = item => hash([item.path, item.line, item.reference, item.quote, item.kind]);
+    // Evidence purpose and reviewer metadata do not make an old observation new.
+    const substantive = item => hash([item.path, item.line, item.reference, item.quote]);
     const relevant = newEvidence.filter(item => item.verification === 'verified' && originalBasis.some(claim => claim.id === item.refutes) &&
       !finding.evidence.some(prior => substantive(prior) === substantive(item)));
     if (!relevant.length) throw new Error('Changing a closed decision requires new verified evidence refuting its original decision basis');
@@ -50,7 +51,11 @@ function reviewFinding(finding, input) {
   }
   const safeBehavior = text(input.safeBehavior, 'verified safe behavior', 8000);
   if (input.disposition === 'FALSE POSITIVE' && !safeBehavior) throw new Error('A false positive decision needs verified safe behavior');
-  if (input.disposition === 'REMEDIATED' && !newEvidence.some(item => item.verification === 'verified' && item.kind === 'remediation')) throw new Error('Remediation requires new verified remediation evidence');
+  if (input.disposition === 'REMEDIATED') {
+    const remediation = newEvidence.filter(item => item.verification === 'verified' && item.kind === 'remediation');
+    if (!remediation.length) throw new Error('Remediation requires new verified remediation evidence');
+    if (!basis.some(claim => claim.evidenceIds.some(id => remediation.some(item => item.id === id)))) throw new Error('The remediation decision basis must cite the new remediation evidence');
+  }
   const at = timestamp(input.at);
   if (at < finding.firstObservedAt || (previous && at < previous.at)) throw new Error('Review timestamps must follow the observation and prior decisions');
   const event = { id: `rv_${hash([finding.id, input.disposition, reason, basis, newEvidence.map(item => item.id), safeBehavior])}`,

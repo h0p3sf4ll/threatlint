@@ -1,10 +1,19 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapBounded, createLimiter } = require('../lib/concurrency.cjs');
+const { mapBounded, createLimiter, batchExecution } = require('../lib/concurrency.cjs');
 const { executeInspectionCalls } = require('../lib/providers.cjs');
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('independent batches share strict per-run concurrency and total call budgets', () => {
+  assert.deepEqual(batchExecution({ mode: 'sequential', maxConcurrency: 8, maxModelRuns: 4 }, 4),
+    { mode: 'sequential', maxConcurrency: 1, maxModelRuns: 4, plannedModelRuns: 4 });
+  assert.equal(batchExecution('{"maxConcurrency":2}', 0).maxConcurrency, 2);
+  for (const bad of [[], true, '{', { maxConcurrency: 9 }, { maxConcurrency: 1.5 }, { maxModelRuns: 65 }, { maxModelRuns: 0 }, { roleWorkers: 2 }]) assert.throws(() => batchExecution(bad));
+  assert.throws(() => batchExecution({ maxModelRuns: 2 }, 3), /needs 3 model runs/);
+  assert.throws(() => batchExecution({ plannedModelRuns: 0, maxModelRuns: 2 }, 3), /needs 3 model runs/);
+});
 
 test('bounded map overlaps work while preserving input order', async () => {
   const gates = Array.from({ length: 4 }, deferred), started = [];

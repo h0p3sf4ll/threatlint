@@ -125,7 +125,8 @@
     try {
       const content = await readBase64(state.file);
       // The model settings the run uses (keys stay in memory; the server never saves them).
-      const body = { ...(state.context?.settings || {}), filename: state.file.name, content, source: $('scanimport-source').value };
+      const body = { ...(state.context?.settings || {}), filename: state.file.name, content, source: $('scanimport-source').value,
+        execution: window.ThreatlintPlatformControls.batchOptions('scanimport') };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
       if (avit) body.avit = avit;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });
@@ -333,6 +334,7 @@
     });
     // A file dropped outside the zone must not navigate the window away (browser and Electron alike).
     for (const type of ['dragover', 'drop']) window.addEventListener(type, event => { if (!drop.contains(event.target) && event.dataTransfer?.types?.includes('Files')) event.preventDefault(); });
+    $('scanimport-form').insertBefore(window.ThreatlintPlatformControls.batchControls('scanimport'), $('scanimport-error'));
     $('scanimport-form').addEventListener('submit', event => { submit(event).catch(error => setError(error.message)); });
     $('scanimport-avit').addEventListener('input', () => { if ($('scanimport-error').textContent.startsWith('Not an AVIT')) setError(''); });
     $('scanimport-workspace').addEventListener('change', () => { state.workspaceChosen = true; });

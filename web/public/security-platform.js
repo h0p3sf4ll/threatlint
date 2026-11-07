@@ -5,6 +5,7 @@
   const $ = id => document.getElementById(id);
   const state = { session: null, scan: null, busy: false, reviewRunning: false, generation: 0, activeScan: null, cancelling: false };
   const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4, UNSPECIFIED: 5 };
+  const autoRules = ['TL-DEBUG-ENABLED', 'TL-PY-YAML', 'TL-TLS-VERIFY-OFF'];
   function node(tag, text, className) {
     const element = document.createElement(tag);
     if (text !== undefined) element.textContent = text;
@@ -38,7 +39,12 @@
     const coverage = $('security-coverage'); coverage.replaceChildren();
     for (const engine of scan.engines || []) {
       const card = node('div', undefined, 'platform-coverage-card');
-      card.append(node('strong', `${engine.id} · ${engine.status}`), node('p', engine.detail, 'small subtle')); coverage.append(card);
+      card.append(node('strong', `${engine.id} · ${engine.status}`), node('p', engine.detail, 'small subtle'));
+      if (engine.provenance) {
+        card.append(node('p', `Engine ${engine.provenance.engineVersion || 'unrecorded'} · rules: ${engine.provenance.rulePack?.source || 'unrecorded'} · immutable rule revision ${engine.provenance.rulePack?.revision || 'unrecorded'}`, 'micro subtle'));
+        for (const [database, metadata] of Object.entries(engine.provenance.databases || {})) card.append(node('p', `${database} · updated ${metadata.updatedAt || 'unrecorded'} · downloaded ${metadata.downloadedAt || 'unrecorded'}`, 'micro subtle'));
+      }
+      coverage.append(card);
     }
     const limits = node('details', undefined, 'platform-coverage-limits');
     limits.append(node('summary', `Coverage: ${scan.coverage?.status || 'unknown'} · ${scan.coverage?.files ?? 'unknown'} files`));
@@ -83,7 +89,7 @@
     state.busy = true; controls(); status('Checking the snapshot, applying the supported change and rescanning…');
     try {
       const result = await request(`/api/security-scanner/fixes/${encodeURIComponent(plan.id)}/apply`, automatic
-        ? { policy: { autoApply: true, rules: ['TL-DEBUG-ENABLED'] } } : { confirm: true });
+        ? { policy: { autoApply: true, rules: autoRules } } : { confirm: true });
       if (generation !== state.generation) return;
       render(result.scan); notifyEvidence();
       status('Change applied and rescanned. Syntax validation passed; application tests have not run. Review the result before committing.');
@@ -129,7 +135,7 @@
       if (automatic) {
         let count = 0;
         while (count < 12 && generation === state.generation) {
-          const eligible = scan.findings.find(item => item.fixAvailable && item.ruleId === 'TL-DEBUG-ENABLED');
+          const eligible = scan.findings.find(item => item.fixAvailable && autoRules.includes(item.ruleId));
           if (!eligible) break;
           const plan = await request(`/api/security-scanner/scans/${encodeURIComponent(scan.id)}/fixes`, { findingId: eligible.id });
           const rescanned = await applyPlan(plan, generation, true);
@@ -137,7 +143,7 @@
           scan = rescanned; count++;
           state.busy = true; controls();
         }
-        if (generation === state.generation) status(count ? `${count} supported debug-setting change(s) applied and rescanned. Application tests have not run; review before committing.${count === 12 ? ' The 12-change limit was reached.' : ''}` : 'Scan finished. No changes qualified for the automatic fix policy.');
+        if (generation === state.generation) status(count ? `${count} supported source change(s) applied and rescanned. Application tests have not run; review before committing.${count === 12 ? ' The 12-change limit was reached.' : ''}` : 'Scan finished. No changes qualified for the automatic fix policy.');
       }
       await loadHistory(generation);
     } catch (error) { if (generation === state.generation) status(error.message, true); }

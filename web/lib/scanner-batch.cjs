@@ -19,8 +19,7 @@ const { runModel, providerRequest, buildUserMessage } = require('./pipeline.cjs'
 const { HttpError } = require('./http.cjs');
 const scanners = require('./scanners.cjs');
 const { runCli, redactSecrets } = require('./avit-batch.cjs');
-const { mapBounded, environmentLimit } = require('./concurrency.cjs');
-const BATCH_CONCURRENCY = environmentLimit('THREATLINT_BATCH_CONCURRENCY', 3, 8);
+const { mapBounded, batchExecution, checkAbort } = require('./concurrency.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
@@ -145,6 +144,9 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
   }
 
   async function run(message, send, controller) {
+    let execution;
+    try { execution = batchExecution(message.execution); } catch (error) { throw new HttpError(error.message); }
+    checkAbort(controller.signal);
     const toolId = scanners.tool(message.tool).id;
     const spec = scanners.tool(toolId);
     const settings = providerRequest(message);
@@ -163,13 +165,15 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
     }
     const all = [...new Set([...explicit, ...found])];
     if (!all.length) throw new HttpError(filter.length ? `The ${spec.label} search returned no findings` : `Enter ${spec.label} references or a filter`);
-    send({ type: 'scanner_batch_start', tool: toolId, references: all });
+    try { execution = batchExecution(execution, all.length); } catch (error) { throw new HttpError(error.message); }
+    checkAbort(controller.signal);
+    send({ type: 'scanner_batch_start', tool: toolId, references: all, execution });
     const started = new Set();
     try {
       await mapBounded(all, async reference => {
         started.add(reference);
         await reviewOne(toolId, reference, { settings, message, signal: controller.signal, send, profile });
-      }, { concurrency: BATCH_CONCURRENCY, signal: controller.signal });
+      }, { concurrency: execution.maxConcurrency, signal: controller.signal });
     } catch (error) { if (!controller.signal.aborted) throw error; }
     for (const reference of all.filter(reference => !started.has(reference))) send({ type: 'scanner_item', tool: toolId, reference, stage: 'cancelled', detail: 'Cancelled before starting', done: true });
     send({ type: 'scanner_batch_complete', tool: toolId, cancelled: controller.signal.aborted });

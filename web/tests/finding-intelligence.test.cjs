@@ -132,6 +132,9 @@ describe('Evidence-gated reviews and attack chains', () => {
       newEvidence: [verified('Caller enforces owner === principal.')], basis: [{ claim: 'All callers enforce ownership.', evidenceIds: [0] }] });
     assert.throws(() => review(store, id, { at: 3000 }), /refuting its original decision basis/);
     assert.throws(() => review(store, id, { at: 3000, newEvidence: [verified('Caller enforces owner === principal.', { refutes: original.reviewHistory[0].basis[0].id })] }), /refuting/);
+    assert.throws(() => review(store, id, { at: 3000, newEvidence: [verified('Caller enforces owner === principal.', {
+      kind: 'impact', verificationMethod: 'A renamed review method', refutes: original.reviewHistory[0].basis[0].id })] }), /refuting/,
+    'changing purpose or verification metadata must not turn an old quote into substantively new evidence');
     const updated = review(store, id, { at: 3000, newEvidence: [verified('An additional reachable caller lacks ownership enforcement.', { refutes: original.reviewHistory[0].basis[0].id })] });
     assert.equal(updated.reviewHistory.length, 2);
     assert.deepEqual(updated.reviewHistory[0], original.reviewHistory[0]);
@@ -144,6 +147,11 @@ describe('Evidence-gated reviews and attack chains', () => {
     assert.throws(() => review(store, finding.id, { basis: [{ claim: 'safe', evidenceIds: ['missing'] }] }), /unknown evidence/);
     assert.throws(() => review(store, finding.id, { disposition: 'FALSE POSITIVE' }), /verified safe behavior/);
     assert.throws(() => review(store, finding.id, { disposition: 'REMEDIATED' }), /remediation evidence/);
+    const reviewed = review(store, finding.id);
+    assert.throws(() => review(store, finding.id, { at: 3000, disposition: 'REMEDIATED', newEvidence: [verified('The fixed revision passes the ownership assertion.', { kind: 'remediation' })],
+      basis: [{ claim: 'The old source demonstrated the issue, not its remediation.', evidenceIds: [reviewed.evidence.find(item => item.verification === 'verified').id] }] }), /basis must cite/);
+    assert.throws(() => review(store, finding.id, { reason: '   ' }), /decision rationale is required/);
+    assert.throws(() => review(store, finding.id, { basis: [{ claim: '   ', evidenceIds: [0] }] }), /basis claim is required/);
   });
   it('retains the three medium contributors and assesses terminal impact without severity inflation', () => {
     const { store, findings, input } = chainFixture();
@@ -189,6 +197,21 @@ describe('Evidence-gated reviews and attack chains', () => {
 });
 
 describe('Conservative trends and offline previews', () => {
+  it('scopes summaries, trends, and chains to branch and revision without making historical chains current', () => {
+    const { store, input } = chainFixture(); const chain = store.correlate(input);
+    store.ingest(ingestion({ sourceId: 'next-revision', commit: 'next', observedAt: 4000 }));
+    store.ingest(ingestion({ sourceId: 'release-empty', branch: 'release', commit: 'release', observedAt: 5000, findings: [] }));
+    const old = store.overview({ repoId: '/repos/shop', branch: 'main', commit: 'abc123', contentDigest: 'clean-digest' });
+    assert.equal(old.summary.open, 3); assert.equal(old.composites[0].id, chain.id);
+    assert.equal(old.composites[0].assessmentStatus, 'historical-revision'); assert.equal(old.chainSummary.current, 0);
+    assert.ok(old.trends.every(point => point.at < 4000));
+    const current = store.overview({ branch: 'main', commit: 'next', contentDigest: 'clean-digest' });
+    assert.equal(current.summary.open, 1); assert.equal(current.composites.length, 0);
+    assert.deepEqual(current.trends.map(point => point.openRiskPoints), [3]);
+    const release = store.overview({ branch: 'release' });
+    assert.equal(release.summary.open, 0); assert.equal(release.observations.length, 1);
+    assert.equal(release.observations[0].provenance.commit, 'release', 'empty scans retain selectable revision metadata');
+  });
   it('never treats scan absence as remediation and shows only evidenced improvement', () => {
     const store = createFindingIntelligenceStore(); store.ingest(ingestion());
     store.ingest(ingestion({ sourceId: 'scan-2', commit: 'next', observedAt: 3000, findings: [], coverage: { status: 'complete', scope: 'SAST' } }));
@@ -211,8 +234,19 @@ describe('Conservative trends and offline previews', () => {
     assert.equal(first.liveWritesEnabled, false);
     assert.equal(first.related.length, 3);
     assert.equal(first.parent.contextualPriority.points, 2.25);
+    assert.equal(first.parent.attackPath.length, 2);
+    assert.equal(first.parent.attackPath[0].prerequisiteFindingKey, `threatlint:finding:${input.links.slice().sort((a, b) => `${a.prerequisite}|${a.effect}`.localeCompare(`${b.prerequisite}|${b.effect}`))[0].prerequisite}`);
+    for (const link of input.links) {
+      assert.match(first.parent.work_notes, new RegExp(link.rationale.replaceAll('.', '\\.')));
+      assert.ok(first.related.find(item => item.findingId === link.prerequisite).work_notes.includes(link.effect));
+      assert.ok(first.related.find(item => item.findingId === link.effect).work_notes.includes(link.prerequisite));
+    }
+    assert.deepEqual(first.parent.provenance, composite.provenance);
+    assert.ok(first.related.every(item => item.evidence.every(evidence => !Object.hasOwn(evidence, 'quote'))));
     assert.equal(new Set(first.related.map(item => item.idempotencyKey)).size, 3);
     assert.deepEqual(store.snapshot(), before);
+    const changedFindings = structuredClone(before.findings); changedFindings[0].severity = 'HIGH';
+    assert.notEqual(serviceNowPreview(composite, changedFindings).exportDigest, first.exportDigest, 'the digest covers exported data, not only record keys');
     review(store, before.findings[0].id, { at: 4000, reason: 'Additional caller reviewed.' });
     assert.throws(() => serviceNowPreview(composite, store.snapshot().findings), /reassess/);
   });
@@ -234,6 +268,16 @@ describe('Conservative trends and offline previews', () => {
     review(store, finding.id, { disposition: 'REMEDIATED', at: 4000, newEvidence: [verified('The authorization regression passes.', { kind: 'remediation' })] });
     assert.ok(developerRiskPreview(store.snapshot().findings, input).score < result.score);
   });
+  it('allows multiple issues per reviewed change and does not treat cross-engine rule-name collisions as recurrence', () => {
+    const store = createFindingIntelligenceStore(), raw = ingestion().findings[0];
+    store.ingest(ingestion({ findings: [{ ...raw, source: 'one' }, { ...raw, source: 'two' }] }));
+    const findings = store.snapshot().findings.map(finding => review(store, finding.id, { newEvidence: [verified('Verified introducing change.', { kind: 'introduction' })] }));
+    const input = { optIn: true, subject: 'My private preview', observedChangeCount: 1, observations: findings.map(finding => ({ findingId: finding.id, introduced: true,
+      introductionEvidenceIds: finding.evidence.filter(item => item.kind === 'introduction').map(item => item.id), exposure: 'unknown' })) };
+    const result = developerRiskPreview(findings, input);
+    assert.equal(result.includedIssues, 2); assert.equal(result.score, null);
+    assert.ok(result.details.every(item => item.recurrenceFactor === 1));
+  });
 });
 
 describe('Intelligence routes bind repository scope to workspace sessions', () => {
@@ -253,6 +297,10 @@ describe('Intelligence routes bind repository scope to workspace sessions', () =
       assert.equal((await post(`/api/intelligence/findings/${finding.id}/reviews`, { sessionId: 'other' })).status, 404);
       assert.equal((await fetch(`${base}/api/intelligence/overview?sessionId=missing`)).status, 404);
       assert.equal((await post('/api/intelligence/sync', { sessionId: 'shop' })).status, 200);
+      intelligence.ingest(ingestion({ sourceId: 'release-import', branch: 'release', findings: [] }));
+      const filtered = await (await fetch(`${base}/api/intelligence/overview?sessionId=shop&branch=release&commit=abc123&contentDigest=clean-digest`)).json();
+      assert.equal(filtered.summary.findings, 0); assert.equal(filtered.observations.length, 1);
+      assert.equal(filtered.observations[0].provenance.branch, 'release');
     } finally { await new Promise(resolve => server.close(resolve)); }
   });
 });

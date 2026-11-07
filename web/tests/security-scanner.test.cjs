@@ -100,3 +100,17 @@ test('shutdown drains apply and never asserts rollback when interrupted', async 
   release({ code: 1, stderr: '', stdout: '' });
   await Promise.all([closing, rejected]);
 });
+
+test('automatic policy must explicitly name the proposed supported rule', async t => {
+  const { scanner, plan, calls } = fixture(t);
+  plan.ruleId = 'TL-PY-YAML';
+  plan.before = 'value = yaml.load(data)'; plan.after = 'value = yaml.safe_load(data)';
+  const { id } = scanner.start({ sessionId: 'session' }); await tick();
+  const proposed = await scanner.propose(id, { findingId: 'finding' });
+  await assert.rejects(scanner.apply(proposed.id, { policy: { autoApply: true, rules: ['TL-DEBUG-ENABLED'] } }), /confirm/);
+  await assert.rejects(scanner.apply(proposed.id, { policy: { autoApply: true, rules: ['TL-PY-YAML', 'arbitrary'] } }), /confirm/);
+  assert.equal(calls.filter(call => call.args[1] === 'apply').length, 0);
+  const result = await scanner.apply(proposed.id, { policy: { autoApply: true, rules: ['TL-PY-YAML'] } });
+  assert.equal(result.status, 'applied');
+  assert.deepEqual(JSON.parse(calls.find(call => call.args[1] === 'apply').input).policy, { autoApply: true, rules: ['TL-PY-YAML'] });
+});

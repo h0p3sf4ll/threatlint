@@ -17,13 +17,17 @@ application tests. Observe the history on **Metrics**.
 pattern is not proof of correct application behavior. Read the [scanner guide](security-scanner.md).
 
 For advanced exercises, compare one worker with two on the same sufficiently large source
-scope; record elapsed time, coverage and model cost instead of assuming speedup. Enable a
+scope; record elapsed time, coverage and model cost instead of assuming speedup. CLI users can
+define independent source scopes with `--targets-file` and bound them with `--workers` and
+`--max-model-runs`; scanner-review/import batches expose their own per-run limits. Enable a
 second provider only after consenting to its data flow. Find one disagreement and identify
 the source evidence that would resolve it. See [review orchestration](review-orchestration.md).
 
 Finally, use **Repository risk** to connect two findings from the same revision. Record how
 the first effect enables the second step and what final impact follows. Keep a false positive
-as context unless new evidence refutes its dismissal. The [finding intelligence guide](finding-intelligence.md)
+as context unless new evidence refutes its dismissal. Changing an evidence label or repeating
+the original evidence is insufficient. Branch/revision filters scope both the findings and
+their summaries and chains; Metrics remains a workspace-wide history. The [finding intelligence guide](finding-intelligence.md)
 explains why three medium findings do not automatically make one critical finding.
 
 ## 1. Take a sighting lap: inspect the sample report

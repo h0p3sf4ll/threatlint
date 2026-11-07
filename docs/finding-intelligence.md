@@ -4,12 +4,20 @@ Open a workspace, run a security scan, then choose **Repository risk**. **Refres
 evidence** also imports that workspace's saved specialist reports. Select a branch
 or revision to inspect the actual observed scope. Historical reports without
 revision metadata remain **unknown**; they never inherit today's checkout.
+Branch and revision selection scopes the finding summary, composite cards, and
+Repository risk history together. Revisions with empty scans remain selectable.
+The decision selector filters finding cards and includes unreviewed, true
+positive, false positive, and remediated decisions. Metrics explicitly retains
+the whole workspace's history across observed branches.
 
 Scanner results begin as unreviewed leads. Expand **Review evidence and record a
 decision**, inspect the source and callers yourself, and record the new evidence,
 verification method, decision basis, and limits. The attestation records your
 review; this action does not execute a test or independently validate a quote.
 Reported severity and confidence remain visible separately from disposition.
+The cards show the rule/source, suggested improvement, verification method,
+decision basis, cited evidence IDs, and any reviewed safe behavior. Guided mode
+keeps this review path available; Advanced mode also exposes chain construction.
 
 ## Connect an attack path
 
@@ -56,13 +64,17 @@ A standalone false positive may supply **context** while retaining that original
 decision. It cannot be treated as a vulnerability contributor. Reopening a false
 positive requires substantively new verified evidence that explicitly refutes
 the original decision basis and is cited in the new basis. Relabeling the old
-quote, changing a verification-method label, model agreement, and proximity to
+quote's purpose (for example, source to impact), changing a verification-method
+label, model agreement, and proximity to
 another finding do not qualify. The new chain's **CHAIN TRUE POSITIVE** disposition
 does not overwrite any component's standalone disposition.
 
 When a component's decision changes, an existing chain is marked
 **needs-reassessment** and its ServiceNow preview is blocked. Chains for older
 observed revisions are labeled **historical-revision**.
+Selecting that historical revision does not reactivate the chain. Each saved
+card displays the directional prerequisite-to-effect links, their rationale and
+evidence IDs separately from the retained component assessments.
 
 ## Read progress conservatively
 
@@ -71,6 +83,9 @@ coverage, and priority points over time. Missing results—even in a scan labele
 complete for its declared scope—never prove a finding is resolved. A verified
 remediation decision reduces the count; an occurrence on a later revision opens
 independently. Findings not reobserved in the latest scan remain visible.
+An evidenced false-positive decision also closes an issue, but is never counted
+as a verified remediation. Remediation decisions must cite the newly submitted
+verified remediation evidence in their decision basis.
 
 Priority points use a transparent ordinal rubric: Critical 10, High 6, Medium 3,
 Low 1, Info/unspecified 0. They are **not CVSS**, and composite assessments are
@@ -90,8 +105,13 @@ findings, work notes, evidence references, and stable idempotency keys. It makes
 no network request to ServiceNow and creates no records. An eventual connector
 must validate instance tables/fields and implement authenticated upserts using
 the supplied parent and component keys. Repeated previews produce the same
-payload for unchanged evidence. Raw source quotes are omitted from the related
-record export; inspect the preview's descriptions and work notes before sharing.
+payload for unchanged evidence. Parent and related work notes include each
+directional attack link, the transition rationale, and supporting evidence IDs.
+The parent also contains the structured attack graph, revision provenance, and
+terminal-impact evidence references. The export digest covers the full proposed
+payload; idempotency keys identify the stable records. Raw source quotes are
+omitted from the related record export; inspect the preview's descriptions and
+work notes before sharing.
 
 Metrics includes an optional **Private developer coaching** preview. It requires
 personal opt-in and explicit verified introduction evidence for each included
@@ -107,12 +127,17 @@ The coaching priority index is:
 
 Severity uses the rubric above. Exposure is 1.5 for verified internet exposure,
 1 for internal or unknown, and 0.75 for local. A repeated verified rule across
-distinct logical issues gets 1.25; otherwise recurrence is 1. Verified
-remediation reduces its factor to 0.25. Unknown exposure is neutral and lowers
+distinct logical issues from the same engine gets 1.25; otherwise recurrence is
+1. Identical rule names from different engines do not establish recurrence.
+Verified remediation reduces its factor to 0.25. Unknown exposure is neutral and lowers
 confidence. Duplicate observations never increase the numerator. The preview
 shows every factor, exclusions, sample size, confidence, limitations, and
 code-specific improvement steps. Its subject label, supplied sample, coverage,
 and reviewer attestations are not independently verified population data.
+One change may introduce multiple issues, so the sample size is the number of
+reviewed changes, not the number of issues. Changing inputs, refreshing evidence,
+or withdrawing consent clears the displayed assessment. Renewing consent
+requires a new preview; an earlier in-flight result cannot reappear.
 
 ## Integration contract
 
@@ -133,6 +158,12 @@ different origin. Evidence quotes and review fields are rendered as text.
 | `GET /api/intelligence/composites/:id?sessionId=...` | Inspect the saved graph |
 | `POST /api/intelligence/composites/:id/servicenow-preview` | Offline parent/related-record export preview |
 | `POST /api/intelligence/developer-risk-preview` | Opt-in, nonpersistent private coaching calculation |
+
+The overview accepts optional `branch`, `commit`, and `contentDigest` query
+filters. These apply to findings, summaries, chains, trends, and the returned
+`observations` metadata, including empty ingestions. Repository identity always
+comes from the session. Historical/current chain status is evaluated against
+the repository's latest observations even when filtering an older revision.
 
 POST bodies include `sessionId`. The scanner completion integration is:
 
@@ -204,7 +235,9 @@ node web/tests/finding-intelligence-browser-smoke.cjs
 ```
 
 The browser check runs the actual UI and local server against clearly labeled
-synthetic ledger data. It verifies reviewer attestation, supported and rejected
-FP reopening, explicit chain construction, preview download, and insufficient
-coaching data. Set `THREATLINT_BROWSER_EXECUTABLE` when needed; on macOS it can use
+synthetic ledger data. It verifies guided/advanced paths, reviewer attestation,
+supported and rejected FP reopening, explicit chain construction and exported
+links, branch/revision filters including empty scans, stale-chain export
+blocking, and coaching previews with insufficient and sufficient observations.
+Set `THREATLINT_BROWSER_EXECUTABLE` when needed; on macOS it can use
 the installed Google Chrome. No model provider or tracker is contacted.

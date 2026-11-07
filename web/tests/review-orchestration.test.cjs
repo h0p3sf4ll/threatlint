@@ -50,7 +50,7 @@ function harness(t, override, options = {}) {
     saved.push(report); return report;
   }, metadata: report => report };
   const pipeline = createPipeline({ sessions, reports, override: async args => { calls.push(args); return override(args); },
-    integrations: { semgrepVersion: async () => 'fixture-semgrep', ...options.integrations }, isSessionBusy: options.isSessionBusy });
+    integrations: { semgrepVersion: async () => 'fixture-semgrep', ...options.integrations }, isSessionBusy: options.isSessionBusy, designInputs: options.designInputs });
   const request = { sessionId: 'session', agentIds: [A], provider: 'lmstudio', model: 'fixture' };
   return { repoPath, saved, events, calls, pipeline, request, run: (message = {}, controller = new AbortController()) => pipeline.run({ ...request, ...message }, event => events.push(event), controller) };
 }
@@ -149,6 +149,34 @@ test('independent assessments finish before challenge and consolidate with prove
   assert.equal(new Set(toolIds).size, 4);
   assert.equal(h.events.find(item => item.type === 'pipeline_start').execution.plannedModelRuns, 6);
   assert.doesNotMatch(JSON.stringify(h.saved[0].source), /apiKey|openaiApiKey|copilotToken/);
+});
+
+test('challenge preserves the requested scope, provenance and design context', async t => {
+  const designInputs = require('../lib/design-inputs.cjs').createDesignInputs();
+  const design = await designInputs.create([{ name: 'architecture.md', content: Buffer.from('Only the account owner can see customer records.') },
+    { name: 'board.png', content: Buffer.from([0x89, 0x50]) }]);
+  const h = harness(t, async args => {
+    assert.match(args.userMessage, /Only inspect authorization for synthetic customer records/);
+    assert.match(args.userMessage, /Selected source: local working tree/);
+    assert.match(args.userMessage, /Only the account owner can see customer records/);
+    assert.deepEqual(args.images.map(image => image.name), ['board.png']);
+    return args.maxIterations === 4 ? answerChallenge(args) : assessment(assigned(args));
+  }, { designInputs });
+  assert.equal(await h.run({ target: 'Only inspect authorization for synthetic customer records', designInputsId: design.id, ensemble: ensemble() }), 'complete');
+  assert.equal(h.calls.filter(args => args.maxIterations === 4).length, 2);
+});
+
+test('an unclassified observation cannot deduplicate explicitly different weakness classes', t => {
+  const repoPath = fixture(t), scope = { id: 'scope-1', files: ['src/0000.js'] };
+  const make = cwe => ({ ...parseAssessment(assessment(scope.files, [candidate(scope.files[0], { cwe })]), scope), scope,
+    participant: { id: cwe || 'unknown', provider: 'fixture', model: 'fixture' } });
+  for (const order of [['CWE-287', '', 'CWE-862'], ['CWE-287', 'CWE-862', '']]) {
+    const groups = groupFindings(order.map(make), repoPath);
+    assert.ok(groups.length >= 2);
+    for (const group of groups) assert.ok(new Set(group.observations.map(item => item.cwe).filter(Boolean)).size <= 1);
+    assert.equal(groups.reduce((sum, group) => sum + group.observations.length, 0), 3);
+  }
+  assert.equal(consolidate(groupFindings(['', 'CWE-287'].map(make), repoPath), [], A)[0].cwe, 'CWE-287');
 });
 
 test('malformed assessments fail the role, drain active peers and skip downstream reports', async t => {

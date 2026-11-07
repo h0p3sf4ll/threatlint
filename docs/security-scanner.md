@@ -22,6 +22,12 @@ Opting in can download rules or vulnerability databases. Threatlint does not
 install packages, run project build hooks, validate discovered credentials, or
 execute scanned application code. It runs engines on a bounded text snapshot.
 Engine output is limited to 20 MB and each engine to five minutes.
+Successful engine results record the reported engine version. Trivy also records
+available vulnerability/Java database schema, update and download timestamps from
+its version metadata. Missing fields remain `unrecorded`; no timestamp or version
+is inferred. Registry and bundled rule sources are identified, but this adapter
+does not yet pin an immutable rule-pack revision. These fields appear in engine
+cards and JSON evidence; they support diagnosis, not fully reproducible scans.
 
 The engine cards distinguish `completed`, `partial`, `not_requested`,
 `unavailable`, and `failed`. Overall coverage remains `partial`: generated and
@@ -45,10 +51,29 @@ each repository/branch/commit/content snapshot through the completion callback.
 
 ## Review and apply
 
-**Propose fix** prepares an exact before/after edit. The initial allowlist contains
-one transformation: a plain Python module-level `DEBUG = True` becomes
-`DEBUG = False`. Other findings retain advisory remediation. Even this small
-change can alter application behavior, so review is the default.
+**Review suggested change** prepares an exact before/after edit. The source
+allowlist contains these supported Python transformations:
+
+| Rule | Eligible source | Proposed change |
+| --- | --- | --- |
+| `TL-DEBUG-ENABLED` | Plain module-level `DEBUG = True` | `DEBUG = False` |
+| `TL-PY-YAML` | Imported `yaml.load`, `unsafe_load` or `load_all`, one positional data argument and no options | `safe_load` or `safe_load_all` |
+| `TL-PY-YAML` | Imported `yaml.load` or `load_all` with one data argument and explicit `Loader=yaml.Loader`, `UnsafeLoader`, `CLoader` or `CUnsafeLoader` | Corresponding `SafeLoader` or `CSafeLoader` |
+| `TL-TLS-VERIFY-OFF` | Imported `requests.request/get/post/put/patch/delete/head/options` with literal `verify=False` | `verify=True` |
+
+Calls must occupy one source line with only one eligible correction, use a direct
+module import, and have no detected binding or module-member mutation. Local
+modules/packages named `yaml` or `requests` disable those library fixes. Custom
+loaders, positional loader arguments, `**kwargs`, multiline calls, aliases and
+other ambiguous shapes remain advisory. Syntax analysis excludes docstrings and
+comments. It establishes static API provenance; it cannot prove runtime behavior
+or absence of dynamic monkey-patching.
+
+Safe loading rejects custom Python object tags. TLS verification may require a
+configured private CA. Debug changes affect diagnostics. These are intentional
+security changes with compatibility consequences, so review is the default.
+Dependency upgrades, secret rotation and infrastructure corrections retain
+advisory guidance; this adapter does not regenerate lockfiles or rotate credentials.
 
 Each proposal is bound to the canonical repository path, branch, commit, captured
 content digest, and current file hash. Application regenerates the allowed edit;
@@ -58,7 +83,7 @@ lines are rejected. Directory-relative replacement is required; hosts without
 that filesystem support retain manual review instead of an unsafe write fallback.
 
 Application parses Python syntax without importing it, writes only the eligible
-file, and rescans. A failed baseline validation restores the original content
+file, and rescans. A failed, absent or finding-budget-truncated baseline validation restores the original content
 unless another process has changed it. Application tests are explicitly
 `not_run`. Interrupted operations require inspection and a fresh scan; the UI
 does not assume that cancellation proves rollback. Closing Workbench aborts and
@@ -66,7 +91,10 @@ drains native scanner/fix operations.
 
 Automation requires an explicit policy such as
 `{"autoApply":true,"rules":["TL-DEBUG-ENABLED"]}` for the requested operation.
-An empty or unknown rule policy grants no write permission. Policy does not waive
+The other recognized policy IDs are `TL-PY-YAML` and `TL-TLS-VERIFY-OFF`; select
+only the rules you intend to authorize. Workbench's advanced checkbox explicitly
+opts into all three named source-rule families for that one scan, up to 12 edits.
+An empty, unknown, or unrelated rule policy grants no write permission. Policy does not waive
 revision/path checks, syntax validation, rescanning, or review before merge.
 
 ## GitHub review and rescan
@@ -91,8 +119,11 @@ The comment also links to
 The maintainer supplies a base branch, full expected SHA, and exact eligible
 finding ID from the scan artifact. Without either application checkbox the
 workflow only prepares a proposal. The reviewed-edit checkbox authorizes that
-edit; the separate false-by-default policy checkbox explicitly permits only the
-`DEBUG` transformation without per-edit approval. Applying validates and rescans,
+edit; the separate false-by-default debug checkbox explicitly permits only the
+`DEBUG` transformation without per-edit approval. The optional **auto_apply_rule**
+selector starts at `none` and authorizes one of the three supported source rules.
+The trusted script exposes this as repeatable `--auto-apply-rule`; the older
+`--auto-apply-debug` option remains compatible. Applying validates and rescans,
 checks the remote base head again before publication, and opens a **draft PR**.
 It never merges. Configure required reviewers on the `security-fixes` GitHub
 environment and normal branch protection for your organization.

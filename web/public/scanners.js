@@ -118,7 +118,7 @@
     const start = button(`Review ${spec.label} findings`, 'button primary', null, 'submit'); start.id = ids.start(tool);
     const row = el('div', 'input-row'); row.append(cancel, start);
     actions.append(el('span', 'small subtle', 'Uses the model chosen in Settings. Nothing is posted until you confirm each finding.'), row);
-    form.append(label, refs, el('p', 'field-note small subtle', `${tool === 'dojo' ? 'Numbers or DOJO-<id>' : 'Issue keys, or SONAR-HOTSPOT-<key> for hotspots'}, separated by commas, spaces, or new lines. No limit; each is reviewed in turn.`), filters, outcomes, connection, error, actions);
+    form.append(label, refs, el('p', 'field-note small subtle', `${tool === 'dojo' ? 'Numbers or DOJO-<id>' : 'Issue keys, or SONAR-HOTSPOT-<key> for hotspots'}, separated by commas, spaces, or new lines. Each finding uses one model run; the batch budget is checked before review.`), filters, window.ThreatlintPlatformControls.batchControls(`${tool}review`), outcomes, connection, error, actions);
     form.addEventListener('submit', event => { event.preventDefault(); start_(tool); });
     const results = el('div', 'fpreview-results'); results.id = ids.results(tool); results.setAttribute('aria-live', 'polite');
     container.replaceChildren(form, results);
@@ -153,11 +153,14 @@
     if (!(state.saved[tool]?.hasToken && state.saved[tool]?.url)) { $(ids.error(tool)).textContent = `Configure ${spec.label} in Settings first.`; return; }
     if (!context.connected || context.socket?.readyState !== 1) { $(ids.error(tool)).textContent = 'The Workbench is not connected.'; return; }
     if (state.running) { $(ids.error(tool)).textContent = 'Another review is running.'; return; }
+    let execution;
+    try { execution = window.ThreatlintPlatformControls.batchOptions(`${tool}review`); }
+    catch (error) { $(ids.error(tool)).textContent = error.message; return; }
     attach(context.socket);
     state.tools = {};
     $(ids.results(tool)).replaceChildren();
     setRunning(tool, true);
-    context.socket.send(JSON.stringify({ action: 'run_scanner_batch', tool, references, ...(filter ? { filter } : {}), ...context.settings }));
+    context.socket.send(JSON.stringify({ action: 'run_scanner_batch', tool, references, ...(filter ? { filter } : {}), ...context.settings, execution }));
   }
 
   function card(tool, reference) {

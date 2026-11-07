@@ -57,6 +57,21 @@
     input.addEventListener('change', () => { try { counts.set(agent.id, integer(input.value, 1, 4)); } catch { input.value = counts.get(agent.id) || 1; } });
     label.append(input); return label;
   }
+  function batchControls(prefix) {
+    const box = doc().createElement('fieldset'); box.className = 'advanced-only scanimport-fields'; box.dataset.batchControls = prefix;
+    const legend = doc().createElement('legend'); legend.textContent = 'Parallel review and budget'; box.append(legend);
+    for (const [key, title, value, max] of [['maxConcurrency', 'Parallel reviewers', 3, 8], ['maxModelRuns', 'Maximum model runs', 64, 64]]) {
+      const label = doc().createElement('label'); label.textContent = title;
+      const input = doc().createElement('input'); input.type = 'number'; input.min = '1'; input.max = String(max); input.step = '1'; input.value = String(value);
+      input.id = `${prefix}-${key}`; label.htmlFor = input.id; label.append(input); box.append(label);
+    }
+    return box;
+  }
+  function batchOptions(prefix) {
+    if (!advanced()) return { maxModelRuns: 64 };
+    return { maxConcurrency: integer(doc()?.getElementById(`${prefix}-maxConcurrency`)?.value, 3, 8),
+      maxModelRuns: integer(doc()?.getElementById(`${prefix}-maxModelRuns`)?.value, 64, 64) };
+  }
   function setLocked(locked) {
     for (const input of doc()?.querySelectorAll('#orchestration-options input, #orchestration-options select, #experience-mode') || []) input.disabled = locked;
   }
@@ -88,7 +103,7 @@
       providerFields();
     }
   }
-  const api = { integer, participant, buildEnsemble, reviewOptions, workerControl, setLocked };
+  const api = { integer, participant, buildEnsemble, reviewOptions, workerControl, batchControls, batchOptions, setLocked };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ThreatlintPlatformControls = api; init();
 })(typeof window === 'undefined' ? globalThis : window);

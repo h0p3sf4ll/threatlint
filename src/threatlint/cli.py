@@ -61,6 +61,19 @@ def _resolve_provider(args: argparse.Namespace) -> tuple[str, str, str] | None:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run an AppSec analysis via a local or cloud LLM."""
+    inherited_key = os.environ.pop("_THREATLINT_BATCH_API_KEY", "")
+    if inherited_key and not getattr(args, "api_key", None):
+        args.api_key = inherited_key
+    if getattr(args, "targets_file", None):
+        from .agent_batch import run_batch
+        try:
+            return run_batch(args)
+        except (OSError, ValueError) as exc:
+            print(_red(f"ERROR: {exc}"))
+            return 1
+    if getattr(args, "workers", 1) != 1 or getattr(args, "max_model_runs", 24) != 24:
+        print(_red("ERROR: --workers and --max-model-runs require --targets-file."))
+        return 1
     mode = args.mode
     if getattr(args, "resolve_avits", False):
         if mode != "fp-review" or args.provider not in ("claude", "claude-code", "codex", "copilot"):
@@ -223,6 +236,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Analysis type: {{{', '.join(_MODES)}}}")
     p_run.add_argument("--target", metavar="TARGET",
         help="Component, path, or service name to analyze (default: auto-discover)")
+    p_run.add_argument("--targets-file", metavar="JSON",
+        help="JSON array of independent source scopes; each receives its own complete report")
+    p_run.add_argument("--workers", type=int, default=1,
+        help="Parallel same-role reviews with --targets-file (1–8, default 1)")
+    p_run.add_argument("--max-model-runs", type=int, default=24,
+        help="Maximum scope reviews admitted by --targets-file (1–64, default 24)")
     p_run.add_argument("--design", metavar="PATH", nargs="+", action="extend",
         help="Design inputs for the threat model: diagrams (draw.io, Mermaid, PlantUML, Visio, SVG, Threat Dragon, "
              "Threat Modeling Tool), design docs (PDF, Word, PowerPoint, Markdown), OpenAPI specs, images, or folders of them")

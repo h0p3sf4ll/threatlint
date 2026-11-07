@@ -16,6 +16,23 @@ function environmentLimit(name, fallback, maximum = 16) {
   return value === undefined ? fallback : positiveLimit(Number(value), fallback, maximum);
 }
 
+/** The same per-run controls for independent scanner/import work, before model dispatch. */
+function batchExecution(value, plannedModelRuns = null) {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { throw new Error('Batch execution must be a JSON object'); }
+  }
+  const settings = value ?? {};
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Batch execution must be an object');
+  if (Object.keys(settings).some(key => !['mode', 'maxConcurrency', 'maxModelRuns', 'plannedModelRuns'].includes(key))) throw new Error('Batch execution accepts mode, maxConcurrency, and maxModelRuns only');
+  const mode = settings.mode ?? 'auto';
+  if (!['auto', 'sequential'].includes(mode)) throw new Error('Batch execution mode must be auto or sequential');
+  const requested = positiveLimit(settings.maxConcurrency, environmentLimit('THREATLINT_BATCH_CONCURRENCY', 3, 8), 8);
+  const maxModelRuns = positiveLimit(settings.maxModelRuns, 64, 64);
+  if (plannedModelRuns !== null && (!Number.isInteger(plannedModelRuns) || plannedModelRuns < 0)) throw new Error('Invalid planned model-run count');
+  if (plannedModelRuns > maxModelRuns) throw new Error(`This batch needs ${plannedModelRuns} model runs; the limit is ${maxModelRuns}. Narrow the input or increase maxModelRuns (maximum 64).`);
+  return { mode, maxConcurrency: mode === 'sequential' ? 1 : requested, maxModelRuns, ...(plannedModelRuns === null ? {} : { plannedModelRuns }) };
+}
+
 /** Stable output order, bounded admission, stop-on-error and cancellation with in-flight draining. */
 async function mapBounded(items, mapper, { concurrency = 4, signal } = {}) {
   positiveLimit(concurrency, 4, 64);
@@ -68,4 +85,4 @@ function createLimiter(limit, maxQueue = 128) {
   });
 }
 
-module.exports = { checkAbort, positiveLimit, environmentLimit, mapBounded, createLimiter };
+module.exports = { checkAbort, positiveLimit, environmentLimit, batchExecution, mapBounded, createLimiter };

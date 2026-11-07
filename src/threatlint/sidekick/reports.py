@@ -232,7 +232,7 @@ KEY = "x.organization=y.organization AND x.project=y.project AND x.repository=y.
 
 def movers(baseline: str, current: str, limit: int = 15) -> list[dict]:
     with contextlib.closing(store.connect()) as db:
-        pairs = db.execute(f"SELECT x.*, " + ", ".join(f"y.{m} AS new_{m}" for _l, m in MOVER_METRICS) +
+        pairs = db.execute("SELECT x.*, " + ", ".join(f"y.{m} AS new_{m}" for _l, m in MOVER_METRICS) +
                            f" FROM report_rows x JOIN report_rows y ON {KEY} WHERE x.run_id=? AND y.run_id=? "
                            "AND x.status='complete' AND y.status='complete'", (baseline, current)).fetchall()
     out = []

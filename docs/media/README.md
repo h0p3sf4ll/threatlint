@@ -74,3 +74,13 @@ records the actual capture environment and scope.
 `THREATLINT_SCREENSHOTS` set to an output directory. It exercises local reviewer attestations,
 causal links, a provisional priority rubric and an offline export; it establishes no exploit
 against a real application.
+
+## November 7 completion audit refresh
+
+The current platform, threat-model and chain PNGs were recaptured after the completion
+changes on `codex/security-platform-foundation`, with installed Google Chrome and Python
+3.13. The three browser acceptance commands passed; the exported pixels and rendered
+`security-platform.svg` were inspected. In-app scanner, fix and repository-risk images
+are byte-identical copies of the documentation PNGs. Live provider and external-engine
+acceptance is recorded separately in `platform-validation.md`; it is not depicted by
+these synthetic screenshots.

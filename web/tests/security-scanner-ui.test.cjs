@@ -44,7 +44,7 @@ test('switching workspace during automatic apply does not relock or overwrite th
   app.nodes.get('experience-mode').value = 'advanced'; app.nodes.get('security-auto-fix').checked = true;
   app.nodes.get('security-scan-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
   assert.equal(typeof release, 'function');
-  assert.deepEqual(JSON.parse(calls.find(call => call.url.endsWith('/apply')).options.body), { policy: { autoApply: true, rules: ['TL-DEBUG-ENABLED'] } });
+  assert.deepEqual(JSON.parse(calls.find(call => call.url.endsWith('/apply')).options.body), { policy: { autoApply: true, rules: ['TL-DEBUG-ENABLED', 'TL-PY-YAML', 'TL-TLS-VERIFY-OFF'] } });
   assert.equal(app.nodes.get('security-auto-fix').checked, false, 'automatic authorization applies to this one scan only');
   app.session('current'); await settle();
   release(response({ scan: { ...scan, id: 'rescanned', findings: [] } })); await settle();

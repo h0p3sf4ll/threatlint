@@ -26,18 +26,19 @@ The development branch is `codex/security-platform-foundation`.
 | --- | --- | --- |
 | Guided experience | A simple starting path, Security scanner, evidence, reviewed fix and progress views | Advanced controls remain available through the mode selector |
 | Repo/branch and context | Existing source-manager checkout, visible revision, supporting-document upload and free-text scope/context | Design content is untrusted evidence; local working trees can change |
-| Parallel specialist workers | Up to four primary source partitions per eligible Workbench role, bounded concurrent calls and total model-run budget | Shared upstream/runtime evidence stays together; other hosts retain their existing limits |
+| Parallel specialist workers | Up to four primary source partitions per eligible Workbench role; per-run scanner/import batch controls; explicit independent CLI scopes with bounded workers and model-run budgets | Shared upstream/runtime evidence stays together; write-capable workflows retain ordering |
 | Independent providers | Two or three distinct providers, separate consent/settings, independent assessment, one challenge round and a host-rendered verdict | More opinions do not prove truth; disagreement and coverage gaps remain visible |
 | Security scanner | Guard-based SAST/secret patterns, selected IaC checks and dependency hygiene; optional Semgrep and Trivy adapters | Known dependency CVEs require successful Trivy/database coverage; no engine is silently treated as available |
-| Reviewed fix and rescan | Server-owned proposals bound to repo, branch, commit and content; narrow deterministic edit; syntax validation and fresh scan | Initial edit supports an exact module-level Python `DEBUG=True` assignment; application tests are not run |
+| Reviewed fix and rescan | Server-owned proposals bound to repo, branch, commit and content; guarded debug, YAML-loader and requests TLS edits; syntax validation and fresh scan | Only recognized unambiguous Python forms are editable; application tests are not run |
 | Automatic fixes | Explicit allowlisted local policy for supported changes; CI uses constrained revision-bound remediation | No arbitrary model-generated patch execution or automatic merge |
 | Repository risk | Persisted observations, branch/revision filters, explicit review decisions and history, causal composite findings | Imported assertions remain reported until reviewed; old reports keep unknown provenance |
-| ServiceNow chain export | Offline JSON preview with composite parent, contributing findings, work notes and idempotency keys | **Stub:** no transport or ServiceNow writes |
+| ServiceNow chain export | Offline JSON preview with composite parent, contributing findings, directional causal links, work notes and idempotency keys | **Stub:** no transport or ServiceNow writes |
 | Progress | Observation history, unresolved issues, verified remediation and coverage context on Metrics | Disappearance from a partial scan does not close an issue |
 | Personal developer coaching | Private opt-in preview with evidence-based inputs, an explained priority index and improvement steps | **Stub:** no identity tracking, persistence, peer ranking or employee-performance inference |
 
 See [scanner and fixes](security-scanner.md), [review orchestration](review-orchestration.md)
-and [finding intelligence](finding-intelligence.md) for exact contracts.
+and [finding intelligence](finding-intelligence.md) for exact contracts. The
+[request audit](request-completion.md) maps each requested outcome to its evidence and remaining limits.
 
 ## Simple starting path
 
@@ -92,6 +93,7 @@ external write authority.
 | Responsibility | Implementation |
 | --- | --- |
 | Dependency scheduling and admission | `web/lib/workflow-plan.cjs`, `pipeline.cjs` |
+| Independent CLI scopes and shared Python bounds | `src/threatlint/agent_batch.py`, `bounded_work.py`, `inspection_batch.py` |
 | Source assignment and provider challenge | `web/lib/review-scopes.cjs`, `review-orchestration.cjs` |
 | Structured evidence and conservative consolidation | `web/lib/review-evidence.cjs` |
 | Scanner snapshot, normalization, engines and fixes | `src/threatlint/security_scanner/` |
@@ -144,7 +146,7 @@ its code, commit and test logs do not include trustworthy execution metadata.
 ## Next phase
 
 The next scanner phase should expand rule and language coverage using measured fixtures,
-add engine/database version provenance and reproducible rule packs, benchmark precision and
+pin reproducible rule packs beyond the recorded engine/database provenance, benchmark precision and
 recall, and broaden fixes only when semantic regression checks can validate them. A hosted
 product additionally needs tenant isolation, remote workers, quotas, durable job ownership,
 credential management and an explicit retention model.

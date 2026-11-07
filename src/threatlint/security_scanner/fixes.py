@@ -9,16 +9,14 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
-import re
 import stat
 import secrets
 from pathlib import Path
 
 from .snapshot import ScannerError, safe_file, snapshot, content_digest
 from .normalize import redacted
+from .source_edits import RULES, replacement
 
-RULE = "TL-DEBUG-ENABLED"
-DEBUG_ASSIGNMENT = re.compile(r"^(DEBUG\s*=\s*)True(\s*(?:#.*)?)(\r?\n)?$")
 PROTECTED = {".git", ".github", ".gitlab", ".circleci", ".codex", ".claude", ".agents"}
 
 
@@ -30,27 +28,26 @@ def protected(path: str) -> bool:
 
 def _replacement(item: dict, files: dict[str, bytes]) -> tuple[bytes, bytes] | None:
     path = item.get("path", "")
-    if item.get("source") != "guard" or item.get("ruleId") != RULE or not path.endswith(".py") or protected(path):
+    if item.get("source") != "guard" or item.get("ruleId") not in RULES or not path.endswith(".py") or protected(path):
         return None
     before = files.get(path)
     if before is None:
         return None
+    module = {"TL-PY-YAML": "yaml", "TL-TLS-VERIFY-OFF": "requests"}.get(item.get("ruleId"))
+    if module and any(Path(name).name == module + ".py" or module in Path(name).parts[:-1] for name in files):
+        return None  # A local module/package may shadow the library whose API we recognize.
     try:
         text = before.decode("utf-8")
-        tree = ast.parse(text)
         lines = text.splitlines(keepends=True)
         index = int(item.get("line", 0)) - 1
-        if not 0 <= index < len(lines) or not DEBUG_ASSIGNMENT.fullmatch(lines[index]):
+        if not 0 <= index < len(lines):
             return None
         if redacted(lines[index].rstrip("\r\n")) != lines[index].rstrip("\r\n"):
             return None  # Never send a secret-bearing edit to a browser, artifact, or suggestion.
-        # Only a real module-level assignment, never a docstring or nested source fragment.
-        if not any(isinstance(node, ast.Assign) and node.lineno == index + 1 and len(node.targets) == 1
-                   and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "DEBUG"
-                   and isinstance(node.value, ast.Constant) and node.value.value is True for node in tree.body):
+        changed = replacement(text, item["ruleId"], index + 1)
+        if changed is None:
             return None
-        lines[index] = DEBUG_ASSIGNMENT.sub(lambda match: match[1] + "False" + match[2] + (match[3] or ""), lines[index])
-        after = "".join(lines).encode("utf-8")
+        after = changed.encode("utf-8")
         ast.parse(after.decode("utf-8"))
         return before, after
     except (ValueError, UnicodeError, SyntaxError):
@@ -72,10 +69,10 @@ def propose_fix(report: dict, finding_id: str) -> dict:
         raise ScannerError("This finding has no eligible deterministic fix; follow the advisory recommendation")
     before, after = edit
     line = item["line"]
-    return {"schemaVersion": 1, "binding": binding, "findingId": finding_id, "ruleId": RULE, "path": item["path"],
+    return {"schemaVersion": 1, "binding": binding, "findingId": finding_id, "ruleId": item["ruleId"], "path": item["path"],
             "line": line, "beforeSha256": hashlib.sha256(before).hexdigest(), "afterSha256": hashlib.sha256(after).hexdigest(),
             "before": before.decode("utf-8").splitlines()[line - 1], "after": after.decode("utf-8").splitlines()[line - 1],
-            "description": "Disable the module-level DEBUG setting. Review the runtime behavior before applying.",
+            "description": RULES[item["ruleId"]],
             "validation": "Python syntax parsing and a fresh baseline security scan; application tests are not run.",
             "status": "proposed", "requiresReview": True}
 
@@ -122,7 +119,9 @@ def apply_fix(plan: dict, *, confirm=False, policy=None, scan=None) -> dict:
     from .scan import scan_repository
     scan = scan or scan_repository
     policy = policy or {}
-    auto = policy.get("autoApply") is True and plan.get("ruleId") in policy.get("rules", [])
+    rules = policy.get("rules", [])
+    auto = (policy.get("autoApply") is True and isinstance(rules, list) and bool(rules)
+            and all(isinstance(rule, str) and rule in RULES for rule in rules) and plan.get("ruleId") in rules)
     if confirm is not True and not auto:
         raise ScannerError("Review and explicitly confirm this fix, or opt in to its specific auto-apply rule")
     repository = plan.get("binding", {}).get("repository", "")
@@ -145,6 +144,9 @@ def apply_fix(plan: dict, *, confirm=False, policy=None, scan=None) -> dict:
         final_binding, _final_files, _coverage = snapshot(repository)
         if rescanned.get("binding") != expected_binding or final_binding != expected_binding:
             raise ScannerError("Repository changed during fix validation")
+        baseline = next((engine for engine in rescanned.get("engines", []) if engine.get("id") == "baseline"), {})
+        if rescanned.get("status") not in {"completed", "partial"} or baseline.get("status") != "completed" or rescanned.get("coverage", {}).get("findingLimitReached"):
+            raise ScannerError("Baseline rescan did not complete within its finding budget")
         if any(item["id"] == plan["findingId"] for item in rescanned.get("findings", [])):
             raise ScannerError("The finding remains after the edit")
     except BaseException:

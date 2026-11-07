@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -129,16 +130,61 @@ def run_engine(engine: str, root: str):
         except semgrep_platform.SemgrepError:
             pass  # The explicitly requested Pro scan fails closed if authentication is required.
         environment.update(SEMGREP_SEND_METRICS="off", SEMGREP_ENABLE_VERSION_CHECK="0")
-        return _run([shutil.which("semgrep") or "semgrep", "scan", *flags, "--config", "p/security-audit", "--json", "--quiet", "--metrics", "off",
-                     "--disable-version-check", "--no-secrets-validation", "."], root, environment)
+        completed = _run([shutil.which("semgrep") or "semgrep", "scan", *flags, "--config", "p/security-audit", "--json", "--quiet", "--metrics", "off",
+                          "--disable-version-check", "--no-secrets-validation", "."], root, environment)
+        # Semgrep includes its engine version in scan JSON. The mutable registry
+        # rule pack has no proven immutable revision here; say so explicitly.
+        completed.provenance = engine_provenance(engine, completed.stdout)
+        return completed
     # Do not interpret a scanned repository's trivy.yaml or .trivyignore as trusted scanner policy.
     with tempfile.TemporaryDirectory(prefix="threatlint-trivy-policy-") as directory:
         config = Path(directory) / "config.yaml"
         ignore = Path(directory) / "ignore"
         config.write_text("{}\n", encoding="utf-8")
         ignore.write_text("", encoding="utf-8")
-        return _run([shutil.which("trivy") or "trivy", "fs", "--config", str(config), "--ignorefile", str(ignore),
-                     "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "."], root, environment)
+        completed = _run([shutil.which("trivy") or "trivy", "fs", "--config", str(config), "--ignorefile", str(ignore),
+                          "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "."], root, environment)
+        version = "{}"
+        try:
+            metadata = _run([shutil.which("trivy") or "trivy", "version", "--format", "json"], root, environment)
+            if metadata.returncode == 0:
+                version = metadata.stdout
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass  # Missing provenance is explicit, never fabricated from the current time.
+        completed.provenance = engine_provenance(engine, version)
+        return completed
+
+
+def engine_provenance(engine: str, output: str) -> dict:
+    """Retain only non-secret version/database fields from engine-owned output."""
+    provenance = {"engineVersion": "unrecorded", "rulePack": {
+        "source": "p/security-audit" if engine == "semgrep" else "Trivy built-in checks",
+        "revision": "unrecorded", "pinned": False}}
+    try:
+        payload = json.loads(output)
+        if not isinstance(payload, dict):
+            return provenance
+        version = payload.get("version" if engine == "semgrep" else "Version")
+        if isinstance(version, str) and re.fullmatch(r"[vV]?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?", version):
+            provenance["engineVersion"] = version
+        if engine == "trivy":
+            provenance["databases"] = {}
+            for name in ("VulnerabilityDB", "JavaDB", "CheckBundle"):
+                database = payload.get(name)
+                if not isinstance(database, dict):
+                    continue
+                values = {}
+                if type(database.get("Version")) is int and database["Version"] >= 0:
+                    values["schemaVersion"] = database["Version"]
+                for key in ("UpdatedAt", "NextUpdate", "DownloadedAt"):
+                    value = database.get(key)
+                    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T[0-9:.+Z-]{8,40}", value):
+                        values[key[0].lower() + key[1:]] = value
+                if values:
+                    provenance["databases"][name] = values
+    except (ValueError, TypeError):
+        pass
+    return provenance
 
 
 def external_scans(files: dict[str, bytes], requested: list[str], *, runner=run_engine, which=shutil.which) -> tuple[list, list]:
@@ -169,6 +215,7 @@ def external_scans(files: dict[str, bytes], requested: list[str], *, runner=run_
                     partial = (bool(payload.get("errors")) if engine == "semgrep" else False) or len(normalized) >= MAX_FINDINGS
                     status.update(status="partial" if partial else "completed", findings=len(normalized),
                                   detail="Engine reported incomplete coverage." if partial else "Scanned the bounded text snapshot; engine matches require review." + (" Semgrep Pro was required; no Community Edition fallback." if engine == "semgrep" else ""))
+                    status["provenance"] = getattr(completed, "provenance", engine_provenance(engine, completed.stdout if engine == "semgrep" else "{}"))
             except EngineUnavailable as exc:
                 status.update(status="unavailable", detail=str(exc))
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):

@@ -36,17 +36,20 @@ parallel workers, independent provider challenge and evidence-backed exploit cha
 - **Security scanner:** local SAST/secret patterns, selected IaC checks and dependency hygiene,
   with optional installed Semgrep and Trivy engines. Coverage and missing engines stay visible.
 - **Reviewed fixes:** inspect a supported change, apply it to the bound source snapshot and
-  rescan. The first automatic policy handles an exact Python `DEBUG=True` assignment; other
-  fixes remain recommendations. Application tests still need to run.
+  rescan. Explicit policies cover exact Python debug settings, recognized unsafe YAML loaders
+  and disabled requests TLS verification. Other fixes remain recommendations; application tests still need to run.
 - **Connected risk:** view findings by repository, branch and revision, review causal attack
   paths, and track verified improvement. Component counts never automatically inflate severity.
 - **Independent perspectives:** opt into two or three providers, one challenge round and a
   consolidated report with disagreements retained. More model votes are not proof.
+- **Bounded parallel work:** control workers and model-run budgets in Workbench reviews,
+  scanner-review/import batches and explicit independent CLI source scopes.
 
 ServiceNow chain export and private developer coaching are explicitly **offline preview
 stubs**. This is a foundation for local testing, not a claim of complete scanner coverage.
 Read [what changed, benefits and limits](docs/security-platform.md) and
-[validation evidence](docs/platform-validation.md) before merging.
+[validation evidence](docs/platform-validation.md) and the
+[original-request audit](docs/request-completion.md) before merging.
 
 ### What a useful answer looks like
 

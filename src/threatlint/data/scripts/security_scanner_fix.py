@@ -19,7 +19,7 @@ def run(args, *, cwd, env=None):
 
 def main(argv=None):
     from threatlint.security_scanner.scan import scan_repository
-    from threatlint.security_scanner.fixes import propose_fix, apply_fix
+    from threatlint.security_scanner.fixes import RULES, propose_fix, apply_fix
     from threatlint.security_scanner.snapshot import git
     parser = argparse.ArgumentParser()
     parser.add_argument('--repo', required=True)
@@ -29,7 +29,8 @@ def main(argv=None):
     parser.add_argument('--finding-id', required=True)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--apply', action='store_true')
-    parser.add_argument('--auto-apply-debug', action='store_true', help='Explicitly authorize the sole allowlisted DEBUG correction')
+    parser.add_argument('--auto-apply-debug', action='store_true', help='Compatibility option: explicitly authorize only the DEBUG correction')
+    parser.add_argument('--auto-apply-rule', action='append', choices=tuple(RULES), default=[], help='Explicitly authorize this supported rule without per-edit approval')
     args = parser.parse_args(argv)
     if not re.fullmatch(r'[a-f0-9]{40,64}', args.expected_sha):
         raise ValueError('Expected head must be a full commit SHA')
@@ -50,10 +51,11 @@ def main(argv=None):
     report = scan_repository(str(root))
     plan = propose_fix(report, args.finding_id)
     (output / 'proposal.json').write_text(json.dumps(plan, indent=2), encoding='utf-8')
-    if not args.apply and not args.auto_apply_debug:
+    rules = list(dict.fromkeys(args.auto_apply_rule + (['TL-DEBUG-ENABLED'] if args.auto_apply_debug else [])))
+    if not args.apply and not rules:
         return 0
     result = apply_fix(plan, confirm=args.apply,
-                       policy={'autoApply': True, 'rules': ['TL-DEBUG-ENABLED']} if args.auto_apply_debug else None)
+                       policy={'autoApply': True, 'rules': rules} if rules else None)
     (output / 'rescan.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     # Only the one validated path may enter the commit. No `git add -A` or project test hooks.
     changed = run(['git', 'diff', '--name-only'], cwd=root).splitlines()
@@ -67,7 +69,7 @@ def main(argv=None):
     run(['git', 'add', '--', plan['path']], cwd=root)
     run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'user.name=github-actions[bot]',
          '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-         'commit', '-m', 'fix(security): disable debug mode after reviewed scanner proposal'], cwd=root)
+         'commit', '-m', 'fix(security): apply reviewed ' + plan['ruleId'] + ' correction'], cwd=root)
     # GitHub authentication is configured only for the trusted git client, never repository code.
     server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com')
     if not re.fullmatch(r'https://[A-Za-z0-9.-]+', server):
@@ -84,7 +86,7 @@ def main(argv=None):
                          '` at `' + args.expected_sha + '`.\n\nPython syntax validation and a baseline rescan passed. '
                          'Application tests were not run. Review runtime behavior and run the application checks before merging.\n', encoding='utf-8')
     run(['gh', 'pr', 'create', '--repo', args.repository, '--draft', '--base', args.base_branch, '--head', branch,
-         '--title', 'fix(security): disable debug mode', '--body-file', str(body_file)], cwd=root)
+         '--title', 'fix(security): apply ' + plan['ruleId'] + ' correction', '--body-file', str(body_file)], cwd=root)
     return 0
 
 

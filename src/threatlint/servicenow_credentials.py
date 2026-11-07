@@ -65,7 +65,7 @@ def read_parameter_store(profile, *, client_parameters, access_help, region, tim
             if not isinstance(item, dict) or not isinstance(item.get("Name"), str) or not isinstance(item.get("Value"), str):
                 raise TypeError
             values[item["Name"]] = item["Value"]
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError):
         raise error_type("Unexpected AWS CLI response from Parameter Store") from None
     client_id, client_secret = values.get(id_parameter, ""), values.get(secret_parameter, "")
     if not client_id or not client_secret:

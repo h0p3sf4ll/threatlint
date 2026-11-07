@@ -106,7 +106,11 @@ function groupFindings(assessments, repoPath) {
   for (const assessment of assessments) for (const raw of assessment.findings) {
     const finding = { ...raw, evidence: verifyEvidence(raw.evidence, repoPath, ledger), participantId: assessment.participant.id, provider: assessment.participant.provider,
       model: assessment.participant.model, workerId: assessment.scope.id };
-    const matches = groups.filter(group => group.observations.some(existing => sameCandidate(existing, finding)));
+    let matches = groups.filter(group => group.observations.some(existing => sameCandidate(existing, finding))
+      && group.observations.every(existing => !existing.cwe || !finding.cwe || existing.cwe === finding.cwe));
+    // An unclassified observation must not bridge explicitly different weakness classes.
+    // Keep the ambiguous observation separate instead of collapsing unrelated candidates.
+    if (new Set(matches.flatMap(group => group.observations.map(item => item.cwe)).filter(Boolean)).size > 1) matches = [];
     let group = matches[0];
     if (!group) { group = { observations: [] }; groups.push(group); }
     group.observations.push(finding);
@@ -146,7 +150,7 @@ function consolidate(groups, challenges, agentId) {
     const unresolved = responses.some(item => item.assessment === 'unresolved') || confidence === 'THEORETICAL' || observations.some(item => item.assumptions.length) || responses.some(item => item.assumptions.length);
     // Every candidate remains open. Neither votes nor a matching quote authorizes suppression/remediation.
     const disposition = agentId === 'appsec-fp-reviewer' ? 'TRUE POSITIVE' : '';
-    return { id: group.id, title: observations[0].title, cwe: observations[0].cwe,
+    return { id: group.id, title: observations[0].title, cwe: observations.find(item => item.cwe)?.cwe || '',
       severity: observations.reduce((highest, item) => SEVERITIES.indexOf(item.severity) > SEVERITIES.indexOf(highest) ? item.severity : highest, 'INFO'),
       confidence, disposition, status: disputed ? 'disputed' : unresolved ? 'unresolved' : 'requires-verification',
       conflicts: { confidence: confidenceConflict, severity: severityConflict, disposition: dispositionConflict }, evidence, observations, challenges: responses,

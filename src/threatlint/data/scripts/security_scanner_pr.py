@@ -42,6 +42,7 @@ def added_lines(patch):
 def publish(scan, repository, pr_number, server, *, api=github_api, proposer=None):
     from threatlint.security_scanner.github import build_comment, suggestion_payload
     from threatlint.security_scanner.fixes import propose_fix
+    from threatlint.security_scanner.normalize import sort_findings
     from threatlint.security_scanner.snapshot import ScannerError
     proposer = proposer or propose_fix
     endpoint = f"repos/{repository}/pulls/{pr_number}"
@@ -60,7 +61,7 @@ def publish(scan, repository, pr_number, server, *, api=github_api, proposer=Non
         if len(files) < 100:
             break
     suggestions = []
-    for item in scan.get('findings', []):
+    for item in sort_findings(scan.get('findings', [])):
         if not item.get('fixAvailable') or item.get('line') not in changed.get(item.get('path'), set()):
             continue
         try:

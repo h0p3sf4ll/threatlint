@@ -85,5 +85,5 @@
   <text class="small" x="1048" y="1117">No live writes, employee ranking, or score storage.</text>
 
   <line x1="80" y1="1171" x2="1520" y2="1171" stroke="#d2e0e0" stroke-width="1"/>
-  <text class="small" x="80" y="1205">Scope: new controls apply to Workbench review pipelines. Python and integration workflows retain their existing execution limits.</text>
+  <text class="small" x="80" y="1205">Bounded work: Workbench reviews, read-only batches and explicit CLI scopes. Dependent analysis and writes retain ordering.</text>
 </svg>

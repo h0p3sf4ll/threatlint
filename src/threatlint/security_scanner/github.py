@@ -34,15 +34,15 @@ def build_comment(scan: dict, action_url: str = "") -> str:
 def suggestion_payload(plan: dict, commit: str) -> dict:
     if not re.fullmatch(r"[a-f0-9]{40,64}", commit) or plan.get("binding", {}).get("commit") != commit:
         raise ValueError("Suggestion must match the reviewed commit")
-    if plan.get("ruleId") != "TL-DEBUG-ENABLED" or "\n" in plan.get("after", "") or "```" in plan.get("after", ""):
-        raise ValueError("Only a validated single-line deterministic fix is eligible")
-    from .fixes import protected, DEBUG_ASSIGNMENT
+    from .fixes import protected
+    from .source_edits import RULES, valid_line_change
     before = plan.get("before", "")
-    match = DEBUG_ASSIGNMENT.fullmatch(before)
-    if not match or plan["after"] != match[1] + "False" + match[2] or redacted(before) != before:
+    if not valid_line_change(plan.get("ruleId"), before, plan.get("after", "")) or redacted(before) != before:
         raise ValueError("Suggestion replacement must be the exact safe transformation")
     path = plan.get("path", "")
-    if protected(path) or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/")):
+    if protected(path) or not path.endswith(".py") or "\\" in path or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/")):
         raise ValueError("Protected or invalid suggestion path")
+    if type(plan.get("line")) is not int or plan["line"] < 1:
+        raise ValueError("Suggestion requires an exact positive line number")
     return {"commit_id": commit, "path": path, "line": plan["line"], "side": "RIGHT",
-            "body": "Disable debug mode after reviewing runtime behavior. Commit this native suggestion to trigger the PR scan again.\n\n```suggestion\n" + plan["after"] + "\n```"}
+            "body": RULES[plan["ruleId"]] + " Commit this native suggestion to trigger the PR scan again.\n\n```suggestion\n" + plan["after"] + "\n```"}

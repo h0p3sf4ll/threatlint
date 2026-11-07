@@ -19,7 +19,7 @@ def scan_repository(repository: str, *, engines=None, external=external_scans) -
     baseline_count = len(findings)
     extra, statuses = external(files, engines)
     findings.extend(extra)
-    from .fixes import eligible
+    from .fixes import eligible, RULES
     for item in findings:
         item["fixAvailable"] = eligible(item, files)
     finding_limit = len(findings) >= MAX_FINDINGS
@@ -40,4 +40,4 @@ def scan_repository(repository: str, *, engines=None, external=external_scans) -
     return {"schemaVersion": 1, "status": "partial", "binding": binding, "observedAt": datetime.now(timezone.utc).isoformat(),
             "findings": findings, "engines": statuses, "coverage": coverage,
             "summary": {severity: sum(item["severity"] == severity for item in findings) for severity in SEVERITIES},
-            "policy": {"mode": "review", "autoApply": False, "eligibleRules": ["TL-DEBUG-ENABLED"]}}
+            "policy": {"mode": "review", "autoApply": False, "eligibleRules": list(RULES)}}

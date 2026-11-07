@@ -183,7 +183,7 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
         const result = await orchestrateReview({ agentId, repoPath: session.repoPath, systemPrompt: agent.systemPrompt, scopePlan, inventory: scopes.inventory,
           participants, ensemble: !!ensemble, concurrency: plan.maxConcurrency, signal, send,
           userMessage: participant => baseMessage + designContext(design, imageNote(participant.provider)),
-          invoke: ({ participant, stage, workerId, ...args }) => admitRun(() => runModel({ ...args, settings: participant.settings, images: stage === 'assessment' ? design?.images || [] : [],
+          invoke: ({ participant, stage, workerId, ...args }) => admitRun(() => runModel({ ...args, settings: participant.settings, images: design?.images || [],
             repoPath: session.repoPath, onEvent: event => send({ ...event, agentId, participantId: participant.id, stage, workerId,
               ...(event.id ? { id: `${agentId}:${participant.id}:${stage}:${workerId}:${event.id}` } : {}) }), override, purpose: 'review', agentId }), { signal: args.signal }),
         });

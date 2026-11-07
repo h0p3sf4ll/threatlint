@@ -88,3 +88,52 @@ it('removes a private coaching result when consent is withdrawn during the previ
   assert.equal(app.nodes.get('coaching-result').children.length, 0);
   assert.equal(app.nodes.get('coaching-status').textContent, '');
 });
+
+it('uses branch-scoped summaries and discards a slower response for a previously selected branch', async () => {
+  const pending = [], data = overview('Whole repository finding');
+  data.repositories = [{ repo: { name: 'fixture' }, branches: ['main', 'release'].map(branch => ({ branch, open: 1, notReobserved: 0, coverage: { status: 'partial', scope: 'fixture', limitations: [] } })) }];
+  const app = fixture(url => url.endsWith('/sync') ? Promise.resolve(response({ overview: data })) : new Promise(resolve => pending.push({ url, resolve })));
+  app.session('fixture'); await settle();
+  const branch = app.nodes.get('intelligence-branch');
+  branch.value = 'main'; branch.dispatchEvent(new Event('change'));
+  branch.value = 'release'; branch.dispatchEvent(new Event('change'));
+  assert.ok(pending[0].url.includes('branch=main')); assert.ok(pending[1].url.includes('branch=release'));
+  const release = overview('Release finding'); release.summary.openRiskPoints = 6;
+  pending[1].resolve(response(release)); await settle();
+  pending[0].resolve(response(overview('Stale main finding'))); await settle();
+  assert.ok(app.nodes.get('intelligence-findings').textContent.includes('Release finding'));
+  assert.ok(!app.nodes.get('intelligence-findings').textContent.includes('Stale main finding'));
+  assert.ok(app.nodes.get('intelligence-summary').textContent.includes('6Open priority points'));
+  assert.ok(app.nodes.get('intelligence-status').textContent.includes('in release'));
+});
+
+it('does not restore findings from the previous scope when a branch request fails', async () => {
+  const app = fixture(url => url.endsWith('/sync') ? Promise.resolve(response({ overview: overview('Previous branch finding') })) : Promise.resolve({ ok: false, json: async () => ({ error: 'Scope unavailable' }) }));
+  app.session('fixture'); await settle();
+  const branch = app.nodes.get('intelligence-branch'); branch.value = 'main'; branch.dispatchEvent(new Event('change')); await settle();
+  assert.equal(app.nodes.get('intelligence-status').textContent, 'Scope unavailable');
+  app.nodes.get('intelligence-disposition').dispatchEvent(new Event('change'));
+  assert.equal(app.nodes.get('intelligence-findings').children.length, 0);
+  assert.equal(app.nodes.get('chain-submit').disabled, true);
+});
+
+it('shows individual coaching factors and exclusions and requires a new preview after consent is renewed', async () => {
+  const pending = [], data = overview('My issue', [{ id: 'ev_intro', path: 'src/orders.js', line: 1, kind: 'introduction', quote: 'Inspected the introducing change.', verification: 'verified' }]);
+  const app = fixture(url => url.endsWith('/sync') ? Promise.resolve(response({ overview: data })) : new Promise(resolve => pending.push(resolve)));
+  app.session('fixture'); await settle();
+  const optIn = app.nodes.get('coaching-opt-in'), form = app.nodes.get('coaching-form');
+  optIn.checked = true; app.nodes.get('coaching-sample').value = '10';
+  const result = { score: 3, confidence: 'low', includedIssues: 1, observedChangeCount: 10, formula: 'fixture formula', improvementSteps: ['Add the ownership guard.'], limitations: [],
+    excluded: [{ findingId: 'another', reason: 'No verified introduction evidence' }], details: [{ findingId: 'fi_fixture', severity: 'MEDIUM', severityWeight: 3,
+      exposure: 'unknown', exposureFactor: 1, recurrenceFactor: 1, disposition: 'TRUE POSITIVE', remediationFactor: 1, points: 3, evidenceIds: ['ev_intro'], exposureEvidenceIds: [] }] };
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  optIn.checked = false; optIn.dispatchEvent(new Event('change')); optIn.checked = true; optIn.dispatchEvent(new Event('change'));
+  pending[0](response(result)); await settle();
+  assert.equal(app.nodes.get('coaching-result').textContent, '', 'renewed consent cannot revive an earlier in-flight assessment');
+  form.dispatchEvent(new Event('submit', { cancelable: true })); pending[1](response(result)); await settle();
+  assert.match(app.nodes.get('coaching-result').textContent, /MEDIUM weight 3 × unknown exposure 1 × recurrence 1/);
+  assert.match(app.nodes.get('coaching-result').textContent, /Introduction evidence: ev_intro/);
+  assert.match(app.nodes.get('coaching-result').textContent, /Excluded another: No verified introduction evidence/);
+  form.dispatchEvent(new Event('change'));
+  assert.equal(app.nodes.get('coaching-result').textContent, '', 'changing the sample or evidence clears the stale preview');
+});

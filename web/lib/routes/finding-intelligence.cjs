@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { handle, HttpError } = require('../http.cjs');
-const { ingestionFromReport } = require('../finding-intelligence.cjs');
+const { ingestionFromReport, text } = require('../finding-intelligence.cjs');
 const { serviceNowPreview, developerRiskPreview } = require('../finding-intelligence-previews.cjs');
 
 function registerFindingIntelligenceRoutes(app, { intelligence, store }) {
@@ -11,7 +11,10 @@ function registerFindingIntelligenceRoutes(app, { intelligence, store }) {
     if (typeof id !== 'string' || !store.sessions.has(id)) throw new HttpError('Select an existing workspace session', 404);
     return store.sessions.get(id);
   }
-  function scope(req) { return { repoId: session(req).repoPath }; }
+  function scope(req) {
+    return { repoId: session(req).repoPath, branch: text(req.query?.branch, 'branch filter', 500),
+      commit: text(req.query?.commit, 'commit filter', 200), contentDigest: text(req.query?.contentDigest, 'content digest filter', 200) };
+  }
   function finding(req) {
     const selected = intelligence.getFinding(req.params.id);
     if (!selected || selected.provenance.repo.id !== session(req).repoPath) throw new HttpError('Finding not found in this workspace', 404);

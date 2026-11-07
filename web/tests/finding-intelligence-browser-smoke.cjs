@@ -40,9 +40,12 @@ const { createWorkbench } = require('../server.js');
       coverage: { status: 'partial', scope: 'Synthetic UI evidence only', limitations: ['Not an assessment of a real application.'] },
       findings: ['Synthetic reachable route', 'Synthetic terminal object read', 'Synthetic FP reevaluation'].map((title, index) => ({ id: `fixture-${index}`, ruleId: `synthetic-${index}`,
         title, severity: 'MEDIUM', path: 'fixture.js', line: index + 1, snippet: '// Synthetic evidence fixture, not a live vulnerability.', confidence: 'PATTERN_MATCH' })) });
-    await page.locator('#experience-mode').selectOption('advanced');
     await page.locator('[data-view="intelligence"]').click();
     await page.waitForFunction(() => document.querySelectorAll('#intelligence-findings article').length === 3);
+    assert.equal(await page.locator('#chain-builder').isVisible(), false, 'guided mode keeps chain construction out of the primary path');
+    assert.equal(await page.getByText('Review evidence and record a decision', { exact: true }).first().isVisible(), true);
+    await page.locator('#experience-mode').selectOption('advanced');
+    assert.equal(await page.locator('#chain-builder').isVisible(), true);
     const card = title => page.locator('#intelligence-findings article').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
     async function recordReview(title, { decision = 'TRUE POSITIVE', kind = 'source', quote, basis = 'Synthetic evidence establishes the scoped issue.', safe = '', refutes = '' } = {}) {
       const selected = card(title);
@@ -103,17 +106,46 @@ const { createWorkbench } = require('../server.js');
     await page.getByRole('button', { name: 'Download ServiceNow preview', exact: true }).click();
     const download = await downloaded; const payload = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
     assert.equal(payload.liveWritesEnabled, false); assert.equal(payload.related.length, 2); assert.ok(payload.parent.idempotencyKey.startsWith('threatlint:chain:'));
+    assert.equal(payload.parent.attackPath.length, 1);
+    assert.ok(payload.parent.work_notes.includes(initial.id)); assert.ok(payload.parent.work_notes.includes(terminal.id));
+    assert.match(await page.locator('#intelligence-composites').textContent(), /Synthetic reachable route → Synthetic terminal object read/);
     if (process.env.THREATLINT_SCREENSHOTS) {
       fs.mkdirSync(process.env.THREATLINT_SCREENSHOTS, { recursive: true });
       await page.locator('#intelligence-composites').screenshot({ path: path.join(process.env.THREATLINT_SCREENSHOTS, 'synthetic-composite-evidence.png') });
     }
-    await page.locator('[data-view="metrics"]').click(); await page.locator('#developer-coaching > summary').click();
+    wb.intelligence.ingest({ repo: { id: session.repoPath, name: 'Synthetic evidence fixture' }, sessionId: session.id, source: 'synthetic-browser-fixture', sourceId: 'empty-release-observation',
+      branch: 'synthetic/release', commit: 'c'.repeat(40), contentDigest: 'd'.repeat(64), observedAt: Date.now(),
+      coverage: { status: 'partial', scope: 'Synthetic empty branch UI fixture', limitations: ['No real application was evaluated.'] }, findings: [] });
+    await page.locator('#intelligence-refresh').click();
+    await page.waitForFunction(() => [...document.querySelector('#intelligence-branch').options].some(item => item.value === 'synthetic/release'));
+    await page.locator('#intelligence-branch').selectOption('synthetic/release');
+    await page.waitForFunction(() => document.querySelector('#intelligence-status').textContent.startsWith('0 logical findings in synthetic/release'));
+    assert.equal(await page.locator('#intelligence-findings article').count(), 0); assert.equal(await page.locator('#intelligence-composites article').count(), 0);
+    assert.match(await page.locator('#intelligence-summary').textContent(), /0Open findings/);
+    await page.locator('#intelligence-revision').selectOption(JSON.stringify(['c'.repeat(40), 'd'.repeat(64)]));
+    await page.waitForFunction(() => document.querySelector('#intelligence-status').textContent.includes('at the selected revision'));
+    await page.locator('#intelligence-branch').selectOption('synthetic/demo');
+    await page.waitForFunction(() => document.querySelectorAll('#intelligence-findings article').length === 3);
+    assert.equal(await page.locator('#intelligence-revision').inputValue(), '', 'a revision from another branch is cleared');
+    await page.locator('#intelligence-disposition').selectOption('REMEDIATED');
+    assert.equal(await page.locator('#intelligence-findings article').count(), 0);
+    await page.locator('#intelligence-disposition').selectOption('');
+    assert.equal((await recordReview('Synthetic reachable route', { kind: 'introduction', quote: 'Synthetic introducing change independently observed; no real person or application is assessed.' })).response.status(), 200);
+    assert.equal(await page.getByRole('button', { name: 'Download ServiceNow preview', exact: true }).isDisabled(), true);
+    await page.locator('[data-view="metrics"]').click();
+    await page.waitForFunction(() => !/^(Loading|Importing)/.test(document.querySelector('#intelligence-status').textContent));
+    await page.locator('#developer-coaching > summary').click();
     await page.locator('#coaching-opt-in').check(); await page.locator('#coaching-sample').fill('5');
     await page.locator('#coaching-form').getByRole('button', { name: 'Preview improvement priorities', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#coaching-status').textContent.includes('Insufficient verified observations'));
     assert.match(await page.locator('#coaching-result').textContent(), /0 verified issues/);
+    await page.locator('#coaching-findings').getByRole('checkbox', { name: /Include my verified introduced issue/ }).check();
+    await page.locator('#coaching-form').getByRole('button', { name: 'Preview improvement priorities', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#coaching-status').textContent.includes('Private coaching priority: 6/100'));
+    assert.match(await page.locator('#coaching-result').textContent(), /MEDIUM weight 3 × unknown exposure 1 × recurrence 1/);
+    assert.match(await page.locator('#repository-progress').textContent(), /all observed workspace branches/);
     await page.locator('#coaching-opt-in').uncheck(); assert.equal(await page.locator('#coaching-result').textContent(), '');
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
-    console.log('PASS: actual UI reviewer attestations, rejected unsupported FP reopening, supported reopening with immutable history, explicit chain assessment, ServiceNow preview download, and null private-coaching assessment. Synthetic fixtures only; no external calls.');
+    console.log('PASS: guided/advanced paths, explicit reviews and evidence-backed FP reopening, retained chain reasoning and offline export, branch/revision-scoped findings and empty scans, stale-chain export blocking, and opt-in coaching with null and explained numeric results. Synthetic fixtures only; no external calls.');
   } finally { if (browser) await browser.close(); await wb.close(); fs.rmSync(temporary, { recursive: true, force: true }); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -23,7 +23,7 @@ const { pdfLines } = require('./pdf-text.cjs');
 const { detectPdf, parseInvictiPdf, parseMobsfPdf } = require('./scan-import-pdf.cjs');
 const { dispositionState } = require('./finding-disposition.cjs');
 const { runCli, errorOf, resolveOutcome } = require('./avit-batch.cjs');
-const { mapBounded, environmentLimit, createLimiter, checkAbort } = require('./concurrency.cjs');
+const { mapBounded, environmentLimit, createLimiter, checkAbort, batchExecution } = require('./concurrency.cjs');
 const BATCH_CONCURRENCY = environmentLimit('THREATLINT_BATCH_CONCURRENCY', 3, 8);
 
 const AGENT_ID = 'appsec-fp-reviewer';
@@ -561,7 +561,9 @@ function fallbackVerdict(finding, reason = NOT_TRIAGED) {
 }
 
 /** Verdicts for every finding: model-backed when possible, otherwise unverified TRUE POSITIVE. */
-async function triage(parsed, { settings, override, workspace, emptyRepo, filename, signal, onProgress = () => {} }) {
+async function triage(parsed, { settings, override, workspace, emptyRepo, filename, signal, execution, onProgress = () => {} }) {
+  const controls = batchExecution(execution, settings ? Math.ceil(parsed.findings.length / BATCH_SIZE) : 0);
+  checkAbort(signal);
   const verdicts = new Map();
   if (!settings) { for (const finding of parsed.findings) verdicts.set(finding.id, fallbackVerdict(finding)); return verdicts; }
   const systemPrompt = AGENTS[AGENT_ID].systemPrompt + SYSTEM_ADDENDUM;
@@ -580,7 +582,7 @@ async function triage(parsed, { settings, override, workspace, emptyRepo, filena
     }
     const byId = new Map(returned.map(item => [String(item.id || '').toUpperCase(), item]));
     return batch.map(finding => [finding.id, byId.has(finding.id) ? normaliseVerdict(byId.get(finding.id), finding) : fallbackVerdict(finding, 'not triaged: the model returned no verdict for this finding')]);
-  }, { concurrency: BATCH_CONCURRENCY, signal });
+  }, { concurrency: controls.maxConcurrency, signal });
   return new Map(batches.flat());
 }
 
@@ -859,15 +861,16 @@ function createScanImports({ store, reports, override, integrations = {} }) {
       const parsed = extract(detected);
       update(job, { target: parsed.target, title: reportTitle(parsed, null, uploadedAt), counts: { total: parsed.findings.length, tp: 0, fp: 0, unverified: 0 },
         findings: parsed.findings.map(finding => ({ id: finding.id, originalId: finding.originalId, title: finding.title, severity: finding.severity, disposition: null, confidence: null, location: finding.location })) });
-      update(job, { status: 'triaging', detail: settings ? `Triaging with ${settings.model}` : 'No model configured; retaining unverified TRUE POSITIVE findings' });
-      const verdicts = await triage(parsed, { settings, override, workspace, signal, emptyRepo: workspace ? null : store.sessions.get(importSession())?.repoPath, filename: job.filename,
+      const execution = batchExecution(job.execution, settings ? Math.ceil(parsed.findings.length / BATCH_SIZE) : 0);
+      update(job, { execution, status: 'triaging', detail: settings ? `Triaging with ${settings.model}` : 'No model configured; retaining unverified TRUE POSITIVE findings' });
+      const verdicts = await triage(parsed, { settings, override, workspace, signal, execution: job.execution, emptyRepo: workspace ? null : store.sessions.get(importSession())?.repoPath, filename: job.filename,
         onProgress: detail => update(job, { detail }) });
       checkAbort(signal);
       const tally = counts(parsed.findings, verdicts);
       const title = reportTitle(parsed, tally, uploadedAt);
       const markdown = reportMarkdown(parsed, verdicts, { filename: job.filename, workspace, model: settings ? `${settings.provider} ${settings.model}` : null, uploadedAt });
       const sessionId = workspace?.id || importSession();
-      const report = await reports.save(AGENT_ID, markdown, sessionId, { title, source: { kind: 'scan-import', scanner: SOURCES[parsed.source], importId: job.id } });
+      const report = await reports.save(AGENT_ID, markdown, sessionId, { title, source: { kind: 'scan-import', scanner: SOURCES[parsed.source], importId: job.id, execution: job.execution } });
       update(job, { status: 'done', detail: report.docxPath ? 'Report saved (Markdown and Word)' : 'Report saved (Markdown only; Word export unavailable)', title, counts: tally, reportId: report.id, sessionId,
         findings: parsed.findings.map(finding => { const verdict = verdicts.get(finding.id); return { id: finding.id, originalId: finding.originalId, title: finding.title,
           severity: verdict.severity, disposition: verdict.disposition, unverified: verdict.unverified, confidence: verdict.confidence, location: finding.location }; }) });
@@ -879,6 +882,8 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   /** Validates and structurally parses the upload now (bad input is a 400); extraction and triage run in the background. */
   async function create({ filename, content, fields = {} }) {
     if (closed) fail('The import runner is shutting down', 503);
+    let execution;
+    try { execution = batchExecution(fields.execution); } catch (error) { fail(error.message); }
     const name = path.basename(String(filename || 'scan-report')).replace(/[^\w.() -]/g, '_').slice(0, 200) || 'scan-report';
     const detected = await readReport(content, String(fields.source || 'auto').toLowerCase());
     if (closed) fail('The import runner is shutting down', 503);
@@ -891,7 +896,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     }
     const { settings, warning } = resolveSettings(fields);
     const id = crypto.randomUUID();
-    const job = { id, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
+    const job = { id, execution, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
       counts: { total: 0, tp: 0, fp: 0, unverified: 0 }, findings: [], reportId: null, sessionId: workspace?.id || null, workspaceId: workspace?.id || null, avit,
       model: settings ? { provider: settings.provider, model: settings.model } : null, warning, detail: 'Queued', servicenow: null, scanners: {}, createdAt: Date.now(), updatedAt: Date.now() };
     jobs.set(id, job);

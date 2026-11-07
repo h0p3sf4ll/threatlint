@@ -4,8 +4,9 @@ The [security platform foundation](security-platform.md#architecture-and-trust-b
 extends these components with a unified scanner, a separate snapshot-bound fix service and
 a revision-aware evidence ledger. See [review orchestration](review-orchestration.md) for
 same-role primary file assignments, independent provider challenge, model-run budgets and
-conservative consolidation. Those advanced controls apply to Workbench review pipelines;
-they do not silently parallelize every host or write-capable integration.
+conservative consolidation. Workbench scanner/import batches and explicit independent CLI
+source scopes also expose worker and model-run limits. Dependent synthesis and write-capable
+integrations retain their ordering.
 
 Threatlint connects a security question to inspected evidence, an advisory fix, and an
 acceptance check. The important boundary is not between two agent names. It is between
@@ -69,6 +70,7 @@ tests and actual runner configuration determine what a particular entry point en
 | Native bundles | Client-specific agents, skills, commands, installation | [installation.py](../src/threatlint/installation.py), `.claude/`, `.github/agents/`, `.codex/skills/` |
 | Python CLI | Parse request, select provider, assemble context, save report | [cli.py](../src/threatlint/cli.py), [run_context.py](../src/threatlint/run_context.py), [skills.py](../src/threatlint/skills.py) |
 | Python provider loops | Stream model output and dispatch tool requests | [agent_runner.py](../src/threatlint/agent_runner.py), [claude_api.py](../src/threatlint/claude_api.py), [responses_api.py](../src/threatlint/responses_api.py) |
+| Independent Python work | Bound explicit CLI scopes and same-turn tool inspection with cancellation draining | [agent_batch.py](../src/threatlint/agent_batch.py), [bounded_work.py](../src/threatlint/bounded_work.py), [inspection_batch.py](../src/threatlint/inspection_batch.py) |
 | Workbench host | Same local backend for browser and Electron, API and session composition | [server.js](../web/server.js), [lib/](../web/lib/), [desktop/](../web/desktop/) |
 | Workbench orchestration | Validate runs, schedule specialists, frame preceding evidence | [pipeline.cjs](../web/lib/pipeline.cjs) |
 | Workbench provider execution | Model transport/tool loop; separate CLI adapters | [providers.cjs](../web/lib/providers.cjs), [claude-code.cjs](../web/lib/claude-code.cjs), [codex.cjs](../web/lib/codex.cjs) |
@@ -122,6 +124,12 @@ invalid limits, and cycles are rejected before provider or integration work star
 | `THREATLINT_MODEL_CONCURRENCY` | 4 | 1–16 | Whole model runs admitted across Workbench review/chat/import/batch callers in one Node process |
 | `THREATLINT_TOOL_CONCURRENCY` | 4 | 1–16 | Independent same-turn inspection calls in Threatlint-owned Node/Python API loops |
 | `THREATLINT_BATCH_CONCURRENCY` | 3 | 1–8 | Read-only Workbench scan-import and scanner-review batch work |
+
+Advanced batch requests can select a per-run concurrency and model-run budget. The CLI's
+`run --targets-file targets.json --workers N --max-model-runs N` reviews explicitly supplied
+independent source scopes into separate outputs. See [review orchestration](review-orchestration.md)
+for the manifest and exact admission rules. These controls do not split dependent synthesis
+or operational write sequences into parallel jobs.
 
 Environment limits are operator settings, not a provider quota negotiation. Configure them
 before starting the relevant process. Multiple Node processes do not share a distributed

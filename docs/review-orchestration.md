@@ -153,7 +153,9 @@ provider is available in a particular account.
 3. Each participant receives all consolidated candidate observations and declared coverage
    in one bounded challenge round. It must address every candidate exactly once and assess
    coverage, including when no candidates were reported. It can support, dispute, or leave
-   a candidate unresolved, with reasons and source evidence.
+   a candidate unresolved, with reasons and source evidence. The original requested scope,
+   source provenance, ancestor evidence, supporting documents, and design images accompany
+   the challenge as well as the assessment.
 4. The host renders a deterministic consolidated report. There is no extra model call to
    invent a consensus verdict. Full attributed specialist reports remain available in the
    report, including their system models, matrices, and diagrams.
@@ -162,7 +164,8 @@ Deduplication requires an overlapping cited file and line plus a matching report
 an identical normalized title when no shared CWE is available. The group retains every
 observation, original identifier, model, source location, severity, and assumption.
 Different locations remain separate unless an additional observation explicitly bridges
-them through shared citations. This heuristic groups candidate duplicates; it does not
+them through shared citations. An observation without a CWE cannot bridge two explicitly
+different CWEs; ambiguous identities remain separate. This heuristic groups candidate duplicates; it does not
 prove a shared root cause.
 
 The highest reported severity is retained within a group. Confidence never exceeds
@@ -194,8 +197,10 @@ providers need `2 × (2 × 2 + 2) = 12` model runs. Adding a shared-evidence tes
 `2 × 1 + 2 = 4`, bringing the plan to **16**. These are admission counts, not token or currency
 estimates. A model run may make several tool-use turns.
 
-Advanced assessments allow at most **16 model/tool iterations** per call; challenges allow
-**4**. A structured response is capped at 256,000 characters; a full role report at 96,000.
+Threatlint-owned API loops allow at most **16 model/tool iterations** per advanced assessment;
+challenges allow **4**. Native clients own their internal iteration scheduling and retain
+their process timeout; these iteration limits do not constrain a native client's internal
+tool calls. A structured response is capped at 256,000 characters; a full role report at 96,000.
 Each assessment can report at most 40 candidates and 12 citations per candidate. More than
 64 deduplicated candidates, or a challenge bundle over 180,000 characters, fails that role
 instead of silently omitting evidence. Citation matching is bounded to 512 files, 2 MiB per
@@ -239,9 +244,9 @@ coordination control, not a filesystem lock against another editor or another ap
 | --- | --- | --- |
 | Workbench specialist review pipeline | Dependency graph; now one pipeline-wide model limiter at `execution.maxConcurrency` | Yes, through `run_pipeline` |
 | Workbench conversation/chat | Existing single conversational provider; shared process model admission | No |
-| Workbench scan-import / scanner-review batches | `THREATLINT_BATCH_CONCURRENCY`, default 3, range 1–8; import queue up to 32 waiting jobs | No; retained existing batch execution |
+| Workbench scan-import / scanner-review batches | Per-run `execution.maxConcurrency`, default `THREATLINT_BATCH_CONCURRENCY` (3), range 1–8; per-run model budget 64; import queue up to 32 waiting jobs | Independent findings or groups of 20 imported findings; no ensemble |
 | Workbench Python AVIT review/resolve sequence | Existing serialized sequence around write-capable operations | No; write authorization and idempotency unchanged |
-| Python CLI specialist runs | Existing provider loop and its own workflow controls | No; not migrated to the new Workbench scheduler |
+| Python CLI specialist runs | `--targets-file`, `--workers` (1–8), `--max-model-runs` (1–64, default 24); shared Python bounded scheduler | Same-role independent explicit source scopes; separate reports, no automatic partition/ensemble |
 | Python AVIT queue/orchestrator | Existing queue lifecycle and runner behavior | No; not migrated |
 | Sidekick report generation | Existing `--workers`, default 10, clamped 1–32 | No |
 | Sidekick bulk triage | Existing `--workers`, default 4, clamped 1–16; ServiceNow client has its existing four-call semaphore | No |
@@ -254,6 +259,65 @@ coordination control, not a filesystem lock against another editor or another ap
 queue is bounded to 128. `THREATLINT_TOOL_CONCURRENCY` continues to bound independent
 same-turn inspection calls in Threatlint-owned Node/Python API loops (default 4, range
 1–16; at most 64 calls per turn). Multiple processes do not share these admission limits.
+
+## Control independent findings batches
+
+Advanced mode exposes **Parallel reviewers** and **Maximum model runs** in the scan-import,
+DefectDojo review, and SonarQube review forms. These use the same bounded mapper and process
+model admission as the existing runners. For JSON API requests, supply:
+
+```json
+{"execution": {"maxConcurrency": 2, "maxModelRuns": 12}}
+```
+
+The `execution` field works on `run_scanner_batch` and `POST /api/scan-import`; multipart
+imports may encode it as a JSON string. `mode: "sequential"` forces one active reviewer.
+Concurrency defaults to `THREATLINT_BATCH_CONCURRENCY` (3) and accepts 1–8; the model-run
+budget defaults to 64 and accepts 1–64. A scanner reference costs one planned model run;
+an imported group of up to 20 findings costs one. Imports without a configured model
+cost zero and retain unverified findings.
+
+Scanner filters may need one read-only integration lookup to count the selected findings.
+An over-budget plan fails before checkouts or model calls. Imports count findings after
+parsing and fail the background job before model calls if over budget. Counts describe
+whole review calls, not tokens, currency, or native-client internal calls. Each import
+stores its execution plan in job and report provenance. Posting findings remains a separate
+explicitly authorized operation.
+
+## Run independent CLI source scopes
+
+For CLI users, a JSON target list supplies independent primary scopes for the same specialist:
+
+```json
+["Review authentication in src/auth", "Review authorization in src/api"]
+```
+
+```bash
+threatlint run auth-review --targets-file scopes.json --workers 2 \
+  --max-model-runs 4 --provider codex --output-dir ./review-output
+```
+
+The CLI validates every scope and the whole model-run budget before starting. It launches
+the normal packaged CLI/provider path for each scope, with at most 1–8 concurrent workers
+(default 1). A target file contains 1–64 distinct, nonempty scope strings; the default
+admission budget is 24 and maximum 64. Source roles are eligible; runtime and upstream
+synthesis roles, supplied findings, AVIT resolution, and write-back options are rejected.
+Design inputs and provider options accompany each scope. Keys are inherited privately
+through the child environment, removed by CLI argument handling, and excluded from the
+generated manifest and child command line.
+
+A unique batch directory contains `batch.json` and one `scope-NNN` directory per target,
+with its complete report and owner-readable `execution.log`. Failure stops queued admission,
+signals admitted peers, and waits for their processes. SIGINT/SIGTERM follow the same path.
+Each subprocess has a two-hour ceiling. POSIX cancellation terminates its process group;
+Windows drains the direct child, with native-client descendant cleanup remaining a platform
+validation obligation. Independent inspection calls and CLI reviews reuse
+`src/threatlint/bounded_work.py`; write-capable workflows keep their established sequencing.
+
+Scopes are explicit user assignments, not automatically proven disjoint source partitions.
+Supporting reads may overlap. These are separate complete reviews: the CLI does not claim
+cross-scope deduplication, provider consensus, or a repository-wide clean verdict. Use the
+Workbench pipeline when a consolidated structured assessment/challenge is required.
 
 ## Keep decisions and writes separate
 
@@ -284,8 +348,26 @@ quotas:
 node --test web/tests/review-orchestration.test.cjs \
   web/tests/workflow-plan.test.cjs web/tests/concurrency.test.cjs \
   web/tests/workbench.test.cjs web/tests/design-inputs.test.cjs \
-  web/tests/api.test.cjs web/tests/model-policy.test.cjs
+  web/tests/api.test.cjs web/tests/model-policy.test.cjs \
+  web/tests/platform-controls.test.cjs web/tests/scan-import.test.cjs web/tests/scanners.test.cjs
+PYTHONPATH=src python -m pytest -q tests/test_agent_batch.py tests/test_inspection_batch.py tests/test_cli.py
 ```
+
+The explicit live harness below generates its own synthetic repository and calls only
+the user's signed-in Codex client. It writes exact stage timings, requested model, contract
+validation outcome, and local report provenance. It is not part of the default test suite:
+
+```bash
+node web/scripts/live-review-smoke.cjs --confirm-live --model gpt-6-astra \
+  --workers 1 --output-dir ./live-acceptance
+```
+
+One worker makes two real calls (assessment and challenge); two workers make three. A
+five-minute timeout cancels the run. The recorded reasoning effort is the native provider
+default, and the model is labeled requested rather than asserting an unreported server
+identity. This single-provider acceptance cannot validate distinct-provider consensus.
+Comparing one- and two-worker fixture runs is an observation of those runs, not a general
+speedup or detection-quality benchmark.
 
 See [execution controls](architecture.md#execution-controls) for the existing admission
 layers and [development](development.md) for the broader check commands. Implementation

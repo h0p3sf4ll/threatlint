@@ -20,10 +20,15 @@ on:
         default: false
         required: true
       auto_apply_debug_policy:
-        description: Explicitly opt in to the sole DEBUG=True to False policy without per-edit approval; draft PR still requires human review
+        description: Opt in to the DEBUG=True to False policy; draft PR still requires human review
         type: boolean
         default: false
         required: true
+      auto_apply_rule:
+        description: Optional specific source rule to authorize without per-edit approval; review compatibility before selecting
+        type: choice
+        default: none
+        options: [none, TL-DEBUG-ENABLED, TL-PY-YAML, TL-TLS-VERIFY-OFF]
 
 permissions:
   contents: read
@@ -73,6 +78,7 @@ jobs:
           FINDING_ID: ${{ inputs.finding_id }}
           APPLY_REVIEWED: ${{ inputs.apply_reviewed_fix }}
           AUTO_DEBUG_POLICY: ${{ inputs.auto_apply_debug_policy }}
+          AUTO_RULE: ${{ inputs.auto_apply_rule }}
           GH_TOKEN: ${{ github.token }}
         working-directory: ${{ runner.temp }}
         shell: bash
@@ -80,6 +86,7 @@ jobs:
           args=(--repo "$SCAN_TARGET" --repository "$SCAN_REPOSITORY" --base-branch "$BASE_BRANCH" --expected-sha "$EXPECTED_SHA" --finding-id "$FINDING_ID" --output-dir "$SCAN_OUTPUT")
           if [ "$APPLY_REVIEWED" = "true" ]; then args+=(--apply); fi
           if [ "$AUTO_DEBUG_POLICY" = "true" ]; then args+=(--auto-apply-debug); fi
+          if [ -n "$AUTO_RULE" ] && [ "$AUTO_RULE" != "none" ]; then args+=(--auto-apply-rule "$AUTO_RULE"); fi
           python3 "$SCAN_TOOL" "${args[@]}"
       - name: Save review and validation evidence
         if: always()
