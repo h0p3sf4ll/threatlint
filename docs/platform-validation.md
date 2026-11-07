@@ -10,25 +10,35 @@ This record distinguishes executed checks from future live validation.
 
 Updated 2026-11-07 after auditing the recovered original request.
 
-Tested implementation: `5079f7d`; documentation-only updates follow it. Checks use Python
+Tested implementation: `d5c5a29`; documentation-only updates follow it. Checks use Python
 3.13.2, installed Google Chrome and the local Node runtime. The three implementation/review
 subagents used requested Astra/ultra settings. Live provider smoke below uses native default
 effort and records the model as requested, not a server-reported identity.
 
 | Check | Actual result |
 | --- | --- |
-| Final Python suite | **1,593 passed** in 88.89 seconds; includes the final import-shadowing and exited-process-leader regressions |
-| Final Node suite | **738 passed**, 76 suites, zero failures/cancellations/skips; 5.84 seconds |
+| Final Python suite | **1,606 passed** in 87.64 seconds; includes the final import-shadowing, process-cleanup and platform-capability regressions |
+| Final Node suite | **743 passed**, 76 suites, zero failures/cancellations/skips; 3.80 seconds |
 | Browser acceptance | All three passed: threat-model source/branch/docs; scanner proposal/apply/rescan/ledger; intelligence review/reopening/chains/filters/coaching/export. Screenshots refreshed and visually inspected. |
 | Real scanner adapters | Semgrep **1.183.0 Pro** completed with 3 findings; Trivy **0.76.1** completed with 8; baseline 3. Generated synthetic Python/Docker/dependency fixture, 14 total observations, explicit partial coverage, 5.39 seconds on warmed databases. |
 | Engine/database provenance | Semgrep rule pack identified but unpinned; Trivy DB schema 2, updated `2026-11-07T12:52:01.765289267Z`; database and check-bundle download metadata recorded. No immutable rule revision asserted. |
 | Actual guarded fixes | Debug True→False, recognized YAML Loader→SafeLoader, requests verify=False→True all applied and passed Python parsing plus fresh baseline rescans. Application tests remain not run. |
 | Live Codex, one worker | Requested `gpt-6-astra`; 2 real calls (assessment/challenge), 95.257 seconds, 4 verified citations, 1 retained candidate. |
 | Live Codex, two workers | Same synthetic fixture/requested model; 3 calls, 90.038 seconds, 4 verified citations, 2 retained candidates; assessment calls visibly overlapped. |
-| macOS arm64 desktop | Unsigned Electron package built successfully; packaged-app smoke passed startup, 22 agents/26 skills, report preview, sandbox/isolation and settings across relaunch on a changed port. Build fingerprint `a544be2a2c2d09d0`, source `5079f7d`. |
+| macOS arm64 desktop | Unsigned Electron package built successfully; packaged-app smoke passed startup, 22 agents/26 skills, report preview, sandbox/isolation and settings across relaunch on a changed port. Build fingerprint `a1a8736b23e3ba87`, source `d5c5a29`. |
 | Python wheel and desktop resources | Both packaged all **159 Python modules** byte-for-byte matching source. Wheel built using isolated `pip wheel --no-deps`. |
 | Static/quality | Organization-reference check and diff whitespace passed. 13 genuine dead-binding diagnostics removed; 149 intentional compatibility/facade warnings remain documented, so repository-wide Pyflakes is not labeled clean. |
 | Peer review | Fixed same-import alias shadowing in guarded edits and POSIX descendants surviving an exited CLI leader; dedicated regressions passed. |
+| Windows portability | Corrected platform-dependent PATH parsing/casing, POSIX-only permission assertions, and UTF-8/LF synthetic fixtures; exact Git patch matching remains enforced for LF/CRLF/autocrlf cases. |
+| Unsupported local writes | All 62 scanner tests passed with required directory-relative capabilities disabled. Reports/proposals retain manual diffs; UI and host refuse automatic/apply writes explicitly. The normal scanner browser acceptance passed again. |
+
+GitHub CI verified implementation `d5c5a29186421d02b8e22f8eb0c8c428b0c59a63`:
+[Python/Workbench tests](https://github.com/h0p3sf4ll/threatlint/actions/runs/42394902516)
+and [unsigned desktop builds](https://github.com/h0p3sf4ll/threatlint/actions/runs/42394902496)
+both passed on **macOS, Linux and Windows**. The first branch CI run exposed fixture
+line-ending/encoding and POSIX permission assumptions, plus unclear unsupported-writer
+behavior. These were corrected and the complete matrix rerun; no security gate was relaxed.
+The final documentation-only commit follows this tested implementation.
 
 The live runs use generated synthetic source and the existing signed-in Codex client;
 no production repository, separate paid API credential, ServiceNow write, PR comment or
@@ -40,8 +50,9 @@ provider, so they do not establish independent-provider consensus.
 The reproducible opt-in harness is `web/scripts/live-review-smoke.cjs`. It records per-stage
 wall times, requested model, scope counts, literal citation validation and attribution in
 `acceptance.json`, `report.md` and `provenance.json`. Automatic tests remain synthetic/offline.
-Native package validation is local macOS arm64 only; signing/notarization and other operating
-systems are separate release checks. The full request mapping is in
+Native runtime smoke is local macOS arm64 only; CI also builds unsigned packages for
+macOS, Linux and Windows. Signing/notarization and Windows/Linux runtime execution are
+separate release checks. The full request mapping is in
 [request completion](request-completion.md).
 
 
@@ -116,7 +127,7 @@ evidence for these changes, not certification that the entire existing project h
 - Deploy trusted workflow code before testing the first scanner PR and native suggestion.
   The introducing PR cannot trust its own scanner implementation; missing trusted-base code
   reports **not evaluated**. No live PR comment, suggestion or draft remediation was published.
-- Test Windows/Linux native packaging and descendant cleanup. POSIX process-group cleanup
+- Exercise the CI-built Windows/Linux applications and descendant cleanup. POSIX process-group cleanup
   has regression coverage. Safe automatic file replacement is unavailable on platforms
   without required directory descriptor/no-follow operations; use advisory/manual edits.
 - Configure and validate ServiceNow mappings before implementing transport. Calibrate the
