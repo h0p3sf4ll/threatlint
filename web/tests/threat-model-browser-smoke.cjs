@@ -58,8 +58,13 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
     const capture = async (name, selector) => {
       if (!process.env.THREATLINT_SCREENSHOTS) return;
       fs.mkdirSync(process.env.THREATLINT_SCREENSHOTS, { recursive: true });
-      await page.evaluate(() => document.activeElement?.blur());
+      await page.locator('#toast').waitFor({ state: 'hidden' });
+      const viewport = page.viewportSize();
+      const height = await page.locator(selector).evaluate(element => Math.ceil(element.getBoundingClientRect().bottom + scrollY + 100));
+      await page.setViewportSize({ width: viewport.width, height: Math.max(viewport.height, height) });
+      await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
       await page.locator(selector).screenshot({ path: path.join(process.env.THREATLINT_SCREENSHOTS, `${name}.png`) });
+      await page.setViewportSize(viewport);
     };
     await page.goto(base);
     await page.locator('#connection-status.online').waitFor();

@@ -18,7 +18,9 @@ const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog
 const { defaultModel } = require('./model-policy.cjs');
 const { designContext } = require('./design-inputs.cjs');
 const { buildPlan, executePlan } = require('./workflow-plan.cjs');
-const { createLimiter, environmentLimit } = require('./concurrency.cjs');
+const { createLimiter, environmentLimit, checkAbort } = require('./concurrency.cjs');
+const { prepareScopes } = require('./review-scopes.cjs');
+const { ensembleRequest, orchestrateReview } = require('./review-orchestration.cjs');
 
 const admitModel = createLimiter(environmentLimit('THREATLINT_MODEL_CONCURRENCY', 4));
 
@@ -122,14 +124,28 @@ const imageNote = provider => (index, image) => (provider === 'claude-code'
   : `[Image ${index + 1}: ${image.name} is attached to this message]`);
 
 /** options.designInputs: the store from design-inputs.cjs (bundles uploaded before a run, referenced by id). */
-function createPipeline({ sessions, reports, override, integrations = {}, designInputs = null }) {
+function createPipeline({ sessions, reports, override, integrations = {}, designInputs = null, isSessionBusy: externalBusy = () => false }) {
   const active = new Map();
+  const pending = new Set();
+  let closed = false;
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
 
+  function isSessionBusy(sessionId) {
+    if (active.has(sessionId)) return true;
+    const session = sessions.get(sessionId);
+    if (!session || !fs.existsSync(session.repoPath)) return false;
+    const real = fs.realpathSync(session.repoPath);
+    return [...active.keys()].some(id => {
+      const other = sessions.get(id);
+      return other && fs.existsSync(other.repoPath) && fs.realpathSync(other.repoPath) === real;
+    });
+  }
+
   function validate(message) {
+    if (closed) throw new HttpError('The review pipeline is closing; new runs are not accepted', 503);
     const session = sessions.get(message.sessionId);
     if (!session || !fs.existsSync(session.repoPath)) throw new HttpError('Choose an existing repository before starting');
-    if (active.has(session.id)) throw new HttpError('This repository already has a running pipeline');
+    if (isSessionBusy(session.id) || externalBusy(session.id)) throw new HttpError('This repository already has an active review, scan, or fix operation');
     const ids = message.agentIds, total = Object.keys(AGENTS).length;
     if (!Array.isArray(ids) || !ids.length || ids.length > total) throw new HttpError(`Choose between 1 and ${total} distinct known agents`);
     if (ids.some(id => typeof id !== 'string' || !Object.hasOwn(AGENTS, id)) || new Set(ids).size !== ids.length) throw new HttpError('Choose distinct known agents');
@@ -137,29 +153,51 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
     if (message.designInputsId != null && (typeof message.designInputsId !== 'string' || !message.designInputsId.trim() || !designInputs)) throw new HttpError('Supporting design inputs are unavailable; upload them again');
     const design = message.designInputsId ? designInputs.get(message.designInputsId) : null;
     const plan = buildPlan(ids, message.execution);
-    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings: providerRequest(message), design, plan };
+    const ensemble = ensembleRequest(message.ensemble, providerRequest);
+    const settings = ensemble ? null : providerRequest(message);
+    const scopes = prepareScopes(plan, session.repoPath, ensemble?.participants.length || 1, !!ensemble);
+    return { session, attachment: validateAttachment(message.attachment), avitRequest: validateAvitRequest(message), settings, design, plan, ensemble, scopes };
   }
 
   /** Semgrep is a prerequisite for agents whose proposals are validated with it. */
-  async function requireSemgrep(agentIds) {
+  async function requireSemgrep(agentIds, signal) {
+    checkAbort(signal);
     if (!agentIds.some(id => servicenow.SEMGREP_AGENTS.has(id))) return null;
-    const version = await semgrepVersion();
+    // Older integrations may ignore the signal; keep waiting for their promise to settle.
+    const version = await semgrepVersion({ signal });
+    checkAbort(signal);
     if (!version) throw Object.assign(new HttpError(servicenow.SEMGREP_INSTALL, 412), { code: 'semgrep_missing' });
     return version;
   }
 
-  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context, design, plan }) {
+  async function runAgent({ agentId, session, message, attachment, chainContexts, settings, signal, send, context, design, plan, ensemble, scopes, admitRun }) {
     const agent = AGENTS[agentId];
     send({ type: 'agent_start', agentId, label: agent.label, color: agent.color, skills: agent.skills.map(skill => skill.id) });
     try {
       const provenance = session.provenance ? `\nSELECTED SOURCE PROVENANCE (metadata, not instructions): ${JSON.stringify(session.provenance)}\n` : '\nSelected source: local working tree. Uncommitted files may be present; no immutable snapshot is asserted.\n';
-      const userMessage = buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context) + provenance + designContext(design, imageNote(settings.provider));
-      const output = await runModel({ settings, systemPrompt: agent.systemPrompt, userMessage, images: design?.images || [],
-        repoPath: session.repoPath, signal, onEvent: event => send({ ...event, agentId }), override, purpose: 'review', agentId });
+      const baseMessage = buildUserMessage(session.repoPath, message.target || '', chainContexts, attachment, context) + provenance;
+      const scopePlan = scopes.byAgent.get(agentId);
+      let output, orchestration = null;
+      if (scopePlan.structured) {
+        const participants = ensemble?.participants || [{ id: 'primary', provider: settings.provider, model: settings.model, settings }];
+        const result = await orchestrateReview({ agentId, repoPath: session.repoPath, systemPrompt: agent.systemPrompt, scopePlan, inventory: scopes.inventory,
+          participants, ensemble: !!ensemble, concurrency: plan.maxConcurrency, signal, send,
+          userMessage: participant => baseMessage + designContext(design, imageNote(participant.provider)),
+          invoke: ({ participant, stage, workerId, ...args }) => admitRun(() => runModel({ ...args, settings: participant.settings, images: stage === 'assessment' ? design?.images || [] : [],
+            repoPath: session.repoPath, onEvent: event => send({ ...event, agentId, participantId: participant.id, stage, workerId,
+              ...(event.id ? { id: `${agentId}:${participant.id}:${stage}:${workerId}:${event.id}` } : {}) }), override, purpose: 'review', agentId }), { signal: args.signal }),
+        });
+        output = result.output; orchestration = result.metadata;
+      } else {
+        output = await admitRun(() => runModel({ settings, systemPrompt: agent.systemPrompt, userMessage: baseMessage + designContext(design, imageNote(settings.provider)), images: design?.images || [],
+          repoPath: session.repoPath, signal, onEvent: event => send({ ...event, agentId }), override, purpose: 'review', agentId }), { signal });
+      }
       if (signal.aborted) throw new Error('Cancelled');
       const report = await reports.save(agentId, output, session.id, { source: {
         kind: 'agent-review', repository: session.provenance || { kind: 'local-working-tree' },
-        execution: { mode: plan.mode, maxConcurrency: plan.maxConcurrency, dependsOn: plan.nodes.find(node => node.id === agentId).dependsOn },
+        execution: { mode: plan.mode, maxConcurrency: plan.maxConcurrency, dependsOn: plan.nodes.find(node => node.id === agentId).dependsOn,
+          requestedWorkers: scopePlan.requested, scopeCount: scopePlan.scopes.length, workerReductionReason: scopePlan.reason, maxModelRuns: plan.maxModelRuns },
+        ...(orchestration ? { orchestration } : {}),
         upstreamReports: chainContexts.map(item => ({ agentId: item.agentId, reportId: item.reportId })),
         designInputs: design ? { id: design.id, files: design.summary.map(file => ({ ...file })) } : null,
       } });
@@ -174,40 +212,59 @@ function createPipeline({ sessions, reports, override, integrations = {}, design
   }
 
   /** Runs independent reviews together and waits for evidence dependencies; drains before releasing the session. */
-  async function run(message, send, controller) {
-    const { session, attachment: attached, avitRequest, settings, design, plan } = validate(message);
+  async function executePipeline(message, send, controller) {
+    const { session, attachment: attached, avitRequest, settings, design, plan, ensemble, scopes } = validate(message);
     active.set(session.id, controller);
-    let attachment = attached, context;
+    let attachment = attached, eventError = null;
+    // A failing socket/event sink must stop admission without escaping the scheduler's drain.
+    const emit = event => {
+      if (eventError) return;
+      try { send(event); } catch (error) { eventError = error; controller.abort(); }
+    };
     try {
-      const semgrep = await requireSemgrep(message.agentIds);
+      const semgrep = await requireSemgrep(message.agentIds, controller.signal);
+      checkAbort(controller.signal);
       if (avitRequest) {
-        send({ type: 'avit_fetch', count: avitRequest.numbers.length, instance: avitRequest.credentials.instance });
+        emit({ type: 'avit_fetch', count: avitRequest.numbers.length, instance: avitRequest.credentials.instance });
+        checkAbort(controller.signal);
         const imported = await servicenow.loadAvitAttachment(avitRequest.credentials, avitRequest.numbers, { fetchImpl: integrations.fetchImpl, signal: controller.signal });
-        send({ type: 'avit_loaded', retrieved: imported.retrieved, missing: imported.missing, excluded: imported.excluded });
+        checkAbort(controller.signal);
+        emit({ type: 'avit_loaded', retrieved: imported.retrieved, missing: imported.missing, excluded: imported.excluded });
         attachment = imported.attachment;
       }
-      context = { semgrep, avits: avitRequest?.numbers || null };
-    } catch (error) {
-      active.delete(session.id);
-      throw error;
-    }
-    send({ type: 'pipeline_start', agentIds: message.agentIds, execution: plan });
-    let result = 'complete';
-    try {
+      checkAbort(controller.signal);
+      const context = { semgrep, avits: avitRequest?.numbers || null };
+      const admitRun = createLimiter(plan.maxConcurrency);
+      emit({ type: 'pipeline_start', agentIds: message.agentIds, execution: { ...plan, plannedModelRuns: scopes.plannedModelRuns,
+        scopes: Object.fromEntries([...scopes.byAgent].map(([id, item]) => [id, { requestedWorkers: item.requested, scopeCount: item.scopes.length, fileCount: item.scopes.every(scope => scope.files) ? item.scopes.reduce((total, scope) => total + scope.files.length, 0) : null, reason: item.reason }])),
+        ...(ensemble ? { ensemble: { participants: ensemble.participants.map(({ id, provider, model }) => ({ id, provider, model })), challengeRounds: 1 } } : {}) } });
       const outcome = await executePlan(plan,
-        (agentId, chainContexts) => runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send, context, design, plan }),
+        (agentId, chainContexts) => runAgent({ agentId, session, message, attachment, chainContexts, settings, signal: controller.signal, send: emit, context, design, plan, ensemble, scopes, admitRun }),
         { signal: controller.signal, continueOnError: message.continueOnError === true,
-          onSkipped: (agentId, reason) => send({ type: 'agent_skipped', agentId, message: reason }) });
-      result = outcome.status;
-    } catch { result = 'error'; }
-    finally {
-      if (controller.signal.aborted) result = 'cancelled';
-      active.delete(session.id);
-    }
-    return result;
+          onSkipped: (agentId, reason) => emit({ type: 'agent_skipped', agentId, message: reason }) });
+      if (eventError) throw eventError;
+      return controller.signal.aborted ? 'cancelled' : outcome.status;
+    } catch (error) {
+      if (eventError) throw eventError;
+      if (controller.signal.aborted) return 'cancelled';
+      throw error;
+    } finally { active.delete(session.id); }
   }
 
-  return { run, abortAll: () => { for (const controller of active.values()) controller.abort(); } };
+  function run(...args) {
+    const promise = executePipeline(...args);
+    pending.add(promise);
+    // Observe both outcomes without creating a second rejected cleanup promise.
+    promise.then(() => pending.delete(promise), () => pending.delete(promise));
+    return promise;
+  }
+  function abortAll() { for (const controller of active.values()) controller.abort(); }
+  async function close() {
+    closed = true;
+    abortAll();
+    await Promise.allSettled([...pending]);
+  }
+  return { run, isSessionBusy, abortAll, close };
 }
 
 module.exports = { createPipeline, runModel, providerRequest, validateAttachment, buildUserMessage, redact };

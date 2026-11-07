@@ -12,6 +12,8 @@
   <script src="/vendor/purify.js" defer></script>
   <script src="/fpreview-run.js" defer></script>
   <script src="/activity-log.js" defer></script>
+  <script src="/platform-controls.js" defer></script>
+  <link rel="stylesheet" href="/platform.css">
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
   <script src="/scan-import.js" defer></script>
@@ -21,6 +23,8 @@
   <script src="/sidekick.js" defer></script>
   <script src="/scanners.js" defer></script>
   <script src="/design-inputs.js" defer></script>
+  <script src="/security-platform.js" defer></script>
+  <script src="/finding-intelligence.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to workspace</a>
@@ -28,6 +32,7 @@
     <a class="brand" href="#workbench" aria-label="Threatlint home"><img src="/mark.svg" width="34" height="38" alt=""><span>threatlint<span class="brand-caption">SECURITY WORKBENCH</span></span></a>
     <nav aria-label="Main navigation">
       <div class="sidebar-label">1 · TEST</div>
+      <button class="nav-item" data-view="security" aria-controls="view-security"><span class="nav-icon" aria-hidden="true">◎</span>Security scanner</button>
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
       <button class="nav-item" data-view="sources" aria-controls="view-sources"><span class="nav-icon" aria-hidden="true">⑂</span>Connect source</button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Scan running app<small class="nav-caption">Preview · not yet GA</small></span></button>
@@ -36,6 +41,7 @@
       <button class="nav-item" data-view="sonarreview" aria-controls="view-sonarreview"><span class="nav-icon" aria-hidden="true">◎</span>SonarQube review</button>
       <div class="sidebar-label">2 · FIX</div>
       <button class="nav-item" data-view="reports"><span class="nav-icon" aria-hidden="true">▤</span>Findings<span class="nav-count" id="report-nav-count">0</span></button>
+      <button class="nav-item" data-view="intelligence" aria-controls="view-intelligence"><span class="nav-icon" aria-hidden="true">⑂</span>Repository risk</button>
       <button class="nav-item" data-view="chat" aria-controls="view-chat"><span class="nav-icon" aria-hidden="true">✦</span>Ask Threatlint</button>
       <div class="sidebar-label">3 · TRACK</div>
       <button class="nav-item" data-view="dojoreview" aria-controls="view-dojoreview"><span class="nav-icon" aria-hidden="true">◉</span>DefectDojo review</button>
@@ -49,7 +55,7 @@
     <div class="sidebar-label recent-heading">RECENT WORKSPACES<button class="icon-button" id="refresh-sessions" aria-label="Refresh workspace history">↻</button></div>
     <div id="session-list" class="session-list"><p class="subtle small">No workspaces yet.</p></div>
     <div class="sidebar-bottom">
-      <div class="safety-card"><span class="status-dot"></span><strong>Observe. Don’t modify.</strong><p>Agents inspect source and propose fixes. Your code stays yours.</p></div>
+      <div class="safety-card"><span class="status-dot"></span><strong>Review first. Fix deliberately.</strong><p>Analysts read source. Separate fix actions show the change and rescan it.</p></div>
       <button class="nav-item" id="settings-button" data-view="settings" aria-controls="view-settings"><span class="nav-icon">⚙</span>Settings</button>
       <div class="sidebar-footer"><span>THREATLINT <span id="app-version">1.0</span></span><span class="connection" id="connection-status">Connecting</span></div>
     </div>
@@ -57,7 +63,7 @@
 
   <div class="application">
     <header class="topbar">
-      <div class="breadcrumb"><span class="subtle">Workspace</span><span class="breadcrumb-divider">/</span><span id="breadcrumb-title">Workbench</span></div>
+      <div class="breadcrumb"><span class="subtle">Workspace</span><span class="breadcrumb-divider">/</span><span id="breadcrumb-title">Workbench</span><label class="experience-switch" for="experience-mode">Experience<select id="experience-mode"><option value="guided">Guided</option><option value="advanced">Advanced</option></select></label></div>
       <div class="topbar-actions"><span class="mode-badge" id="runtime-badge">LOCAL WORKBENCH</span><button class="workspace-button" id="choose-repo"><span class="folder-icon">▱</span><span id="workspace-label">Open repository</span><span class="subtle">⌄</span></button><span data-tip="open-repo"></span><button class="button secondary small-button" id="open-help" type="button" aria-keyshortcuts="?">? Help</button><span class="avatar" aria-label="Local workspace">TL</span></div>
     </header>
 
@@ -71,6 +77,10 @@
           <li data-step="run"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Run a review</strong><small>Pick a playbook below, then press Run.</small></div><a class="button secondary small-button" href="#pipeline-title">Go to pipeline</a></li>
           <li data-step="fix"><span class="onboarding-mark" aria-hidden="true"></span><div><strong>Fix and ask</strong><small>Open a finding, then ask Threatlint how to fix it in your code.</small></div><button class="button secondary small-button" type="button" data-go-view="reports">See findings</button></li>
         </ol>
+        <section class="guided-path panel" aria-label="A guided path to safer code">
+          <div><span class="eyebrow">START WHERE YOU ARE</span><h2>You do not need to be a security expert.</h2><p>Connect your code, scan it, understand the important findings, then review a fix and check your progress.</p></div>
+          <div class="platform-actions"><button class="button primary" data-go-view="security">Scan my code →</button><button class="button secondary" data-go-view="learn">Show me how</button></div>
+        </section>
         <div class="stat-grid">
           <div class="stat-card"><span class="stat-icon mint">⌘</span><div><span class="stat-value" id="stat-agents">—</span><span class="stat-label">Specialist agents</span></div><span class="stat-note">Purpose-built expertise</span></div>
           <div class="stat-card"><span class="stat-icon lavender">◇</span><div><span class="stat-value" id="stat-skills">—</span><span class="stat-label">Focused skills</span></div><span class="stat-note">Evidence → action</span></div>
@@ -96,10 +106,23 @@
               <label for="pipeline-concurrency">Parallel agents<input id="pipeline-concurrency" type="number" min="1" max="8" step="1" value="3" inputmode="numeric" aria-describedby="pipeline-concurrency-note"></label>
               <p class="micro subtle" id="pipeline-concurrency-note">Up to 8 concurrent agents. Lower this for local models or provider rate limits.</p>
             </div>
+            <details class="platform-advanced advanced-only" id="orchestration-options">
+              <summary>Worker capacity and independent model review</summary>
+              <p class="small subtle">Workers divide a specialist’s source scope. More workers can increase cost and do not guarantee better findings. Synthesis roles use one worker.</p>
+              <label for="pipeline-model-budget">Maximum model runs for this pipeline<input id="pipeline-model-budget" type="number" min="1" max="64" value="24"></label>
+              <label class="checkbox-label"><input id="ensemble-enabled" type="checkbox"><span>Use independent providers, challenge their evidence, and consolidate one report</span></label>
+              <div id="ensemble-options" hidden>
+                <p class="small subtle">Your selected model is the first participant. Each additional provider receives source, supporting documents and the other participants’ evaluations during challenge. Agreement is not proof.</p>
+                <fieldset class="ensemble-participant" data-participant="second"><legend>Second provider</legend><label>Provider<select data-field="provider"><option value="openai">OpenAI</option><option value="claude">Claude API</option><option value="codex">Codex CLI</option><option value="claude-code">Claude Code</option><option value="lmstudio">LM Studio</option><option value="bedrock">Claude on Bedrock</option></select></label><label>Model ID<input data-field="model" autocomplete="off" placeholder="Explicit model ID"></label><label>API key <span class="subtle">memory only; optional when configured</span><input data-field="key" type="password" autocomplete="off"></label><label>Local endpoint<input data-field="url" value="http://localhost:1234/v1" type="url"></label><label>AWS region<input data-field="region" placeholder="us-east-1"></label><label class="checkbox-label"><input data-field="consent" type="checkbox"><span>I authorize sharing this review context with this provider.</span></label></fieldset>
+                <label class="checkbox-label"><input id="ensemble-third-enabled" type="checkbox"><span>Add a third provider</span></label>
+                <fieldset class="ensemble-participant" data-participant="third" id="ensemble-third" hidden><legend>Third provider</legend><label>Provider<select data-field="provider"><option value="claude">Claude API</option><option value="openai">OpenAI</option><option value="codex">Codex CLI</option><option value="claude-code">Claude Code</option><option value="lmstudio">LM Studio</option><option value="bedrock">Claude on Bedrock</option></select></label><label>Model ID<input data-field="model" autocomplete="off" placeholder="Explicit model ID"></label><label>API key <span class="subtle">memory only</span><input data-field="key" type="password" autocomplete="off"></label><label>Local endpoint<input data-field="url" value="http://localhost:1234/v1" type="url"></label><label>AWS region<input data-field="region" placeholder="us-east-1"></label><label class="checkbox-label"><input data-field="consent" type="checkbox"><span>I authorize sharing this review context with this provider.</span></label></fieldset>
+                <label class="checkbox-label"><input id="ensemble-consent" type="checkbox"><span>I authorize the selected primary provider and these participants to assess and challenge this context within the model-run budget.</span></label>
+              </div>
+            </details>
             <ol id="pipeline-list" class="pipeline-list"></ol>
             <button class="add-agent-button" id="browse-agents">＋ Add a specialist</button>
             <div class="form-section">
-              <label for="target">Review scope <span class="subtle">optional</span><span data-tip="scope"></span></label><textarea id="target" rows="3" placeholder="A component, path, commit range, or question. Leave blank for autonomous discovery."></textarea>
+              <label for="target">Scope and additional context <span class="subtle">optional</span><span data-tip="scope"></span></label><textarea id="target" rows="4" placeholder="What does this system do? What data, users, trust boundaries or changes matter? Include a component, path, commit range or security question."></textarea>
               <div class="attachment-row"><button class="button secondary small-button" id="attach-findings">↥ Attach findings</button><span data-tip="attach"></span><span class="small subtle" id="attachment-name">SARIF, JSON, Markdown, or text · up to 5 MB</span><button id="remove-attachment" class="icon-button hidden" aria-label="Remove findings attachment">×</button></div>
               <input type="file" id="findings-file" accept=".sarif,.json,.md,.txt" aria-label="Findings file" hidden>
               <div class="supporting-context-heading"><h3>Supporting documentation</h3><p class="small subtle">Add architecture diagrams, design documents, API specs, or whiteboard images. Design claims are untrusted evidence, checked against the selected source. Text and images go to your selected model when you run the review.</p></div>
@@ -122,6 +145,43 @@
 
         <div class="section-heading"><div><h2>Built for the handoff</h2><p>Not another alert. A finding your team can act on.</p></div><button class="text-button" data-go-view="reports">Explore reports →</button></div>
         <div class="handoff-grid"><article><span class="feature-number">01 / EVIDENCE</span><h3>Grounded in your source</h3><p>Specific locations, verified controls, and explicit assumptions. No invented certainty.</p></article><article><span class="feature-number">02 / DECISION</span><h3>Signal, not scanner noise</h3><p>True positives, false positives, and unanswered questions remain distinct and traceable.</p></article><article><span class="feature-number">03 / REMEDIATION</span><h3>A practical path to closure</h3><p>Proposed fixes, engineering notes, regression assertions, and acceptance criteria.</p></article></div>
+      </section>
+
+      <section class="view" id="view-security" aria-labelledby="security-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">TEST · UNDERSTAND · IMPROVE</div><h1 id="security-title">Security scanner</h1><p class="page-description">Check your code, dependencies, secrets and infrastructure in one place. Start with a scan, then review the evidence and the proposed change.</p></div><button class="button secondary" data-go-view="sources">Select repo / branch</button></div>
+        <ol class="security-steps"><li><strong>1. Select your code</strong><span id="security-source">Open a local repository or connect a branch.</span></li><li><strong>2. Find what matters</strong><span>See severity, impact, code and coverage.</span></li><li><strong>3. Review a fix</strong><span>Inspect the change, apply it deliberately, then rescan.</span></li></ol>
+        <section class="panel security-scan-panel"><div><h2>Scan this workspace</h2><p class="small subtle">The local baseline runs without a model. Installed Semgrep and Trivy engines extend coverage. Unavailable engines remain visible; an incomplete scan is never reported as clean.</p></div><form id="security-scan-form"><fieldset id="security-scan-options"><legend>Checks to include</legend><label class="checkbox-label"><input id="security-semgrep" type="checkbox" checked><span>Semgrep · source code</span></label><label class="checkbox-label"><input id="security-trivy" type="checkbox" checked><span>Trivy · dependencies, secrets and infrastructure</span></label><details class="advanced-only"><summary>Automatic fixes</summary><p class="small subtle">Off by default. The initial policy only changes an exact, supported Python DEBUG=True assignment to False. Every change is bound to the scan snapshot and followed by a rescan. Other fixes remain proposals.</p><label class="checkbox-label"><input id="security-auto-fix" type="checkbox"><span>Automatically apply the supported debug-setting fix and rescan this workspace.</span></label></details></fieldset><button id="security-scan-start" type="submit" class="button primary" disabled>Scan my code →</button><button id="security-scan-cancel" type="button" class="button secondary" hidden disabled>Cancel scan</button></form></section>
+        <output id="security-status" class="operations-status" aria-live="polite">No scan has run in this workspace.</output>
+        <div id="security-coverage" class="platform-coverage"></div>
+        <div class="section-heading"><div><h2>Findings to act on</h2><p>Highest severity first. A scanner result is a lead; review its context.</p></div><button class="button secondary small-button" data-go-view="intelligence">Explore repository risk →</button></div>
+        <div id="security-findings" class="platform-findings"><p class="subtle">Select your code and run a scan to see results.</p></div>
+        <details class="platform-history"><summary>Previous scans in this workspace</summary><div id="security-history"></div></details>
+      </section>
+
+      <section class="view" id="view-intelligence" aria-labelledby="intelligence-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">ONE REPOSITORY · CONNECTED EVIDENCE</div><h1 id="intelligence-title">Understand the whole risk.</h1><p class="page-description">Review findings together, preserve their original decisions, and investigate whether one weakness enables another.</p></div><button class="button secondary" id="intelligence-refresh">Refresh evidence</button></div>
+        <output id="intelligence-status" class="operations-status" aria-live="polite">Open a workspace to load its findings.</output>
+        <div id="intelligence-summary" class="stat-grid"></div>
+        <div class="platform-filter-row"><label for="intelligence-branch">Branch<select id="intelligence-branch"><option value="">All observed branches</option></select></label><label for="intelligence-revision">Revision<select id="intelligence-revision"><option value="">All observed revisions</option></select></label><label for="intelligence-disposition">Decision<select id="intelligence-disposition"><option value="">All decisions</option><option>TRUE POSITIVE</option><option>FALSE POSITIVE</option></select></label></div>
+        <p class="small subtle">A finding can participate in a chain only with evidence for each transition. Reopening a false positive requires new evidence that addresses the original dismissal; model agreement and proximity are insufficient.</p>
+        <div id="intelligence-findings" class="platform-findings"></div>
+        <details class="platform-advanced advanced-only" id="chain-builder"><summary>Build an evidence-backed exploit chain</summary>
+          <p class="small subtle">Review each component first, then select findings from one revision. Order the causal path and cite verified evidence at each transition. Add an impact evidence record to the final finding. Component ratings remain unchanged.</p>
+          <form id="chain-form" class="intelligence-form">
+            <label>Chain title<input id="chain-title" required maxlength="200" placeholder="What could this connected path allow?"></label>
+            <div id="chain-members"></div><div id="chain-links"></div>
+            <label>Final impact<textarea id="chain-impact" required rows="3" placeholder="Name the asset, attacker capability, and resulting impact."></textarea></label>
+            <label>Verified final-impact evidence<select id="chain-impact-evidence" required><option value="">Review the final finding and add impact evidence first</option></select></label>
+            <div class="platform-filter-row"><label>Assessed impact<select id="chain-impact-level"><option>MEDIUM</option><option>LOW</option><option>HIGH</option><option>CRITICAL</option></select></label><label>Attack complexity<select id="chain-complexity"><option value="high">High</option><option value="moderate">Moderate</option><option value="low">Low</option></select></label></div>
+            <label>Why this impact rating?<textarea id="chain-risk-rationale" required rows="2" placeholder="Justify the terminal impact; do not add component scores."></textarea></label>
+            <label>Complexity rationale<textarea id="chain-complexity-rationale" required rows="2" placeholder="Describe attacker access, prerequisites, and difficult steps."></textarea></label>
+            <label>Reviewed coverage<textarea id="chain-coverage" required rows="2" placeholder="Which entry points, controls, and dataflows were inspected?"></textarea></label>
+            <label>Uncertainty · one item per line<textarea id="chain-uncertainty" rows="2" placeholder="Record runtime assumptions and missing evidence. Leave empty only if none remain."></textarea></label>
+            <button class="button primary" type="submit" id="chain-submit">Save reviewed chain</button><output id="chain-status" class="operations-status" aria-live="polite"></output>
+          </form>
+        </details>
+        <div class="section-heading"><div><h2>Composite findings</h2><p>Each chain keeps its contributing findings, assumptions and scoring explanation.</p></div></div><div id="intelligence-composites" class="platform-findings"></div>
+        <details class="platform-advanced"><summary>Progress across comparable reviews</summary><div id="intelligence-trends"></div><p class="small subtle">Absence in a partial scan is not proof of remediation. Comparisons retain coverage and revision differences.</p></details>
       </section>
 
       <section class="view" id="view-agents" aria-labelledby="agents-title" hidden>
@@ -250,6 +310,8 @@
       <section class="view" id="view-metrics" aria-labelledby="metrics-title" hidden>
         <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>MEASURE WHAT YOU FIX</div><h1 id="metrics-title">Your security, in numbers.</h1><p class="page-description">Explore saved reports, runtime scans, and findings synced from your defect trackers. Build dashboards for your team, your repo, or your sprint.</p></div>
           <div class="heading-actions"><a class="button secondary" id="metrics-export" href="/api/metrics/export" download>↓ Export CSV</a><button class="button secondary" type="button" data-help-topic="dashboards">How to build dashboards ▷</button></div></div>
+        <section class="panel" aria-labelledby="repository-progress-title"><div class="panel-header"><div><span class="eyebrow">CURRENT WORKSPACE · VERIFIED PROGRESS</span><h2 id="repository-progress-title">Repository risk over time</h2><p class="small subtle">Recorded decisions show improvement. Missing results remain unresolved, and scan coverage stays visible.</p></div><button id="repository-progress-refresh" class="button secondary small-button" type="button">Refresh evidence</button></div><div id="repository-progress" class="operations-panel-body"><p class="subtle">Open a workspace to see its evidence history.</p></div></section>
+        <details class="panel platform-advanced" id="developer-coaching"><summary>Private developer coaching · preview</summary><p class="small subtle">Opt in to a private, temporary assessment of verified introduced issues. Commit authorship does not establish responsibility. This preview does not rank employees or send a score to a tracker.</p><form id="coaching-form" class="intelligence-form"><label class="check-row"><input id="coaching-opt-in" type="checkbox" required> I want a private coaching preview for my own reviewed work.</label><label>Observed change sample size<input id="coaching-sample" type="number" min="1" max="100000" value="5" required></label><p class="small subtle">Include the total reviewed changes, including changes without issues. At least five changes and one verified introduced issue are needed for an index.</p><div id="coaching-findings"></div><button class="button secondary" type="submit">Preview improvement priorities</button></form><output id="coaching-status" class="operations-status" aria-live="polite"></output><div id="coaching-result"></div></details>
         <div class="metrics-toolbar">
           <label class="operations-field metrics-select"><span class="micro subtle">DASHBOARD</span><select id="dashboard-select" aria-label="Choose dashboard"></select></label>
           <label class="operations-field metrics-select"><span class="micro subtle">SOURCE</span><select id="metrics-source" aria-label="Metrics source"><option value="all">All sources</option></select></label>
@@ -513,9 +575,15 @@
       </section>
       <section class="view" id="view-learn" aria-labelledby="learn-title" hidden>
         <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>BUILT FOR DEVELOPERS</div><h1 id="learn-title">Learn Threatlint in minutes.</h1><p class="page-description">Narrated walkthroughs and step-by-step guides for every workflow: review a PR, connect source, scan a running app, secure AI-generated code, and build dashboards.</p></div><span class="tag">VOICEOVER · CAPTIONS IN GUIDES</span></div>
+        <div class="section-heading"><div><h2>Follow the security path</h2><p>Current interface captures from a disposable learning fixture. These are examples, not findings from your code.</p></div></div>
+        <div class="platform-gallery">
+          <figure><a href="/media/platform/security-scanner.png" target="_blank" rel="noopener"><img src="/media/platform/security-scanner.png" alt="Security scanner results showing ranked findings and coverage" loading="lazy"></a><figcaption><strong>1. Scan and understand</strong><span>Read the impact and code. Check which engines actually ran.</span><button class="text-button" data-go-view="security">Open Security scanner →</button></figcaption></figure>
+          <figure><a href="/media/platform/security-fix-review.png" target="_blank" rel="noopener"><img src="/media/platform/security-fix-review.png" alt="Before and after lines for a supported fix, with apply and rescan action" loading="lazy"></a><figcaption><strong>2. Review a correction</strong><span>Inspect the exact change. Apply it deliberately and rescan.</span></figcaption></figure>
+          <figure><a href="/media/platform/repository-risk.png" target="_blank" rel="noopener"><img src="/media/platform/repository-risk.png" alt="Repository findings with revision filters and recorded evidence" loading="lazy"></a><figcaption><strong>3. Connect the evidence</strong><span>Explore context and verified progress while keeping uncertainty visible.</span><button class="text-button" data-go-view="intelligence">Explore repository risk →</button></figcaption></figure>
+        </div>
         <div class="section-heading"><div><h2>Video library</h2><p>Every video has a voiceover. Press play, or read the matching guide below.</p></div></div>
         <div id="video-grid" class="video-grid"></div>
-        <div class="section-heading"><div><h2>Guides</h2><p>Short, task-first steps. Each one links to its video.</p></div></div>
+        <div class="section-heading"><div><h2>Guides</h2><p>Short, task-first steps. Recorded workflows also link to their video.</p></div></div>
         <div id="help-topics" class="help-topics"></div>
         <div class="section-heading"><div><h2>Glossary</h2><p>What the labels in Threatlint mean.</p></div></div>
         <dl id="help-glossary" class="help-glossary"></dl>

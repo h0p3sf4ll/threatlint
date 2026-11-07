@@ -36,6 +36,10 @@ const { createDesignInputs } = require('./lib/design-inputs.cjs');
 const { registerDesignInputRoutes, designInputBodyParsers } = require('./lib/routes/design-inputs.cjs');
 const { createScannerBatch } = require('./lib/scanner-batch.cjs');
 const { registerScannerRoutes } = require('./lib/routes/scanners.cjs');
+const { createSecurityScanner } = require('./lib/security-scanner.cjs');
+const { registerSecurityScannerRoutes } = require('./lib/routes/security-scanner.cjs');
+const { createFindingIntelligenceStore, ingestionFromScan } = require('./lib/finding-intelligence.cjs');
+const { registerFindingIntelligenceRoutes } = require('./lib/routes/finding-intelligence.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -73,7 +77,13 @@ function createWorkbench(options = {}) {
   const trackerMetrics = createTrackerMetrics(store.directory);
   const avitAggregate = createAvitAggregateStore(store.directory);
   const designInputs = createDesignInputs();
-  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations, designInputs });
+  const intelligence = createFindingIntelligenceStore({ directory: store.directory });
+  let securityScanner;
+  const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations, designInputs,
+    isSessionBusy: sessionId => securityScanner?.isBusy(sessionId) || false });
+  securityScanner = createSecurityScanner({ store, integrations: options.integrations,
+    isSessionBusy: sessionId => pipeline.isSessionBusy(sessionId),
+    onScanComplete: (scan, session) => intelligence.ingest(ingestionFromScan(scan, session)) });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
@@ -97,6 +107,8 @@ function createWorkbench(options = {}) {
   registerScanImportRoutes(app, { scanImports });
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
+  registerSecurityScannerRoutes(app, { securityScanner });
+  registerFindingIntelligenceRoutes(app, { intelligence, store });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
@@ -112,13 +124,13 @@ function createWorkbench(options = {}) {
     pipeline.abortAll();
     avitRuns.close();
     unsubscribe();
-    await scanImports.close();
+    await Promise.all([pipeline.close(), scanImports.close(), securityScanner.close()]);
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));
     if (server.listening) await new Promise(resolve => server.close(resolve));
   }
-  return { app, server, wss, store, close, scanImports, generateReport: reports.save };
+  return { app, server, wss, store, close, scanImports, securityScanner, intelligence, generateReport: reports.save };
 }
 
 const workbench = createWorkbench();

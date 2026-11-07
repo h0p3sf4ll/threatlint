@@ -309,6 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_redteam_parser(sub)
     from threatlint.assurance.cli import add_assure_parser
     add_assure_parser(sub)
+    from threatlint.security_scanner.cli import add_security_scanner_parser
+    add_security_scanner_parser(sub)
 
     return parser
 

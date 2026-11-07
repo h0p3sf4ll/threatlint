@@ -11,6 +11,16 @@ function buildPlan(agentIds, execution = {}) {
   if (!['auto', 'sequential'].includes(mode)) throw new HttpError('Execution mode must be auto or sequential');
   let maxConcurrency;
   try { maxConcurrency = positiveLimit(execution.maxConcurrency, 3, 8); } catch (error) { throw new HttpError(error.message); }
+  let roleWorkers, maxModelRuns;
+  try {
+    roleWorkers = positiveLimit(execution.roleWorkers, 1, 4);
+    maxModelRuns = positiveLimit(execution.maxModelRuns, 24, 64);
+  } catch (error) { throw new HttpError(error.message); }
+  const roleWorkerCounts = execution.roleWorkerCounts ?? {};
+  if (!roleWorkerCounts || typeof roleWorkerCounts !== 'object' || Array.isArray(roleWorkerCounts) || Object.keys(roleWorkerCounts).some(id => !agentIds.includes(id))) throw new HttpError('Role worker counts must map selected agent IDs to counts');
+  for (const count of Object.values(roleWorkerCounts)) {
+    try { positiveLimit(count, 1, 4); } catch { throw new HttpError('Role worker counts must be integers from 1 to 4'); }
+  }
   if (mode === 'sequential') maxConcurrency = 1;
   const dependencies = execution.dependencies ?? {};
   if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) throw new HttpError('Dependencies must map selected agent IDs to prerequisite arrays');
@@ -30,7 +40,7 @@ function buildPlan(agentIds, execution = {}) {
     visiting.delete(id); visited.add(id);
   }
   for (const node of nodes) visit(node.id);
-  return { mode, maxConcurrency, nodes };
+  return { mode, maxConcurrency, roleWorkers, roleWorkerCounts: { ...roleWorkerCounts }, maxModelRuns, nodes };
 }
 
 /** Each task receives a deterministic snapshot of its successful ancestors, never shared mutable context. */

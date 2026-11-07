@@ -13,7 +13,7 @@ __pycache__/
 /~$*
 
 # Web UI
-web/node_modules/
+web/node_modules
 web/npm-debug.log*
 web/*.log
 web/release/

@@ -96,7 +96,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { security: 'Security scanner', intelligence: 'Repository risk', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -150,6 +150,7 @@
         if (state.running) return;
         state.pipeline.splice(index, 1); state.preset = ''; renderPipeline(); renderPresets(); renderAgents();
       }, `Remove ${agent?.label}`); remove.disabled = state.running;
+      if (window.ThreatlintPlatformControls) actions.append(window.ThreatlintPlatformControls.workerControl(agent || { id }, state.running));
       actions.append(up, down, remove); item.append(actions); $('pipeline-list').append(item);
     });
     updateRunControls();
@@ -158,8 +159,8 @@
   function publishContext() {
     const provider = state.preferences.provider;
     document.dispatchEvent(new CustomEvent('threatlint:context', { detail: Object.freeze({
-      session: state.session ? { id: state.session.id, repoPath: state.session.repoPath } : null,
-      connected: state.connected, ready: modelReady() && (!cloudProvider() || state.consent.has(consentKey())),
+      session: state.session ? { id: state.session.id, repoPath: state.session.repoPath, provenance: state.session.provenance } : null,
+      connected: state.connected, running: state.running, ready: modelReady() && (!cloudProvider() || state.consent.has(consentKey())),
       reports: state.reports.length, ran: state.reports.length > 0,
       socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
         ...providerKeys(provider) },
@@ -181,6 +182,7 @@
     $('target').disabled = state.running;
     $('attach-findings').disabled = state.running;
     window.ThreatlintDesignInputs?.setLocked(state.running);
+    window.ThreatlintPlatformControls?.setLocked(state.running);
     $('review-select-source').disabled = state.running;
     $('pipeline-execution-mode').disabled = state.running;
     $('pipeline-concurrency').disabled = state.running || $('pipeline-execution-mode').value === 'sequential';
@@ -901,6 +903,7 @@
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
       case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${displayModel()}${event.execution ? ` · ${event.execution.mode} · concurrency ${event.execution.maxConcurrency}` : ''}`); break;
       case 'agent_skipped': state.statuses[event.agentId] = 'skipped'; renderPipeline(); log(`${agentById(event.agentId)?.label || event.agentId} skipped · ${event.message || event.reason || 'required evidence unavailable'}`); break;
+      case 'review_stage': log(`${agentById(event.agentId)?.label || event.agentId} · ${event.stage} · ${event.provider || ''} ${event.model || ''} ${event.workerId || ''}`, 'tool'); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
       case 'text_chunk': logText(event.text, event.agentId); break;
@@ -977,6 +980,8 @@
     if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : provider === 'claude-code' ? 'Install Claude Code and run `claude` once in a terminal to sign in.' : provider === 'codex' ? 'Install Codex CLI and run `codex login` in a terminal, then reload Settings.' : 'A provider API key is required for this review.', true); return; }
     if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
     if (!await requireSemgrep() || state.running || !state.connected || window.ThreatlintDesignInputs?.busy()) return;
+    const primarySettings = { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio, ...providerKeys(provider) };
+    const orchestration = window.ThreatlintPlatformControls?.reviewOptions({ primarySettings, agentIds: state.pipeline }) || {};
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
     $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden'); activity().clear();
     $('activity-badge').classList.add('running'); $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode('Reviewing'));
@@ -984,7 +989,7 @@
       model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider),
       attachment: state.attachment || undefined, designInputsId: window.ThreatlintDesignInputs?.id() || undefined, continueOnError: false,
-      execution: { mode: $('pipeline-execution-mode').value, maxConcurrency: Number($('pipeline-concurrency').value) },
+      execution: { mode: $('pipeline-execution-mode').value, maxConcurrency: Number($('pipeline-concurrency').value) }, ...orchestration,
       ...(avits.length ? { avits, servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } } : {}) };
     try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
     renderPipeline(); renderPresets(); renderAgents();

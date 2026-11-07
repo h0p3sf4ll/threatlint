@@ -1,0 +1,66 @@
+name: Security scanner
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scanner-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out trusted scanner implementation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: scanner-tool
+          persist-credentials: false
+      - name: Require a deployed trusted scanner
+        env:
+          TRUSTED_SCANNER: ${{ github.workspace }}/scanner-tool/src/threatlint/security_scanner/cli.py
+        run: |
+          if [ ! -f "$TRUSTED_SCANNER" ]; then
+            echo "::error::Security scanner coverage was not evaluated: deploy this feature to the trusted base revision before enabling PR scans."
+            exit 1
+          fi
+      - name: Check out the exact target revision as data
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: scanner-target
+          persist-credentials: false
+      - name: Run bounded baseline without executing target code
+        env:
+          PYTHONPATH: ${{ github.workspace }}/scanner-tool/src
+          SCAN_TARGET: ${{ github.workspace }}/scanner-target
+          SCAN_OUTPUT: ${{ runner.temp }}/security-scanner.json
+        working-directory: ${{ runner.temp }}
+        run: python3 -m threatlint.cli security-scanner scan --repo "$SCAN_TARGET" > "$SCAN_OUTPUT"
+      - name: Save scan evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-scanner-${{ github.run_id }}
+          path: ${{ runner.temp }}/security-scanner.json
+          retention-days: 14
+      - name: Post compact review for same-repository PRs
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PYTHONPATH: ${{ github.workspace }}/scanner-tool/src
+          GH_TOKEN: ${{ github.token }}
+          SCAN_TOOL: ${{ github.workspace }}/scanner-tool/.github/scripts/security_scanner_pr.py
+          SCAN_OUTPUT: ${{ runner.temp }}/security-scanner.json
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SCAN_REPOSITORY: ${{ github.repository }}
+        working-directory: ${{ runner.temp }}
+        run: python3 "$SCAN_TOOL" --scan "$SCAN_OUTPUT" --pr "$PR_NUMBER" --repository "$SCAN_REPOSITORY" --post
