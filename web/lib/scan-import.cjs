@@ -1,8 +1,7 @@
 'use strict';
 
 /**
- * Manual scan-report import: an uploaded Invicti (DAST, XML, JSON, or PDF Detailed Scan Report), MobSF (mobile, report JSON or PDF report), DefectDojo
- * (API v2 findings JSON), or SonarQube (issues or hotspots search JSON) report is parsed, redacted, triaged by the
+ * Manual scan-report import: PDFs or supported scanner exports are parsed, redacted, triaged by the
  * Finding Review agent (or retained as unverified TRUE POSITIVE when no model is configured), written as a Finding Review report in the report
  * store, and on an explicit, confirmed second call posted to ServiceNow, DefectDojo, or SonarQube.
  * Report content is untrusted data: it is parsed without DTDs or entities, never executed, and fenced as evidence in
@@ -20,7 +19,7 @@ const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const scanners = require('./scanners.cjs');
 const { pdfLines } = require('./pdf-text.cjs');
-const { detectPdf, parseInvictiPdf, parseMobsfPdf } = require('./scan-import-pdf.cjs');
+const { detectPdf, parseInvictiPdf, parseMobsfPdf, parseGenericPdf } = require('./scan-import-pdf.cjs');
 const { dispositionState } = require('./finding-disposition.cjs');
 const { runCli, errorOf, resolveOutcome } = require('./avit-batch.cjs');
 const { mapBounded, environmentLimit, createLimiter, checkAbort, batchExecution } = require('./concurrency.cjs');
@@ -33,7 +32,7 @@ const REQUEST_LIMIT = 3000;
 const RESPONSE_LIMIT = 4000;
 const TEXT_LIMIT = 4000;
 const MAX_JOBS = 200;
-const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube' };
+const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'Scanner PDF' };
 // Code-level sources: findings carry a file and line, and post back to the tool they came from.
 const CODE_SOURCES = new Set(['defectdojo', 'sonarqube']);
 const SOURCE_TOOL = { defectdojo: 'dojo', sonarqube: 'sonar' };
@@ -179,17 +178,17 @@ function checkSize(buffer) {
 function decodeUpload(buffer) {
   checkSize(buffer);
   if (isPdf(buffer)) fail('PDF reports are read with readReport (they are parsed asynchronously)');
-  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself (Invicti XML/JSON/PDF or MobSF report JSON/PDF), not the application or an archive.');
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself as a PDF or supported XML/JSON export.');
   if (buffer.includes(0)) fail('The upload is a binary file, not a supported scan report');
   return buffer.toString('utf8').replace(/^﻿/, '');
 }
 
-const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload the Invicti vulnerabilities export (XML, JSON, or the Detailed Scan Report PDF), the MobSF report JSON (/api/v1/report_json) or PDF report, a DefectDojo findings JSON (/api/v2/findings/), or a SonarQube issues or hotspots JSON (/api/issues/search, /api/hotspots/search). SARIF and Semgrep files go to Finding Review.';
+const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload a scanner PDF with selectable text, an Invicti XML/JSON export, a MobSF report JSON, a DefectDojo findings JSON, or a SonarQube issues or hotspots JSON. SARIF and Semgrep files go to Finding Review.';
 
-const UNSUPPORTED_PDF = 'This PDF is not an Invicti Detailed Scan Report or a MobSF PDF report. Upload one of those, or the XML/JSON export.';
 const MOBSF_WEB_PDF = 'This PDF is a browser print of the MobSF web page, whose tables are paginated, so findings beyond the first page of each table are missing. Use MobSF\'s "PDF Report" button (or the report JSON, /api/v1/report_json) instead.';
-const checkHint = hint => { if (!['auto', ...Object.keys(SOURCES)].includes(hint)) fail('source must be "auto", "invicti", "mobsf", "defectdojo", or "sonarqube"'); };
+const checkHint = hint => { if (hint !== 'auto' && !Object.hasOwn(SOURCES, hint)) fail(`source must be one of: auto, ${Object.keys(SOURCES).join(', ')}`); };
 const checkMatch = (source, hint) => { if (hint !== 'auto' && hint !== source) fail(`The file is a ${SOURCES[source]} report, not ${SOURCES[hint]}; choose "auto" or the matching source`); };
+const PDF_ADAPTERS = { invicti: parseInvictiPdf, mobsf: parseMobsfPdf };
 
 /** Detects any supported upload (text or PDF) by content and returns its parsed document. */
 async function readReport(buffer, hint = 'auto') {
@@ -198,11 +197,22 @@ async function readReport(buffer, hint = 'auto') {
   if (!isPdf(buffer)) return detect(decodeUpload(buffer), hint);
   let lines;
   try { lines = await pdfLines(buffer); } catch (error) { fail(error.message); }
+  if (!lines.length) fail('The PDF has no selectable text. Run OCR on it or export a text-based report from the scanner, then upload it again.');
   const source = detectPdf(lines);
   if (source === 'mobsf-web') fail(MOBSF_WEB_PDF);
-  if (!source) fail(UNSUPPORTED_PDF);
-  checkMatch(source, hint);
-  return { source, format: 'pdf', document: lines };
+  const native = PDF_ADAPTERS[source]?.(lines);
+  if (native?.findings.length) {
+    checkMatch(source, hint);
+    return { source, format: 'pdf', document: native };
+  }
+  const document = parseGenericPdf(lines);
+  if (native && !document.findings.length && lines.some(line => /^(?:no (?:findings|vulnerabilities)(?: were (?:found|detected))?[.!]?|(?:total )?(?:findings|vulnerabilities):\s*0)$/i.test(line.text))) {
+    checkMatch(source, hint);
+    return { source, format: 'pdf', document: native };
+  }
+  if (!document.findings.length) fail('Threatlint could not identify individual findings in this PDF. Upload the detailed scanner report with finding titles and evidence, or use a supported structured export.');
+  checkMatch('generic', hint);
+  return { source: 'generic', format: 'pdf', document };
 }
 
 /** Detects a text report by content (never by extension) and returns its parsed document. */
@@ -389,13 +399,11 @@ function parseMobsf(report) {
 /** "Oct. 8, 2024, 5:11 p.m." (MobSF) → "Oct 8, 2024" so dateOf can read it. */
 const pdfDate = text => String(text || '').replace(/^([A-Z][a-z]{2,8})\.?\s+(\d{1,2}),\s*(\d{4}).*$/, '$1 $2, $3');
 
-function invictiFromPdf(lines) {
-  const { target, scanTime, findings } = parseInvictiPdf(lines);
+function invictiFromPdf({ target, scanTime, findings }) {
   return { target, host: hostOf(target), scanDate: dateOf(scanTime), findings: findings.map(invictiFinding) };
 }
 
-function mobsfFromPdf(lines) {
-  const { app, scanDate, findings } = parseMobsfPdf(lines);
+function mobsfFromPdf({ app, scanDate, findings }) {
   const name = app.name || app.identifier || 'Mobile app';
   return { target: `${name}${app.version ? ` ${app.version}` : ''}${app.identifier ? ` (${app.identifier})` : ''}`,
     app: { name: name.slice(0, 120), version: app.version.slice(0, 40), identifier: app.identifier.slice(0, 200), platform: app.platform },
@@ -416,6 +424,34 @@ function codeFinding({ originalId, rule, title, severity, scannerSeverity, descr
     cwe: cweOf(cwe), owasp: '', masvs: '', classification: Object.fromEntries(Object.entries(classification).filter(([, value]) => value != null && String(value).trim()).slice(0, 20).map(([key, value]) => [key.slice(0, 40), redactText(String(value)).slice(0, 200)])),
     remediation: clip(redactText(stripTags(remediation)), 3000), description: clip(redactText(stripTags(description)), 3000),
     files: filePath ? [{ path: filePath, lines: lineText ? [lineText] : [] }] : [], location: filePath ? `${filePath}${lineText ? `:${lineText}` : ''}` : 'not recorded' };
+}
+
+const PDF_SEVERITY = { ...DOJO_SEVERITY, information: 'INFO', note: 'INFO', moderate: 'MEDIUM', warning: 'MEDIUM',
+  blocker: 'CRITICAL', major: 'MEDIUM', minor: 'LOW' };
+const pdfMetadata = (value, limit) => redactText(stripTags(value)).replace(/[\n;]/g, ' ').slice(0, limit);
+
+function redactPdfEvidence(text) {
+  return redactText(String(text || '').replace(/^([\w-]+):[ \t]*(.+)$/gm, (line, name, value) => (
+    /^(?:cookie|set-cookie)$/i.test(name) || SENSITIVE_HEADER.test(name) ? redactHeader(name, value) : line
+  )));
+}
+
+function genericFromPdf({ target, scanDate, findings }) {
+  return { target: pdfMetadata(target, 200), host: '', scanDate: dateOf(scanDate), findings: findings.map(raw => {
+    const page = `PDF page ${raw.page}`;
+    const scannerSeverity = pdfMetadata(raw.severity, 40);
+    const severityKey = norm(scannerSeverity.split('(')[0]);
+    const [, file, embeddedLine] = /^(.*?):(\d{1,9})$/.exec(raw.file || '') || [];
+    const id = pdfMetadata(raw.id, 120) || `PDF-${raw.page}-${raw.row}`;
+    const finding = codeFinding({ originalId: id, rule: raw.id ? id : raw.title, title: raw.title, scannerSeverity,
+      severity: Object.hasOwn(PDF_SEVERITY, severityKey) ? PDF_SEVERITY[severityKey] : 'INFO', cwe: /^(?:CWE[ -]?)?(\d{1,5})\b/i.exec(raw.cwe || '')?.[1],
+      file: pdfMetadata(file || raw.file, 600), line: raw.line || embeddedLine });
+    finding.description = clip(redactPdfEvidence([`Source: ${page}`, raw.description, raw.impact && `Impact:\n${raw.impact}`,
+      raw.evidence && `Evidence:\n${raw.evidence}`].filter(Boolean).join('\n\n')), 3000);
+    finding.remediation = clip(redactPdfEvidence(raw.remediation), 3000);
+    if (!finding.files.length) finding.location = pdfMetadata(raw.location, 600) || page;
+    return finding;
+  }) };
 }
 
 function parseDojo(document) {
@@ -462,7 +498,7 @@ const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((severity, index) => [se
 const PARSERS = {
   'invicti:xml': parseInvictiXml, 'invicti:json': parseInvictiJson, 'invicti:pdf': invictiFromPdf,
   'mobsf:json': parseMobsf, 'mobsf:pdf': mobsfFromPdf,
-  'defectdojo:json': parseDojo, 'sonarqube:json': parseSonar,
+  'defectdojo:json': parseDojo, 'sonarqube:json': parseSonar, 'generic:pdf': genericFromPdf,
 };
 
 /** Full parse of a detected report into redacted findings with stable FP-NNN ids (highest severity first). Every finding
@@ -489,10 +525,10 @@ const evidenceFor = finding => ({ id: finding.id, originalId: finding.originalId
   description: clip(finding.description, 1500) || undefined, scannerRemediation: clip(finding.remediation, 800) || undefined,
   request: clip(finding.request, 1500) || undefined, response: clip(finding.response, 2000) || undefined, passiveObservations: finding.passive.length ? finding.passive : undefined });
 
-const SCANNER_DESCRIPTION = { mobsf: 'MobSF mobile static analysis', invicti: 'Invicti DAST', defectdojo: 'DefectDojo findings export', sonarqube: 'SonarQube issues/hotspots export' };
+const SCANNER_DESCRIPTION = { mobsf: 'MobSF mobile static analysis report', invicti: 'Invicti DAST report', defectdojo: 'DefectDojo findings export report', sonarqube: 'SonarQube issues/hotspots export report', generic: 'scanner PDF' };
 function triagePrompt(parsed, batch, { workspace, filename }) {
   const scanner = SCANNER_DESCRIPTION[parsed.source];
-  return [`Triage ${batch.length} finding(s) from a ${scanner} report the user uploaded manually (${JSON.stringify(filename)}; target ${JSON.stringify(parsed.target || 'not recorded')}).`,
+  return [`Triage ${batch.length} finding(s) from a ${scanner} the user uploaded manually (${JSON.stringify(filename)}; target ${JSON.stringify(parsed.target || 'not recorded')}).`,
     workspace ? `Source context: the repository ${JSON.stringify(workspace.repoPath)} is open with read-only tools. Trace each finding to the code (route, parameter, sink, manifest or file:line) before deciding.`
       : 'No source repository was supplied: decide from the scan evidence alone, and say when source would be needed to decide.',
     '',
@@ -618,7 +654,7 @@ function reportTitle(parsed, summary, uploadedAt = new Date()) {
   const date = parsed.scanDate || uploadedAt.toISOString().slice(0, 10);
   const tally = summary ? `(${summary.total} finding${summary.total === 1 ? '' : 's'}: ${summary.tp} TP / ${summary.fp} FP; ${summary.unverified || 0} unverified TP)` : `(${parsed.findings.length} finding${parsed.findings.length === 1 ? '' : 's'})`;
   if (parsed.source === 'mobsf') return `Finding Review: MobSF — ${parsed.app.name}${parsed.app.version ? ` ${parsed.app.version}` : ''} (${parsed.app.platform}) — ${date} ${tally}`;
-  if (CODE_SOURCES.has(parsed.source)) return `Finding Review: ${SOURCES[parsed.source]} — ${parsed.target} — ${date} ${tally}`;
+  if (CODE_SOURCES.has(parsed.source) || parsed.source === 'generic') return `Finding Review: ${SOURCES[parsed.source]} — ${parsed.target || 'unknown target'} — ${date} ${tally}`;
   return `Finding Review: Invicti DAST — ${parsed.host || 'unknown target'} — ${date} ${tally}`;
 }
 
@@ -663,10 +699,11 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
   const priorities = parsed.findings.filter(finding => dispositionState(verdicts.get(finding.id).disposition).disposition === 'TRUE POSITIVE')
     .sort((a, b) => SEVERITY_RANK[verdicts.get(a.id).severity] - SEVERITY_RANK[verdicts.get(b.id).severity]).slice(0, 15);
   const target = parsed.source === 'mobsf' ? `${parsed.app.name}${parsed.app.version ? ` ${parsed.app.version}` : ''} (${parsed.app.identifier || 'identifier not recorded'}, ${parsed.app.platform})` : parsed.target || 'not recorded';
-  const lines = [`# Finding Review: ${scanner} ${CODE_SOURCES.has(parsed.source) ? `findings for ${parsed.target}` : `scan of ${parsed.source === 'mobsf' ? parsed.app.name : parsed.host || 'unknown target'}`}`, '',
+  const scope = parsed.source === 'mobsf' ? `scan of ${parsed.app.name}` : parsed.source === 'invicti' ? `scan of ${parsed.host || 'unknown target'}` : `findings for ${parsed.target || 'unknown target'}`;
+  const lines = [`# Finding Review: ${scanner} ${scope}`, '',
     `**Status**: ${triaged ? `Triaged by ${model}` : `NOT TRIAGED — ${NOT_TRIAGED}`}`, `**Date**: ${uploadedAt.toISOString().slice(0, 10)}`,
-    `**Input**: ${filename.replace(/[\n|]/g, ' ')} (${scanner} ${parsed.format.toUpperCase()} report, uploaded to the Workbench)`,
-    `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
+    `**Input**: ${filename.replace(/[\n|]/g, ' ')} (${parsed.source === 'generic' ? scanner : `${scanner} ${parsed.format.toUpperCase()}`} report, uploaded to the Workbench)`,
+    `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)', generic: 'Generic scanner PDF' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
     `**Source context**: ${workspace ? workspace.repoPath : 'none (scan evidence only)'}`, `**Findings reviewed**: ${parsed.findings.length}`,
     `**Reviewed by**: ${AGENT_ID}`, '', '## TIER 1 — EXECUTIVE SUMMARY', '',
     triaged ? `Threatlint reviewed ${parsed.findings.length} ${scanner} finding(s) for ${target}: ${summary.tp} true positive and ${summary.fp} false positive. ${summary.unverified} true-positive finding(s) remain unverified.${untriaged ? ` ${untriaged} finding(s) could not be reviewed and defaulted to TRUE POSITIVE (unverified).` : ''} A precautionary classification is not a verified vulnerability.`
@@ -681,7 +718,12 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, uploaded
   lines.push('', '## TIER 2 — DETAILED FINDINGS', '');
   if (!parsed.findings.length) lines.push('The report contains no findings to triage (no findings).');
   for (const finding of parsed.findings) lines.push(findingSection({ ...finding, source: parsed.source }, verdicts.get(finding.id), scanner), '');
-  lines.push('## Residual Risk', '', `${parsed.source === 'invicti' ? 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.' : parsed.source === 'mobsf' ? 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.' : `${scanner} results are static findings as exported; the reviewed source may differ from the scanned revision, and runtime behaviour was not observed.`} Verdicts are advisory and need human confirmation before closing tickets.`);
+  const limits = {
+    invicti: 'DAST results reflect the scanned deployment at scan time; proxies, WAF and production configuration may differ from source.',
+    mobsf: 'MobSF results are static; runtime behaviour, server-side controls, and obfuscated code were not observed.',
+    generic: 'PDF extraction depends on the report layout and text layer. Compare the extracted findings with the original report before relying on their completeness.',
+  };
+  lines.push('## Residual Risk', '', `${limits[parsed.source] || `${scanner} results are static findings as exported; the reviewed source may differ from the scanned revision, and runtime behaviour was not observed.`} Verdicts are advisory and need human confirmation before closing tickets.`);
   return `${lines.join('\n')}\n`;
 }
 

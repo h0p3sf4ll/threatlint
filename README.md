@@ -131,7 +131,7 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 | "Are we improving?" | Metrics → repository progress | Historical observations, verified remediation and coverage context |
 | "What can go wrong in this feature?" | Threat model (optionally with design diagrams, data-flow/architecture diagrams, specs, and source as inputs) | Assets, trust boundaries, attack paths, priorities, and design-drift notes |
 | "Did this change weaken a control?" | Security code review | Source-backed findings and a merge recommendation |
-| "Is this scanner result actionable?" | False-positive review (AVITs, SCTASKs, ISSTs) or Triage a scan report (Invicti, MobSF, DefectDojo, SonarQube) | Disposition, missing evidence, proposed fixes, acceptance criteria |
+| "Is this scanner result actionable?" | False-positive review (AVITs, SCTASKs, ISSTs) or Triage a scan report (PDF, supported XML or JSON) | Disposition, missing evidence, proposed fixes, acceptance criteria |
 | "Can one role see another role's data?" | Authorized runtime workflow | Identity-aware observations to correlate with source |
 | "Was the root cause fixed?" | Fix verification | A remediation verdict, residual paths, and validation gaps |
 | "Where should the portfolio focus?" | Sidekick | Loadouts, vReports, ownership, trends, and action history |

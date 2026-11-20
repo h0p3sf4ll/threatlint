@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Layout parsers for PDF scan reports: Invicti "Detailed Scan Report" and MobSF static-analysis reports.
+ * Layout parsers for PDF scan reports, with dedicated adapters for Invicti and MobSF.
  *
  * Input is the positioned lines from pdf-text.cjs. Output is *raw* fields only: scan-import.cjs feeds them through
  * the same invictiFinding / mobsfFinding builders as XML and JSON exports, so PDF findings get identical
@@ -21,7 +21,8 @@ const PAGE_MARKER = /^\d{1,4}\/\d{1,4}$/;
  */
 function detectPdf(lines) {
   const head = lines.slice(0, 60).map(line => line.text).join('\n');
-  if (/RECENT SCANS\s+STATIC ANALYZER/i.test(head) || lines.some(line => /^Showing \d+ to \d+ of \d+ entries$/.test(line.text))) return 'mobsf-web';
+  if (/RECENT SCANS\s+STATIC ANALYZER/i.test(head) || (/\bMob\s*SF\b|Mobile Security Framework/i.test(head)
+    && lines.some(line => /^Showing \d+ to \d+ of \d+ entries$/.test(line.text)))) return 'mobsf-web';
   if (/\b(?:ANDROID|IOS|IPA|APK|WINDOWS|APPX) (?:STATIC|DYNAMIC) ANALYSIS REPORT\b|\bMobSF\b|Mobile Security Framework/i.test(head)) return 'mobsf';
   if (/Detailed Scan Report|Invicti|Netsparker/i.test(head)) return 'invicti';
   return null;
@@ -111,18 +112,23 @@ function parseInvictiPdf(lines) {
 
 // ── MobSF static-analysis report ──────────────────────────────────────────────
 
-const HEADING_SIZE = 18;        // section headings are ~22pt; table headers ~12pt; cells ~9pt
-const ROW_GAP = 2.5;            // a vertical gap over this many times the cell font size starts a new table row
-                                // (wrapped lines in a cell are ~1.5× apart; rows are padded to ~3.5×)
+const HEADING_SIZE = 14;        // section headings can be as small as 15pt; table headers are ~11pt
+const ROW_GAP = 1.8;            // Mobile layouts can put row starts ~2× and wrapped lines ~1.5× apart.
 const SEVERITY_COLUMNS = ['severity', 'status'];
 const TITLE_COLUMNS = ['issue', 'protection', 'title', 'permissions', 'permission'];
+const ROW_STATUS = /^(?:critical|high|medium|warning|low|info(?:rmational)?|secure|good|dangerous|normal|pass(?:ed)?|fail(?:ed)?|true|false)$/i;
 const SECTION_PREFIX = [[/manifest/i, 'manifest'], [/binary|protection/i, 'binary'], [/network/i, 'network'], [/transport security|\bats\b/i, 'ats'],
   [/certificate/i, 'certificate'], [/permission/i, 'permission'], [/code analysis/i, 'code']];
 
-const isHeading = line => line.size >= HEADING_SIZE && /[A-Z]/.test(line.text) && line.text === line.text.toUpperCase();
-/** A table header names its columns in upper case and includes a severity or status column. */
+function mobsfHeading(line) {
+  const label = line.text.replace(/^[^\p{L}\p{N}]+\s*/u, '');
+  return line.size >= HEADING_SIZE && /[A-Z]{2}/.test(label) && label === label.toUpperCase() ? label : '';
+}
+
+/** A findings table includes a severity or status column and an issue or description column. */
 const isTableHeader = line => line.parts.length >= 2 && line.parts.every(part => part.text === part.text.toUpperCase())
-  && line.parts.some(part => SEVERITY_COLUMNS.includes(norm(part.text)));
+  && line.parts.some(part => SEVERITY_COLUMNS.includes(norm(part.text)))
+  && line.parts.some(part => TITLE_COLUMNS.includes(norm(part.text)) || norm(part.text) === 'description');
 
 function columnOf(columns, x) {
   let found = columns[0];
@@ -130,15 +136,18 @@ function columnOf(columns, x) {
   return found;
 }
 
-/** Rows of one table: parts go to the column whose header starts at or left of them; large vertical gaps split rows. */
+/** Rows split at same-page gaps. On a new page, a running row can continue beneath a repeated header. */
 function tableRows(header, body) {
   const columns = header.parts.map(part => ({ x: part.x, name: norm(part.text) }));
   const rows = [];
   let row = null, previous = null;
   for (const line of body) {
-    const gap = previous && previous.page === line.page ? previous.y - line.y : Infinity;
-    if (!row || gap > line.size * ROW_GAP) rows.push(row = Object.fromEntries(columns.map(column => [column.name, []])));
-    for (const part of line.parts) row[columnOf(columns, part.x).name].push(part.text);
+    const parts = line.parts.map(part => ({ column: columnOf(columns, part.x).name, text: part.text }));
+    const newRowAtPageBreak = previous?.page !== line.page && parts.some(({ column, text }) =>
+      (column === 'no' && /^\d+$/.test(text)) || (SEVERITY_COLUMNS.includes(column) && ROW_STATUS.test(text)));
+    const newRowOnPage = previous?.page === line.page && previous.y - line.y > line.size * ROW_GAP;
+    if (!row || newRowAtPageBreak || newRowOnPage) rows.push(row = Object.fromEntries(columns.map(column => [column.name, []])));
+    for (const { column, text } of parts) row[column].push(text);
     previous = line;
   }
   return rows.map(cells => Object.fromEntries(Object.entries(cells).map(([name, texts]) => [name, texts.join(' ').replace(/\s+/g, ' ').trim()])));
@@ -150,16 +159,16 @@ function mobsfTables(lines) {
   let section = '', table = null;
   for (const line of lines) {
     if (PAGE_MARKER.test(line.text)) continue;
-    if (isHeading(line)) { section = line.text; table = null; continue; }
+    const heading = mobsfHeading(line);
+    if (heading) { section = heading; table = null; continue; }
     if (isTableHeader(line)) {
       const columns = line.parts.map(part => norm(part.text)).join('|');
       if (!table || table.columns !== columns) tables.push(table = { section, columns, header: line, body: [] });
-      else table.body.push({ ...line, parts: [] }); // a repeated header still ends the previous row
       continue;
     }
     if (table) table.body.push(line);
   }
-  return tables.map(({ section: name, header, body }) => ({ section: name, rows: tableRows(header, body.filter(line => line.parts.length || line.text)) }));
+  return tables.map(({ section: name, header, body }) => ({ section: name, rows: tableRows(header, body) }));
 }
 
 function standards(text) {
@@ -172,6 +181,26 @@ function standards(text) {
 const field = (lines, label) => lines.map(line => new RegExp(`^${label}:\\s*(.+)$`, 'i').exec(line.text)?.[1]).find(Boolean) || '';
 const PASSING = new Set(['secure', 'good', 'pass', 'passed', 'true', 'normal']);
 
+/** Android's tracker and secrets sections do not label an individual severity. */
+function mobsfAndroidObservations(lines) {
+  const findings = [];
+  const trackers = lines.find(line => /^Trackers Detection:/i.test(line.text));
+  const count = Number(/^Trackers Detection:\s*(\d+)\s*\/\s*\d+$/i.exec(trackers?.text)?.[1]);
+  if (Number.isSafeInteger(count) && count > 0) {
+    findings.push({ id: 'tracker:detected', title: 'Privacy trackers detected', location: `PDF page ${trackers.page}`,
+      description: `MobSF reports ${count} detected tracker(s). Presence alone does not establish that the app collects or sends data.` });
+  }
+  const secrets = lines.findIndex(line => mobsfHeading(line) === 'HARDCODED SECRETS');
+  if (secrets >= 0) {
+    const [header, firstEntry] = lines.slice(secrets + 1, secrets + 5).filter(line => !PAGE_MARKER.test(line.text));
+    if (header?.text === 'POSSIBLE SECRETS' && firstEntry && !mobsfHeading(firstEntry)) {
+      findings.push({ id: 'secret:possible', title: 'Possible hardcoded secrets', location: `PDF page ${lines[secrets].page}`,
+        description: 'MobSF lists possible hardcoded secrets. Review the original PDF to identify the candidates. Secret values were omitted from the import.' });
+    }
+  }
+  return findings;
+}
+
 function parseMobsfPdf(lines) {
   const title = lines.find(line => /ANALYSIS REPORT/i.test(line.text))?.text || '';
   const platform = /\bIOS|IPA\b/i.test(title) ? 'iOS' : /WINDOWS|APPX/i.test(title) ? 'Windows' : 'Android';
@@ -181,10 +210,11 @@ function parseMobsfPdf(lines) {
     for (const row of rows) {
       const severity = row.severity || row.status || '';
       const titleText = TITLE_COLUMNS.map(name => row[name]).find(Boolean) || row.description?.split(/[.\n]/)[0] || '';
-      if (!titleText) continue;
+      if (!titleText || !severity) continue;
       if (prefix === 'permission') {
         if (norm(row.status) !== 'dangerous') continue;
-        findings.push({ id: `permission:${titleText.split(' ')[0]}`, title: `Dangerous permission: ${titleText.split(' ')[0]}`, severity: 'dangerous',
+        const permission = platform === 'Android' ? titleText.replace(/\s+/g, '') : titleText.split(' ')[0];
+        findings.push({ id: `permission:${permission}`, title: `Dangerous permission: ${permission}`, severity: 'dangerous',
           description: [row.description, row.reasoninmanifest].filter(Boolean).join('\n') });
         continue;
       }
@@ -194,11 +224,127 @@ function parseMobsfPdf(lines) {
         ...standards(row.standards || ''), files: row.files ? [{ path: row.files.split(' ')[0], lines: [] }] : [] });
     }
   }
+  if (platform === 'Android') findings.push(...mobsfAndroidObservations(lines));
   return {
-    app: { name: field(lines, 'App Name'), version: field(lines, 'Version') || field(lines, 'Version Name'),
+    app: { name: field(lines, 'App Name'), version: field(lines, 'Version') || field(lines, 'Version Name') || field(lines, 'Android Version Name'),
       identifier: field(lines, 'Identifier') || field(lines, 'Package Name'), platform },
     scanDate: field(lines, 'Scan Date'), findings,
   };
 }
 
-module.exports = { detectPdf, parseInvictiPdf, parseMobsfPdf, tableRows, mobsfTables };
+// Generic reports have no schema. Look for explicit finding fields or a table with both a title and severity.
+const GENERIC_FIELDS = {
+  finding: 'title', findingname: 'title', findingtitle: 'title', name: 'title', title: 'title', issue: 'title', issuename: 'title',
+  issuetitle: 'title', vulnerability: 'title', vulnerabilityname: 'title', vulnerabilitytitle: 'title', pluginname: 'title', alert: 'title',
+  severity: 'severity', risk: 'severity', risklevel: 'severity', riskfactor: 'severity', priority: 'severity',
+  description: 'description', details: 'description', synopsis: 'description',
+  evidence: 'evidence', observation: 'evidence', observations: 'evidence', pluginoutput: 'evidence',
+  remediation: 'remediation', recommendation: 'remediation', solution: 'remediation', mitigation: 'remediation',
+  impact: 'impact', cwe: 'cwe', id: 'id', findingid: 'id', ruleid: 'id', pluginid: 'id',
+  location: 'location', affectedlocation: 'location', affectedasset: 'location', affectedresource: 'location',
+  affectedurl: 'location', url: 'location', host: 'location', endpoint: 'location',
+  affectedfile: 'file', file: 'file', filepath: 'file', line: 'line', linenumber: 'line',
+};
+const RISK_LABEL = 'critical|high|medium|moderate|low|info(?:rmation(?:al)?)?|note|warning|blocker|major|minor';
+const riskValue = new RegExp(`^(${RISK_LABEL})(?:\\s*\\(\\d{1,2}(?:\\.\\d+)?\\))?$`, 'i');
+const riskHeading = new RegExp(`^(?:\\[(${RISK_LABEL})\\]\\s+|(${RISK_LABEL})\\s*[:–—-]\\s+)(.+)$`, 'i');
+const numbered = /^\d{1,7}[.)-]\s+|^\d{4,7}\s+-\s+/;
+const pageFooter = /^(?:page\s+)?\d{1,4}(?:\s+of\s+|\s*\/\s*)\d{1,4}$/i;
+const summaryTitle = /^\d+(?:\s+(?:findings?|issues?|alerts?|vulnerabilities))?$|^(?:scan|findings?|vulnerabilit(?:y|ies)|issues?|alerts?|risk|severity|executive)\s+(?:summary|overview|totals?|counts?|report)\b|\.{3,}\s*\d+$/i;
+const reportField = (lines, names) => lines.slice(0, 60).map(line => {
+  const match = /^([^:]+):\s*(.+)$/.exec(line.text);
+  return match && names.includes(norm(match[1])) ? match[2] : '';
+}).find(Boolean) || '';
+
+function genericField(text) {
+  const match = /^([a-z][a-z /_-]{0,35})(?::\s*(.*))?$/i.exec(text);
+  const key = match && Object.hasOwn(GENERIC_FIELDS, norm(match[1])) ? GENERIC_FIELDS[norm(match[1])] : '';
+  return key ? { key, value: match[2] || '', label: norm(match[1]) } : null;
+}
+
+function genericDetails(lines) {
+  const findings = [];
+  let finding, field, weakTitle;
+  const finish = () => {
+    if (!finding) return;
+    const hasContext = finding.description || finding.evidence || finding.file || finding.location || finding.cwe;
+    if (riskValue.test(finding.severity || '') || (hasContext && !weakTitle)) findings.push(finding);
+  };
+  for (let row = 0; row < lines.length; row += 1) {
+    const line = lines[row];
+    const text = line.text.replace(numbered, '');
+    const label = genericField(text), risk = riskHeading.exec(text);
+    const next = lines[row + 1]?.page === line.page ? genericField(lines[row + 1].text) : null;
+    const looksLikeHeading = !label && next?.key === 'severity' && (numbered.test(line.text) || line.size > lines[row + 1].size);
+    const title = label?.key === 'title' ? label.value : risk?.[3] || (looksLikeHeading ? text : '');
+    if (title && !summaryTitle.test(title)) {
+      finish();
+      finding = { title, page: line.page, row: row + 1 };
+      if (risk) finding.severity = risk[1] || risk[2];
+      weakTitle = ['name', 'title'].includes(label?.label);
+      field = '';
+    } else if (finding && label && label.key !== 'title') {
+      field = label.key;
+      if (label.value) finding[field] = [finding[field], label.value].filter(Boolean).join('\n');
+    } else if (finding && field && !risk && !pageFooter.test(text)) {
+      const previous = lines[row - 1];
+      if (line.page !== previous.page || line.size > previous.size + 2) field = '';
+      if (field && (!finding[field] || ['description', 'impact', 'evidence', 'remediation'].includes(field))) {
+        finding[field] = [finding[field], line.text].filter(Boolean).join('\n');
+      }
+    }
+  }
+  finish();
+  return findings;
+}
+
+function genericTables(lines) {
+  const findings = [];
+  let header, columns, finding, previous;
+  for (let row = 0; row < lines.length; row += 1) {
+    const line = lines[row];
+    if (pageFooter.test(line.text)) continue;
+    const keys = line.parts.map(part => genericField(part.text)?.key);
+    if (keys.includes('title') && keys.includes('severity')) {
+      header = line;
+      columns = line.parts.map((part, index) => ({ x: part.x, name: keys[index] }));
+      finding = null;
+      continue;
+    }
+    if (!header || line.page !== header.page || line.size > header.size + 2) {
+      header = null;
+      continue;
+    }
+    const cells = {};
+    for (const part of line.parts) {
+      const key = columnOf(columns, part.x).name;
+      if (key) cells[key] = [cells[key], part.text].filter(Boolean).join(' ');
+    }
+    if (cells.title && !summaryTitle.test(cells.title) && riskValue.test(cells.severity || '')) {
+      finding = { ...cells, page: line.page, row: row + 1 };
+      findings.push(finding);
+    } else if (finding && !cells.severity && line.y < previous.y && previous.y - line.y <= line.size * 2) {
+      for (const [key, value] of Object.entries(cells)) finding[key] = [finding[key], value].filter(Boolean).join(' ');
+    } else {
+      finding = null;
+    }
+    previous = line;
+  }
+  return findings;
+}
+
+const titleKey = finding => finding.title.normalize().toLowerCase().replace(/\s+/g, ' ').trim();
+
+function parseGenericPdf(lines) {
+  const details = genericDetails(lines);
+  const detailedTitles = new Set(details.map(titleKey));
+  const tables = genericTables(lines).filter(finding => !detailedTitles.has(titleKey(finding)) || finding.file || finding.location);
+  const findings = [...details, ...tables].sort((a, b) => a.row - b.row);
+  return {
+    target: reportField(lines, ['scantarget', 'target', 'application', 'project', 'appname']),
+    scanDate: reportField(lines, ['scandate', 'scantime']),
+    findings,
+  };
+}
+
+module.exports = { detectPdf, parseInvictiPdf, parseMobsfPdf, parseGenericPdf, tableRows, mobsfTables };

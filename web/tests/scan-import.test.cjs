@@ -14,6 +14,7 @@ const { parseReport } = require('../lib/reports.cjs');
 const servicenow = require('../lib/servicenow.cjs');
 const { CONSERVATIVE_NOTE } = require('../lib/finding-disposition.cjs');
 const { convertToWord } = require('./helpers/docx.cjs');
+const { makePdf, page } = require('./helpers/pdf-fixture.cjs');
 
 const FIXTURES = path.join(__dirname, 'fixtures/scan-import');
 const fixture = name => fs.readFileSync(path.join(FIXTURES, name));
@@ -45,7 +46,7 @@ describe('Scan report parsing', () => {
     assert.equal(scan.detect(fixture('mobsf.json').toString()).source, 'mobsf');
     assert.throws(() => scan.detect(fixture('mobsf.json').toString(), 'invicti'), /MobSF report, not Invicti/);
   });
-  it('rejects files that are not Invicti or MobSF reports', async () => {
+  it('rejects files that are not supported scan reports', async () => {
     for (const content of ['{"version":"2.1.0","runs":[]}', '<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
       await assert.rejects(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti, MobSF, DefectDojo, or SonarQube report/, content);
     await assert.rejects(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /The PDF could not be read/);
@@ -350,6 +351,48 @@ describe('Scan import routes', () => {
     assert.ok(sessions.some(session => session.id === job.report.sessionId));
     const md = (await api(job.report.mdUrl)).body.toString();
     assert.match(md, /not triaged: no model configured/); assert.doesNotMatch(md, /AIzaSyD-synthetic|Pa55-synthetic-word/);
+  });
+
+  it('triages a scanner-neutral PDF and exposes the saved Finding Review', async () => {
+    const pdf = makePdf([page([
+      [40, 18, 'Security findings report'],
+      [40, 14, 'Finding: Missing backup encryption'],
+      [40, 10, 'Severity: High'],
+      [40, 10, 'Affected file: config/backups.yml:17'],
+      [40, 10, 'Description: The report shows encryption disabled. api_key=example-sensitive-value'],
+      [40, 10, 'Evidence: Administrative backup settings were inspected.'],
+      [40, 10, 'Cookie: session=example-cookie-value'],
+      [40, 10, 'Remediation: Enable encryption for the backup location.'],
+    ])]);
+    const created = await api('/api/scan-import', {
+      filename: 'example-release.apkk.PDF', content: pdf.toString('base64'), workspaceId, provider: 'lmstudio', model: 'stub',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.status, 'queued');
+
+    const job = await finished(created.body.id);
+    assert.equal(job.status, 'done', job.error);
+    assert.equal(job.source, 'generic');
+    assert.equal(job.format, 'pdf');
+    assert.match(job.title, /^Finding Review: Scanner PDF/);
+    assert.deepEqual(job.counts, { total: 1, tp: 1, fp: 0, unverified: 0 });
+    assert.equal(job.findings[0].disposition, 'TRUE POSITIVE');
+    assert.equal(job.report.sessionId, workspaceId);
+
+    const prompt = prompts.at(-1).userMessage;
+    assert.match(prompt, /Missing backup encryption/);
+    assert.match(prompt, /config\/backups\.yml:17/);
+    assert.match(prompt, /PDF page 1/);
+    assert.doesNotMatch(prompt, /example-sensitive-value|example-cookie-value/);
+
+    const markdown = (await api(job.report.mdUrl)).body.toString();
+    assert.match(markdown, /Missing backup encryption/);
+    assert.match(markdown, /config\/backups\.yml:17/);
+    assert.match(markdown, /PDF page 1/);
+    assert.doesNotMatch(markdown, /example-sensitive-value|example-cookie-value/);
+    const preview = (await api(job.report.previewUrl)).body;
+    assert.equal(preview.findings[0].disposition, 'TRUE POSITIVE');
+    assert.equal((await api(job.report.docxUrl)).status, 200);
   });
 
   it('forwards Bedrock credentials and region for scan triage without persisting the key', async () => {
