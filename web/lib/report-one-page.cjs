@@ -81,9 +81,10 @@ function onePageFinding(finding) {
   const falsePositive = finding.disposition === 'FALSE POSITIVE';
   const impact = summaryText(pick('impact', 'finding and impact', 'security impact', 'business impact')) || field(finding.body, 'impact|finding and impact')
     || (falsePositive ? summaryText(pick('verified safe behavior')) : '');
+  const assessment = [finding.disposition || 'Reported finding', finding.confidence !== 'UNSPECIFIED' && finding.confidence].filter(Boolean).join(' · ');
   return {
     title: finding.title, id: finding.id, severity: finding.severity,
-    status: finding.unverified ? 'Unverified finding' : finding.disposition || 'Reported finding',
+    status: finding.unverified ? 'Unverified finding' : assessment,
     location: originalCodeSource || finding.evidence?.[0] || field(finding.body, 'location'),
     originalCodeSource, impact,
     originalCode: falsePositive ? '' : excerpt(unsafe) || (originalCodeSource ? excerpt(observed, { requireLanguage: true }) : '') || difference.originalCode || '',
