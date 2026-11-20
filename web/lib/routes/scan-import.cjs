@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Manual Invicti / MobSF (XML, JSON, or PDF) / DefectDojo / SonarQube report upload: POST creates a queued import (triage runs in the background),
+ * Manual PDF or supported structured scan report upload: POST queues the import for background triage,
  * GET polls it, and POST /:id/servicenow (or /:id/scanner with {tool}) posts the finished report only with {confirm: true}.
  */
 

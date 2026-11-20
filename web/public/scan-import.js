@@ -1,36 +1,36 @@
 'use strict';
 
 /**
- * Triage a scan report: upload an Invicti (DAST) or MobSF (mobile) report (XML, JSON, or PDF), follow its triage, open or download
+ * Triage a scan report: upload a PDF or supported XML/JSON export, follow its triage, open or download
  * the saved findings report, and post the outcome to ServiceNow. Independent of app.js state; workspace and
  * model come from threatlint:context, and reports open through threatlint:open-report.
  * CSP-safe: DOM nodes and textContent only. Every value from a scan report is rendered as text.
  */
 (() => {
   const $ = id => document.getElementById(id);
-  // The file travels base64-encoded in JSON, and the runner caps a JSON body at 7 MB.
+  // The scan import endpoint accepts files up to 25 MB before base64 encoding.
   const MAX_BYTES = 25 * 1024 * 1024;
   const POLL_MS = 1000;
   const STEPS = ['queued', 'parsing', 'triaging', 'done'];
   const STATUS_LABELS = { queued: 'Queued', parsing: 'Parsing', triaging: 'Triaging', done: 'Done', error: 'Error' };
   const STATUS_DETAIL = { queued: 'Queued. The runner starts it shortly.', parsing: 'Parsing the report into findings…', triaging: 'Triaging each finding against the evidence…' };
-  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', auto: 'Auto-detect' };
+  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'PDF report', auto: 'Auto-detect' };
   const AVIT = /^AVIT\d{7,15}$/;
   const state = { workspaceChosen: false, file: null, context: null, job: null, jobId: null, pollTimer: null, lastStep: 'queued', report: null, submitting: false, posting: false };
 
   // Help for this page, merged into /api/help by insights.js (server entries win on a shared key or id).
   window.ThreatlintHelpExtras = {
     tooltips: {
-      'scanimport-source': 'Auto-detect reads the file to tell Invicti (XML, JSON, or Detailed Scan Report PDF), MobSF (JSON or PDF report), DefectDojo (/api/v2/findings/ JSON), and SonarQube (/api/issues/search or /api/hotspots/search JSON) apart. Choose one explicitly if detection fails.',
+      'scanimport-source': 'Use Auto-detect for PDF reports from any scanner and for supported XML or JSON exports. Select a scanner only when you know the report uses that scanner’s listed format.',
       'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
       'scanimport-avit': 'The ServiceNow AVIT this scan belongs to: AVIT followed by 7 to 15 digits. Needed only to post the result to ServiceNow.',
-      'scanimport-servicenow': 'Attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives and ambiguous findings. Asks first.',
+      'scanimport-servicenow': 'After you confirm, attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives, including unverified ones.',
       'scanimport-disposition': 'TRUE POSITIVE = supported or retained as unverified when safety is not proven. FALSE POSITIVE = evidence disproves the finding beyond reasonable doubt.',
     },
     topics: [{ id: 'scan-import', title: 'Triage a scan report (Finding Review)', minutes: 2, steps: [
-      'Get the report: Invicti as XML, JSON, or its Detailed Scan Report PDF; MobSF as its JSON or PDF report (the PDF Report button, not a browser print).',
+      'Export a detailed PDF report with selectable text, or use a supported XML or JSON export. For MobSF, use the PDF Report button to include the full findings tables.',
       'Open Test → Triage a scan report and drop the file, or press Choose file.',
-      'Leave Scanner on Auto-detect, or pick Invicti or MobSF. Optionally pick a workspace so triage can read the matching source, and enter the AVIT number.',
+      'Leave Scanner on Auto-detect unless you know the report format. Optionally pick a workspace so triage can read the matching source, and enter the AVIT number.',
       'Press Triage findings. Progress moves through Queued → Parsing → Triaging → Done.',
       'Review the counts and the findings table, then press Open report, or download it as Markdown or Word. It is also listed in Findings.',
       'Press Post to ServiceNow, check what will happen, and confirm. The Word report is attached, false positives are closed, and the rest get work notes.',
@@ -81,7 +81,7 @@
   function setFile(file) {
     setError('');
     if (!file) return;
-    if (!/\.(xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose an Invicti XML or JSON export, a MobSF JSON report, or a DefectDojo or SonarQube findings JSON.`); return; }
+    if (!/\.(pdf|xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose a PDF scan report or a supported XML or JSON scanner export.`); return; }
     if (!file.size) { setError(`${file.name} is empty. Export the scan report again.`); return; }
     if (file.size > MAX_BYTES) { setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB; export a filtered report (for example, without request/response bodies) or split it.`); return; }
     state.file = file;
@@ -195,7 +195,9 @@
     $('scanimport-count-total').textContent = count(counts.total);
     $('scanimport-count-tp').textContent = count(counts.tp);
     $('scanimport-count-fp').textContent = count(counts.fp);
-    $('scanimport-count-ambiguous').textContent = count(counts.ambiguous);
+    const legacy = counts.unverified == null && counts.ambiguous != null;
+    $('scanimport-count-unverified').textContent = count(legacy ? counts.ambiguous : counts.unverified);
+    $('scanimport-count-unverified-label').textContent = legacy ? 'Ambiguous' : 'Unverified true positives';
     const rows = (Array.isArray(job.findings) ? job.findings : []).map(finding => {
       const row = el('tr');
       const cell = (value, className) => { const td = el('td', className); if (value instanceof Node) td.append(value); else td.textContent = text(value); return td; };
@@ -305,7 +307,8 @@
       const info = el('div', 'report-card-info');
       const counts = item.counts || {};
       const when = formatTime(item.createdAt || item.created || item.updatedAt);
-      const meta = [sourceLabel(item.source), item.target ? text(item.target) : '', when, item.status === 'done' ? `${count(counts.tp)} TP · ${count(counts.fp)} FP · ${count(counts.ambiguous)} ambiguous` : ''].filter(Boolean).join(' · ');
+      const reviewCount = counts.unverified == null && counts.ambiguous != null ? `${count(counts.ambiguous)} ambiguous` : `${count(counts.unverified)} unverified TP`;
+      const meta = [sourceLabel(item.source), item.target ? text(item.target) : '', when, item.status === 'done' ? `${count(counts.tp)} TP · ${count(counts.fp)} FP · ${reviewCount}` : ''].filter(Boolean).join(' · ');
       info.append(el('h3', 'operations-break', text(item.title) || 'Scan import'), el('p', 'operations-break', meta));
       if (item.status === 'error' && item.error) info.append(el('div', 'report-card-status', text(item.error)));
       const status = STATUS_LABELS[item.status] ? item.status : 'queued';

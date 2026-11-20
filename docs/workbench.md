@@ -254,10 +254,14 @@ records a denial for that request, not proof authorization holds everywhere.
 
 ## Triaging a scan report
 
-**Triage a scan report** is false positive review for a scanner's report file. Every finding gets a
-verdict (true positive, false positive, or ambiguous) with its evidence, in a findings report.
+**Triage a scan report** is false positive review for a scanner's report file. Every imported finding
+gets a verdict (true positive or false positive) with its evidence in a Finding Review report.
 
 1. Open **Triage a scan report** and choose the report (**25 MB** maximum):
+   - PDF findings reports with selectable text from any scanner. Threatlint extracts identifiable
+     findings from detail sections or tables. Check the extracted findings against the original
+     report when the layout is unfamiliar. For an image-only PDF, run OCR first or use a supported
+     structured export.
    - Invicti: XML, JSON, or the **Detailed Scan Report** PDF.
    - MobSF: report JSON or the **PDF Report**. A browser print of the MobSF web page is refused
      because its tables are paginated and would drop findings.
@@ -267,7 +271,7 @@ verdict (true positive, false positive, or ambiguous) with its evidence, in a fi
    them when you have a choice.
 2. Leave **Scanner** on auto-detect or select it. Optionally select the matching workspace
    and supply the destination finding reference.
-3. Press **Triage findings** and inspect the saved findings/report. Every finding is retained and
+3. Press **Triage findings** and inspect the saved findings/report. Every extracted finding is retained and
    reviewed (no count limit; the model sees them in batches). Without a usable model, results are **NOT TRIAGED**, with
    conservative TRUE POSITIVE placeholders marked unverified, not model-verified vulnerabilities.
 4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
