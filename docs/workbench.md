@@ -266,15 +266,21 @@ gets a verdict (true positive or false positive) with its evidence in a Finding 
 
    Download the complete report from your scanner. Browser printouts of paginated results can omit findings.
    Structured exports can include extra detail, such as finding IDs or the scanner's stated certainty.
-2. Leave **Report format** on **Auto-detect** or choose a specific export format. Optionally select the matching workspace
-   and supply the destination finding reference.
-3. Press **Triage findings** and inspect the saved findings/report. Every extracted finding is retained and
-   reviewed (no count limit; the model sees them in batches). Without a usable model, results are **NOT TRIAGED**, with
-   conservative TRUE POSITIVE placeholders marked unverified, not model-verified vulnerabilities.
+2. Leave **Report format** on **Auto-detect** or choose a specific export format. Select the workspace at the
+   scanned revision when reviewing source findings. For deployment findings, use **Supporting evidence** to
+   paste sanitized excerpts from the matching environment. Identify the finding, target, and capture time.
+   For example, an HSTS review needs the recorded HTTPS response headers and the applicable proxy or edge
+   policy for the scanned route. A response from another environment or a later deployment does not disprove the original finding.
+3. Choose a working model in Settings and authorize sharing if it is remote. Press **Triage findings**.
+   The reviewer checks the scan, supporting evidence and any selected workspace. A false positive requires
+   evidence that disproves the original claim. A finding stays unverified when the evidence cannot decide it.
+   If the model is unavailable or returns no usable verdicts, Threatlint reports how many findings it could review
+   and keeps the rest open as unverified true positives. **Import without review** saves the findings without calling a model.
 4. Review the evidence before choosing a destination to post the report. Posting requires confirmation
    and can change finding status.
 
-Parsing is local; model triage sends finding evidence to your configured provider.
+Parsing is local. Model triage sends finding evidence, including supplied supporting evidence, to your selected provider.
+This workflow reviews existing evidence and does not send requests to the scanned target.
 SARIF/Semgrep inputs belong in [Findings triage](#review-experience), not this importer.
 Use the destination guide for write behavior: [AVIT](avit-integration.md),
 [DefectDojo](integrations/defectdojo.md) (findings management), [SonarQube](integrations/sonarqube.md) (scanning tool).

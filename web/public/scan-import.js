@@ -10,6 +10,7 @@
   const $ = id => document.getElementById(id);
   // The scan import endpoint accepts files up to 25 MB before base64 encoding.
   const MAX_BYTES = 25 * 1024 * 1024;
+  const MAX_EVIDENCE_CHARS = 16_000;
   const POLL_MS = 1000;
   const STEPS = ['queued', 'parsing', 'triaging', 'done'];
   const STATUS_LABELS = { queued: 'Queued', parsing: 'Parsing', triaging: 'Triaging', done: 'Done', error: 'Error' };
@@ -22,7 +23,7 @@
   window.ThreatlintHelpExtras = {
     tooltips: {
       'scanimport-source': 'Use Auto-detect for PDF reports and supported XML or JSON exports. Choose a specific format if you know which export you have.',
-      'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
+      'scanimport-workspace': 'For source-based review, pick the workspace at the scanned revision. For findings about a deployed service, add evidence from the matching environment.',
       'scanimport-avit': 'Enter AVIT followed by 7 to 15 digits to associate this report with a ticket. You can also enter it when you post the results.',
       'scanimport-servicenow': 'After you confirm, attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives, including unverified ones.',
       'scanimport-disposition': 'TRUE POSITIVE = supported or retained as unverified when safety is not proven. FALSE POSITIVE = evidence disproves the finding beyond reasonable doubt.',
@@ -30,8 +31,8 @@
     topics: [{ id: 'scan-import', title: 'Triage a scan report (Finding Review)', minutes: 2, steps: [
       'Export a detailed report with individual findings. Choose PDF with selectable text, or use a supported XML or JSON export.',
       'Open Test → Triage a scan report and drop the file, or press Choose file.',
-      'Leave Report format on Auto-detect unless you know the export format. Pick a workspace if you want triage to check the matching source.',
-      'Press Triage findings. Progress moves through Queued → Parsing → Triaging → Done.',
+      'Leave Report format on Auto-detect unless you know the export format. Select the workspace at the scanned revision, or add sanitized evidence from the matching deployment.',
+      'Choose a model in Settings and authorize remote sharing if needed. Press Triage findings to review the evidence. Without a model, the import extracts findings for later review.',
       'Review the counts and the findings table, then press Open report, or download it as Markdown or Word. It is also listed in Findings.',
       'To post a result, choose a connected tracker and review what will change before confirming.',
     ] }],
@@ -81,11 +82,15 @@
     if (message) $('scanimport-avit').setAttribute('aria-invalid', 'true');
     else $('scanimport-avit').removeAttribute('aria-invalid');
   }
+  const reviewSettings = () => state.context?.ready ? state.context.settings : null;
+  const MODEL_REVIEW_HINT = 'Choose a model in Settings and authorize remote sharing if needed.';
   function updateControls() {
-    $('scanimport-start').disabled = !state.file || state.submitting || isLive(state.job?.status);
-    const settings = state.context?.settings;
+    const start = $('scanimport-start');
+    const settings = reviewSettings();
+    start.disabled = !state.file || state.submitting || isLive(state.job?.status);
+    start.textContent = settings ? 'Triage findings' : 'Import without review';
     const model = state.context?.models?.review || settings?.model;
-    $('scanimport-model').textContent = model ? `Model: ${model} (${settings.provider}).` : 'Choose a model in Settings before importing.';
+    $('scanimport-model').textContent = settings ? `Review model: ${model || settings.provider}.` : MODEL_REVIEW_HINT;
   }
   function setFile(file) {
     if (!file) return;
@@ -137,16 +142,25 @@
     const invalid = avitError(avit, false);
     setAvitError(invalid);
     if (invalid) { $('scanimport-avit').focus(); return; }
+    const evidenceInput = $('scanimport-evidence');
+    const evidenceDraft = evidenceInput.value;
+    const supportingEvidence = evidenceDraft.trim();
+    if (supportingEvidence.length > MAX_EVIDENCE_CHARS) { setError('Keep supporting evidence to 16,000 characters or fewer.', { reveal: true }); return; }
+    if (supportingEvidence && !reviewSettings()) { setError(`Supporting evidence requires model review. ${MODEL_REVIEW_HINT}`, { reveal: true }); return; }
     state.submitting = true; updateControls();
     try {
       const content = await readBase64(file);
-      // The model settings the run uses (keys stay in memory; the server never saves them).
-      const body = { ...(state.context?.settings || {}), filename: file.name, content, source: $('scanimport-source').value };
+      // The shared ready flag includes the user's session consent for remote model review.
+      const settings = reviewSettings();
+      if (supportingEvidence && !settings) throw new Error(`Supporting evidence requires model review. ${MODEL_REVIEW_HINT}`);
+      const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
       if (avit) body.avit = avit;
+      if (supportingEvidence) body.supportingEvidence = supportingEvidence;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });
       $('scanimport-avit').value = avit;
       startJob({ id: created.id, status: created.status || 'queued', source: body.source, title: file.name, avit }, true);
+      if (evidenceInput.value === evidenceDraft) evidenceInput.value = '';
       if (state.file === file) clearFile();
     } catch (error) {
       if (state.file === file) setError(error.message, { reveal: true });
@@ -195,10 +209,17 @@
     $('scanimport-job-target').textContent = job.target ? `Target · ${text(job.target)}` : '';
     const pill = $('scanimport-job-status'); pill.textContent = STATUS_LABELS[status].toUpperCase(); pill.className = `operations-pill scanimport-pill-${status}`;
     renderSteps(status);
-    const output = $('scanimport-status'); output.classList.toggle('scanimport-status-error', status === 'error');
+    const output = $('scanimport-status');
+    const total = count(job.counts?.total);
+    const parsedOnly = status === 'done' && total > 0 && job.reviewedCount === 0;
+    const warning = ['triaging', 'done'].includes(status) ? text(job.warning) : '';
+    output.classList.toggle('scanimport-status-error', status === 'error');
+    output.classList.toggle('fp-status-warn', parsedOnly || !!warning);
     if (status === 'error') output.textContent = errorMessage(job.error);
-    else if (status === 'done') output.textContent = `Triage complete · ${count(job.counts?.total)} finding${count(job.counts?.total) === 1 ? '' : 's'} · the report is saved in Findings.`;
-    else output.textContent = STATUS_DETAIL[status];
+    else if (status === 'done') {
+      const summary = parsedOnly ? 'Report saved without model review' : 'Triage complete';
+      output.textContent = `${summary} · ${total} finding${total === 1 ? '' : 's'} · saved in Findings.${warning ? ` ${warning}` : ''}`;
+    } else output.textContent = warning || STATUS_DETAIL[status];
     $('scanimport-result').hidden = status !== 'done';
     if (status === 'done') renderResult(job);
     updateControls();

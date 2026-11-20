@@ -531,6 +531,7 @@ output.operations-status,output.field-note,output.toast{display:block}
 .scanimport-file-name{font-family:var(--mono);color:var(--muted);overflow-wrap:anywhere}
 .scanimport-error:not(:empty){display:flex;align-items:baseline;gap:10px;margin:10px 0 0;padding:12px 14px;border:1px solid #a46760;border-left:4px solid #e68d80;border-radius:7px;background:#3b2524;color:#ffdbd5;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin:92px 16px 16px}
 .scanimport-error:not(:empty)::before{content:'!';font-weight:700}
+.markdown pre:has(>code.language-scan-prose),.markdown pre>code.language-scan-prose{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--sans)}
 .scanimport-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 18px}
 .scanimport-fields>div{min-width:0}
 .settings-card .scanimport-open-repo{margin-top:7px;display:inline-block}

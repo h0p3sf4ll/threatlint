@@ -142,19 +142,20 @@ async function scanImport(page) {
   const [saved] = await page.evaluate(id => fetch(`/api/session/${id}/reports`).then(response => response.json()), session.id);
   const hostile = '<img src=x onerror="window.__scanImportXss=1">Reflected XSS in search';
   const done = { id: 'imp-1', status: 'done', source: 'generic', format: 'pdf', title: 'PDF scan · staging.example.test · 3 findings', target: 'https://staging.example.test', reportId: saved.id,
+    reviewedCount: 2, warning: 'One finding has no completed model review.',
     counts: { total: 3, tp: 2, fp: 1, unverified: 1 }, findings: [
       { id: 'IN-001', title: hostile, severity: 'HIGH', disposition: 'TRUE POSITIVE', confidence: 'CONFIRMED', location: 'https://staging.example.test/search?q=' },
       { id: 'IN-002', title: 'Missing X-Frame-Options header', severity: 'LOW', disposition: 'FALSE POSITIVE', confidence: 'CONFIRMED', location: 'https://staging.example.test/' },
       { id: 'IN-003', title: 'Possible SQL injection', severity: 'CRITICAL', disposition: 'TRUE POSITIVE', unverified: true, confidence: 'UNSPECIFIED', location: 'https://staging.example.test/api/items' },
     ] };
   const progress = ['queued', 'parsing', 'triaging'];
-  const calls = { upload: null, snow: [] };
+  const calls = { upload: null, unreadable: null, snow: [] };
   let polls = 0;
   await page.route(/\/api\/scan-import(\/.*)?$/, async route => {
     const request = route.request(), url = new URL(request.url()), json = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (url.pathname === '/api/scan-import' && request.method() === 'POST') {
       const upload = request.postDataJSON();
-      if (upload.filename === 'unreadable.pdf') return json(400, { error: 'The PDF could not be read. Export the report again.' });
+      if (upload.filename === 'unreadable.pdf') { calls.unreadable = upload; return json(400, { error: 'The PDF could not be read. Export the report again.' }); }
       calls.upload = upload;
       return json(201, { id: 'imp-1', status: 'queued' });
     }
@@ -194,14 +195,22 @@ async function scanImport(page) {
   const error = await alert.boundingBox();
   assert.ok(error.y - (choose.y + choose.height) < 55, 'The upload error appears directly below the file controls');
   await page.locator('#scanimport-file').setInputFiles({ name: 'unreadable.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF') });
+  assert.equal(await page.locator('#scanimport-start').innerText(), 'Import without review');
   await page.locator('#scanimport-start').click();
   await page.getByRole('alert').filter({ hasText: 'The PDF could not be read.' }).waitFor();
+  assert.equal(calls.unreadable.provider, undefined, 'An upload without sharing consent omits the provider');
+  assert.equal(calls.unreadable.openaiApiKey, undefined, 'An upload without sharing consent omits credentials');
   await page.waitForFunction(() => {
     const alert = document.getElementById('scanimport-error').getBoundingClientRect();
     const header = document.querySelector('.topbar').getBoundingClientRect();
     return alert.top >= header.bottom && alert.bottom <= innerHeight;
   });
   await page.setViewportSize(viewport);
+  await page.locator('#settings-button').click();
+  await page.locator('#cloud-consent').check();
+  await page.locator('#settings-form button[type=submit]').click();
+  await page.locator('[data-view="scanimport"]').click();
+  await page.getByRole('button', { name: 'Triage findings', exact: true }).waitFor();
   const dataTransfer = await page.evaluateHandle(({ name, bytes }) => {
     const transfer = new DataTransfer();
     transfer.items.add(new File([Uint8Array.from(bytes)], name, { type: 'application/pdf' }));
@@ -212,6 +221,9 @@ async function scanImport(page) {
   assert.equal(await page.locator('#scanimport-error').innerText(), '');
   assert.match(await page.locator('#scanimport-file-name').innerText(), /example-app\.apkk\.PDF/);
   await page.locator('#scanimport-workspace').selectOption(session.id);
+  const evidence = 'IN-002, https://staging.example.test/, 2026-11-04. Recorded: X-Frame-Options: DENY.';
+  await page.locator('summary').filter({ hasText: 'Supporting evidence' }).click();
+  await page.locator('#scanimport-evidence').fill(evidence);
   await page.locator('#scanimport-avit').fill('AVIT12');
   await page.locator('#scanimport-start').click();
   assert.match(await page.locator('#scanimport-avit-error').innerText(), /Not an AVIT number: AVIT12/);
@@ -220,13 +232,16 @@ async function scanImport(page) {
   await page.locator('#scanimport-start').click();
 
   await page.locator('#scanimport-job-status', { hasText: 'DONE' }).waitFor();
-  const { filename, content, source, workspaceId, avit, provider } = calls.upload;
+  const { filename, content, source, workspaceId, avit, provider, supportingEvidence } = calls.upload;
   assert.deepEqual({ filename, source, workspaceId, avit }, { filename: pdfName, source: 'auto', workspaceId: session.id, avit: 'AVIT0042599' });
   assert.deepEqual(Buffer.from(content, 'base64'), report);
   assert.ok(provider, 'The upload carries the model settings, so the import is triaged with the chosen model');
+  assert.equal(supportingEvidence, evidence);
+  assert.equal(await page.locator('#scanimport-evidence').inputValue(), '', 'Submitted notes do not carry over to the next report');
   assert.ok(polls >= 4, 'Progress polled through queued, parsing, and triaging');
   assert.equal(await page.locator('#scanimport-steps li.complete').count(), 4);
   assert.equal(await page.locator('#scanimport-job-title').innerText(), done.title);
+  assert.match(await page.locator('#scanimport-status').innerText(), /One finding has no completed model review/);
   assert.equal(await page.locator('#scanimport-job-eyebrow').innerText(), 'PDF REPORT IMPORT');
   assert.deepEqual(await page.locator('.scanimport-stats .stat-value').allInnerTexts(), ['3', '2', '1', '1']);
   assert.equal(await page.locator('#scanimport-count-unverified-label').innerText(), 'Unverified true positives');
@@ -593,7 +608,7 @@ async function fpReviewRun(page) {
     await scanImport(page);
     if (process.env.THREATLINT_BROWSER_SCENARIO === 'scan-import') {
       assert.deepEqual(errors, []);
-      console.log('PASS: PDF import, visible upload errors, progress, findings, report downloads, and confirmed posting.');
+      console.log('PASS: PDF import, upload errors, model consent, supporting evidence, review status, report downloads, and confirmed posting.');
       return;
     }
     await scannerFlows(page);

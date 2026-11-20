@@ -13,6 +13,26 @@ const norm = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, ''
 const slug = value => norm(value).slice(0, 60) || 'item';
 const PAGE_MARKER = /^\d{1,4}\/\d{1,4}$/;
 
+// Recorded HTTP and explicit list/label lines keep their boundaries. Narrative continuations
+// use nearby baselines and the same left margin, without flattening separate sentences or sections.
+const STRUCTURED_LINE = /^(?:[-*•◦–]\s|\d{1,3}[.)]\s|[\w-]+:\s|[A-Z]+ \S+ HTTP\/|HTTP\/\d)/;
+function continuesProse(previous, line) {
+  if (!previous || previous.page !== line.page) return false;
+  const size = Math.max(previous.size, line.size);
+  const leading = previous.y - line.y;
+  const marginChange = Math.abs(previous.parts[0].x - line.parts[0].x);
+  if (leading <= 0 || leading > size * 1.8 || marginChange > size * 0.6) return false;
+  if (STRUCTURED_LINE.test(previous.text) || STRUCTURED_LINE.test(line.text)) return false;
+  return !(/[.!?]["'’”)\]]*$/.test(previous.text) && /^\p{Lu}/u.test(line.text));
+}
+
+function proseText(lines) {
+  return lines.map((line, index) => {
+    const separator = index === 0 ? '' : continuesProse(lines[index - 1], line) ? ' ' : '\n';
+    return separator + line.text;
+  }).join('');
+}
+
 // ── Detection ─────────────────────────────────────────────────────────────────
 
 /**
@@ -52,10 +72,11 @@ function invictiHeadings(texts) {
 }
 
 /** Splits a vulnerability block into { description: [...], sections: { impact: [...], ... }, instances: [...] }. */
-function invictiBlock(texts, number) {
+function invictiBlock(lines, number) {
   const block = { description: [], sections: {}, instances: [] };
   let section = null, instance = null;
-  for (const text of texts) {
+  for (const line of lines) {
+    const { text } = line;
     const key = norm(text);
     const start = new RegExp(`^${number}\\.(\\d{1,3})\\. (\\S+)$`).exec(text);
     if (section === 'vulnerabilities' && start) {
@@ -66,8 +87,8 @@ function invictiBlock(texts, number) {
       instance = null;
       block.sections[section] ??= [];
     } else if (instance) instance.lines.push(text);
-    else if (section) block.sections[section].push(text);
-    else block.description.push(text);
+    else if (section) block.sections[section].push(line);
+    else block.description.push(line);
   }
   return block;
 }
@@ -86,16 +107,17 @@ function invictiInstance(lines) {
 
 /** "CWE 327", "OWASP 2017 A3", "PCI DSS v4.0 6.2.4" → { CWE: '327', 'OWASP 2017': 'A3', ... }. */
 function invictiClassification(lines = []) {
-  return Object.fromEntries(lines.map(text => /^(.+?)\s+(\S+)$/.exec(text)).filter(Boolean).map(([, key, value]) => [key, value]));
+  return Object.fromEntries(lines.map(line => /^(.+?)\s+(\S+)$/.exec(line.text)).filter(Boolean).map(([, key, value]) => [key, value]));
 }
 
 function parseInvictiPdf(lines) {
-  const texts = lines.map(line => line.text).filter(text => !PAGE_MARKER.test(text));
+  const positioned = lines.filter(line => !PAGE_MARKER.test(line.text));
+  const texts = positioned.map(line => line.text);
   const headings = invictiHeadings(texts);
   const findings = headings.flatMap((heading, index) => {
-    const block = invictiBlock(texts.slice(heading.body, headings[index + 1]?.start ?? texts.length), heading.number);
-    const description = [...block.description, ...(block.sections.impact?.length ? ['Impact:', ...block.sections.impact] : [])].join('\n');
-    const remediation = [...(block.sections.remedy || []), ...(block.sections.actionstotake?.length ? ['Actions to take:', ...block.sections.actionstotake] : [])].join('\n');
+    const block = invictiBlock(positioned.slice(heading.body, headings[index + 1]?.start ?? positioned.length), heading.number);
+    const description = [proseText(block.description), block.sections.impact?.length && `Impact:\n${proseText(block.sections.impact)}`].filter(Boolean).join('\n');
+    const remediation = [proseText(block.sections.remedy || []), block.sections.actionstotake?.length && `Actions to take:\n${proseText(block.sections.actionstotake)}`].filter(Boolean).join('\n');
     const classification = invictiClassification(block.sections.classification);
     const instances = block.instances.length ? block.instances : [{ number: `${heading.number}.1`, url: '', lines: [] }];
     return instances.map(instance => {
@@ -264,7 +286,7 @@ function genericField(text) {
 
 function genericDetails(lines) {
   const findings = [];
-  let finding, field, weakTitle;
+  let finding, field, fieldLine, weakTitle;
   const finish = () => {
     if (!finding) return;
     const hasContext = finding.description || finding.evidence || finding.file || finding.location || finding.cwe;
@@ -285,12 +307,15 @@ function genericDetails(lines) {
       field = '';
     } else if (finding && label && label.key !== 'title') {
       field = label.key;
+      fieldLine = { ...line, text: label.value };
       if (label.value) finding[field] = [finding[field], label.value].filter(Boolean).join('\n');
     } else if (finding && field && !risk && !pageFooter.test(text)) {
       const previous = lines[row - 1];
       if (line.page !== previous.page || line.size > previous.size + 2) field = '';
       if (field && (!finding[field] || ['description', 'impact', 'evidence', 'remediation'].includes(field))) {
-        finding[field] = [finding[field], line.text].filter(Boolean).join('\n');
+        const separator = field !== 'evidence' && continuesProse(fieldLine, line) ? ' ' : '\n';
+        finding[field] = [finding[field], line.text].filter(Boolean).join(separator);
+        fieldLine = line;
       }
     }
   }
