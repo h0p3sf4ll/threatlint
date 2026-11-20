@@ -55,6 +55,14 @@ is not proof that an application is secure.
 | CI snapshot runner | The configured Markdown report/artifacts; see [CI templates](ci-templates.md) |
 | Teams | A conversation response, split into messages when needed |
 
+In Workbench **Findings**, open a saved report and choose **PowerPoint** for an editable one-slide summary
+of its top finding. The **Findings** tab inside the report lets you export a specific finding instead.
+Each slide shows the reported code and proposed fixed code when the report supplies them, along with the impact
+and review status. If a report lacks a code excerpt, the slide says so and uses remediation prose when available.
+
+To remove a saved report and its local files, choose **Delete…** on its card in **Findings** and confirm.
+The scan run history, previously downloaded copies, and tracker attachments remain available.
+
 For the direct CLI, `--output-dir DIR` chooses the destination; otherwise it uses
 the repository root. Its basename is:
 

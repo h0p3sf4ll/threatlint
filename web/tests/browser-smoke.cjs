@@ -149,7 +149,12 @@ async function scanImport(page) {
       { id: 'IN-003', title: 'Possible SQL injection', severity: 'CRITICAL', disposition: 'TRUE POSITIVE', unverified: true, confidence: 'UNSPECIFIED', location: 'https://staging.example.test/api/items' },
     ] };
   const progress = ['queued', 'parsing', 'triaging'];
-  const calls = { upload: null, unreadable: null, snow: [] };
+  const calls = { upload: null, unreadable: null, snow: [], reportAttachments: [] };
+  await page.route(/\/api\/servicenow\/attach-review$/, async route => {
+    const request = route.request().postDataJSON();
+    calls.reportAttachments.push(request);
+    return route.fulfill({ json: { ok: true, actions: [{ action: 'attached', number: request.number, detail: 'Attached the review.' }] } });
+  });
   let polls = 0;
   await page.route(/\/api\/scan-import(\/.*)?$/, async route => {
     const request = route.request(), url = new URL(request.url()), json = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -162,7 +167,8 @@ async function scanImport(page) {
     if (url.pathname === '/api/scan-import') return json(200, calls.upload ? [{ ...done, findings: undefined, createdAt: Date.now() }, { id: 'imp-0', status: 'error', source: 'mobsf', title: 'app-release.apk', error: 'Not a MobSF report', counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 } }] : []);
     if (url.pathname === '/api/scan-import/imp-1') { const status = progress[polls++]; return json(200, status ? { ...done, status, counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 }, reportId: undefined, findings: [] } : done); }
     if (url.pathname === '/api/scan-import/imp-1/servicenow') {
-      calls.snow.push(request.postDataJSON());
+      const destination = request.postDataJSON(); calls.snow.push(destination);
+      if (destination.number) return json(200, { ok: true, actions: [{ action: 'attached', number: destination.number, detail: 'Attached the review.' }] });
       return calls.snow.length === 1 ? json(403, { error: 'AVIT not readable by the integration account' })
         : json(200, { ok: true, actions: ['Attached threatlint-scan.docx to AVIT0042599', 'IN-002 closed as Closed / False Positive', 'IN-001 work note added', 'IN-003 work note added'] });
     }
@@ -226,8 +232,8 @@ async function scanImport(page) {
   await page.locator('#scanimport-evidence').fill(evidence);
   await page.locator('#scanimport-avit').fill('AVIT12');
   await page.locator('#scanimport-start').click();
-  assert.match(await page.locator('#scanimport-avit-error').innerText(), /Not an AVIT number: AVIT12/);
-  assert.equal(calls.upload, null, 'An invalid AVIT blocks the upload');
+  assert.match(await page.locator('#scanimport-avit-error').innerText(), /Invalid ServiceNow ticket number: AVIT12/);
+  assert.equal(calls.upload, null, 'An invalid ticket blocks the upload');
   await page.locator('#scanimport-avit').fill('avit0042599');
   await page.locator('#scanimport-start').click();
 
@@ -260,18 +266,26 @@ async function scanImport(page) {
   await page.locator('#report-dialog[open]').waitFor();
   assert.equal(await page.locator('#view-reports').isVisible(), true, 'Open report shows it in Findings');
   assert.equal(await page.locator('#download-md').getAttribute('href'), saved.mdUrl);
+  await page.locator('#report-attach-review').click();
+  await page.locator('#scanimport-snow-avit').fill('isst0012345');
+  assert.match(await page.locator('#scanimport-snow-steps').innerText(), /Attachment only/);
+  assert.equal(calls.reportAttachments.length, 0, 'Opening the dialog does not attach anything');
+  await page.locator('#scanimport-snow-confirm').click();
+  await page.locator('#scanimport-snow-result', { hasText: 'Posted to ISST0012345' }).waitFor();
+  assert.deepEqual(calls.reportAttachments, [{ number: 'ISST0012345', reportId: saved.id, confirm: true }]);
+  await page.locator('#scanimport-snow-cancel').click();
   await page.locator('#report-dialog .close-dialog').click();
 
   await page.locator('[data-view="scanimport"]').click();
   await page.locator('#scanimport-post').click();
   await page.locator('#scanimport-snow-dialog[open]').waitFor();
   const steps = await page.locator('#scanimport-snow-steps').innerText();
-  assert.match(steps, /Attach the Word report/); assert.match(steps, /Close 1 false positive as Closed \/ False Positive with the Threatlint comment/); assert.match(steps, /Add work notes to 2 true positive findings \(1 unverified\)/);
+  assert.match(steps, /Attach the Word report/); assert.match(steps, /Add a work note on this AVIT \(1 unverified finding\)/);
   assert.equal(await page.locator('#scanimport-snow-avit').inputValue(), 'AVIT0042599');
   await page.locator('#scanimport-snow-avit').fill('');
   await page.locator('#scanimport-snow-confirm').click();
-  assert.match(await page.locator('#scanimport-snow-error').innerText(), /Enter the AVIT number/);
-  assert.equal(calls.snow.length, 0, 'Posting requires an AVIT');
+  assert.match(await page.locator('#scanimport-snow-error').innerText(), /Enter an AVIT, ISST, or SCTASK number/);
+  assert.equal(calls.snow.length, 0, 'Posting requires a ticket');
   await page.locator('#scanimport-snow-avit').fill('AVIT0042599');
   await page.locator('#scanimport-snow-confirm').click();
   await page.locator('#scanimport-snow-error', { hasText: 'AVIT not readable by the integration account' }).waitFor();
@@ -280,6 +294,14 @@ async function scanImport(page) {
   assert.deepEqual(calls.snow, [{ avit: 'AVIT0042599', confirm: true }, { avit: 'AVIT0042599', confirm: true }]);
   assert.equal(await page.locator('#scanimport-snow-result li').count(), 4);
   await page.locator('#scanimport-snow-cancel').click();
+  await page.locator('#scanimport-post').click();
+  await page.locator('#scanimport-snow-avit').fill('SCTASK14120565');
+  assert.match(await page.locator('#scanimport-snow-steps').innerText(), /Attachment only/);
+  await page.locator('#scanimport-snow-confirm').click();
+  await page.locator('#scanimport-snow-result', { hasText: 'Posted to SCTASK14120565' }).waitFor();
+  assert.deepEqual(calls.snow.at(-1), { number: 'SCTASK14120565', confirm: true });
+  await page.locator('#scanimport-snow-cancel').click();
+  await page.unroute(/\/api\/servicenow\/attach-review$/);
   await page.unroute(/\/api\/scan-import(\/.*)?$/);
 }
 /** DefectDojo / SonarQube: settings, review page against a stubbed batch, confirmed post, and the import's Post to DefectDojo. */

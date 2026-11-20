@@ -9,6 +9,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { AGENTS, SKILLS, publicAgent } = require('../agents.cjs');
 const { parseReport } = require('../reports.cjs');
+const { onePageFinding, primaryFinding } = require('../report-one-page.cjs');
 const { validateBaseUrl } = require('../providers.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
@@ -204,6 +205,32 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     return { id: session.id, repoPath: session.repoPath, reportCount: session.reports.length, provenance: session.provenance || null };
   }));
   app.get('/api/session/:id/reports', handle(req => sessionFor(req.params.id).reports.map(reports.metadata).reverse()));
+
+  app.delete('/api/session/:id/reports/:reportId', handle(req => {
+    const session = sessionFor(req.params.id);
+    const report = session.reports.find(item => item.id === req.params.reportId);
+    if (!report || report.sessionId !== session.id) throw new HttpError('Report not found', 404);
+    try { reports.remove(report); }
+    catch { throw new HttpError('The saved report could not be deleted. Check that the local report storage is writable.', 500); }
+    return { id: report.id };
+  }));
+
+  app.get('/api/report/:sessionId/:agentId/:ts/pptx', handle(async (req, res) => {
+    const { sessionId, agentId, ts } = req.params;
+    const report = sessions.get(sessionId)?.reports.find(item => item.agentId === agentId && String(item.timestamp) === ts);
+    if (!report) throw new HttpError('Report not found', 404);
+    const findingId = req.query.finding;
+    if (findingId !== undefined && (typeof findingId !== 'string' || !/^[A-Z][A-Z0-9]*-\d+$/.test(findingId) || findingId.length > 40)) {
+      throw new HttpError('Choose a finding from this report');
+    }
+    let parsed;
+    try { parsed = reports.read(report); } catch { throw new HttpError('The report file is no longer available', 404); }
+    const finding = findingId ? parsed.findings.find(item => item.id === findingId) : primaryFinding(parsed.findings);
+    if (!finding) throw new HttpError(findingId ? 'Finding not found in this report' : 'This report has no findings to export', 404);
+    const { createFindingPptx } = require('../report-pptx.cjs');
+    const deck = await createFindingPptx(onePageFinding(finding));
+    res.attachment(`${finding.id}-threatlint-one-page.pptx`).send(deck);
+  }));
 
   app.get('/api/report/:sessionId/:agentId/:ts/:fmt', (req, res) => {
     const { sessionId, agentId, ts, fmt } = req.params;

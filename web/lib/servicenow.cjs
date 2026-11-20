@@ -8,6 +8,8 @@
  */
 
 const { execFile } = require('node:child_process');
+const { createHash } = require('node:crypto');
+const fs = require('node:fs');
 const { promisify } = require('node:util');
 const { HttpError } = require('./http.cjs');
 const { readServiceNow } = require('./threatlint-config.cjs');
@@ -28,6 +30,10 @@ const METRICS_PAGE_MAX_BYTES = 8 * 1024 * 1024;
 const METRICS_CREATION_LAG_MS = 60_000;
 // AVIT plus 7 to 15 digits: AVIT000000095938462 (CodeSecurity) or AVIT0042599 (other tools/views).
 const AVIT_PATTERN = /^AVIT\d{7,15}$/;
+const SCTASK_PATTERN = /^SCTASK\d{7,10}$/;
+const ISST_PATTERN = /^ISST\d{7,15}$/;
+const SYS_ID_PATTERN = /^[0-9a-f]{32}$/;
+const TABLE_PATTERN = /^[a-z][a-z0-9_]{1,79}$/;
 const SERVICENOW_DOMAINS = ['.service-now.com', '.servicenowservices.com'];
 const HTTP_TIMEOUT_MS = 30_000;
 const AWS_TIMEOUT_MS = 60_000;
@@ -124,6 +130,14 @@ function parseAvitNumbers(value) {
   return numbers;
 }
 
+function parseReviewTicket(value) {
+  const number = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  if (!AVIT_PATTERN.test(number) && !SCTASK_PATTERN.test(number) && !ISST_PATTERN.test(number)) {
+    throw new HttpError('Enter one ServiceNow record number: AVIT or ISST plus 7 to 15 digits, or SCTASK plus 7 to 10 digits.');
+  }
+  return number;
+}
+
 /** HTTPS origin of a ServiceNow-hosted (or explicitly allowed) instance; the client secret is sent there. */
 function validateInstanceUrl(value) {
   let url;
@@ -192,7 +206,7 @@ async function requestJson(fetchImpl, url, options, signal, withHeaders = false,
     throw new HttpError(`ServiceNow request failed: ${error.cause?.message || error.message}`, 502);
   }
   if (!response.ok) {
-    const hint = { 401: ' Check the client ID and secret.', 403: ' The OAuth client lacks access to this AVIT table operation.' }[response.status] || '';
+    const hint = { 401: ' Check the client ID and secret.', 403: ' The OAuth client lacks access to this operation.' }[response.status] || '';
     throw Object.assign(new HttpError(`ServiceNow returned HTTP ${response.status}.${hint}`, 502), { upstreamStatus: response.status });
   }
   try {
@@ -701,9 +715,101 @@ async function attachmentNames(instance, headers, sysId, fetchImpl, signal) {
   catch (error) { if (signal?.aborted) throw error; return new Set(); }
 }
 
-async function attachFile(instance, headers, sysId, file, fetchImpl, signal) {
-  const query = new URLSearchParams({ table_name: AVIT_TABLE, table_sys_id: sysId, file_name: file.name });
+async function attachFile(instance, headers, sysId, file, fetchImpl, signal, table = AVIT_TABLE) {
+  const query = new URLSearchParams({ table_name: table, table_sys_id: sysId, file_name: file.name });
   return (await requestJson(fetchImpl, `${instance}/api/now/attachment/file?${query}`, { method: 'POST', headers: { ...headers, 'Content-Type': file.type }, body: file.content }, signal)).result || {};
+}
+
+function unreadableRecord(number) {
+  return Object.assign(new HttpError(`${number} was not found or is not readable by the integration account. Check the number and table access.`, 404), { code: 'review_ticket_unreadable' });
+}
+
+async function reviewTicketRecord(instance, headers, table, number, fetchImpl, signal) {
+  const query = new URLSearchParams({ sysparm_query: `number=${number}`, sysparm_display_value: 'all', sysparm_limit: '2',
+    sysparm_fields: 'sys_id,number,sys_class_name' });
+  let rows;
+  try { rows = (await requestJson(fetchImpl, `${instance}/api/now/table/${table}?${query}`, { headers }, signal)).result; }
+  catch (error) {
+    if ([403, 404].includes(error.upstreamStatus)) throw unreadableRecord(number);
+    throw error;
+  }
+  if (!Array.isArray(rows) || rows.length > 1) throw new HttpError(`ServiceNow did not return a unique record for ${number}`, 502);
+  if (!rows.length) return null;
+  const row = rows[0];
+  const sysId = fieldValue(row?.sys_id?.value ?? row?.sys_id);
+  if (fieldValue(row?.number) !== number || !SYS_ID_PATTERN.test(sysId)) throw new HttpError(`ServiceNow returned an unexpected record identity for ${number}`, 502);
+  return { table, sysId, concrete: fieldValue(row?.sys_class_name?.value ?? row?.sys_class_name) };
+}
+
+async function isstMetadataTable(instance, headers, fetchImpl, signal) {
+  const query = new URLSearchParams({ sysparm_query: 'labelLIKEInformation Security', sysparm_fields: 'name,label', sysparm_limit: '100' });
+  let rows;
+  try { rows = (await requestJson(fetchImpl, `${instance}/api/now/table/sys_db_object?${query}`, { headers }, signal)).result; }
+  catch (error) { if (error.upstreamStatus === 403) return ''; throw error; }
+  if (!Array.isArray(rows) || rows.length >= 100) return '';
+  const candidates = [...new Set(rows.filter(row => /security/i.test(fieldValue(row?.label)) && /task/i.test(fieldValue(row?.label)))
+    .map(row => fieldValue(row?.name)).filter(name => TABLE_PATTERN.test(name) && name !== 'task'))];
+  if (candidates.length > 1) throw new HttpError('Several Information Security task tables are available. Set THREATLINT_SNOW_ISST_TABLE to the concrete ISST table.', 409);
+  return candidates[0] || '';
+}
+
+/** ISSTs are instance-specific task subclasses. Read the concrete record and agree on both identifiers before posting. */
+async function reviewTicketTarget(instance, headers, number, fetchImpl, signal) {
+  const get = table => reviewTicketRecord(instance, headers, table, number, fetchImpl, signal);
+  if (!ISST_PATTERN.test(number)) {
+    const target = await get(AVIT_PATTERN.test(number) ? AVIT_TABLE : 'sc_task');
+    if (!target) throw unreadableRecord(number);
+    return target;
+  }
+  const configured = (process.env.THREATLINT_SNOW_ISST_TABLE || '').trim();
+  if (configured && (!TABLE_PATTERN.test(configured) || configured === 'task')) throw new HttpError('THREATLINT_SNOW_ISST_TABLE must name the concrete ISST table');
+  let parent;
+  try { parent = await get('task'); }
+  catch (error) { if (error.code !== 'review_ticket_unreadable') throw error; }
+  const table = parent?.concrete && parent.concrete !== 'task' ? parent.concrete : configured || await isstMetadataTable(instance, headers, fetchImpl, signal);
+  if (!table) throw new HttpError(`The concrete table for ${number} could not be determined. Give the integration account read access to the task or set THREATLINT_SNOW_ISST_TABLE.`, 404);
+  if (!TABLE_PATTERN.test(table)) throw new HttpError(`ServiceNow returned an invalid ISST table for ${number}`, 502);
+  const target = await get(table);
+  if (!target) throw unreadableRecord(number);
+  if (parent && parent.sysId !== target.sysId) throw new HttpError(`The task and ISST record identities for ${number} do not match`, 502);
+  return target;
+}
+
+const pendingReviewAttachments = new Set();
+
+/** Attaches a saved review to a verified ticket. Never writes its state, work notes, or other fields. */
+async function attachReview(credentials, value, report, { fetchImpl = fetch, signal } = {}) {
+  const number = parseReviewTicket(value);
+  const document = report.docxPath && fs.existsSync(report.docxPath);
+  const filePath = document ? report.docxPath : report.mdPath;
+  if (!filePath || !fs.existsSync(filePath)) throw new HttpError('No downloadable copy of this review is available', 409);
+  const content = fs.readFileSync(filePath);
+  const fingerprint = createHash('sha256').update(content).digest('hex').slice(0, 20);
+  const name = `${number}-threatlint-review-${fingerprint}.${document ? 'docx' : 'md'}`;
+  const type = document ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'text/markdown; charset=utf-8';
+  const { instance } = credentials;
+  const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
+  const { table, sysId } = await reviewTicketTarget(instance, headers, number, fetchImpl, signal);
+  const key = `${instance}/${table}/${sysId}/${name}`;
+  if (pendingReviewAttachments.has(key)) throw new HttpError(`This review is already being attached to ${number}`, 409);
+  pendingReviewAttachments.add(key);
+  try {
+    const query = new URLSearchParams({ sysparm_query: `table_name=${table}^table_sys_id=${sysId}^file_name=${name}`, sysparm_fields: 'file_name', sysparm_limit: '2' });
+    const existing = (await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result;
+    if (!Array.isArray(existing)) throw new HttpError(`ServiceNow did not return a readable attachment list for ${number}`, 502);
+    let attachment;
+    if (existing.some(row => fieldValue(row?.file_name) === name)) attachment = { name, alreadyAttached: true };
+    else {
+      const uploaded = await attachFile(instance, headers, sysId, { name, content, type }, fetchImpl, signal, table);
+      const attachmentId = fieldValue(uploaded.sys_id?.value ?? uploaded.sys_id);
+      if (!SYS_ID_PATTERN.test(attachmentId)) throw new HttpError(`ServiceNow did not confirm the attachment for ${number}. Check the record before retrying.`, 502);
+      attachment = { name, sysId: attachmentId };
+    }
+    return { number, action: 'attached', url: `${instance}/nav_to.do?uri=${table}.do?sys_id=${sysId}`, attachments: [attachment],
+      detail: attachment.alreadyAttached ? `${name} is already attached. No ticket fields were changed.` : `Attached ${name}. No ticket fields were changed.` };
+  } finally {
+    pendingReviewAttachments.delete(key);
+  }
 }
 
 async function updateAvit(instance, headers, sysId, values, fetchImpl, signal) {
@@ -756,7 +862,7 @@ async function semgrepVersion() {
   } catch { return null; }
 }
 
-module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, validateInstanceUrl, validateCredentials,
+module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, parseReviewTicket, validateInstanceUrl, validateCredentials, attachReview,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
   fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, fetchAvitContextValues, validateAggregateFilters, aggregateQuery, aggregateColumns,
   METRICS_PAGE_SIZE, AVIT_QUERY_CHUNK,

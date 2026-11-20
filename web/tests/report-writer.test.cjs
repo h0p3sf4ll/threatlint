@@ -13,7 +13,7 @@ function fixture(t, converter) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-writer-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const store = createStore(directory);
-  return { writer: createReportWriter(store, { convertToWord: converter }), sessionId: store.create(directory) };
+  return { writer: createReportWriter(store, { convertToWord: converter }), sessionId: store.create(directory), store };
 }
 
 describe('Report conversion boundary', () => {
@@ -61,5 +61,33 @@ describe('Report conversion boundary', () => {
     assert.equal(report.docxPath, null);
     assert.equal(writer.metadata(report).hasDocx, false);
     assert.match(report.conversionNote, /Word export unavailable/);
+  });
+});
+
+describe('Saved report deletion', () => {
+  const markdown = '# Review\nNo material findings.\n';
+
+  it('leaves a stored path outside the managed report directory alone', async t => {
+    const { writer, sessionId, store } = fixture(t, convertToWord);
+    const report = await writer.save('appsec-code-reviewer', markdown, sessionId);
+    const unrelated = path.join(store.directory, 'unrelated.docx');
+    fs.writeFileSync(unrelated, 'keep this file');
+    report.docxPath = unrelated;
+
+    assert.equal(writer.remove(report), true);
+    assert.equal(writer.find(report.id), null);
+    assert.equal(fs.existsSync(report.mdPath), false);
+    assert.equal(fs.readFileSync(unrelated, 'utf8'), 'keep this file');
+  });
+
+  it('restores the report and both files if saving the history fails', async t => {
+    const { writer, sessionId, store } = fixture(t, convertToWord);
+    const report = await writer.save('appsec-code-reviewer', markdown, sessionId);
+    t.mock.method(store, 'save', () => { throw new Error('Synthetic history write failure'); });
+
+    assert.throws(() => writer.remove(report), /Synthetic history write failure/);
+    assert.equal(writer.find(report.id).report, report);
+    assert.equal(fs.readFileSync(report.mdPath, 'utf8'), markdown);
+    assert.equal(fs.readFileSync(report.docxPath, 'utf8'), 'PK-docx');
   });
 });

@@ -17,15 +17,16 @@
   const STATUS_DETAIL = { queued: 'Queued. The runner starts it shortly.', parsing: 'Parsing the report into findings…', triaging: 'Triaging each finding against the evidence…' };
   const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'PDF report', auto: 'Auto-detect' };
   const AVIT = /^AVIT\d{7,15}$/;
-  const state = { workspaceChosen: false, file: null, context: null, job: null, jobId: null, pollTimer: null, lastStep: 'queued', report: null, submitting: false, posting: false };
+  const TICKET = /^(?:(?:AVIT|ISST)\d{7,15}|SCTASK\d{7,10})$/;
+  const state = { workspaceChosen: false, file: null, context: null, job: null, jobId: null, pollTimer: null, lastStep: 'queued', report: null, submitting: false, posting: false, snow: null };
 
   // Help for this page, merged into /api/help by insights.js (server entries win on a shared key or id).
   window.ThreatlintHelpExtras = {
     tooltips: {
       'scanimport-source': 'Use Auto-detect for PDF reports and supported XML or JSON exports. Choose a specific format if you know which export you have.',
       'scanimport-workspace': 'For source-based review, pick the workspace at the scanned revision. For findings about a deployed service, add evidence from the matching environment.',
-      'scanimport-avit': 'Enter AVIT followed by 7 to 15 digits to associate this report with a ticket. You can also enter it when you post the results.',
-      'scanimport-servicenow': 'After you confirm, attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives, including unverified ones.',
+      'scanimport-avit': 'Optional ServiceNow destination. Enter an AVIT, ISST, or SCTASK now or when you post.',
+      'scanimport-servicenow': 'Choose an AVIT, ISST, or SCTASK and confirm the attachment. Scan imports keep the existing AVIT verdict workflow. ISST and SCTASK posting attaches the report only.',
       'scanimport-disposition': 'TRUE POSITIVE = supported or retained as unverified when safety is not proven. FALSE POSITIVE = evidence disproves the finding beyond reasonable doubt.',
     },
     topics: [{ id: 'scan-import', title: 'Triage a scan report (Finding Review)', minutes: 2, steps: [
@@ -65,10 +66,10 @@
     const date = new Date(typeof value === 'number' || /^\d+$/.test(text(value)) ? Number(value) : value);
     return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
-  function normalizeAvit(value) { return text(value).trim().toUpperCase(); }
-  function avitError(value, required) {
-    if (!value) return required ? 'Enter the AVIT number to post to.' : '';
-    return AVIT.test(value) ? '' : `Not an AVIT number: ${value} (expected AVIT followed by 7 to 15 digits, e.g. AVIT000000095938462 or AVIT0042599)`;
+  function normalizeTicket(value) { return text(value).trim().toUpperCase(); }
+  function ticketError(value, required) {
+    if (!value) return required ? 'Enter an AVIT, ISST, or SCTASK number to post to.' : '';
+    return TICKET.test(value) ? '' : `Invalid ServiceNow ticket number: ${value}. Use an AVIT or ISST with 7 to 15 digits, or an SCTASK with 7 to 10 digits.`;
   }
 
   // ── Form ─────────────────────────────────────────────────────────────────
@@ -138,8 +139,8 @@
     event.preventDefault(); setError('');
     const file = state.file;
     if (!file) { setError('Choose a scan report first.', { reveal: true }); return; }
-    const avit = normalizeAvit($('scanimport-avit').value);
-    const invalid = avitError(avit, false);
+    const number = normalizeTicket($('scanimport-avit').value);
+    const invalid = ticketError(number, false);
     setAvitError(invalid);
     if (invalid) { $('scanimport-avit').focus(); return; }
     const evidenceInput = $('scanimport-evidence');
@@ -156,11 +157,11 @@
       const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value,
         execution: window.ThreatlintPlatformControls.batchOptions('scanimport') };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
-      if (avit) body.avit = avit;
+      if (number) body[AVIT.test(number) ? 'avit' : 'number'] = number;
       if (supportingEvidence) body.supportingEvidence = supportingEvidence;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });
-      $('scanimport-avit').value = avit;
-      startJob({ id: created.id, status: created.status || 'queued', source: body.source, title: file.name, avit }, true);
+      $('scanimport-avit').value = number;
+      startJob({ id: created.id, status: created.status || 'queued', source: body.source, title: file.name, number }, true);
       if (evidenceInput.value === evidenceDraft) evidenceInput.value = '';
       if (state.file === file) clearFile();
     } catch (error) {
@@ -174,7 +175,6 @@
   function startJob(job, fresh) {
     clearTimeout(state.pollTimer);
     state.jobId = job.id; state.job = job; state.report = null; state.lastStep = 'queued';
-    if (fresh) state.avit = job.avit || '';
     renderJob(job);
     $('scanimport-job').hidden = false;
     if (fresh) $('scanimport-job').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -219,7 +219,8 @@
     if (status === 'error') output.textContent = errorMessage(job.error);
     else if (status === 'done') {
       const summary = parsedOnly ? 'Report saved without model review' : 'Triage complete';
-      output.textContent = `${summary} · ${total} finding${total === 1 ? '' : 's'} · saved in Findings.${warning ? ` ${warning}` : ''}`;
+      const reportStatus = job.reportUnavailable ? 'The saved report has been removed from Findings.' : 'Saved in Findings.';
+      output.textContent = `${summary} · ${total} finding${total === 1 ? '' : 's'}. ${reportStatus}${warning ? ` ${warning}` : ''}`;
     } else output.textContent = warning || STATUS_DETAIL[status];
     $('scanimport-result').hidden = status !== 'done';
     if (status === 'done') renderResult(job);
@@ -282,6 +283,7 @@
       } catch { /* shown below */ }
     }
     if (job.id !== state.jobId) return;
+    if (state.job?.reportUnavailable) return;
     state.report = found ? { ...found.report, sessionId: found.sessionId } : null;
     setReportLinks(state.report);
     if (!found) $('scanimport-status').textContent = 'Triage complete, but the saved report could not be found in any workspace. Refresh Findings, or import the file again.';
@@ -292,15 +294,34 @@
   }
 
   // ── ServiceNow ───────────────────────────────────────────────────────────
-  function openServiceNow() {
-    const job = state.job; if (!job || job.status !== 'done') return;
-    const counts = job.counts || {};
-    const fp = count(counts.fp), open = count(counts.tp);
-    const title = text(job.title) || 'Scan import', target = text(job.target);
-    $('scanimport-snow-summary').textContent = `${title}${target && !title.includes(target.replace(/^https?:\/\//, '')) ? ` · ${target}` : ''}${/\bfindings?\b/i.test(title) ? '' : ` · ${count(counts.total)} findings`}`;
-    $('scanimport-snow-fp').textContent = `Close ${fp} false positive${fp === 1 ? '' : 's'} as Closed / False Positive with the Threatlint comment.`;
-    $('scanimport-snow-open').textContent = `Add work notes to ${open} true positive finding${open === 1 ? '' : 's'} (${count(counts.unverified)} unverified); they stay open.`;
-    $('scanimport-snow-avit').value = state.avit || job.avit || normalizeAvit($('scanimport-avit').value);
+  function updateServiceNowSteps() {
+    const number = normalizeTicket($('scanimport-snow-avit').value);
+    const counts = state.snow?.counts;
+    const avitUpdate = Boolean(counts && count(counts.total) && AVIT.test(number));
+    const unverified = count(counts?.unverified);
+    $('scanimport-snow-attachment').textContent = avitUpdate ? 'Attach the Word report to the AVIT.' : 'Attach the saved review. Uses Word when available and Markdown otherwise.';
+    $('scanimport-snow-verdict').textContent = avitUpdate
+      ? count(counts.fp) === count(counts.total) ? 'Close this AVIT as Closed / False Positive after its evidence is attached.'
+        : `Add a work note on this AVIT${unverified ? ` (${unverified} unverified finding${unverified === 1 ? '' : 's'})` : ''}.`
+      : 'Attachment only.';
+  }
+
+  function openServiceNow(report) {
+    if (state.posting || $('scanimport-snow-dialog').open) return;
+    if (report) {
+      if (!report.id || report.agentId !== 'appsec-fp-reviewer') return;
+      state.snow = { reportId: report.id };
+      $('scanimport-snow-summary').textContent = text(report.title || report.label || 'Finding Review');
+      $('scanimport-snow-avit').value = '';
+    } else {
+      const job = state.job;
+      if (job?.status !== 'done' || !job.reportId || job.reportUnavailable) return;
+      state.snow = { jobId: job.id, reportId: job.reportId, counts: job.counts };
+      $('scanimport-snow-summary').textContent = text(job.title || 'Scan import');
+      const savedNumber = job.number || (typeof job.avit === 'string' ? job.avit : '');
+      $('scanimport-snow-avit').value = savedNumber || normalizeTicket($('scanimport-avit').value);
+    }
+    updateServiceNowSteps();
     $('scanimport-snow-error').textContent = ''; $('scanimport-snow-result').replaceChildren();
     $('scanimport-snow-confirm').disabled = false; $('scanimport-snow-confirm').hidden = false;
     $('scanimport-snow-cancel').textContent = 'Cancel';
@@ -309,26 +330,29 @@
   }
   async function postServiceNow(event) {
     event.preventDefault();
-    if (state.posting || !state.job) return;
-    const avit = normalizeAvit($('scanimport-snow-avit').value);
-    const invalid = avitError(avit, true);
+    const destination = state.snow;
+    if (state.posting || !destination) return;
+    const number = normalizeTicket($('scanimport-snow-avit').value);
+    const invalid = ticketError(number, true);
     $('scanimport-snow-error').textContent = invalid;
     if (invalid) { $('scanimport-snow-avit').focus(); return; }
     state.posting = true; $('scanimport-snow-confirm').disabled = true;
-    const result = $('scanimport-snow-result'); result.replaceChildren(el('p', 'field-note small', `Posting to ${avit}…`));
+    const result = $('scanimport-snow-result'); result.replaceChildren(el('p', 'field-note small', `Posting to ${number}…`));
     try {
-      const response = await api(`/api/scan-import/${encodeURIComponent(state.job.id)}/servicenow`, { method: 'POST', body: JSON.stringify({ avit, confirm: true }) });
-      state.avit = avit;
+      const url = destination.jobId ? `/api/scan-import/${encodeURIComponent(destination.jobId)}/servicenow` : '/api/servicenow/attach-review';
+      const body = destination.jobId && AVIT.test(number) ? { avit: number } : { number, ...(!destination.jobId ? { reportId: destination.reportId } : {}) };
+      const response = await api(url, { method: 'POST', body: JSON.stringify({ ...body, confirm: true }) });
+      if (destination.jobId && state.job?.id === destination.jobId) state.job = { ...state.job, number };
       const actions = Array.isArray(response.actions) ? response.actions : [];
       const list = el('ul', 'scanimport-snow-actions');
       for (const action of actions) list.append(el('li', '', typeof action === 'string' ? action : [action.action || action.type, action.number || action.finding || action.id, action.detail || action.result || action.status].filter(Boolean).map(text).join(' · ')));
-      result.replaceChildren(el('p', 'field-note small fp-status-ok', `Posted to ${avit}. ${actions.length} action${actions.length === 1 ? '' : 's'} applied:`), list);
+      result.replaceChildren(el('p', `field-note small ${response.ok === false ? 'fp-status-warn' : 'fp-status-ok'}`, response.ok === false ? `Review the outcome for ${number}.` : `Posted to ${number}.`), list);
       $('scanimport-snow-confirm').hidden = true; $('scanimport-snow-cancel').textContent = 'Close';
-      toast(`Posted to ServiceNow ${avit}.`);
+      if (response.ok !== false) toast(`Posted to ServiceNow ${number}.`);
     } catch (error) {
       result.replaceChildren();
       let message = error.message;
-      if (/not readable|cannot read|not found|no access|permission/i.test(message)) message += ' Check the AVIT number, or ask your ServiceNow administrator to give the integration account read access to it.';
+      if (/not readable|cannot read|not found|no access|permission/i.test(message)) message += ' Check the ticket number and the integration account’s access.';
       $('scanimport-snow-error').textContent = message;
       $('scanimport-snow-confirm').disabled = false;
     } finally { state.posting = false; }
@@ -383,13 +407,21 @@
     $('scanimport-open-repo').addEventListener('click', () => $('choose-repo').click());
     $('scanimport-refresh').addEventListener('click', () => { void loadHistory(); void loadWorkspaces(); });
     $('scanimport-open-report').addEventListener('click', openReport);
-    $('scanimport-post').addEventListener('click', openServiceNow);
+    $('scanimport-post').addEventListener('click', () => openServiceNow());
+    document.addEventListener('threatlint:attach-review-servicenow', event => openServiceNow(event.detail));
+    $('scanimport-snow-avit').addEventListener('input', () => { $('scanimport-snow-error').textContent = ''; updateServiceNowSteps(); });
     $('scanimport-snow-form').addEventListener('submit', postServiceNow);
     $('scanimport-snow-cancel').addEventListener('click', () => $('scanimport-snow-dialog').close());
     for (const id of ['scanimport-download-md', 'scanimport-download-docx']) $(id).addEventListener('click', event => { if (!$(id).getAttribute('href')) event.preventDefault(); });
     document.addEventListener('threatlint:context', event => {
       const previous = state.context?.session?.id; state.context = event.detail; updateControls();
       if (event.detail.session?.id && event.detail.session.id !== previous && !$('view-scanimport').hidden) { state.workspaceChosen = false; $('scanimport-workspace').value = ''; void loadWorkspaces(); }
+    });
+    document.addEventListener('threatlint:report-deleted', event => {
+      if (state.job?.reportId !== event.detail?.reportId) return;
+      state.report = null;
+      state.job = { ...state.job, reportId: null, reportUnavailable: true, report: null };
+      renderJob(state.job);
     });
     document.addEventListener('threatlint:view', event => { if (event.detail.view === 'scanimport') { void loadWorkspaces(); void loadHistory(); } });
     document.dispatchEvent(new CustomEvent('threatlint:request-context'));
