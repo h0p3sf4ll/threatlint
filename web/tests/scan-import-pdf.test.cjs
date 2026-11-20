@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const scan = require('../lib/scan-import.cjs');
-const { pdfLines } = require('../lib/pdf-text.cjs');
+const { pdfLines, pageLines } = require('../lib/pdf-text.cjs');
 const { makePdf, page } = require('./helpers/pdf-fixture.cjs');
 
 // Synthetic Invicti "Detailed Scan Report": one wrapped-title finding with an instance, request, and response.
@@ -17,6 +17,9 @@ const INVICTI = makePdf([page([
   [40, 14, 'Policy Not Enabled'],
   [40, 9, 'MEDIUM 1 CONFIRMED 1'],
   [40, 9, 'The target website lacks an HSTS policy.'],
+  [40, 9, 'A browser can use the policy to keep traffic on', 22.5],
+  [40, 9, 'secure connections.'],
+  [68, 9, '- Review the policy at the edge.'],
   [40, 12, 'Impact'],
   [40, 9, 'Traffic can be downgraded to HTTP.'],
   [40, 12, 'Vulnerabilities'],
@@ -69,6 +72,18 @@ describe('PDF scan reports', () => {
     assert.ok(lines.every(line => line.page === 1 && line.size > 0 && line.parts.length));
   });
 
+  it('joins touching fi ligatures while retaining word spaces and table columns', () => {
+    const run = (str, x, y, width) => ({ str, width, transform: [9, 0, 0, 9, x, y] });
+    const [sentence, table] = pageLines([
+      run('The scanner identi', 40, 700, 80.04), run('fi', 120, 700, 5.08), run('ed the header', 125, 700, 52),
+      run(' ', 177, 700, 0.5), run('fi', 177.5, 700, 5), run('eld.', 182.5, 700, 14),
+      run('Use the word ', 40, 686, 55), run('fi', 95, 686, 5), run('again', 102, 686, 20), run('High', 270, 686, 18),
+    ]);
+    assert.equal(sentence.text, 'The scanner identified the header field.');
+    assert.equal(table.text, 'Use the word fi again High');
+    assert.deepEqual(table.parts.map(part => part.x), [40, 95, 102, 270]);
+  });
+
   it('parses an Invicti Detailed Scan Report PDF like the exports, with redaction', async () => {
     const parsed = await scan.parseScanReport(INVICTI);
     assert.equal(parsed.source, 'invicti'); assert.equal(parsed.format, 'pdf');
@@ -79,7 +94,10 @@ describe('PDF scan reports', () => {
     assert.equal(finding.severity, 'MEDIUM'); assert.equal(finding.originalId, '1.1'); assert.ok(finding.confirmed);
     assert.equal(finding.url, 'https://shop.example.test/account'); assert.equal(finding.method, 'GET'); assert.equal(finding.cwe, 'CWE-523');
     assert.match(finding.description, /lacks an HSTS policy[\s\S]*Impact:[\s\S]*downgraded/);
+    assert.match(finding.description, /policy\.\nA browser can use the policy to keep traffic on secure connections\.\n- Review the policy at the edge\./);
     assert.match(finding.remediation, /Strict-Transport-Security/);
+    assert.match(finding.request, /^GET \/account HTTP\/1\.1\nHost: shop\.example\.test\nCookie:/);
+    assert.match(finding.response, /^HTTP\/1\.1 200 OK\nContent-Type: text\/html/);
     assert.ok(!finding.request.includes('abcdef0123456789abcdef'), 'cookie values are redacted');
     assert.ok(!/Response Time/.test(finding.response));
   });
@@ -156,8 +174,10 @@ describe('PDF scan reports', () => {
       page([
         [40, 14, 'Finding: Missing transport policy'],
         [40, 10, 'Severity: High'],
-        [40, 10, 'Description: The deployment does not declare a transport policy.'],
-        [40, 10, 'The application settings were inspected.'],
+        [40, 10, 'Description: The deployment does not declare'],
+        [40, 10, 'a transport policy.'],
+        [40, 10, 'Evidence: GET /account HTTP/1.1'],
+        [40, 10, 'Cookie: session=synthetic-cookie-value'],
         [40, 10, 'Affected file: config/web.conf:17'],
         [40, 10, 'CWE: CWE-319'],
         [40, 10, 'Remediation: Declare the transport policy in the web configuration.'],
@@ -171,7 +191,9 @@ describe('PDF scan reports', () => {
     assert.equal(finding.title, 'Missing transport policy');
     assert.equal(finding.severity, 'HIGH');
     assert.equal(finding.cwe, 'CWE-319');
-    assert.match(finding.description, /does not declare a transport policy[\s\S]*application settings were inspected/);
+    assert.match(finding.description, /does not declare a transport policy\./);
+    assert.match(finding.description, /GET \/account HTTP\/1\.1\nCookie: session=<redacted:/);
+    assert.doesNotMatch(finding.description, /synthetic-cookie-value/);
     assert.match(finding.remediation, /Declare the transport policy/);
     assert.match(finding.location, /config\/web\.conf:17/);
     assert.match(`${finding.location}\n${finding.description}`, /page 2/i);

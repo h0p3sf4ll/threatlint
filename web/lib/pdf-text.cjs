@@ -14,6 +14,8 @@
 const MAX_PAGES = 1000;
 const MAX_CHARS = 8 * 1024 * 1024;
 const LINE_TOLERANCE = 2; // points: items whose baselines differ by less than this share a line
+const LATIN_LIGATURE = /^(?:ff[il]?|f[il])$/;
+const LIGATURE_GAP = 0.12; // em: tolerate kerning noise without swallowing a normal word space
 
 let pdfjs;
 /**
@@ -30,23 +32,45 @@ async function loadPdfjs() {
   return pdfjs;
 }
 
+/** Coalesce a font's split ligature runs only where the positioned glyphs belong to the same word. */
+function lineParts(runs) {
+  const parts = [];
+  let previous = null;
+  for (const run of runs) {
+    if (!run.text) {
+      previous = null;
+      continue;
+    }
+    const gap = previous ? run.x - (previous.x + previous.width) : Infinity;
+    const tolerance = run.size * LIGATURE_GAP;
+    const joinsWord = previous && !previous.endsInSpace && !run.startsWithSpace
+      && previous.width > 0 && run.width > 0 && Math.abs(gap) <= tolerance
+      && /\p{L}$/u.test(previous.text) && /^\p{L}/u.test(run.text)
+      && (LATIN_LIGATURE.test(previous.text) || LATIN_LIGATURE.test(run.text));
+    if (joinsWord) parts[parts.length - 1].text += run.text;
+    else parts.push({ x: run.x, size: run.size, text: run.text });
+    previous = run;
+  }
+  return parts;
+}
+
 /** Text items of one page joined into lines, top to bottom, left to right. */
 function pageLines(items, page = 1) {
   const rows = [];
   for (const item of items) {
-    if (typeof item.str !== 'string' || !item.str.trim()) continue;
+    if (typeof item.str !== 'string' || !item.str) continue;
     const [, , , height, x, y] = item.transform;
     let row = rows.find(candidate => Math.abs(candidate.y - y) < LINE_TOLERANCE);
-    if (!row) { row = { page, y, parts: [] }; rows.push(row); }
-    row.parts.push({ x, size: Math.abs(height), text: item.str.replace(/\s+/g, ' ').trim() });
+    if (!row) { row = { y, runs: [] }; rows.push(row); }
+    row.runs.push({ x, size: Math.abs(height), width: item.width, startsWithSpace: /^\s/.test(item.str), endsInSpace: /\s$/.test(item.str),
+      text: item.str.replace(/[\uFB00-\uFB06]/g, glyph => glyph.normalize('NFKC')).replace(/\s+/g, ' ').trim() });
   }
   return rows
     .sort((a, b) => b.y - a.y) // PDF y grows upward
-    .map(row => {
-      const parts = row.parts.sort((a, b) => a.x - b.x);
-      return { ...row, parts, size: Math.max(...parts.map(part => part.size)), text: parts.map(part => part.text).join(' ').trim() };
-    })
-    .filter(row => row.text);
+    .flatMap(({ y, runs }) => {
+      const parts = lineParts(runs.sort((a, b) => a.x - b.x));
+      return parts.length ? [{ page, y, parts, size: Math.max(...parts.map(part => part.size)), text: parts.map(part => part.text).join(' ') }] : [];
+    });
 }
 
 /** Positioned lines from every page, in reading order. */

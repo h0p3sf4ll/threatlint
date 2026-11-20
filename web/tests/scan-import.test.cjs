@@ -176,6 +176,16 @@ describe('Scan triage and report', () => {
     assert.equal(verdicts.get('FP-001').disposition, 'TRUE POSITIVE'); assert.equal(verdicts.get('FP-001').unverified, true); assert.match(verdicts.get('FP-001').rationale, /conclusive binary disposition/);
     assert.match(verdicts.get('FP-002').rationale, /no verdict for this finding/);
   });
+  it('accepts cited false positives and keeps placeholders unresolved', async () => {
+    const verdicts = await scan.triage(await parsed(), { settings: { provider: 'lmstudio', model: 'stub' }, emptyRepo: os.tmpdir(),
+      override: async () => JSON.stringify({ verdicts: [
+        { id: 'FP-001', disposition: 'FALSE POSITIVE', unverified: 'false', rationale: 'The exact deployed route enforces the policy.', evidence: 'FP-001 recorded response and effective route configuration.', verifiedSafeBehavior: 'The recorded policy applies to the flagged route and identity.' },
+        { id: 'FP-002', disposition: 'FALSE POSITIVE', rationale: 'The rule may not apply.', evidence: 'Not inspected.', verifiedSafeBehavior: 'Unknown' },
+      ] }) });
+    assert.equal(verdicts.get('FP-001').disposition, 'FALSE POSITIVE');
+    assert.equal(verdicts.get('FP-002').disposition, 'TRUE POSITIVE');
+    assert.equal(verdicts.get('FP-002').unverified, true);
+  });
   it('writes the FP-review format the AVIT flow and report parser use', async () => {
     const report = await parsed();
     const verdicts = await scan.triage(report, { settings: { provider: 'lmstudio', model: 'stub' }, emptyRepo: os.tmpdir(),
@@ -271,7 +281,11 @@ describe('Scan import routes', () => {
   before(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-scan-repo-'));
     storage = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-scan-store-'));
-    instance = createWorkbench({ storageDir: storage, runProvider: async args => { prompts.push(args); return verdictsFor(args.userMessage); }, integrations: { convertToWord, fetchImpl: fakeServiceNow(snowCalls) } });
+    instance = createWorkbench({ storageDir: storage, runProvider: async args => {
+      prompts.push(args);
+      if (args.model === 'fixture-credit-failure') throw new Error('Your credit balance is too low to run the selected model.');
+      return verdictsFor(args.userMessage);
+    }, integrations: { convertToWord, fetchImpl: fakeServiceNow(snowCalls) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${instance.server.address().port}`;
     ({ sessionId: workspaceId } = await api('/api/session/local', { repoPath: root }).then(response => response.body));
@@ -311,15 +325,22 @@ describe('Scan import routes', () => {
   });
 
   it('queues an Invicti upload, triages it, and saves a downloadable report in the workspace', async () => {
-    const created = await upload('invicti.xml', { workspaceId, avit: AVIT, provider: 'lmstudio', model: 'stub' });
+    const supportingEvidence = 'FP-002 captured on the scanned host at scan time\nContent-Security-Policy: frame-ancestors none\nCookie: session=example-review-cookie';
+    const created = await upload('invicti.xml', { workspaceId, avit: AVIT, provider: 'lmstudio', model: 'stub', supportingEvidence });
     assert.equal(created.status, 201); assert.deepEqual(Object.keys(created.body).sort(), ['id', 'status']); assert.equal(created.body.status, 'queued');
     const job = await finished(created.body.id);
     assert.equal(job.status, 'done', job.error); assert.equal(job.source, 'invicti');
     assert.equal(job.title, 'Finding Review: Invicti DAST — shop.example.test — 2026-10-20 (2 findings: 1 TP / 1 FP; 0 unverified TP)');
     assert.deepEqual(job.counts, { total: 2, tp: 1, fp: 1, unverified: 0 });
+    assert.equal(job.reviewedCount, 2);
+    assert.equal(job.warning, null);
+    assert.equal(job.supportingEvidence, undefined);
     assert.deepEqual(Object.keys(job.findings[0]).sort(), ['confidence', 'disposition', 'id', 'location', 'originalId', 'severity', 'title', 'unverified']);
     assert.equal(job.findings[0].disposition, 'TRUE POSITIVE'); assert.equal(job.target, 'https://shop.example.test/');
     assert.ok(prompts.at(-1).userMessage.includes(JSON.stringify(fs.realpathSync(root))), 'workspace source context is offered');
+    assert.match(prompts.at(-1).userMessage, /BEGIN UNTRUSTED SUPPORTING EVIDENCE/);
+    assert.match(prompts.at(-1).userMessage, /Content-Security-Policy: frame-ancestors none/);
+    assert.doesNotMatch(prompts.at(-1).userMessage, /example-review-cookie/);
     assert.equal(prompts.at(-1).apiKey, undefined);
     assert.ok(job.reportId);
     assert.equal(job.report.sessionId, workspaceId); assert.ok(job.report.previewUrl && job.report.mdUrl && job.report.docxUrl);
@@ -351,6 +372,19 @@ describe('Scan import routes', () => {
     assert.ok(sessions.some(session => session.id === job.report.sessionId));
     const md = (await api(job.report.mdUrl)).body.toString();
     assert.match(md, /not triaged: no model configured/); assert.doesNotMatch(md, /AIzaSyD-synthetic|Pa55-synthetic-word/);
+  });
+
+  it('saves an import with an explicit reason when the provider returns no verdicts', async () => {
+    const created = await upload('invicti.xml', { provider: 'lmstudio', model: 'fixture-credit-failure' });
+    const job = await finished(created.body.id);
+    assert.equal(job.status, 'done');
+    assert.equal(job.reviewedCount, 0);
+    assert.equal(job.counts.unverified, 2);
+    assert.match(job.warning, /model provider has insufficient credits/);
+    const markdown = (await api(job.report.mdUrl)).body.toString();
+    assert.match(markdown, /\*\*Findings reviewed\*\*: 0/);
+    assert.match(markdown, /\*\*Status\*\*: NOT TRIAGED .*insufficient credits/);
+    assert.doesNotMatch(markdown, /no model configured/i);
   });
 
   it('triages a scanner-neutral PDF and exposes the saved Finding Review', async () => {
