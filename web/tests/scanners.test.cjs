@@ -122,7 +122,7 @@ describe('DefectDojo and SonarQube JSON imports', () => {
     assert.deepEqual(sonar.findings.map(finding => [finding.originalId, finding.severity, finding.location]), [['SONAR-AYxExampleKey01', 'HIGH', 'src/app/search.py:42'], ['SONAR-AYxExampleKey03', 'LOW', 'src/app/client.py:7']]);
     const hotspots = await scan.parseScanReport(fixture('sonarqube-hotspots.json'));
     assert.deepEqual(hotspots.findings.map(finding => [finding.originalId, finding.rule, finding.location]), [['SONAR-HOTSPOT-AYxExampleKey02', 'python:S2068', 'src/app/config.py:9']]);
-    assert.throws(() => scan.detect(fixture('sonarqube-issues.json').toString(), 'defectdojo'), /SonarQube report, not DefectDojo/);
+    assert.throws(() => scan.detect(fixture('sonarqube-issues.json').toString(), 'defectdojo'), /does not match the selected scanner.*Auto-detect/);
   });
   it('reads reference mappings for posting', async () => {
     assert.equal(scan.parseReferenceMapping('dojo', 'dojo-12'), 'DOJO-12');
