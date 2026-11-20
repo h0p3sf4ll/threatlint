@@ -34,6 +34,7 @@ test('one-page summaries use finding-scoped source and proposed changes', () => 
   assert.equal(page.fixedCode, 'DEBUG = False');
   assert.equal(page.originalCodeSource, 'server/settings.py:12');
   assert.equal(page.impact, 'Error details can reveal internal configuration.');
+  assert.equal(page.status, 'TRUE POSITIVE · CONFIRMED');
   const unverified = onePageFinding(findings[1]);
   assert.equal(unverified.status, 'Unverified finding');
   assert.equal(unverified.originalCode, '');
@@ -57,6 +58,7 @@ test('a saved report exports a single slide for the default or selected finding'
     assert.match(response.headers.get('content-disposition'), /FP-001-threatlint-one-page\.pptx/);
     const slides = readMatching(Buffer.from(await response.arrayBuffer()), /^ppt\/slides\/slide\d+\.xml$/);
     assert.equal(slides.length, 1);
+    assert.match(slides[0].text, /Vulnerable code/);
     assert.match(slides[0].text, /DEBUG = True/);
     assert.match(slides[0].text, /DEBUG = False/);
     assert.match(slides[0].text, /Error details can reveal internal configuration\./);
