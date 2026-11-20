@@ -152,7 +152,12 @@ async function scanImport(page) {
   let polls = 0;
   await page.route(/\/api\/scan-import(\/.*)?$/, async route => {
     const request = route.request(), url = new URL(request.url()), json = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-    if (url.pathname === '/api/scan-import' && request.method() === 'POST') { calls.upload = request.postDataJSON(); return json(201, { id: 'imp-1', status: 'queued' }); }
+    if (url.pathname === '/api/scan-import' && request.method() === 'POST') {
+      const upload = request.postDataJSON();
+      if (upload.filename === 'unreadable.pdf') return json(400, { error: 'The PDF could not be read. Export the report again.' });
+      calls.upload = upload;
+      return json(201, { id: 'imp-1', status: 'queued' });
+    }
     if (url.pathname === '/api/scan-import') return json(200, calls.upload ? [{ ...done, findings: undefined, createdAt: Date.now() }, { id: 'imp-0', status: 'error', source: 'mobsf', title: 'app-release.apk', error: 'Not a MobSF report', counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 } }] : []);
     if (url.pathname === '/api/scan-import/imp-1') { const status = progress[polls++]; return json(200, status ? { ...done, status, counts: { total: 0, tp: 0, fp: 0, ambiguous: 0 }, reportId: undefined, findings: [] } : done); }
     if (url.pathname === '/api/scan-import/imp-1/servicenow') {
@@ -178,7 +183,24 @@ async function scanImport(page) {
   await page.locator('#scanimport-file').setInputFiles({ name: pdfName, mimeType: 'application/pdf', buffer: report });
   assert.equal(await page.locator('#scanimport-error').innerText(), '');
   assert.match(await page.locator('#scanimport-file-name').innerText(), /example-app\.apkk\.PDF/);
-  await page.locator('#scanimport-remove').click();
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: 950, height: 600 });
+  await page.locator('#scanimport-file').setInputFiles({ name: 'replacement.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('file') });
+  assert.equal(await page.locator('#scanimport-start').isDisabled(), true, 'Rejecting a replacement clears the earlier selection');
+  assert.equal(await page.locator('#scanimport-file-name').innerText(), 'No file selected');
+  const alert = page.getByRole('alert').filter({ hasText: 'Unsupported file: replacement.bin' });
+  await alert.waitFor();
+  const choose = await page.locator('#scanimport-choose').boundingBox();
+  const error = await alert.boundingBox();
+  assert.ok(error.y - (choose.y + choose.height) < 55, 'The upload error appears directly below the file controls');
+  await page.locator('#scanimport-file').setInputFiles({ name: 'unreadable.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF') });
+  await page.locator('#scanimport-start').click();
+  await page.getByRole('alert').filter({ hasText: 'The PDF could not be read.' }).waitFor();
+  await page.waitForFunction(() => {
+    const alert = document.getElementById('scanimport-error').getBoundingClientRect();
+    return alert.top >= 0 && alert.bottom <= innerHeight;
+  });
+  await page.setViewportSize(viewport);
   const dataTransfer = await page.evaluateHandle(({ name, bytes }) => {
     const transfer = new DataTransfer();
     transfer.items.add(new File([Uint8Array.from(bytes)], name, { type: 'application/pdf' }));
@@ -191,7 +213,7 @@ async function scanImport(page) {
   await page.locator('#scanimport-workspace').selectOption(session.id);
   await page.locator('#scanimport-avit').fill('AVIT12');
   await page.locator('#scanimport-start').click();
-  assert.match(await page.locator('#scanimport-error').innerText(), /Not an AVIT number: AVIT12/);
+  assert.match(await page.locator('#scanimport-avit-error').innerText(), /Not an AVIT number: AVIT12/);
   assert.equal(calls.upload, null, 'An invalid AVIT blocks the upload');
   await page.locator('#scanimport-avit').fill('avit0042599');
   await page.locator('#scanimport-start').click();
@@ -568,6 +590,11 @@ async function fpReviewRun(page) {
     assert.equal(await page.locator('#cloud-consent').isChecked(), false);
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
     await scanImport(page);
+    if (process.env.THREATLINT_BROWSER_SCENARIO === 'scan-import') {
+      assert.deepEqual(errors, []);
+      console.log('PASS: PDF import, visible upload errors, progress, findings, report downloads, and confirmed posting.');
+      return;
+    }
     await scannerFlows(page);
     await githubSettings(page);
     await claudeDefaults(page);

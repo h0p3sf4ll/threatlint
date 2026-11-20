@@ -192,9 +192,9 @@ describe('PDF scan reports', () => {
   });
 
   it('honours the source hint and refuses PDFs it cannot import faithfully', async () => {
-    await assert.rejects(() => scan.parseScanReport(MOBSF, { source: 'invicti' }), /MobSF report, not Invicti/);
+    await assert.rejects(() => scan.parseScanReport(MOBSF, { source: 'invicti' }), /does not match the selected scanner.*Auto-detect/);
     const dashboard = makePdf([page([[40, 20, 'Mob SF RECENT SCANS STATIC ANALYZER DYNAMIC ANALYZER'], [40, 16, 'Showing 1 to 10 of 35 entries']])]);
-    await assert.rejects(() => scan.parseScanReport(dashboard), /browser print of the MobSF web page/);
+    await assert.rejects(() => scan.parseScanReport(dashboard), /browser printout of a paginated results page/);
     const newsletter = makePdf([page([[40, 12, 'Title: Quarterly newsletter'], [40, 12, 'Description: A recap of this quarter.'], [40, 12, 'HIGH: 18']])]);
     await assert.rejects(() => scan.parseScanReport(newsletter), /could not identify individual findings/i);
     await assert.rejects(() => scan.parseScanReport(makePdf([[]])), /OCR/i);

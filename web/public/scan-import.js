@@ -21,19 +21,19 @@
   // Help for this page, merged into /api/help by insights.js (server entries win on a shared key or id).
   window.ThreatlintHelpExtras = {
     tooltips: {
-      'scanimport-source': 'Use Auto-detect for PDF reports from any scanner and for supported XML or JSON exports. Select a scanner only when you know the report uses that scanner’s listed format.',
+      'scanimport-source': 'Use Auto-detect for PDF reports and supported XML or JSON exports. Choose a specific format if you know which export you have.',
       'scanimport-workspace': 'Optional. With a workspace, triage reads that repository’s source to confirm or rule out each finding. Without one, it judges the report alone.',
-      'scanimport-avit': 'The ServiceNow AVIT this scan belongs to: AVIT followed by 7 to 15 digits. Needed only to post the result to ServiceNow.',
+      'scanimport-avit': 'Enter AVIT followed by 7 to 15 digits to associate this report with a ticket. You can also enter it when you post the results.',
       'scanimport-servicenow': 'After you confirm, attaches the Word report to the AVIT, closes false positives as Closed / False Positive with the Threatlint comment, and adds work notes to true positives, including unverified ones.',
       'scanimport-disposition': 'TRUE POSITIVE = supported or retained as unverified when safety is not proven. FALSE POSITIVE = evidence disproves the finding beyond reasonable doubt.',
     },
     topics: [{ id: 'scan-import', title: 'Triage a scan report (Finding Review)', minutes: 2, steps: [
-      'Export a detailed PDF report with selectable text, or use a supported XML or JSON export. For MobSF, use the PDF Report button to include the full findings tables.',
+      'Export a detailed report with individual findings. Choose PDF with selectable text, or use a supported XML or JSON export.',
       'Open Test → Triage a scan report and drop the file, or press Choose file.',
-      'Leave Scanner on Auto-detect unless you know the report format. Optionally pick a workspace so triage can read the matching source, and enter the AVIT number.',
+      'Leave Report format on Auto-detect unless you know the export format. Pick a workspace if you want triage to check the matching source.',
       'Press Triage findings. Progress moves through Queued → Parsing → Triaging → Done.',
       'Review the counts and the findings table, then press Open report, or download it as Markdown or Word. It is also listed in Findings.',
-      'Press Post to ServiceNow, check what will happen, and confirm. The Word report is attached, false positives are closed, and the rest get work notes.',
+      'To post a result, choose a connected tracker and review what will change before confirming.',
     ] }],
   };
 
@@ -71,7 +71,16 @@
   }
 
   // ── Form ─────────────────────────────────────────────────────────────────
-  function setError(message) { $('scanimport-error').textContent = message || ''; }
+  function setError(message, { reveal = false } = {}) {
+    const alert = $('scanimport-error');
+    alert.textContent = message || '';
+    if (message && reveal && !$('view-scanimport').hidden) alert.scrollIntoView({ block: 'nearest' });
+  }
+  function setAvitError(message) {
+    $('scanimport-avit-error').textContent = message;
+    if (message) $('scanimport-avit').setAttribute('aria-invalid', 'true');
+    else $('scanimport-avit').removeAttribute('aria-invalid');
+  }
   function updateControls() {
     $('scanimport-start').disabled = !state.file || state.submitting || isLive(state.job?.status);
     const settings = state.context?.settings;
@@ -79,11 +88,11 @@
     $('scanimport-model').textContent = model ? `Model: ${model} (${settings.provider}).` : 'Choose a model in Settings before importing.';
   }
   function setFile(file) {
-    setError('');
     if (!file) return;
-    if (!/\.(pdf|xml|json)$/i.test(file.name)) { setError(`Unsupported file: ${file.name}. Choose a PDF scan report or a supported XML or JSON scanner export.`); return; }
-    if (!file.size) { setError(`${file.name} is empty. Export the scan report again.`); return; }
-    if (file.size > MAX_BYTES) { setError(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB; export a filtered report (for example, without request/response bodies) or split it.`); return; }
+    if (!/\.(pdf|xml|json)$/i.test(file.name)) { rejectFile(`Unsupported file: ${file.name}. Choose a PDF report or a supported XML or JSON export.`); return; }
+    if (!file.size) { rejectFile(`${file.name} is empty. Export the scan report again.`); return; }
+    if (file.size > MAX_BYTES) { rejectFile(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB. Export a smaller report or split it.`); return; }
+    setError('');
     state.file = file;
     $('scanimport-file-name').textContent = `${file.name} · ${file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}`;
     $('scanimport-file-name').title = file.name;
@@ -92,10 +101,15 @@
     updateControls();
   }
   function clearFile() {
+    setError('');
     state.file = null; $('scanimport-file').value = '';
     $('scanimport-file-name').textContent = 'No file selected'; $('scanimport-file-name').title = '';
     $('scanimport-remove').classList.add('hidden'); $('scanimport-drop').classList.remove('has-file');
     updateControls();
+  }
+  function rejectFile(message) {
+    clearFile();
+    setError(message);
   }
   function readBase64(file) {
     return new Promise((resolve, reject) => {
@@ -117,22 +131,26 @@
   }
   async function submit(event) {
     event.preventDefault(); setError('');
-    if (!state.file) { setError('Choose a scan report first.'); return; }
+    const file = state.file;
+    if (!file) { setError('Choose a scan report first.', { reveal: true }); return; }
     const avit = normalizeAvit($('scanimport-avit').value);
     const invalid = avitError(avit, false);
-    if (invalid) { setError(invalid); $('scanimport-avit').focus(); return; }
+    setAvitError(invalid);
+    if (invalid) { $('scanimport-avit').focus(); return; }
     state.submitting = true; updateControls();
     try {
-      const content = await readBase64(state.file);
+      const content = await readBase64(file);
       // The model settings the run uses (keys stay in memory; the server never saves them).
-      const body = { ...(state.context?.settings || {}), filename: state.file.name, content, source: $('scanimport-source').value };
+      const body = { ...(state.context?.settings || {}), filename: file.name, content, source: $('scanimport-source').value };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
       if (avit) body.avit = avit;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });
       $('scanimport-avit').value = avit;
-      startJob({ id: created.id, status: created.status || 'queued', source: body.source, title: state.file.name, avit }, true);
-      clearFile();
-    } catch (error) { setError(error.message); }
+      startJob({ id: created.id, status: created.status || 'queued', source: body.source, title: file.name, avit }, true);
+      if (state.file === file) clearFile();
+    } catch (error) {
+      if (state.file === file) setError(error.message, { reveal: true });
+    }
     finally { state.submitting = false; updateControls(); }
   }
 
@@ -331,13 +349,13 @@
     drop.addEventListener('drop', event => {
       event.preventDefault(); drop.classList.remove('dragging');
       const files = event.dataTransfer?.files;
-      if (files?.length > 1) { setError('Drop one scan report at a time.'); return; }
+      if (files?.length > 1) { rejectFile('Drop one scan report at a time.'); return; }
       setFile(files?.[0]);
     });
     // A file dropped outside the zone must not navigate the window away (browser and Electron alike).
     for (const type of ['dragover', 'drop']) window.addEventListener(type, event => { if (!drop.contains(event.target) && event.dataTransfer?.types?.includes('Files')) event.preventDefault(); });
-    $('scanimport-form').addEventListener('submit', event => { submit(event).catch(error => setError(error.message)); });
-    $('scanimport-avit').addEventListener('input', () => { if ($('scanimport-error').textContent.startsWith('Not an AVIT')) setError(''); });
+    $('scanimport-form').addEventListener('submit', event => { submit(event).catch(error => setError(error.message, { reveal: true })); });
+    $('scanimport-avit').addEventListener('input', () => setAvitError(''));
     $('scanimport-workspace').addEventListener('change', () => { state.workspaceChosen = true; });
     $('scanimport-open-repo').addEventListener('click', () => $('choose-repo').click());
     $('scanimport-refresh').addEventListener('click', () => { void loadHistory(); void loadWorkspaces(); });
