@@ -4,8 +4,8 @@
  * Developer help content shared by the browser and desktop workbench.
  * TOOLTIPS: keyed by the data-tip attribute in index.html.
  * HELP_TOPICS: short, task-oriented guides shown in the Learn view.
- * VIDEOS: narrated walkthroughs rendered by web/scripts/build-videos.cjs into
- *   web/public/media (MP4 with voiceover) and docs/media (GIF previews).
+ * VIDEOS: bundled narrated walkthroughs in web/public/media, with previews in
+ *   docs/media. See docs/narration.md for Descript exports and the video builder.
  */
 
 const TOOLTIPS = {
@@ -93,11 +93,11 @@ const HELP_TOPICS = [
 ];
 
 const VIDEOS = [
-  { id: 'overview', title: 'Threatlint in two minutes', file: 'overview.mp4', poster: 'overview.png', topic: null },
+  { id: 'overview', title: 'Threatlint overview', file: 'overview.mp4', poster: 'overview.png', topic: null },
   { id: 'first-review', title: 'Your first review', file: 'first-review.mp4', poster: 'first-review.png', topic: 'first-review' },
   { id: 'ask', title: 'Ask Threatlint how to fix it', file: 'ask.mp4', poster: 'ask.png', topic: 'ask' },
   { id: 'connect-source', title: 'Connect a source code manager', file: 'connect-source.mp4', poster: 'connect-source.png', topic: 'connect-source' },
-  { id: 'runtime-scan', title: 'Authenticated runtime scan and attack chain', file: 'runtime-scan.mp4', poster: 'runtime-scan.png', topic: 'runtime-scan' },
+  { id: 'runtime-scan', title: 'Authenticated runtime scan and attack chain (Preview)', file: 'runtime-scan.mp4', poster: 'runtime-scan.png', topic: 'runtime-scan' },
   { id: 'dashboards', title: 'Metrics and custom dashboards', file: 'dashboards.mp4', poster: 'dashboards.png', topic: 'dashboards' },
   { id: 'ide', title: 'Secure-by-default code in the IDE', file: 'ide.mp4', poster: 'ide.png', topic: 'ide' },
 ];

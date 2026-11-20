@@ -1,13 +1,38 @@
 # A voice worth listening to
 
 A useful walkthrough should feel like a colleague showing you the next step,
-not a machine reading a feature list. These scripts are prepared for a **human
-female narrator**: warm, clear, conversational, and comfortable with technical
-language. No text-to-speech or voice-cloning fallback is used.
+not a machine reading a feature list.
 
-**Current status:** the checked-in videos still have their earlier synthetic
-voiceovers. They are not human recordings. Replace them only after a narrator's
-takes and a rendered draft pass the listening review below.
+**Current status (2026-11-20):** the seven bundled tutorials pair original screen
+footage with the saved narration and timed captions
+from the [Threatlint Descript project](https://web.descript.com/0cc8bb8f-1d1c-4b0d-bb1c-947fb9cefd90).
+They contain synthetic narration, including partially regenerated Descript voiceovers.
+The editing job exhausted its AI credits before
+voice consistency and final editorial review were completed. Additional lessons
+were planned but not created. Do not describe this library as human-recorded or
+as a completed voice replacement.
+
+The raw Descript exports contained large overlays that hid the screen actions.
+The bundled clips instead use the original scene frames from commit
+`70e9802d8bfe9b280d76d18dde81827718562ed9`, timed to the updated narration.
+The original caption areas are replaced with captions from Descript's SRT exports.
+Only the saved Descript audio is included; it is copied without re-encoding or
+mixing in the original source audio.
+
+The rebuilt clips replace the existing MP4 filenames in `web/public/media`, so the
+Workbench, desktop package, and documentation video links use the same bundled
+files without contacting Descript during playback. Posters and silent previews
+are extracted from those rebuilt clips. To update them again, export the corresponding
+compositions from Descript and inspect the visuals, captions, timing, and narration
+before replacing each MP4 and its matching poster/preview. Do not copy the raw
+exports over the repaired visuals without checking for obscuring overlays.
+Keep temporary signed download URLs out of Git.
+
+The optional recording workflow below is prepared for a **human female narrator**:
+warm, clear, conversational, and comfortable with technical language. The local
+builder does not generate text-to-speech or clone voices. Its source scripts do
+not reproduce the Descript timeline edits; running it without `--output-dir`
+replaces those bundled clips. Use a separate draft directory when trying this workflow.
 
 ## 1. Hand off a recording packet
 
