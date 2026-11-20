@@ -529,7 +529,7 @@ output.operations-status,output.field-note,output.toast{display:block}
 .scanimport-drop-symbol{font-size:28px;color:var(--accent);line-height:1}
 .scanimport-file-row{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:6px;max-width:100%}
 .scanimport-file-name{font-family:var(--mono);color:var(--muted);overflow-wrap:anywhere}
-.scanimport-error:not(:empty){display:flex;align-items:baseline;gap:10px;margin:10px 0 0;padding:12px 14px;border:1px solid #a46760;border-left:4px solid #e68d80;border-radius:7px;background:#3b2524;color:#ffdbd5;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin:16px}
+.scanimport-error:not(:empty){display:flex;align-items:baseline;gap:10px;margin:10px 0 0;padding:12px 14px;border:1px solid #a46760;border-left:4px solid #e68d80;border-radius:7px;background:#3b2524;color:#ffdbd5;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin:92px 16px 16px}
 .scanimport-error:not(:empty)::before{content:'!';font-weight:700}
 .scanimport-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 18px}
 .scanimport-fields>div{min-width:0}

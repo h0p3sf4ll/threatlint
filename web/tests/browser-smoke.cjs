@@ -198,7 +198,8 @@ async function scanImport(page) {
   await page.getByRole('alert').filter({ hasText: 'The PDF could not be read.' }).waitFor();
   await page.waitForFunction(() => {
     const alert = document.getElementById('scanimport-error').getBoundingClientRect();
-    return alert.top >= 0 && alert.bottom <= innerHeight;
+    const header = document.querySelector('.topbar').getBoundingClientRect();
+    return alert.top >= header.bottom && alert.bottom <= innerHeight;
   });
   await page.setViewportSize(viewport);
   const dataTransfer = await page.evaluateHandle(({ name, bytes }) => {
