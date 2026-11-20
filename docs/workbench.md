@@ -307,20 +307,17 @@ gets a verdict (true positive or false positive) with its evidence in a Finding 
      findings from detail sections or tables. Check the extracted findings against the original
      report when the layout is unfamiliar. For an image-only PDF, run OCR first or use a supported
      structured export.
-   - Invicti: XML, JSON, or the **Detailed Scan Report** PDF.
-   - MobSF: report JSON or the **PDF Report**. A browser print of the MobSF web page is refused
-     because its tables are paginated and would drop findings.
-   - DefectDojo findings JSON, or SonarQube issues/hotspots JSON.
+   - Supported XML or JSON findings exports. The **Report format** selector lists supported structured formats.
 
-   The XML/JSON exports carry the most detail, such as lookup IDs and exact certainty, so prefer
-   them when you have a choice.
-2. Leave **Scanner** on auto-detect or select it. Optionally select the matching workspace
+   Download the complete report from your scanner. Browser printouts of paginated results can omit findings.
+   Structured exports can include extra detail, such as finding IDs or the scanner's stated certainty.
+2. Leave **Report format** on **Auto-detect** or choose a specific export format. Optionally select the matching workspace
    and supply the destination finding reference.
 3. Press **Triage findings** and inspect the saved findings/report. Every extracted finding is retained and
    reviewed (no count limit; the model sees them in batches). Without a usable model, results are **NOT TRIAGED**, with
    conservative TRUE POSITIVE placeholders marked unverified, not model-verified vulnerabilities.
-4. Review the evidence before selecting **Post to ServiceNow**, **Post to DefectDojo…**, or
-   **Post to SonarQube…**. Posting requires confirmation and can change status.
+4. Review the evidence before choosing a destination to post the report. Posting requires confirmation
+   and can change finding status.
 
 Parsing is local; model triage sends finding evidence to your configured provider.
 SARIF/Semgrep inputs belong in [Findings triage](#review-experience), not this importer.

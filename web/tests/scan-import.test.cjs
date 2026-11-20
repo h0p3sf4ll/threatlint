@@ -44,13 +44,13 @@ describe('Scan report parsing', () => {
     assert.equal(scan.detect(fixture('invicti.xml').toString()).format, 'xml');
     assert.equal(scan.detect(fixture('invicti.json').toString()).format, 'json');
     assert.equal(scan.detect(fixture('mobsf.json').toString()).source, 'mobsf');
-    assert.throws(() => scan.detect(fixture('mobsf.json').toString(), 'invicti'), /MobSF report, not Invicti/);
+    assert.throws(() => scan.detect(fixture('mobsf.json').toString(), 'invicti'), /does not match the selected scanner.*Auto-detect/);
   });
   it('rejects files that are not supported scan reports', async () => {
     for (const content of ['{"version":"2.1.0","runs":[]}', '<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
-      await assert.rejects(() => scan.parseScanReport(Buffer.from(content)), /not an Invicti, MobSF, DefectDojo, or SonarQube report/, content);
+      await assert.rejects(() => scan.parseScanReport(Buffer.from(content)), /could not recognize this scan report/, content);
     await assert.rejects(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /The PDF could not be read/);
-    await assert.rejects(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /ZIP, APK, and IPA/);
+    await assert.rejects(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /app package or archive/);
     await assert.rejects(() => scan.parseScanReport(Buffer.alloc(0)), /empty/);
     await assert.rejects(() => scan.parseScanReport(Buffer.from('{"app_name": ')), /JSON report could not be parsed/);
   });
@@ -293,7 +293,7 @@ describe('Scan import routes', () => {
 
   it('rejects non-reports and unsafe XML at upload with 400', async () => {
     const sarif = await api('/api/scan-import', { filename: 'scan.xml', content: Buffer.from('{"runs":[]}').toString('base64') });
-    assert.equal(sarif.status, 400); assert.match(sarif.body.error, /not an Invicti, MobSF, DefectDojo, or SonarQube report/);
+    assert.equal(sarif.status, 400); assert.match(sarif.body.error, /could not recognize this scan report/);
     const xxe = await api('/api/scan-import', { filename: 'scan.xml', content: Buffer.from('<!DOCTYPE x [<!ENTITY a "b">]><invicti-enterprise/>').toString('base64') });
     assert.equal(xxe.status, 400); assert.match(xxe.body.error, /DOCTYPE/);
     assert.equal((await api('/api/scan-import', { filename: 'x', content: '!!notbase64!!' })).status, 400);

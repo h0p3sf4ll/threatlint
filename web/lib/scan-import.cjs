@@ -178,16 +178,16 @@ function checkSize(buffer) {
 function decodeUpload(buffer) {
   checkSize(buffer);
   if (isPdf(buffer)) fail('PDF reports are read with readReport (they are parsed asynchronously)');
-  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('ZIP, APK, and IPA files cannot be imported. Upload the scan report itself as a PDF or supported XML/JSON export.');
-  if (buffer.includes(0)) fail('The upload is a binary file, not a supported scan report');
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) fail('This file is an app package or archive. Upload the scan report as a PDF or supported XML or JSON export.');
+  if (buffer.includes(0)) fail('This file format could not be read. Upload a PDF scan report or a supported XML or JSON findings export.');
   return buffer.toString('utf8').replace(/^﻿/, '');
 }
 
-const UNSUPPORTED = 'This file is not an Invicti, MobSF, DefectDojo, or SonarQube report. Upload a scanner PDF with selectable text, an Invicti XML/JSON export, a MobSF report JSON, a DefectDojo findings JSON, or a SonarQube issues or hotspots JSON. SARIF and Semgrep files go to Finding Review.';
+const UNSUPPORTED = 'Threatlint could not recognize this scan report. Upload a PDF with selectable text or a supported XML or JSON findings export. Use Finding Review for SARIF or rule-based scan results.';
 
-const MOBSF_WEB_PDF = 'This PDF is a browser print of the MobSF web page, whose tables are paginated, so findings beyond the first page of each table are missing. Use MobSF\'s "PDF Report" button (or the report JSON, /api/v1/report_json) instead.';
+const MOBSF_WEB_PDF = 'This PDF is a browser printout of a paginated results page and may be missing findings. Download the full PDF report or export the findings as JSON from the scanner.';
 const checkHint = hint => { if (hint !== 'auto' && !Object.hasOwn(SOURCES, hint)) fail(`source must be one of: auto, ${Object.keys(SOURCES).join(', ')}`); };
-const checkMatch = (source, hint) => { if (hint !== 'auto' && hint !== source) fail(`The file is a ${SOURCES[source]} report, not ${SOURCES[hint]}; choose "auto" or the matching source`); };
+const checkMatch = (source, hint) => { if (hint !== 'auto' && hint !== source) fail('This report does not match the selected scanner. Choose Auto-detect and try again.'); };
 const PDF_ADAPTERS = { invicti: parseInvictiPdf, mobsf: parseMobsfPdf };
 
 /** Detects any supported upload (text or PDF) by content and returns its parsed document. */
