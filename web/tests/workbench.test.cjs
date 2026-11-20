@@ -156,6 +156,41 @@ describe('Pipeline integration without paid provider calls', () => {
   });
 });
 
+it('deletes a saved scan report only from its own workspace and removes its download links', async () => {
+  const repoPath = path.join(root, 'report-deletion');
+  fs.mkdirSync(repoPath);
+  const { body: { sessionId } } = await api('/api/session/local', { repoPath });
+  const { body: otherSession } = await api('/api/session/local', { repoPath: root });
+  const keep = await instance.generateReport('appsec-code-reviewer', '# Review\nNo material findings.\n', sessionId);
+  const input = Buffer.from(JSON.stringify({ app_name: 'Test', package_name: 'com.example.app', code_analysis: { findings: {} } })).toString('base64');
+  const { status, body: incoming } = await api('/api/scan-import', { filename: 'report.json', content: input, workspaceId: sessionId });
+  assert.equal(status, 201);
+  await instance.scanImports.idle();
+  const { body: job } = await api(`/api/scan-import/${incoming.id}`);
+  assert.equal(job.status, 'done');
+  assert.ok(job.report.mdUrl);
+  const endpoint = `/api/session/${sessionId}/reports/${job.report.id}`;
+  const remove = (url, headers = {}) => fetch(base + url, { method: 'DELETE', headers });
+
+  assert.equal((await remove(`/api/session/${otherSession.sessionId}/reports/${job.report.id}`)).status, 404);
+  assert.equal((await remove(endpoint, { Origin: 'https://untrusted.example' })).status, 403);
+  assert.equal((await fetch(base + job.report.previewUrl)).status, 200);
+  const deleted = await remove(endpoint);
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), { id: job.report.id });
+  assert.equal((await remove(endpoint)).status, 404);
+  assert.equal((await fetch(base + job.report.mdUrl)).status, 404);
+  assert.equal((await fetch(base + job.report.previewUrl)).status, 404);
+  assert.deepEqual((await api(`/api/session/${sessionId}/reports`)).body.map(report => report.id), [keep.id]);
+  assert.ok(fs.existsSync(keep.mdPath));
+  assert.deepEqual(createStore(storage).sessions.get(sessionId).reports.map(report => report.id), [keep.id]);
+  const { body: history } = await api(`/api/scan-import/${incoming.id}`);
+  assert.equal(history.status, 'done');
+  assert.equal(history.report, null);
+  assert.equal(history.reportId, null);
+  assert.equal(history.reportUnavailable, true);
+});
+
 describe('ServiceNow AVIT triage and Semgrep prerequisite', () => {
   const servicenow = { instance: 'https://example.service-now.com', clientId: 'client', clientSecret: 'secret' };
   it('fetches AVITs into one FP review without persisting ServiceNow credentials', async () => {

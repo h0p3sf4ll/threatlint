@@ -21,6 +21,7 @@ async function convertMarkdownToWord(mdPath, docxPath) {
 }
 
 function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {}) {
+  let lastTimestamp = 0;
   function directoryFor(sessionId) {
     return store.directory ? path.join(store.directory, 'reports', sessionId) : path.join(os.tmpdir(), `threatlint-reports-${sessionId}`);
   }
@@ -41,7 +42,7 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
     const session = store.sessions.get(sessionId);
     const directory = directoryFor(sessionId);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const timestamp = Math.max(Date.now(), (session.reports.at(-1)?.timestamp || 0) + 1);
+    const timestamp = lastTimestamp = Math.max(Date.now(), lastTimestamp + 1, (session.reports.at(-1)?.timestamp || 0) + 1);
     const mdPath = path.join(directory, `${agentId}-${timestamp}.md`);
     const docxPath = path.join(directory, `${agentId}-${timestamp}.docx`);
     fs.writeFileSync(mdPath, markdown, { mode: 0o600 });
@@ -75,11 +76,46 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
 
   function read(report) { return parseReport(fs.readFileSync(report.mdPath, 'utf8'), report.agentId); }
 
-  /** Deletes a report's files and history entry (AVIT reports live only in ServiceNow). */
+  /** Deletes one saved report. A failed history write restores its files and entry. */
   function remove(report) {
-    for (const file of [report.mdPath, report.docxPath]) if (file) fs.rmSync(file, { force: true });
     const session = store.sessions.get(report.sessionId);
-    if (session) { session.reports = session.reports.filter(item => item.id !== report.id); session.updatedAt = Date.now(); store.save(); }
+    const saved = session?.reports.find(item => item.id === report.id);
+    if (!saved) return false;
+    const previous = session.reports;
+    const updatedAt = session.updatedAt;
+    const remaining = previous.filter(item => item.id !== saved.id);
+    const artifacts = item => [[item.mdPath, 'md'], [item.docxPath, 'docx']];
+    const referenced = new Set(remaining.flatMap(artifacts).map(([file]) => typeof file === 'string' && path.resolve(file)));
+    const directory = directoryFor(session.id);
+    const moved = [];
+    try {
+      // Never delete a path supplied by stored metadata outside its managed report directory.
+      if (Object.hasOwn(AGENTS, saved.agentId) && Number.isSafeInteger(saved.timestamp) && /^[\w-]+$/.test(session.id) && fs.existsSync(directory)) {
+        const expectedParent = store.directory ? path.join(fs.realpathSync(store.directory), 'reports', session.id)
+          : path.join(fs.realpathSync(os.tmpdir()), `threatlint-reports-${session.id}`);
+        if (fs.realpathSync(directory) === expectedParent) {
+          for (const [file, format] of artifacts(saved)) {
+            const artifact = path.resolve(directory, `${saved.agentId}-${saved.timestamp}.${format}`);
+            if (typeof file !== 'string' || path.resolve(file) !== artifact || referenced.has(artifact)) continue;
+            const stat = fs.lstatSync(artifact, { throwIfNoEntry: false });
+            if (!stat || (!stat.isFile() && !stat.isSymbolicLink())) continue;
+            const staged = path.join(directory, `.deleted-${crypto.randomUUID()}`);
+            try { fs.renameSync(artifact, staged); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+            moved.push({ artifact, staged });
+          }
+        }
+      }
+      session.reports = remaining;
+      session.updatedAt = Date.now();
+      store.save();
+    } catch (error) {
+      session.reports = previous;
+      session.updatedAt = updatedAt;
+      for (const { artifact, staged } of moved.reverse()) fs.renameSync(staged, artifact);
+      throw error;
+    }
+    for (const { staged } of moved) fs.rmSync(staged, { force: true });
+    return true;
   }
 
   return { save, metadata, find, read, remove };

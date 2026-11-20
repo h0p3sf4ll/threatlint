@@ -22,18 +22,32 @@ const INSTANCE = 'https://example.service-now.com';
 const CREDENTIALS = { instance: INSTANCE, clientId: 'id', clientSecret: 'secret' };
 const SYS_ID = 'c'.repeat(32);
 const AVIT = 'AVIT0042599', AVIT2 = 'AVIT0042600', HIDDEN = 'AVIT0042601';
+const ISST = 'ISST0012345', SCTASK = 'SCTASK14120565', ISST_TABLE = 'x_example_information_security_task';
 const json = body => ({ ok: true, status: 200, json: async () => body });
 
 function fakeServiceNow(calls, { source = '' } = {}) {
+  const attachments = new Set();
   return async (url, options = {}) => {
     calls.push({ url, options });
+    const target = new URL(url);
+    const params = target.searchParams;
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
-    if (url.includes('/api/now/attachment/file')) return json({ result: { sys_id: 'd'.repeat(32) } });
-    if (url.includes('/api/now/attachment?')) return json({ result: [] });
+    if (target.pathname === '/api/now/attachment/file') {
+      attachments.add(params.get('file_name'));
+      return json({ result: { sys_id: 'd'.repeat(32) } });
+    }
+    if (target.pathname === '/api/now/attachment') {
+      const fileName = /\^file_name=(.+)$/.exec(params.get('sysparm_query'))?.[1];
+      return json({ result: attachments.has(fileName) ? [{ file_name: fileName }] : [] });
+    }
     if (options.method === 'PATCH') { const body = JSON.parse(options.body); return json({ result: { state: body.state || '1', substate: body.substate || '' } }); }
     // The integration account sees no rows for source=Invicti AVITs.
     if (url.includes(`number%3D${HIDDEN}`)) return json({ result: [] });
-    if (url.includes('/api/now/table/sn_vul_app_vulnerable_item')) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: AVIT }, source: { value: source, display_value: source } }] });
+    const number = params.get('sysparm_query')?.slice('number='.length);
+    if (target.pathname === `/api/now/table/${servicenow.AVIT_TABLE}`) return json({ result: [{ sys_id: { value: SYS_ID, display_value: SYS_ID }, number: { value: number }, source: { value: source, display_value: source } }] });
+    if (target.pathname === '/api/now/table/task' && number === ISST) return json({ result: [{ sys_id: SYS_ID, number, sys_class_name: { value: ISST_TABLE } }] });
+    if (target.pathname === `/api/now/table/${ISST_TABLE}` && number === ISST) return json({ result: [{ sys_id: SYS_ID, number }] });
+    if (target.pathname === '/api/now/table/sc_task') return json({ result: number === SCTASK ? [{ sys_id: SYS_ID, number }] : [] });
     throw new Error(`unexpected ${url}`);
   };
 }
@@ -424,7 +438,7 @@ describe('Scan import routes', () => {
     assert.equal(job.status, 'done'); assert.equal(job.findings[0].severity, 'CRITICAL'); assert.match(job.title, /api\.example\.test — 2026-10-21/);
   });
 
-  it('posts to ServiceNow only with confirmation and an AVIT', async () => {
+  it('posts to ServiceNow only with confirmation and a ticket', async () => {
     const history = (await api('/api/scan-import')).body;
     const withAvit = history.find(item => item.avit === AVIT);
     const without = history.find(item => item.source === 'mobsf' && !item.avit);
@@ -432,7 +446,7 @@ describe('Scan import routes', () => {
     assert.equal(unconfirmed.status, 400); assert.match(unconfirmed.body.error, /confirm/);
     assert.equal(snowCalls.length, 0, 'nothing is sent without confirmation');
     const disabled = await api(`/api/scan-import/${without.id}/servicenow`, { confirm: true, servicenow: CREDENTIALS });
-    assert.equal(disabled.status, 400); assert.match(disabled.body.error, /disabled: no AVIT/);
+    assert.equal(disabled.status, 400); assert.match(disabled.body.error, /enter an AVIT, ISST, or SCTASK/);
   });
 
   it('closes a false-positive AVIT and notes a true-positive one', async () => {
@@ -456,6 +470,58 @@ describe('Scan import routes', () => {
     const job = (await api('/api/scan-import')).body.find(item => item.avit);
     const result = await api(`/api/scan-import/${job.id}/servicenow`, { confirm: true, avit: HIDDEN, servicenow: CREDENTIALS });
     assert.equal(result.status, 404); assert.match(result.body.error, /AVIT not readable by the integration account/); assert.equal(result.body.code, 'avit_unreadable');
+  });
+
+  it('attaches scan imports to ISST and SCTASK records without changing ticket fields', async () => {
+    const callsBefore = snowCalls.length;
+    const created = await upload('invicti.xml', { number: ISST.toLowerCase() });
+    const job = await finished(created.body.id);
+    assert.equal(job.number, ISST);
+    assert.equal(snowCalls.length, callsBefore, 'import never posts to ServiceNow');
+    const endpoint = `/api/scan-import/${job.id}/servicenow`;
+    let result = await api(endpoint, { confirm: true, servicenow: CREDENTIALS });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.actions[0].number, result.body.actions[0].action], [ISST, 'attached']);
+    result = await api(endpoint, { confirm: true, number: SCTASK, servicenow: CREDENTIALS });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.actions[0].number, result.body.actions[0].action], [SCTASK, 'attached']);
+    const calls = snowCalls.slice(callsBefore);
+    assert.ok(calls.some(call => new URL(call.url).pathname === '/api/now/table/task'));
+    assert.ok(calls.some(call => new URL(call.url).pathname === `/api/now/table/${ISST_TABLE}`));
+    assert.ok(!calls.some(call => call.options.method === 'PATCH'));
+    const uploads = calls.filter(call => new URL(call.url).pathname === '/api/now/attachment/file');
+    assert.deepEqual(uploads.map(call => new URL(call.url).searchParams.get('table_name')), [ISST_TABLE, 'sc_task']);
+    assert.ok(uploads.every(call => new URL(call.url).searchParams.get('table_sys_id') === SYS_ID));
+  });
+
+  it('attaches an existing file-based Finding Review without AVIT state changes and skips duplicates', async () => {
+    const report = await instance.generateReport('appsec-fp-reviewer', '# Finding Review: File\n\nNo findings.\n', workspaceId);
+    const data = { reportId: report.id, number: AVIT, servicenow: CREDENTIALS };
+    const callsBefore = snowCalls.length;
+    assert.equal((await api('/api/servicenow/attach-review', data)).status, 400);
+    assert.equal(snowCalls.length, callsBefore);
+    const result = await api('/api/servicenow/attach-review', { ...data, confirm: true });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.match(result.body.actions[0].attachments[0].name, /^AVIT\d+-threatlint-review-[0-9a-f]+\.docx$/);
+    const repeated = await api('/api/servicenow/attach-review', { ...data, confirm: true });
+    assert.equal(repeated.body.actions[0].attachments[0].alreadyAttached, true);
+    const calls = snowCalls.slice(callsBefore);
+    assert.ok(!calls.some(call => call.options.method === 'PATCH'));
+    assert.equal(calls.filter(call => new URL(call.url).pathname === '/api/now/attachment/file').length, 1);
+  });
+
+  it('does not attach a review to an unreadable or mismatched ticket', async () => {
+    const report = await instance.generateReport('appsec-fp-reviewer', '# Finding Review: File\n\nNo findings.\n', workspaceId);
+    const calls = [];
+    const service = fakeServiceNow(calls);
+    await assert.rejects(servicenow.attachReview(CREDENTIALS, SCTASK, report, { fetchImpl: (url, options) => {
+      if (new URL(url).pathname === '/api/now/table/sc_task') return json({ result: [{ sys_id: SYS_ID, number: 'SCTASK14120566' }] });
+      return service(url, options);
+    } }), /unexpected record identity/);
+    const unreadable = await api('/api/servicenow/attach-review', { reportId: report.id, number: 'SCTASK14120566', confirm: true, servicenow: CREDENTIALS });
+    assert.equal(unreadable.status, 404);
+    assert.equal(unreadable.body.code, 'review_ticket_unreadable');
+    assert.ok(!calls.some(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')));
   });
 
   it('returns 404 for unknown imports', async () => {

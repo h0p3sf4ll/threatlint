@@ -276,8 +276,10 @@ gets a verdict (true positive or false positive) with its evidence in a Finding 
    evidence that disproves the original claim. A finding stays unverified when the evidence cannot decide it.
    If the model is unavailable or returns no usable verdicts, Threatlint reports how many findings it could review
    and keeps the rest open as unverified true positives. **Import without review** saves the findings without calling a model.
-4. Review the evidence before choosing a destination to post the report. Posting requires confirmation
-   and can change finding status.
+4. Review the evidence before choosing a destination. In **Post to ServiceNow**, enter an AVIT, ISST,
+   or SCTASK number and confirm the action shown. ISST and SCTASK posting only attaches the review.
+   The AVIT posting workflow can update the ticket based on the reviewed dispositions. To attach a
+   saved Finding Review without changing ticket fields, open the report and use **Attach to ServiceNow…**.
 
 Parsing is local. Model triage sends finding evidence, including supplied supporting evidence, to your selected provider.
 This workflow reviews existing evidence and does not send requests to the scanned target.

@@ -44,6 +44,18 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     return { report, finding };
   }
 
+  app.post('/api/servicenow/attach-review', handle(async req => {
+    const { reportId, number, confirm, servicenow: connection } = req.body || {};
+    if (confirm !== true) throw new HttpError('Confirm the ServiceNow attachment before posting');
+    const ticket = servicenow.parseReviewTicket(number);
+    const located = typeof reportId === 'string' ? reports.find(reportId) : null;
+    if (!located) throw new HttpError('Report not found', 404);
+    if (located.report.agentId !== FP_REVIEWER) throw new HttpError('Only Finding Review reports can be attached from this view');
+    const credentials = servicenow.validateCredentials(connection);
+    const action = await servicenow.attachReview(credentials, ticket, located.report, { fetchImpl });
+    return { ok: true, actions: [action] };
+  }));
+
   app.post('/api/servicenow/close-false-positive', handle(async req => {
     const { report, finding } = falsePositive(req.body?.reportId, req.body?.findingId);
     const avit = avitFor(finding);

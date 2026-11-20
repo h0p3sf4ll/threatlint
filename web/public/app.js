@@ -296,19 +296,41 @@
     for (const report of state.reports) {
       const agent = agentById(report.agentId);
       const card = el('article', 'report-card');
-      const info = el('div', 'report-card-info'); info.append(el('h3', '', report.label), el('p', '', `${formatTime(report.timestamp)} · ${report.findings?.length || 0} parsed findings · ${report.hasDocx ? 'Markdown + Word' : 'Markdown'}`));
+      const info = el('div', 'report-card-info'); info.append(el('h3', '', report.title || report.label), el('p', '', `${formatTime(report.timestamp)} · ${report.findings?.length || 0} parsed findings · ${report.hasDocx ? 'Markdown + Word' : 'Markdown'}`));
       if (report.quality?.issues?.length) info.append(el('div', 'report-card-status', `${report.quality.issues.length} format item${report.quality.issues.length > 1 ? 's' : ''} need review`));
       const actions = el('div', 'report-card-actions'); actions.append(button('Read report ↗', 'button primary small-button', () => openReportUrl(report.previewUrl).catch(error => toast(error.message, true))));
       const download = el('a', 'button secondary small-button', '↓ Markdown'); download.href = report.mdUrl; download.download = ''; actions.append(download);
       if (report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = report.docxUrl; word.download = ''; actions.append(word); }
+      actions.append(button('Delete…', 'button danger small-button', event => deleteReport(report, event.currentTarget), `Delete ${report.title || report.label}`));
       card.append(el('span', 'agent-monogram', agent?.initials || 'TL'), info, actions); list.append(card);
     }
   }
+  async function deleteReport(report, control) {
+    if (!window.confirm(`Delete "${report.title || report.label}" from this workspace? Downloaded copies and tracker attachments will remain.`)) return;
+    control.disabled = true;
+    try {
+      await request(`/api/session/${encodeURIComponent(report.sessionId)}/reports/${encodeURIComponent(report.id)}`, { method: 'DELETE' });
+      if (state.report?.id === report.id) {
+        $('report-dialog').close();
+        state.report = null;
+      }
+      document.dispatchEvent(new CustomEvent('threatlint:report-deleted', { detail: { reportId: report.id } }));
+      if (state.session?.id === report.sessionId) await refreshReports();
+      await refreshSessions();
+      toast('Saved report deleted.');
+    } catch (error) { toast(error.message, true); }
+    finally { control.disabled = false; }
+  }
   async function openReportUrl(url) { const report = await request(url); openReport(report); }
   async function openExample() { try { openReport(await request('/api/examples/fp-review')); } catch (error) { toast(error.message, true); } }
+  function powerPointUrl(report, findingId) {
+    if (report?.example || !report?.findings?.length || !report.previewUrl?.endsWith('/json')) return '';
+    const download = report.previewUrl.replace(/\/json$/, '/pptx');
+    return findingId ? `${download}?finding=${encodeURIComponent(findingId)}` : download;
+  }
   function openReport(report) {
     state.report = report;
-    $('report-reader-title').textContent = report.example ? 'Findings & remediation · Example' : report.label || 'Security findings report';
+    $('report-reader-title').textContent = report.example ? 'Findings & remediation · Example' : report.title || report.label || 'Security findings report';
     $('report-reader-eyebrow').textContent = report.example ? 'SYNTHETIC EXAMPLE · NOT A SCAN' : 'SOURCE-GROUNDED / HUMAN REVIEW REQUIRED';
     const quality = $('report-quality'); quality.replaceChildren(); quality.className = 'report-quality';
     quality.classList.toggle('example', !!report.example);
@@ -322,7 +344,8 @@
       details.append(list); quality.append(details);
     }
     $('report-ask').hidden = !!report.example || !report.id;
-    for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl]]) {
+    $('report-attach-review').hidden = !!report.example || !report.id || report.agentId !== FP_REVIEWER;
+    for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl], ['download-pptx', powerPointUrl(report)]]) {
       $(id).classList.toggle('hidden', !url || report.example); if (url) $(id).href = url; else $(id).removeAttribute('href');
     }
     $('reader-finding-count').textContent = report.findings?.length || 0;
@@ -357,6 +380,14 @@
         actions.append(button('Close FP & tune Semgrep…', 'button primary small-button', () => openFalsePositiveActions(finding)));
       }
       if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
+      const slideUrl = powerPointUrl(state.report, finding.id);
+      if (slideUrl) {
+        const slide = el('a', 'button secondary small-button', '↓ PowerPoint');
+        slide.href = slideUrl;
+        slide.download = '';
+        slide.setAttribute('aria-label', `Download one-slide PowerPoint for ${finding.id}`);
+        actions.append(slide);
+      }
       card.append(header, body, actions); list.append(card);
     }
     if (!findings.length) { const empty = el('div', 'empty-state'); empty.append(el('h3', '', 'No findings match this view.'), el('p', '', state.report?.findings?.length ? 'Adjust the severity or disposition filter.' : 'No structured finding blocks were detected. Read the full report for conclusions, scope, and limitations.')); list.append(empty); }
@@ -1044,6 +1075,7 @@
     $('preview-example').addEventListener('click', openExample); $('reports-example').addEventListener('click', openExample);
     $('report-tab-full').addEventListener('click', () => selectReportTab('full')); $('report-tab-findings').addEventListener('click', () => selectReportTab('findings'));
     $('report-ask').addEventListener('click', () => askAbout({ type: 'report', reportId: state.report.id, label: `${state.report.label} report` }, 'What should I fix first in this report, and why?'));
+    $('report-attach-review').addEventListener('click', () => document.dispatchEvent(new CustomEvent('threatlint:attach-review-servicenow', { detail: state.report })));
     $('onboarding-repo').addEventListener('click', chooseRepository);
     $('onboarding-model').addEventListener('click', showSettings);
     $('severity-filter').addEventListener('change', renderFindings); $('disposition-filter').addEventListener('change', renderFindings);
