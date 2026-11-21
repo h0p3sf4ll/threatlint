@@ -14,9 +14,11 @@ The verified Spaceship server is `server66.shared.spaceship.host`, and the `thre
 
 See [Spaceship's official FTP guide](https://www.spaceship.com/knowledgebase/how-to-create-and-access-ftp-accounts/).
 
-## GitHub Actions: add secrets
+## GitHub Actions: configure production
 
-Open [repository Actions secrets and variables](https://github.com/h0p3sf4ll/threatlint/settings/secrets/actions). Under **Secrets**, add all three as **repository secrets**, not source files or chat messages:
+Open [repository environments](https://github.com/h0p3sf4ll/threatlint/settings/environments) and select `production`. Its deployment branch policy must allow only `main`. Leave required reviewers and wait timers disabled for unattended delivery.
+
+Under the `production` environment's **Secrets**, add all three as **environment secrets**, not source files or chat messages:
 
 | Name | Value |
 | --- | --- |
@@ -24,18 +26,25 @@ Open [repository Actions secrets and variables](https://github.com/h0p3sf4ll/thr
 | `SPACESHIP_FTP_USER` | Dedicated FTP account's **full** username |
 | `SPACESHIP_FTP_PASSWORD` | Dedicated FTP account password |
 
-Under **Variables**, add:
+Under the `production` environment's **Variables**, add:
 
 | Name | Value |
 | --- | --- |
 | `SPACESHIP_FTP_PATH` | `/` when the FTP account is scoped to the website's document root |
+
+Open [repository Actions variables](https://github.com/h0p3sf4ll/threatlint/settings/variables/actions) and add the following **repository variable**:
+
+| Name | Value |
+| --- | --- |
 | `SPACESHIP_DEPLOY_ENABLED` | `true` only once you have verified the document root and secrets |
+
+Keep `SPACESHIP_DEPLOY_ENABLED` at repository scope: the deployment job's `if` condition is evaluated before its environment variables become available. The FTP secrets and path remain scoped to `production`.
 
 **Security:** Do not use the Spaceship login password or full-access cPanel tokens as deployment secrets. The workflow requires TLS and certificate verification, uses FTP passive mode and does not delete remote files. If it reports a certificate mismatch, fix the hostname or Spaceship TLS configuration; do not disable verification.
 
 ## First deploy and ongoing delivery
 
-Open [Deploy marketing site to Spaceship — GitHub Actions](https://github.com/h0p3sf4ll/threatlint/actions/workflows/deploy-marketing-spaceship.yml), choose **Run workflow** on `main`. The validation job works before deployment is enabled; the deployment job is skipped until `SPACESHIP_DEPLOY_ENABLED=true`. Once enabled, the workflow deploys automatically when `marketing/**` or the deployment workflow changes on `main`. Manual runs deploy only from `main`; other branches can run validation but cannot deploy. For unattended delivery, the `production` environment must allow these deployments without a required reviewer or wait timer.
+Open [Deploy marketing site to Spaceship — GitHub Actions](https://github.com/h0p3sf4ll/threatlint/actions/workflows/deploy-marketing-spaceship.yml), choose **Run workflow** on `main`. The validation job works before deployment is enabled; the deployment job is skipped until `SPACESHIP_DEPLOY_ENABLED=true`. Once enabled, the workflow deploys automatically when `marketing/**` or the deployment workflow changes on `main`. Manual runs deploy only from `main`; other branches can run validation but cannot deploy. Both the workflow guard and the `production` environment's branch policy restrict deployment to `main`.
 
 The workflow stages only the marketing site, excludes the Cloudflare-only `_headers` file, and publishes using certificate-verified **explicit FTPS**. The password is passed through `LFTP_PASSWORD`, not a command-line argument. After upload, it verifies that the public HTTPS homepage, stylesheet, logo, robots.txt and sitemap.xml exactly match the deployed source. The deployment job has a ten-minute timeout. The included `marketing/.htaccess` is intended for Spaceship's LiteSpeed/Apache-compatible shared hosting.
 
