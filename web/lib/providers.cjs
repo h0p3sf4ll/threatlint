@@ -1,6 +1,7 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { mapBounded, environmentLimit } = require('./concurrency.cjs');
 
 const TOOL_SCHEMAS = [
   { name: 'Read', description: 'Read numbered lines from a file within the selected repository.', input_schema: { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string' }, offset: { type: 'integer' }, limit: { type: 'integer' } } } },
@@ -14,8 +15,33 @@ const MAX_OUTPUT_TOKENS = 16000;
 // Claude responses are streamed, so they can use a larger cap; on current models thinking counts toward it.
 const CLAUDE_MAX_OUTPUT_TOKENS = 64000;
 const MAX_CONTINUATIONS = 3;
+const TOOL_CONCURRENCY = environmentLimit('THREATLINT_TOOL_CONCURRENCY', 4);
+const MAX_TOOL_CALLS = 64;
 
 function checkAbort(signal) { if (signal?.aborted) throw new Error('Cancelled'); }
+
+/** Calls from one model turn are independent read-only inspections. Validate all before dispatch. */
+async function executeInspectionCalls(calls, { execute, onEvent, signal }) {
+  if (calls.length > MAX_TOOL_CALLS) throw new Error('The model requested too many inspection tools in one turn');
+  const ids = new Set();
+  for (const call of calls) {
+    if (!TOOL_SCHEMAS.some(tool => tool.name === call.name) || typeof call.id !== 'string' || !call.id || ids.has(call.id)
+      || !call.input || typeof call.input !== 'object' || Array.isArray(call.input)) throw new Error('Invalid inspection tool call from the model');
+    ids.add(call.id);
+  }
+  return mapBounded(calls, async call => {
+    checkAbort(signal);
+    onEvent({ type: 'tool_executing', tool: call.name, input: call.input, id: call.id });
+    const result = await execute(call.name, call.input);
+    checkAbort(signal);
+    onEvent({ type: 'tool_result', tool: call.name, id: call.id, preview: 'Inspection completed' });
+    return result;
+  }, { concurrency: TOOL_CONCURRENCY, signal });
+}
+
+function parseToolInput(call) {
+  try { return JSON.parse(call.arguments || '{}'); } catch { throw new Error(`Invalid ${call.name} tool arguments from the model`); }
+}
 
 function validateBaseUrl(value) {
   const url = new URL(value || 'http://localhost:1234/v1');
@@ -84,15 +110,8 @@ async function runOpenAi({ systemPrompt, userMessage, images = [], history = [],
     const turn = await openAiTurn({ baseUrl, model, messages, key, signal, onEvent, headers });
     messages.push({ role: 'assistant', content: turn.text || null, ...(turn.calls.length ? { tool_calls: turn.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) } : {}) });
     if (!turn.calls.length) return turn.text; // Save only the final report, never investigation chatter.
-    for (const call of turn.calls) {
-      checkAbort(signal);
-      let input;
-      try { input = JSON.parse(call.arguments || '{}'); } catch { throw new Error(`Invalid ${call.name} tool arguments from the model`); }
-      onEvent({ type: 'tool_executing', tool: call.name, input, id: call.id });
-      const result = await execute(call.name, input);
-      onEvent({ type: 'tool_result', tool: call.name, id: call.id, preview: 'Inspection completed' });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: result });
-    }
+    const results = await executeInspectionCalls(turn.calls.map(call => ({ ...call, input: parseToolInput(call) })), { execute, onEvent, signal });
+    messages.push(...turn.calls.map((call, index) => ({ role: 'tool', tool_call_id: call.id, content: results[index] })));
   }
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
@@ -165,15 +184,8 @@ async function runResponses({ systemPrompt, userMessage, images = [], history = 
       // its reasoning items and let the model finish within the iteration cap.
       continue;
     }
-    for (const call of calls) {
-      checkAbort(signal);
-      let args;
-      try { args = JSON.parse(call.arguments || '{}'); } catch { throw new Error(`Invalid ${call.name} tool arguments from the model`); }
-      onEvent({ type: 'tool_executing', tool: call.name, input: args, id: call.call_id });
-      const result = await execute(call.name, args);
-      onEvent({ type: 'tool_result', tool: call.name, id: call.call_id, preview: 'Inspection completed' });
-      input.push({ type: 'function_call_output', call_id: call.call_id, output: result });
-    }
+    const results = await executeInspectionCalls(calls.map(call => ({ id: call.call_id, name: call.name, input: parseToolInput(call) })), { execute, onEvent, signal });
+    input.push(...calls.map((call, index) => ({ type: 'function_call_output', call_id: call.call_id, output: results[index] })));
   }
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
@@ -218,17 +230,12 @@ async function runClaude({ systemPrompt, userMessage, images = [], history = [],
     }
     messages.push({ role: 'assistant', content: final.content });
     if (final.stop_reason !== 'tool_use') return [...partial, text].join('');
-    const results = [];
-    for (const block of final.content.filter(block => block.type === 'tool_use')) {
-      checkAbort(signal);
-      onEvent({ type: 'tool_executing', tool: block.name, input: block.input, id: block.id });
-      const result = await execute(block.name, block.input);
-      onEvent({ type: 'tool_result', tool: block.name, id: block.id, preview: 'Inspection completed' });
-      results.push({ type: 'tool_result', tool_use_id: block.id, content: result });
-    }
+    const calls = final.content.filter(block => block.type === 'tool_use');
+    const contents = await executeInspectionCalls(calls, { execute, onEvent, signal });
+    const results = calls.map((block, index) => ({ type: 'tool_result', tool_use_id: block.id, content: contents[index] }));
     messages.push({ role: 'user', content: results });
   }
   throw new Error('Inspection budget reached; analysis remains incomplete');
 }
 
-module.exports = { runClaude, runOpenAi, runResponses, validateBaseUrl, openAiTurn, responsesTurn, TOOL_SCHEMAS };
+module.exports = { runClaude, runOpenAi, runResponses, validateBaseUrl, openAiTurn, responsesTurn, TOOL_SCHEMAS, executeInspectionCalls };

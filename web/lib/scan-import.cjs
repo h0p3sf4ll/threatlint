@@ -23,6 +23,8 @@ const { detectPdf, parseInvictiPdf, parseMobsfPdf, parseGenericPdf } = require('
 const { dispositionState } = require('./finding-disposition.cjs');
 const { evidenceLocations } = require('./reports.cjs');
 const { runCli, errorOf, resolveOutcome } = require('./avit-batch.cjs');
+const { mapBounded, environmentLimit, createLimiter, checkAbort, batchExecution } = require('./concurrency.cjs');
+const BATCH_CONCURRENCY = environmentLimit('THREATLINT_BATCH_CONCURRENCY', 3, 8);
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const MAX_UPLOAD = 25 * 1024 * 1024;
@@ -609,11 +611,14 @@ function fallbackVerdict(finding, reason = NOT_TRIAGED) {
 }
 
 /** Verdicts for every finding: model-backed when possible, otherwise unverified TRUE POSITIVE. */
-async function triage(parsed, { settings, override, workspace, emptyRepo, filename, supportingEvidence, warning, signal, onProgress = () => {} }) {
+async function triage(parsed, { settings, override, workspace, emptyRepo, filename, supportingEvidence, warning, signal, execution, onProgress = () => {} }) {
+  const controls = batchExecution(execution, settings ? Math.ceil(parsed.findings.length / BATCH_SIZE) : 0);
+  checkAbort(signal);
   const verdicts = new Map();
   if (!settings) { for (const finding of parsed.findings) verdicts.set(finding.id, fallbackVerdict(finding, warning)); return verdicts; }
   const systemPrompt = AGENTS[AGENT_ID].systemPrompt + SYSTEM_ADDENDUM;
-  for (let start = 0; start < parsed.findings.length; start += BATCH_SIZE) {
+  const starts = Array.from({ length: Math.ceil(parsed.findings.length / BATCH_SIZE) }, (_, index) => index * BATCH_SIZE);
+  const batches = await mapBounded(starts, async start => {
     const batch = parsed.findings.slice(start, start + BATCH_SIZE);
     onProgress(`Triaging findings ${start + 1}–${start + batch.length} of ${parsed.findings.length}`);
     let returned = [];
@@ -624,13 +629,12 @@ async function triage(parsed, { settings, override, workspace, emptyRepo, filena
     } catch (error) {
       if (signal?.aborted) throw error;
       const providerDetail = /credit balance|insufficient credits/i.test(error.message) ? 'the model provider has insufficient credits' : redact(error.message).slice(0, 200);
-      for (const finding of batch) verdicts.set(finding.id, fallbackVerdict(finding, `not triaged: the model call failed (${providerDetail})`));
-      continue;
+      return batch.map(finding => [finding.id, fallbackVerdict(finding, `not triaged: the model call failed (${providerDetail})`)]);
     }
     const byId = new Map(returned.map(item => [String(item.id || '').toUpperCase(), item]));
-    for (const finding of batch) verdicts.set(finding.id, byId.has(finding.id) ? normaliseVerdict(byId.get(finding.id), finding) : fallbackVerdict(finding, 'not triaged: the model returned no verdict for this finding'));
-  }
-  return verdicts;
+    return batch.map(finding => [finding.id, byId.has(finding.id) ? normaliseVerdict(byId.get(finding.id), finding) : fallbackVerdict(finding, 'not triaged: the model returned no verdict for this finding')]);
+  }, { concurrency: controls.maxConcurrency, signal });
+  return new Map(batches.flat());
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
@@ -860,8 +864,9 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   const index = store.directory ? path.join(store.directory, 'scan-imports.json') : null;
   const jobs = new Map();
   const listeners = new Set();
-  let queue = Promise.resolve();
-  let pendingJobs = 0;
+  const admitImport = createLimiter(BATCH_CONCURRENCY, 32);
+  const pending = new Map();
+  let closed = false;
   if (index && fs.existsSync(index)) {
     try {
       for (const job of JSON.parse(fs.readFileSync(index, 'utf8'))) {
@@ -910,17 +915,20 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     catch (error) { return { settings: null, warning: `not triaged: ${redact(error.message)}` }; }
   }
 
-  async function runJob(job, detected, settings, workspace, supportingEvidence) {
+  async function runJob(job, detected, settings, workspace, supportingEvidence, signal) {
     const uploadedAt = new Date(job.createdAt);
     try {
+      checkAbort(signal);
       update(job, { status: 'parsing', detail: 'Extracting and redacting findings' });
       const parsed = extract(detected);
       update(job, { target: parsed.target, title: reportTitle(parsed, null, uploadedAt), counts: { total: parsed.findings.length, tp: 0, fp: 0, unverified: 0 },
         findings: parsed.findings.map(finding => ({ id: finding.id, originalId: finding.originalId, title: finding.title, severity: finding.severity, disposition: null, confidence: null, location: finding.location })) });
-      update(job, { status: 'triaging', detail: settings ? `Triaging with ${settings.model}` : 'Saving findings without model review' });
-      const verdicts = await triage(parsed, { settings, override, workspace, emptyRepo: workspace ? null : store.sessions.get(importSession())?.repoPath, filename: job.filename,
+      const execution = batchExecution(job.execution, settings ? Math.ceil(parsed.findings.length / BATCH_SIZE) : 0);
+      update(job, { execution, status: 'triaging', detail: settings ? `Triaging with ${settings.model}` : 'Saving findings without model review' });
+      const verdicts = await triage(parsed, { settings, override, workspace, signal, execution: job.execution, emptyRepo: workspace ? null : store.sessions.get(importSession())?.repoPath, filename: job.filename,
         supportingEvidence, warning: job.warning,
         onProgress: detail => update(job, { detail }) });
+      checkAbort(signal);
       const tally = counts(parsed.findings, verdicts);
       const unreviewed = [...verdicts.values()].filter(verdict => !verdict.triaged);
       const reviewedCount = tally.total - unreviewed.length;
@@ -928,7 +936,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
       const title = reportTitle(parsed, tally, uploadedAt);
       const markdown = reportMarkdown(parsed, verdicts, { filename: job.filename, workspace, model: settings ? `${settings.provider} ${settings.model}` : null, warning, uploadedAt });
       const sessionId = workspace?.id || importSession();
-      const report = await reports.save(AGENT_ID, markdown, sessionId, { title, source: { kind: 'scan-import', scanner: SOURCES[parsed.source], importId: job.id } });
+      const report = await reports.save(AGENT_ID, markdown, sessionId, { title, source: { kind: 'scan-import', scanner: SOURCES[parsed.source], importId: job.id, execution: job.execution } });
       update(job, { status: 'done', detail: report.docxPath ? 'Report saved (Markdown and Word)' : 'Report saved (Markdown only; Word export unavailable)', title, counts: tally, reviewedCount, warning, reportId: report.id, sessionId,
         findings: parsed.findings.map(finding => { const verdict = verdicts.get(finding.id); return { id: finding.id, originalId: finding.originalId, title: finding.title,
           severity: verdict.severity, disposition: verdict.disposition, unverified: verdict.unverified, confidence: verdict.confidence, location: finding.location }; }) });
@@ -939,12 +947,16 @@ function createScanImports({ store, reports, override, integrations = {} }) {
 
   /** Validates and structurally parses the upload now (bad input is a 400); extraction and triage run in the background. */
   async function create({ filename, content, fields = {} }) {
+    if (closed) fail('The import runner is shutting down', 503);
+    let execution;
+    try { execution = batchExecution(fields.execution); } catch (error) { fail(error.message); }
     const name = path.basename(String(filename || 'scan-report')).replace(/[^\w.() -]/g, '_').slice(0, 200) || 'scan-report';
     const evidence = fields.supportingEvidence;
     if (evidence != null && (typeof evidence !== 'string' || evidence.length > MAX_SUPPORTING_EVIDENCE)) {
       fail(`Supporting evidence must be text of at most ${MAX_SUPPORTING_EVIDENCE.toLocaleString('en-US')} characters`);
     }
     const detected = await readReport(content, String(fields.source || 'auto').toLowerCase());
+    if (closed) fail('The import runner is shutting down', 503);
     const number = fields.number == null || fields.number === '' ? null : servicenow.parseReviewTicket(fields.number);
     if (number && fields.avit) fail('Supply either a ServiceNow ticket number or an AVIT mapping');
     const avit = parseAvitMapping(number && servicenow.AVIT_PATTERN.test(number) ? number : fields.avit);
@@ -957,7 +969,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     const { settings, warning } = resolveSettings(fields);
     const supportingEvidence = settings && evidence ? clip(redactEvidenceText(evidence), MAX_SUPPORTING_EVIDENCE) : '';
     const id = crypto.randomUUID();
-    const job = { id, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
+    const job = { id, execution, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
       counts: { total: 0, tp: 0, fp: 0, unverified: 0 }, findings: [], reportId: null, sessionId: workspace?.id || null, workspaceId: workspace?.id || null, avit,
       ...(number && !avit ? { number } : {}),
       model: settings ? { provider: settings.provider, model: settings.model } : null, warning, detail: 'Queued', servicenow: null, scanners: {}, createdAt: Date.now(), updatedAt: Date.now() };
@@ -966,10 +978,12 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     persist();
     // The caller's answer describes the job as accepted; the background run starts mutating `job` immediately.
     const accepted = { id: job.id, status: job.status };
-    // One import triages at a time. Supporting evidence and provider settings live only in this closure.
-    pendingJobs++;
-    const done = queue.then(() => runJob(job, detected, settings, workspace, supportingEvidence)).finally(() => { pendingJobs--; });
-    queue = done.catch(() => {});
+    // Independent uploads may overlap. Supporting evidence and provider settings remain only in this closure.
+    const controller = new AbortController();
+    const done = admitImport(() => runJob(job, detected, settings, workspace, supportingEvidence, controller.signal), { signal: controller.signal })
+      .catch(error => update(job, { status: 'error', error: redact(error.message), detail: '' }))
+      .finally(() => pending.delete(id));
+    pending.set(id, { controller, done });
     return { job, accepted, done };
   }
 
@@ -1069,9 +1083,11 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     return { ok, tool: spec.id, actions };
   }
 
+  const idle = async () => { while (pending.size) await Promise.all([...pending.values()].map(item => item.done)); };
+  const close = async () => { closed = true; for (const item of pending.values()) item.controller.abort(); await idle(); };
   return { create, post, postScanner, get: id => summary(jobFor(id)), list: () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(job => summary(job, false)),
-    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle: () => queue,
-    get active() { return pendingJobs > 0; } };
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle, close,
+    get active() { return pending.size > 0; } };
 }
 
 module.exports = { createScanImports, reviewSemgrepAvit, parseScanReport, readReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,

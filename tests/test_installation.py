@@ -8,7 +8,22 @@ import pytest
 
 from threatlint import installation
 from threatlint.cli import build_parser
-from threatlint.skills import SKILLS, agent_prompt, markdown_body, skill_map
+from threatlint.skills import SKILLS, agent_prompt, agent_contracts, markdown_body, skill_map
+
+
+@pytest.mark.parametrize("provider,directory,suffix", [
+    ("claude", ".claude/agents", ".md"), ("copilot", ".github/agents", ".agent.md"),
+])
+def test_native_agent_install_includes_canonical_handoff_contracts(tmp_path, provider, directory, suffix):
+    args = argparse.Namespace(local=True, directory=str(tmp_path), yes=True, quiet=True,
+                              lmstudio=False, codex=False, copilot=provider == "copilot")
+    assert installation.cmd_install(args) == 0
+    if provider == "claude":
+        assert (tmp_path / ".claude/agent-contracts.json").is_file()
+    for agent, contract in agent_contracts().items():
+        text = (tmp_path / directory / f"{agent}{suffix}").read_text(encoding="utf-8")
+        assert contract["inputs"] in text
+        assert contract["boundaries"] in text
 
 
 def test_uninstall_removes_bundled_scripts_and_preserves_custom_content(tmp_path):

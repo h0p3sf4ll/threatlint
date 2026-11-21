@@ -34,7 +34,6 @@ import os
 import re
 import secrets
 import sys
-import urllib.request
 from pathlib import Path
 
 # Installed scripts and file-based imports both resolve the bundled sibling helper.

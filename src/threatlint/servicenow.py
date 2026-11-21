@@ -8,7 +8,6 @@ FP reviewer, in the same form as an attached SARIF or Markdown file.
 
 from __future__ import annotations
 
-import base64
 import datetime
 import json
 import os

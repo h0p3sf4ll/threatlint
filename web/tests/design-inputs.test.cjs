@@ -7,6 +7,7 @@ const design = require('../lib/design-inputs.cjs');
 const { createPipeline } = require('../lib/pipeline.cjs');
 const { makePdf, page } = require('./helpers/pdf-fixture.cjs');
 const { makeZip } = require('./helpers/zip-fixture.cjs');
+const { parseFiles } = require('../lib/routes/design-inputs.cjs');
 
 const file = (name, content) => ({ name, content: Buffer.isBuffer(content) ? content : Buffer.from(content) });
 const extract = async (name, content) => design.extract(name, Buffer.isBuffer(content) ? content : Buffer.from(content));
@@ -82,6 +83,33 @@ describe('design inputs: extraction', () => {
 });
 
 describe('design inputs: bundles and prompts', () => {
+  it('rejects malformed records, ambiguous names, and invalid base64 before extraction', async () => {
+    await assert.rejects(() => design.buildBundle([null]), /file name and file content/);
+    await assert.rejects(() => design.buildBundle([file('a/design.md', 'a'), file('b/design.md', 'b')]), /Duplicate design input name/);
+    for (const content of ['A', 'AA=A', 'AAAA=', 'AB==', '====']) assert.throws(() => parseFiles({ files: [{ name: 'bad.md', content }] }), /base64/);
+    assert.deepEqual(parseFiles({ files: [{ name: 'good.md', content: 'YQ==\n' }] }), [file('good.md', 'a')]);
+    assert.throws(() => parseFiles({ files: [{ name: 'large.md', content: Buffer.alloc(design.MAX_FILE + 1).toString('base64') }] }), error => error.status === 413);
+  });
+
+  it('stores immutable evidence and a content digest without exposing the stored manifest for mutation', async () => {
+    const crypto = require('node:crypto');
+    const store = design.createDesignInputs({ now: () => 100, ttlMs: 1000 });
+    const result = await store.create([file('a.md', '# A')]);
+    assert.equal(result.expiresAt, 1100);
+    assert.equal(result.files[0].sha256, crypto.createHash('sha256').update('# A').digest('hex'));
+    result.files[0].name = 'changed.md';
+    const bundle = store.get(result.id);
+    assert.equal(bundle.summary[0].name, 'a.md');
+    assert.throws(() => { bundle.documents[0].text = 'injected'; }, TypeError);
+    assert.throws(() => { bundle.images.push({ name: 'extra' }); }, TypeError);
+  });
+
+  it('evicts the oldest bundle immediately at capacity rather than on a later read', async () => {
+    const store = design.createDesignInputs();
+    const first = await store.create([file('a.md', 'first')]);
+    for (let i = 0; i < 50; i++) await store.create([file('b.md', 'later')]);
+    assert.equal(store.remove(first.id), false);
+  });
   it('enforces limits and truncates within the text budget, disclosing it', async () => {
     await assert.rejects(() => design.buildBundle([]), /at least one/);
     await assert.rejects(() => design.buildBundle(Array.from({ length: 21 }, (_, n) => file(`f${n}.md`, 'x'))), /at most 20/);

@@ -19,8 +19,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
-import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -309,7 +307,6 @@ def remove_checkout(path: str | None) -> bool:
     """Delete the AVIT checkout once triage and validation are done; read-only git objects are made writable first."""
     if not path or not os.path.isdir(path) or not os.path.isdir(os.path.join(path, ".git")):
         return False
-    import shutil  # noqa: PLC0415
     import stat  # noqa: PLC0415
 
     def writable(function, target, _info):

@@ -21,6 +21,7 @@ const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { superviseChild } = require('./child-lifecycle.cjs');
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const STATUS_TIMEOUT_MS = 15_000;
@@ -97,6 +98,7 @@ function handleEvent(event, onEvent) {
 async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
   const file = claudePath;
   if (!file) throw new Error('Claude Code is not installed. Install it (https://claude.com/claude-code), run `claude` once to sign in, then retry.');
+  if (signal?.aborted) throw Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-claude-code-'));
   const promptFile = path.join(temp, 'system-prompt.md');
   fs.writeFileSync(promptFile, systemPrompt, { mode: 0o600 });
@@ -112,13 +114,19 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
   try {
     return await new Promise((resolve, reject) => {
       const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : []), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
-      let buffer = '', stderr = '', result = null, settled = false;
-      const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener?.('abort', abort); error ? reject(error) : resolve(value); };
-      const abort = () => { child.kill('SIGTERM'); finish(Object.assign(new Error('Run cancelled'), { name: 'AbortError' })); };
-      const timer = setTimeout(() => { child.kill('SIGTERM'); finish(new Error(`Claude Code did not finish within ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`)); }, RUN_TIMEOUT_MS);
-      if (signal?.aborted) return abort();
-      signal?.addEventListener?.('abort', abort, { once: true });
+      let buffer = '', stderr = '', result = null;
+      const lifecycle = superviseChild(child, { signal, timeoutMs: RUN_TIMEOUT_MS,
+        timeoutMessage: `Claude Code did not finish within ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`,
+        startMessage: 'Claude Code could not start. Check the installed CLI.', resolve, reject,
+        onClose(code, finish) {
+          if (result && !result.is_error && result.subtype === 'success' && code === 0) return finish(null, String(result.result || ''));
+          const reason = result?.result || stderr.trim().split('\n').pop() || `exit code ${code}`;
+          const login = /log ?in|auth|credential|unauthori[sz]ed/i.test(reason) ? ' Run `claude` in a terminal to sign in, then retry.' : '';
+          finish(new Error(`Claude Code run failed: ${String(reason).slice(0, 300)}.${login}`));
+        },
+      });
       child.stdout.on('data', chunk => {
+        if (lifecycle.settled || lifecycle.stopping) return;
         buffer += chunk;
         const lines = buffer.split('\n');
         buffer = lines.pop();
@@ -130,13 +138,7 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
         }
       });
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
-      child.on('error', error => finish(new Error(`Claude Code could not start: ${error.message}`)));
-      child.on('close', code => {
-        if (result && !result.is_error && result.subtype === 'success') return finish(null, String(result.result || ''));
-        const reason = result?.result || stderr.trim().split('\n').pop() || `exit code ${code}`;
-        const login = /log ?in|auth|credential|unauthori[sz]ed/i.test(reason) ? ' Run `claude` in a terminal to sign in, then retry.' : '';
-        finish(new Error(`Claude Code run failed: ${String(reason).slice(0, 300)}.${login}`));
-      });
+      child.stdin.on?.('error', () => lifecycle.stop(new Error('Claude Code could not receive the review request')));
       child.stdin.end(withHistory(history, prompt));
     });
   } finally {

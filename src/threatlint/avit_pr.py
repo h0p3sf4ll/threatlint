@@ -192,7 +192,7 @@ def _request(base: str, pat: str, path: str = "", *, params: dict | None = None,
         result = json.loads(data)
     except urllib.error.HTTPError as exc:
         raise ResolveError(f"Azure DevOps PR operation failed (HTTP {exc.code}); check service-account Code write and PR permissions") from None
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+    except (urllib.error.URLError, TimeoutError, ValueError):
         raise ResolveError("Azure DevOps PR operation failed; check connectivity and service-account access") from None
     if not isinstance(result, dict):
         raise ResolveError("Azure DevOps returned an unreadable PR response")

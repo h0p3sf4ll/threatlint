@@ -87,6 +87,34 @@ it('keeps queued scan imports busy through final report conversion after the upl
   assert.equal((await f.call(`/api/scan-import/${upload.body.id}`)).body.status, 'done');
 });
 
+for (const cancel of [false, true]) it(`keeps detached security scans busy until ${cancel ? 'cancelled' : 'completed'} subprocess work settles`, async t => {
+  const entered = deferred(), completion = deferred();
+  let signal;
+  const f = await fixture(t, { integrations: {
+    semgrepVersion: async () => '1.99.0',
+    securityScannerCli: async (_args, options) => { signal = options.signal; entered.resolve(); return completion.promise; },
+  } });
+  try {
+    const session = await f.call('/api/session/local', { method: 'POST', json: { repoPath: f.root } });
+    assert.equal(session.status, 200);
+    const started = await f.call('/api/security-scanner/scans', { method: 'POST', json: { sessionId: session.body.sessionId } });
+    assert.equal(started.status, 202);
+    await entered.promise;
+    assert.deepEqual((await f.call('/internal/activity')).body, { busy: true });
+    if (cancel) {
+      assert.equal((await f.call(`/api/security-scanner/scans/${started.body.id}/cancel`, { method: 'POST', json: {} })).status, 200);
+      assert.equal(signal.aborted, true);
+      assert.deepEqual((await f.call('/internal/activity')).body, { busy: true }, 'Cancellation must keep the worker alive until its subprocess has settled');
+    }
+    completion.resolve(cancel ? { code: 1, stdout: '', stderr: '' } : { code: 0, stdout: JSON.stringify({
+      status: 'completed', binding: { repository: fs.realpathSync(f.root), branch: 'main', commit: 'a'.repeat(40), contentDigest: 'b'.repeat(64) },
+      findings: [], coverage: { status: 'completed' }, engines: [],
+    }), stderr: '' });
+    await eventually(async () => !(await f.call('/internal/activity')).body.busy);
+    assert.equal((await f.call(`/api/security-scanner/scans/${started.body.id}`)).body.status, cancel ? 'cancelled' : 'completed');
+  } finally { completion.resolve({ code: 1, stdout: '', stderr: '' }); }
+});
+
 it('keeps disconnected pipeline cleanup busy after its WebSocket lease ends', async t => {
   const started = deferred(), completion = deferred();
   const f = await fixture(t, { runProvider: async () => { started.resolve(); await completion.promise; return '# Fixture report'; },

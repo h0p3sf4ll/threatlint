@@ -42,7 +42,9 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
     const session = store.sessions.get(sessionId);
     const directory = directoryFor(sessionId);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const timestamp = lastTimestamp = Math.max(Date.now(), lastTimestamp + 1, (session.reports.at(-1)?.timestamp || 0) + 1);
+    // Reserve before Word conversion yields, including previously saved reports from any completion order.
+    const previous = session.reports.reduce((maximum, report) => Math.max(maximum, report.timestamp), lastTimestamp);
+    const timestamp = lastTimestamp = Math.max(Date.now(), previous + 1);
     const mdPath = path.join(directory, `${agentId}-${timestamp}.md`);
     const docxPath = path.join(directory, `${agentId}-${timestamp}.docx`);
     fs.writeFileSync(mdPath, markdown, { mode: 0o600 });
@@ -52,6 +54,7 @@ function createReportWriter(store, { convertToWord = convertMarkdownToWord } = {
       sessionId, summary: parsed.summary, findings: parsed.findings, quality: parsed.quality, conversionNote: hasDocx ? null : WORD_UNAVAILABLE,
       ...(title ? { title: String(title).slice(0, 300) } : {}), ...(source ? { source } : {}) };
     session.reports.push(report);
+    session.reports.sort((a, b) => a.timestamp - b.timestamp);
     session.updatedAt = Date.now();
     store.save();
     return report;

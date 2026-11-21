@@ -154,7 +154,8 @@
       // The shared ready flag includes the user's session consent for remote model review.
       const settings = reviewSettings();
       if (supportingEvidence && !settings) throw new Error(`Supporting evidence requires model review. ${MODEL_REVIEW_HINT}`);
-      const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value };
+      const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value,
+        execution: window.ThreatlintPlatformControls.batchOptions('scanimport') };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
       if (number) body[AVIT.test(number) ? 'avit' : 'number'] = number;
       if (supportingEvidence) body.supportingEvidence = supportingEvidence;
@@ -399,6 +400,7 @@
     });
     // A file dropped outside the zone must not navigate the window away (browser and Electron alike).
     for (const type of ['dragover', 'drop']) window.addEventListener(type, event => { if (!drop.contains(event.target) && event.dataTransfer?.types?.includes('Files')) event.preventDefault(); });
+    $('scanimport-form').insertBefore(window.ThreatlintPlatformControls.batchControls('scanimport'), $('scanimport-error'));
     $('scanimport-form').addEventListener('submit', event => { submit(event).catch(error => setError(error.message, { reveal: true })); });
     $('scanimport-avit').addEventListener('input', () => setAvitError(''));
     $('scanimport-workspace').addEventListener('change', () => { state.workspaceChosen = true; });

@@ -23,6 +23,57 @@ every skill, see [Threatlint architecture](architecture.md).
 | Compare reports or check one claimed fix | [Threat delta](#appsec-threat-delta) · [Verify fix](#appsec-verify-fix) |
 | Interpret supplied runtime captures or plan regression tests | [Runtime reviewer](#appsec-runtime-reviewer) · [Security test planner](#appsec-security-test-planner) |
 
+## Define the assignment before choosing more agents
+
+A specialist is a scoped review contract, not a permanently running worker. In Workbench and
+CLI API runs, it is a model invocation with a role, required skills, evidence, and restricted
+tools. The same provider can execute several specialists. Different prompts do not guarantee
+independent reasoning or eliminate correlated errors.
+
+Use these boundaries to avoid asking several agents to repeat the same audit:
+
+| Specialist | Minimum useful input and concrete decision | Stop or hand off when… |
+| --- | --- | --- |
+| Code reviewer | Exact diff/range plus surrounding source → identify security regressions and recommend a scoped merge decision | No diff exists, or the question is whole-system design; use the threat modeler |
+| Secure codegen reviewer | New/generated code plus project helpers → propose a secure rewrite and reusable guardrail | The task is to apply or run the rewrite; that belongs to an authorized development workflow |
+| API reviewer | Routes, schemas, authorization middleware → determine which role can perform which operation on whose object | Identity issuance/recovery is the root cause; involve the auth reviewer |
+| Auth reviewer | Login/session/token/recovery and policy code → assess identity and authorization lifecycles | A domain state transition breaks an entitlement despite correct identity checks; use business logic |
+| Business logic reviewer | A workflow, invariants, state transitions, jobs/webhooks → assess races, replay, and invalid transitions | There is no source-backed invariant; state the missing requirement rather than invent a business rule |
+| Client reviewer | Browser/mobile/Electron entry points and privileged bridges → assess client trust boundaries | The defect is enforced wholly on the server; route it to API/auth review |
+| Crypto reviewer | Security purpose, primitive use, key/nonce lifecycle → propose a compatible cryptographic correction | Keys, certificates, or deployed TLS settings cannot be inspected; keep those runtime facts unknown |
+| AI security reviewer | Model calls, retrieval, tools, memory, output sinks → locate an attacker-controlled path across an authority boundary | Only suspicious prompt wording is visible; instruction influence alone is not proof of security impact |
+| Privacy reviewer | Data collection, storage, retention, logs, recipients → identify unnecessary or unprotected data flows | Legal basis or organizational policy needs a decision; refer it to privacy/legal owners |
+| Dependency auditor | Manifests/lockfiles and available advisory evidence → prioritize applicable dependency risk and compatible upgrades | Advisory applicability or the resolved version is unknown; do not invent a CVE or safe version |
+| Secrets scanner | Source/config/history in scope → report redacted exposure and a rotation sequence | The next step would use a credential; testing or rotation needs a separate authorized workflow |
+| IaC reviewer | Terraform/Kubernetes/container/cloud configuration → assess resource-specific exposure and privileges | Live deployed state differs or is unavailable; report the drift/verification gap |
+| CI/CD auditor | Workflow triggers, permissions, runners, artifacts, deployment steps → identify build/release trust failures | Application code needs a deeper analysis; keep pipeline authority separate from application findings |
+| Compliance checker | Technical findings and scope evidence → map verified gaps to applicable controls | Certification, legal interpretation, or policy attestation is required; the report cannot provide those |
+| Attack tree | A target asset or prior threat → model AND/OR prerequisites and defensive cuts | Leaves lack source evidence; show the gap rather than a fictional attack chain |
+| Red team | Source and optional prior findings → propose bounded adversarial scenarios and detection tests | A request would execute an attack; this specialist plans only |
+| Threat delta | Prior report, current source, relevant history → preserve original IDs and classify risk change | A prior finding cannot be aligned to current evidence; mark the assessment limit rather than assume resolution |
+| Verify fix | One original finding and current code/history → assess root-cause repair and equivalent bypasses | Proof depends on execution or unavailable state; distinguish source remediation from runtime validation |
+| Runtime reviewer | Redacted authorized captures, identity/role/time provenance, source → explain observed behavior and source correlation | Capture provenance, effective role, or session validity is unknown; a status code alone is not an identity proof |
+| Security test planner | Findings or invariants, fixtures, permitted environment → produce executable-in-principle cases and observable oracles | Authorization or setup is missing; mark BLOCKED. Proposed cases remain NOT RUN |
+
+Threat modeling defines the system and prioritizes attack paths. Findings triage starts from a
+scanner claim and determines its disposition. Neither is a substitute for every specialist
+above, and selecting all agents is not automatically a better review.
+
+### Make handoffs reviewable
+
+Pass the original finding ID, source revision, scope, evidence locations, assumptions, severity,
+confidence, proposed action, and **actual** validation status. Include the upstream report when
+it is available, but remember that context budgets may omit or truncate material. These are
+reporting requirements, not a claim that every runtime serializes one universal JSON envelope.
+
+A downstream agent should be able to answer: “Which input supports this conclusion, and what
+must I check myself?” Repeating an earlier claim is not independent verification.
+
+**Definition of done for any specialist:** the requested decision is answered; coverage and
+excluded areas are stated; every material finding cites inspected evidence; advisory changes
+and unrun tests are labeled; remaining decisions have a concrete owner or next step. If the
+available evidence cannot support a finding, a qualified negative result is useful work.
+
 ## Start with one question
 
 In a client with Threatlint commands installed:
@@ -58,8 +109,12 @@ and [CI callers](ci-templates.md) for other entry points.
 
 The [agent definitions](../src/threatlint/data/agents/) specify full protocols and
 report formats; the [agent-skill registry](../src/threatlint/data/agent-skills.json)
-assigns required shared and specialist skills. The summaries below are a selection
-guide, not a replacement for those contracts. See [the workbench](workbench.md)
+assigns required shared and specialist skills. The [execution contracts](../src/threatlint/data/agent-contracts.json)
+declare inputs, outputs, boundaries, and source/upstream evidence mode for the owned Python and
+Workbench runners. Installers include the contracts in generated Claude, Copilot, Codex, and
+local-model bundles; reinstall to refresh an existing installation. Previously copied Markdown
+is not updated automatically, and native clients still enforce their own permissions. The
+summaries below are a selection guide, not a replacement for those contracts. See [the workbench](workbench.md)
 for evidence handoffs.
 
 Most reports separate an executive decision from technical findings. The technical
@@ -71,7 +126,7 @@ add inventories, verdicts, or test plans; their canonical definitions remain aut
 
 ## appsec-threat-modeler
 
-> **Design inputs:** give it diagrams, design documents, OpenAPI specs, or whiteboard images (Workbench **Add design inputs**, or `threatlint run threat-model --design PATH`). It uses them to learn the intended architecture, verifies each claim against the code, and reports design drift. See [Design inputs](workbench.md#design-inputs).
+> **Design inputs:** give it diagrams, design documents, OpenAPI specs, or whiteboard images (Workbench **Add supporting docs**, or `threatlint run threat-model --design PATH`). It uses them to learn the intended architecture, verifies each claim against the code, and reports design drift. See [Design inputs](workbench.md#design-inputs).
 
 **Finding prefix**: `TM-NNN`  
 **Slash command**: `/threat-model`, `/threat-model-deep`, `/threat-model-local`, `/threat-model-deep-local`  

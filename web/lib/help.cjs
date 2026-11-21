@@ -10,7 +10,7 @@
 
 const TOOLTIPS = {
   'open-repo': 'Pick a local folder or a checkout from Connect source. Agents only read it; nothing is modified.',
-  pipeline: 'Agents run top to bottom. Each later agent receives the earlier agents’ findings as untrusted context to verify.',
+  pipeline: 'Auto mode overlaps independent source reviews within a bounded limit. Synthesis roles wait for earlier evidence. Sequential mode passes all prior reports in order. Advanced mode adds scoped workers and independent provider challenge.',
   playbooks: 'Curated agent combinations for common developer tasks. Click one to load it into your pipeline.',
   scope: 'Optional. Narrow the review: a path (src/api), a diff range (main...HEAD), or a question (“is the upload route safe?”).',
   attach: 'Attach SARIF or Semgrep JSON so the triage agent can separate true positives from noise.',
@@ -33,6 +33,30 @@ const TOOLTIPS = {
 };
 
 const HELP_TOPICS = [
+  { id: 'security-scanner', title: 'Scan, understand, fix and measure', minutes: 3, steps: [
+    'Choose Guided mode, open a repository, and select Security scanner under Test. No model is needed for the local baseline.',
+    'Start the scan. Installed Semgrep and Trivy can extend coverage; unavailable engines stay visible. Dependency hygiene alone is not a CVE scan.',
+    'Read the highest-severity finding: its impact, source location, vulnerable code and suggested fix. A pattern match still needs context.',
+    'For a supported change, choose Review suggested change, inspect the before/after lines, then Apply this change & rescan. This edits your workspace.',
+    'The first fix policy handles an exact Python DEBUG=True assignment only. Other recommendations remain advisory. Run your application tests before committing.',
+    'Open Repository risk and Metrics. Historical observations remain visible; a missing finding in a partial scan does not prove remediation.',
+  ] },
+  { id: 'parallel-provider-review', title: 'Use more workers and independent providers deliberately', minutes: 3, steps: [
+    'Switch to Advanced mode and add the source-review specialists you need. Choose one to four workers beside each eligible role.',
+    'Workers divide primary source files. They may read supporting context; this is an assignment boundary, not a file-access sandbox. Synthesis roles stay together.',
+    'Set the maximum simultaneous calls and the total model-run budget. More calls can reduce latency for large independent scopes, but increase token cost and rate-limit pressure.',
+    'Enable independent provider review, choose a distinct second or third provider, and explicitly consent to share context with each. Credentials stay in the current request/session memory.',
+    'Independent assessments are followed by one challenge round. The host checks literal source quotes and produces one report with deduplicated candidates and visible disagreements.',
+    'Agreement is not proof. Missing or malformed participant output fails the role; conflicting claims remain unresolved and cannot automatically close a finding.',
+  ] },
+  { id: 'risk-chains', title: 'Understand when small weaknesses combine', minutes: 4, steps: [
+    'Open Repository risk and filter to one branch and revision. Refresh evidence imports saved reports and retains their original provenance.',
+    'Review each candidate using source evidence. Verified means that you explicitly attest to a quote and verification method; the form does not execute an exploit.',
+    'In Advanced mode, build a path showing how one finding supplies the prerequisite for the next. Record the final asset impact, difficulty and uncertainty.',
+    'Three medium findings do not automatically become critical. A critical composite requires evidence for a critical final impact; individual ratings remain intact.',
+    'A contextual false positive can help explain a path without becoming a standalone vulnerability. Reopening it requires new evidence refuting its original dismissal basis.',
+    'Preview the ServiceNow parent and child work notes. This integration is a stub and does not send anything. Private developer coaching is also an opt-in preview, not an employee ranking.',
+  ] },
   { id: 'first-review', title: 'Run your first review in 60 seconds', minutes: 1, steps: [
     'Open a repository (top-right) or check one out from Connect source.',
     'Pick the “Pull request review” playbook, or add agents from the Agent library.',

@@ -4,15 +4,18 @@ name: Desktop app build
 # the browser runner uses, so the desktop download never lags the web version.
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/security-platform-foundation']
     paths:
       - 'web/**'
-      - 'src/threatlint/data/**'
+      - 'src/threatlint/**'
+      - 'pyproject.toml'
       - '.github/workflows/desktop-build.yml'
   pull_request:
     paths:
       - 'web/**'
-      - 'src/threatlint/data/**'
+      - 'src/threatlint/**'
+      - 'pyproject.toml'
+      - '.github/workflows/desktop-build.yml'
   workflow_dispatch:
 
 permissions:

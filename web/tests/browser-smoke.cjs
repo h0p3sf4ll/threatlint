@@ -576,7 +576,11 @@ async function fpReviewRun(page) {
   const wrapper = path.join(temporary, 'python-wrapper.sh');
   fs.writeFileSync(wrapper, `#!/bin/sh\ncase "$1" in *md_to_docx.py) printf PK-docx > "$3"; exit 0;; esac\nexec "${realPython}" "$@"\n`, { mode: 0o755 });
   if (process.platform !== 'win32') avitBatch.python = () => wrapper;
-  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: { threatlintCli: fprCli }, runProvider: async args => {
+  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: {
+    threatlintCli: fprCli,
+    // Provider output and scanner findings are synthetic; this test must not depend on a locally installed CLI.
+    semgrepVersion: async () => 'synthetic-browser-fixture',
+  }, runProvider: async args => {
     const fpr = await fprProvider(args); if (fpr) return fpr;
     if (args.userMessage.includes('WAIT_FOR_CANCELLATION')) await new Promise((resolve, reject) => args.signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }));
     args.onEvent({ type: 'text_chunk', text: 'Synthetic integration fixture, not a scan.' });
@@ -607,6 +611,8 @@ async function fpReviewRun(page) {
     await page.locator('#findings-file').setInputFiles({ name: 'scan.sarif', mimeType: 'application/json', buffer: Buffer.from('{"runs":[]}') });
     await page.locator('#start-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
+    // Completion arrives on the socket before the asynchronous report-history refresh finishes.
+    await page.waitForFunction(() => document.getElementById('stat-reports').textContent === '1');
     assert.equal(await page.locator('#stat-reports').innerText(), '1');
     await page.locator('[data-view="reports"]').click(); await page.getByRole('button', { name: 'Read report ↗' }).click();
     await page.locator('#report-tab-findings').click(); assert.equal(await page.locator('.finding-card').count(), 2);
@@ -616,7 +622,7 @@ async function fpReviewRun(page) {
     await page.reload(); await page.locator('#connection-status.online').waitFor();
     await page.waitForFunction(() => document.getElementById('stat-reports').textContent === '1');
     await page.locator('[data-view="workbench"]').click(); await page.locator('#target').fill('WAIT_FOR_CANCELLATION'); await page.locator('#start-run').click();
-    await page.locator('.pipeline-item.running').waitFor(); await page.locator('#cancel-run').click();
+    await page.locator('.pipeline-item.running').first().waitFor(); await page.locator('#cancel-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review stopped'));
     assert.equal(await page.locator('#stat-reports').innerText(), '1');
     await page.locator('#settings-button').click(); await page.locator('input[name=provider][value=openai]').check();
@@ -626,7 +632,9 @@ async function fpReviewRun(page) {
     assert.equal(saved.includes('synthetic-key-not-a-secret'), false);
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click(); await page.locator('#view-settings:not([hidden])').waitFor();
     assert.equal(await page.locator('#cloud-consent').isChecked(), false);
+    await page.locator('.settings-nav [data-settings-category="scanners"]').click();
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
+    await page.locator('.settings-nav [data-settings-category="general"]').click();
     await scanImport(page);
     if (process.env.THREATLINT_BROWSER_SCENARIO === 'scan-import') {
       assert.deepEqual(errors, []);

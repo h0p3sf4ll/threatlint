@@ -15,6 +15,7 @@ import urllib.request
 from collections.abc import Callable, Iterable
 
 from .agent_tools import _TOOLS, _execute_tool
+from .inspection_batch import run_inspections
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 _MAX_AGENT_ITERATIONS = 80
@@ -262,10 +263,8 @@ def run_agent(endpoint: str, model: str, system_prompt: str, user_message: str, 
         if turn.stop_reason != "tool_use":
             return turn.text
         messages.append({"role": "assistant", "content": turn.content})
-        results = []
-        for call in (block for block in turn.content if block["type"] == "tool_use"):
-            progress(f"\n  → {call['name']}\n")
-            result = _execute_tool(repo_root, call["name"], call["input"])
-            results.append({"type": "tool_result", "tool_use_id": call["id"], "content": str(result)})
+        calls = [(block["id"], block["name"], block["input"]) for block in turn.content if block["type"] == "tool_use"]
+        contents = run_inspections(calls, repo_root, _execute_tool, progress)
+        results = [{"type": "tool_result", "tool_use_id": call[0], "content": result} for call, result in zip(calls, contents)]
         messages.append({"role": "user", "content": results})
     raise MessagesError("Model exceeded the inspection iteration limit. No complete report was saved.")

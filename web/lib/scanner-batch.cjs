@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * DefectDojo / SonarQube review from the Workbench, one finding at a time:
+ * DefectDojo / SonarQube review from the Workbench, bounded independent finding reviews:
  *   1. `threatlint dojo|sonar fetch`     – the findings, by reference or by filter
  *   2. `threatlint dojo|sonar checkout`  – the repository and branch the finding names (skipped when it names none)
  *   3. the Findings triage agent, with the selected model, against that checkout
@@ -19,6 +19,7 @@ const { runModel, providerRequest, buildUserMessage } = require('./pipeline.cjs'
 const { HttpError } = require('./http.cjs');
 const scanners = require('./scanners.cjs');
 const { runCli, redactSecrets } = require('./avit-batch.cjs');
+const { mapBounded, batchExecution, checkAbort } = require('./concurrency.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
@@ -143,6 +144,9 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
   }
 
   async function run(message, send, controller) {
+    let execution;
+    try { execution = batchExecution(message.execution); } catch (error) { throw new HttpError(error.message); }
+    checkAbort(controller.signal);
     const toolId = scanners.tool(message.tool).id;
     const spec = scanners.tool(toolId);
     const settings = providerRequest(message);
@@ -161,11 +165,17 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
     }
     const all = [...new Set([...explicit, ...found])];
     if (!all.length) throw new HttpError(filter.length ? `The ${spec.label} search returned no findings` : `Enter ${spec.label} references or a filter`);
-    send({ type: 'scanner_batch_start', tool: toolId, references: all });
-    for (const reference of all) {
-      if (controller.signal.aborted) { send({ type: 'scanner_item', tool: toolId, reference, stage: 'cancelled', detail: 'Cancelled', done: true }); continue; }
-      await reviewOne(toolId, reference, { settings, message, signal: controller.signal, send, profile });
-    }
+    try { execution = batchExecution(execution, all.length); } catch (error) { throw new HttpError(error.message); }
+    checkAbort(controller.signal);
+    send({ type: 'scanner_batch_start', tool: toolId, references: all, execution });
+    const started = new Set();
+    try {
+      await mapBounded(all, async reference => {
+        started.add(reference);
+        await reviewOne(toolId, reference, { settings, message, signal: controller.signal, send, profile });
+      }, { concurrency: execution.maxConcurrency, signal: controller.signal });
+    } catch (error) { if (!controller.signal.aborted) throw error; }
+    for (const reference of all.filter(reference => !started.has(reference))) send({ type: 'scanner_item', tool: toolId, reference, stage: 'cancelled', detail: 'Cancelled before starting', done: true });
     send({ type: 'scanner_batch_complete', tool: toolId, cancelled: controller.signal.aborted });
   }
 

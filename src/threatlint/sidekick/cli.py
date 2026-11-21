@@ -63,7 +63,7 @@ def add_sidekick_parser(sub) -> None:
     trend = a.add_parser("trends", help="Trend summary for a loadout")
     trend.add_argument("loadout")
     trend.add_argument("--months", type=int, default=12, help="0 for all history")
-    find = a.add_parser("find", help="Find repositories by name (names on stdin, one per line)")
+    a.add_parser("find", help="Find repositories by name (names on stdin, one per line)")
     owner = a.add_parser("owner", help="Repository ownership by email, or by --repository/--project")
     owner.add_argument("--email", default="")
     owner.add_argument("--repository", default="")

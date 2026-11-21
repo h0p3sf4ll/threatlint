@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "agents": {
+    "appsec-threat-modeler": {
+      "evidenceMode": "source",
+      "inputs": "Repository source, scope, and optional architecture/specification documents.",
+      "outputs": "System model; trust boundaries; prioritized threat register; design/source disagreements.",
+      "boundaries": "Do not treat design intent as implemented controls; record unresolved assumptions."
+    },
+    "appsec-code-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Changed code or an explicit diff/range, surrounding controls, and repository context.",
+      "outputs": "Source-backed security regressions; advisory patches; scoped merge recommendation.",
+      "boundaries": "Do not approve unrelated code or claim regression tests ran without execution evidence."
+    },
+    "appsec-dependency-auditor": {
+      "evidenceMode": "source",
+      "inputs": "Manifests, resolved lockfiles, package provenance, and available advisory evidence.",
+      "outputs": "Reachability/applicability assessment; dependency inventory; compatible upgrade sequence.",
+      "boundaries": "Do not invent CVEs, assert exploitability from a version alone, or install packages."
+    },
+    "appsec-secrets-scanner": {
+      "evidenceMode": "source",
+      "inputs": "Source/configuration/history in authorized scope and credential-shaped evidence.",
+      "outputs": "Redacted exposure locations; confidence limits; containment and rotation sequence.",
+      "boundaries": "Never disclose complete secret values, test credentials, rotate keys, or contact issuers."
+    },
+    "appsec-iac-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Infrastructure declarations, container configuration, deployment identity and network boundaries.",
+      "outputs": "Resource-specific control gaps; least-privilege proposals; rollout and rollback checks.",
+      "boundaries": "Do not apply infrastructure, probe cloud resources, or assume undeclared deployed state."
+    },
+    "appsec-cicd-auditor": {
+      "evidenceMode": "source",
+      "inputs": "Workflow triggers, runner trust, token permissions, artifact provenance and deployment gates.",
+      "outputs": "Event-to-deployment trust graph; pipeline findings; guarded YAML proposals.",
+      "boundaries": "Do not trigger jobs, modify tokens, or equate configured gates with successful enforcement."
+    },
+    "appsec-api-security-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Routes/contracts, handlers, data access and role/tenant enforcement.",
+      "outputs": "Endpoint-level abuse paths; contract-aware fixes; role/tenant regression assertions.",
+      "boundaries": "Do not issue requests to live targets or duplicate general system modeling without endpoint evidence."
+    },
+    "appsec-auth-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Identity/session/token/recovery implementations and authorization enforcement points.",
+      "outputs": "Identity lifecycle and boundary findings; framework-specific remediation; bypass checks.",
+      "boundaries": "Do not authenticate as a user, reuse supplied tokens, or treat authentication as authorization."
+    },
+    "appsec-fp-reviewer": {
+      "evidenceMode": "upstream",
+      "inputs": "Scanner findings with original identifiers, source, rule provenance and available validation evidence.",
+      "outputs": "Binary dispositions with decision basis; proposed fixes; proof-gated tuning; acceptance matrix.",
+      "boundaries": "FALSE POSITIVE needs proof; never suppress, publish rules, close records, or hide missing evidence."
+    },
+    "appsec-compliance-checker": {
+      "evidenceMode": "upstream",
+      "inputs": "Applicable framework scope, supplied findings and inspected implementation evidence.",
+      "outputs": "Traceable control-gap matrix; closure evidence needed; prioritized control remediation.",
+      "boundaries": "Do not give legal advice, certification, audit assurance, or invent control identifiers."
+    },
+    "appsec-attack-tree": {
+      "evidenceMode": "upstream",
+      "inputs": "A defined attacker goal, assets/trust boundaries, source and available earlier findings.",
+      "outputs": "AND/OR attack tree; explicit prerequisites/defensive cuts; ranked leaves; validation plan.",
+      "boundaries": "Do not turn hypothetical paths into verified exploit chains or execute attacks."
+    },
+    "appsec-red-team": {
+      "evidenceMode": "upstream",
+      "inputs": "Authorized design/source scope, attacker objectives and available upstream threat evidence.",
+      "outputs": "Evidence-grounded adversarial scenarios; bounded kill chains; detection hypotheses.",
+      "boundaries": "This agent plans scenarios only; it does not run live exploitation or bypass target authorization."
+    },
+    "appsec-threat-delta": {
+      "evidenceMode": "upstream",
+      "inputs": "Prior report with stable finding IDs, current source and revision/change history.",
+      "outputs": "Per-finding change verdicts; regressions/new risks; revised remediation priorities.",
+      "boundaries": "If no genuine prior baseline exists, report the gap rather than invent a historical comparison."
+    },
+    "appsec-verify-fix": {
+      "evidenceMode": "upstream",
+      "inputs": "Original finding, expected root-cause fix, current source and any actual test evidence.",
+      "outputs": "Qualified remediation verdict; equivalent bypass analysis; residual risk; acceptance checks.",
+      "boundaries": "No finding baseline means insufficient evidence; a changed line alone does not prove remediation."
+    },
+    "appsec-runtime-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Supplied authorized runtime captures, authentication/role state and matching source.",
+      "outputs": "Source/capture evidence matrix; qualified runtime findings; NOT RUN validation proposals.",
+      "boundaries": "Do not initiate scans, acquire sessions or assume a capture proves another role/tenant is protected."
+    },
+    "appsec-business-logic-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Business invariants, state transitions, entitlements, replay/idempotency and asynchronous effects.",
+      "outputs": "Invariant-specific abuse paths; advisory corrections; synthetic state/race acceptance cases.",
+      "boundaries": "Do not invent business policy or execute transactions to validate a hypothesis."
+    },
+    "appsec-client-security-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Browser/Electron/mobile entry points, origins, renderers, storage and privileged bridges.",
+      "outputs": "Client boundary findings; framework-native fixes; isolation and navigation checks.",
+      "boundaries": "Do not conflate client checks with server authorization or assume platform isolation is configured."
+    },
+    "appsec-crypto-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Security purpose, primitive choices, key/nonce lifecycle and TLS verification code.",
+      "outputs": "Purpose-specific crypto findings; compatibility-aware migration and rollback proposals.",
+      "boundaries": "Do not invent cryptographic primitives, reveal keys, or label all weak hashes exploitable."
+    },
+    "appsec-ai-security-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Prompt/retrieval/memory/tool/output flows, identity context and enforcement code.",
+      "outputs": "AI trust-boundary findings; deterministic authorization controls; synthetic adversarial cases.",
+      "boundaries": "Prompts are not access control; do not grant authority to retrieved content or execute attacks."
+    },
+    "appsec-security-test-planner": {
+      "evidenceMode": "upstream",
+      "inputs": "Source, intended controls, upstream findings and available test/authorization context.",
+      "outputs": "Traceable acceptance cases; role/tenant negative controls; owners and prerequisite gaps.",
+      "boundaries": "Design tests only; mark NOT RUN unless actual evidence exists, and never bypass SSO/MFA."
+    },
+    "appsec-secure-codegen-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Generated/new code, surrounding trust boundaries and intended security properties.",
+      "outputs": "Secure-by-default advisory rewrites; root-cause reasoning; reusable assistant/IDE guardrails.",
+      "boundaries": "Do not apply patches or equate model-generated fixes with validated secure behavior."
+    },
+    "appsec-privacy-reviewer": {
+      "evidenceMode": "source",
+      "inputs": "Data inventories and source flows into storage, logs, analytics, AI providers and third parties.",
+      "outputs": "Purpose/retention/exposure inventory; minimization proposals; synthetic-data acceptance cases.",
+      "boundaries": "Do not print personal data or give legal compliance conclusions; distinguish observed and inferred flows."
+    }
+  }
+}

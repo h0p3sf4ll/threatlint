@@ -30,6 +30,30 @@ More time making the next change with a clear reason.
 Workbench also supports [centralized findings management](docs/integrations.md) in Jira Cloud,
 Azure Boards, and GitHub Issues, with multiple organization connections and basic role controls.
 
+### Security platform foundation
+
+The Workbench now connects **scan → understand → fix → measure**. Guided mode provides a
+starting path for developers who want help with their code; Advanced mode exposes scoped
+parallel workers, independent provider challenge and evidence-backed exploit chains.
+
+- **Security scanner:** local SAST/secret patterns, selected IaC checks and dependency hygiene,
+  with optional installed Semgrep and Trivy engines. Coverage and missing engines stay visible.
+- **Reviewed fixes:** inspect a supported change, apply it to the bound source snapshot and
+  rescan. Explicit policies cover exact Python debug settings, recognized unsafe YAML loaders
+  and disabled requests TLS verification. Other fixes remain recommendations; application tests still need to run.
+- **Connected risk:** view findings by repository, branch and revision, review causal attack
+  paths, and track verified improvement. Component counts never automatically inflate severity.
+- **Independent perspectives:** opt into two or three providers, one challenge round and a
+  consolidated report with disagreements retained. More model votes are not proof.
+- **Bounded parallel work:** control workers and model-run budgets in Workbench reviews,
+  scanner-review/import batches and explicit independent CLI source scopes.
+
+ServiceNow chain export and private developer coaching are explicitly **offline preview
+stubs**. This is a foundation for local testing, not a claim of complete scanner coverage.
+Read [what changed, benefits and limits](docs/security-platform.md) and
+[validation evidence](docs/platform-validation.md) and the
+[original-request audit](docs/request-completion.md) for scope and validation details.
+
 ### What a useful answer looks like
 
 An illustrative finding, not a result from your repository:
@@ -82,7 +106,7 @@ npm --prefix web start
 ```
 
 Open `http://127.0.0.1:3000`. View the bundled sample report before configuring a
-model, or connect a provider and review a repository.
+model, run **Test → Security scanner** without a model, or connect a provider and review a repository.
 Claude supports your Claude Code login, an Anthropic API key, or an Amazon Bedrock API key.
 Choose the method in Settings; see [credential setup](docs/setup.md#cloud-providers).
 
@@ -111,6 +135,9 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 
 | Your question | Start here | The useful outcome |
 | --- | --- | --- |
+| "Where should I start securing this code?" | Guided mode → Security scanner | Ranked findings, visible coverage, supported fixes and a rescan |
+| "Could these findings combine?" | Repository risk → reviewed chain | A causal path with final impact, difficulty, evidence and preserved individual decisions |
+| "Are we improving?" | Metrics → repository progress | Historical observations, verified remediation and coverage context |
 | "What can go wrong in this feature?" | Threat model (optionally with design diagrams, data-flow/architecture diagrams, specs, and source as inputs) | Assets, trust boundaries, attack paths, priorities, and design-drift notes |
 | "Did this change weaken a control?" | Security code review | Source-backed findings and a merge recommendation |
 | "Is this scanner result actionable?" | False-positive review (AVITs, SCTASKs, ISSTs) or Triage a scan report (PDF, supported XML or JSON) | Disposition, missing evidence, proposed fixes, acceptance criteria |
@@ -119,7 +146,9 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 | "Where should the portfolio focus?" | Sidekick | Loadouts, vReports, ownership, trends, and action history |
 
 Pick a [specialist by outcome](docs/agents.md). The 22 agents receive shared
-evidence/reporting workflows plus domain-specific skills—not just a role name.
+evidence/reporting workflows plus domain-specific skills, with explicit inputs, outputs,
+and boundaries for each assignment. Read the [agentic-workflow learning path](docs/learning.md)
+for a practical introduction using race-engineering metaphors.
 
 ## One workflow, several places to use it
 
@@ -140,10 +169,45 @@ evidence/reporting workflows plus domain-specific skills—not just a role name.
 [First review](web/public/media/first-review.mp4) ·
 [Authenticated runtime workflow](web/public/media/runtime-scan.mp4)
 
-The demonstrations use local fixtures and synthetic examples. More videos are
-available in the Workbench under **Learn & videos**.
+The demonstrations use local fixtures and synthetic examples, not results from your repository.
+They are existing recordings and may differ from the latest controls. More videos are available
+in the Workbench under **Learn & videos**; [media provenance and capture instructions](docs/media/README.md)
+explain how to refresh them from the real app.
 The existing voiceovers are synthetic; the [human narration workflow](docs/narration.md)
 provides scripts and recording guidance for their replacement.
+
+## Learn the system, not just the buttons
+
+Start with the [guided learning path](docs/learning.md): inspect a synthetic report, choose a
+specialist, connect source and design evidence, understand the model/tool loop, and plan safe
+parallel work. Each lesson has a small exercise and an observable checkpoint.
+
+For a threat model, choose **Model a system**, use **Select repo / branch**, and add architecture
+notes, specifications, or diagrams with **Add supporting docs**. The review compares design
+intent against the selected source. See the [step-by-step walkthrough](docs/workbench.md#model-a-system-from-source-and-design).
+
+The current browser captures use a disposable synthetic repository and model/source adapters;
+they are interface demonstrations, not results from production code.
+
+![Security scanner showing ranked findings and explicit coverage](docs/media/security-scanner.png)
+
+<details><summary>Explore the current review and remediation interface</summary>
+
+![Review a supported change before applying and rescanning](docs/media/security-fix-review.png)
+![Select a repository branch for a threat model](docs/media/threat-model-source.png)
+![Provide source, supporting documents and review context](docs/media/threat-model-setup.png)
+![Advanced scoped workers and independent provider controls](docs/media/parallel-provider-controls.png)
+![Repository-wide finding history and revision-aware review](docs/media/repository-risk.png)
+![An explicitly reviewed synthetic chain with complexity and priority rationale](docs/media/synthetic-composite-evidence.png)
+![Repository evidence history on the Metrics page](docs/media/repository-progress.png)
+
+</details>
+
+<p align="center"><img src="docs/media/architecture.svg" alt="Threatlint architecture: shared specialist contracts, separate execution runtimes, advisory reports, and separately authorized operational workflows" width="100%"></p>
+
+The [architecture guide](docs/architecture.md) links each boundary to implementation and explains
+where evidence travels. Shared instructions are not a shared sandbox; a report-format check
+is not independent verification of a vulnerability.
 
 ## Clear boundaries build trust
 
@@ -171,6 +235,7 @@ engineering handoff without overstating what was verified.
 | Install for Claude, Copilot, Codex, or terminal use | [Setup](docs/setup.md) |
 | Review code visually or inspect authorized runtime evidence | [Workbench](docs/workbench.md) |
 | Choose one of the 22 specialists | [Agent guide](docs/agents.md) |
+| Learn AI, agentic workflows, parallelism, and AppSec through practical exercises | [Learning path](docs/learning.md) |
 | See the architecture, data flows, and every agent and skill on one page | [Architecture](docs/architecture.md) |
 | Add instructions, guard hooks, or the VS Code extension | [IDE guide](docs/ide.md) |
 | Start warn-first reviews in GitHub or Azure Pipelines | [CI templates](docs/ci-templates.md) |

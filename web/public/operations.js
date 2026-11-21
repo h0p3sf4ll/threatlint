@@ -125,6 +125,8 @@
     if (!response.ok) {
       const error = new Error('The local runner could not complete this operation.');
       error.status = response.status;
+      const failure = await response.json().catch(() => null);
+      if (failure?.code === 'SCM_BRANCH_MOVED') error.code = failure.code;
       throw error;
     }
     if (response.status === 204) return null;
@@ -495,12 +497,13 @@
     try {
       const payload = await api('/api/scm/checkout', { method: 'POST', body });
       if (!idOf(payload?.sessionId) || typeof payload.repoPath !== 'string' || !payload.repoPath) throw new Error('Invalid checkout.');
-      $('scm-checkout-detail').textContent = `Checkout ready · ${redactText(payload.repoPath)} · branch ${body.branch}`;
+      $('scm-checkout-detail').textContent = `Checkout ready · ${redactText(payload.repoPath)} · branch ${body.branch}${payload.provenance?.commit ? ` · commit ${payload.provenance.commit}` : ''}`;
       // Bubbles to both document and window listeners; the parent opens the shared session.
       document.dispatchEvent(new CustomEvent('threatlint:workspace', { bubbles: true, detail: { sessionId: payload.sessionId, repoPath: payload.repoPath } }));
       status('scm-status', 'Checkout ready. A shared-workspace handoff was requested; specialist reviews still require an explicit run.');
-    } catch {
-      status('scm-status', 'The checkout was not acknowledged. Check repository access and the local runner before retrying.', 'error');
+    } catch (error) {
+      status('scm-status', error.code === 'SCM_BRANCH_MOVED' ? 'The branch changed during checkout. Select it again to pin its latest commit; no workspace was opened.'
+        : 'The checkout was not acknowledged. Check repository access and the local runner before retrying.', 'error');
     } finally { scm.checkout = false; syncSourceControls(); }
   }
 

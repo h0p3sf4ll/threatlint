@@ -9,6 +9,7 @@
   const preferencesStorage = profile?.storage || localStorage;
   const desktop = window.threatlintDesktop;
   const PRESETS = [
+    { id: 'threat', title: 'Model a system', icon: '⑂', description: 'Select a repository and branch, add supporting docs, and map threats against the actual code.', agents: ['appsec-threat-modeler'], label: 'SOURCE + DESIGN CONTEXT' },
     { id: 'full', title: 'Security baseline', icon: '◎', description: 'Understand your exposure, credentials, and dependency trust.', agents: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'], label: 'DISCOVER & PRIORITIZE' },
     { id: 'pr', title: 'Pull request review', icon: '⌘', description: 'Review the change. Trace its impact. Make a scoped merge decision.', agents: ['appsec-code-reviewer', 'appsec-api-security-reviewer', 'appsec-auth-reviewer'], label: 'REVIEW & VALIDATE' },
     { id: 'triage', title: 'Find signal in the noise', icon: '⌁', description: 'Turn scanner findings into defensible verdicts and proposed fixes.', agents: ['appsec-fp-reviewer'], label: 'TRIAGE & REMEDIATE' },
@@ -100,7 +101,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { management: 'Issue management', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { security: 'Security scanner', intelligence: 'Repository risk', management: 'Issue management', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -140,7 +141,7 @@
       const item = el('li', `pipeline-item ${status}`); item.dataset.agentId = id;
       const info = el('div', 'pipeline-item-info'); info.append(el('strong', '', agent?.label || id), el('small', '', `${agent?.skills?.length || 3} skills · ${agent?.category || 'Analysis'}`));
       item.append(el('span', 'pipeline-number', String(index + 1).padStart(2, '0')), el('span', 'agent-monogram', agent?.initials || 'TL'), info);
-      if (state.running || status !== 'ready') item.append(el('span', 'pipeline-status', { ready: 'Queued', running: 'Reviewing…', complete: 'Complete', error: 'Failed', cancelled: 'Stopped', interrupted: 'Interrupted' }[status] || status));
+      if (state.running || status !== 'ready') item.append(el('span', 'pipeline-status', { ready: 'Queued', running: 'Reviewing…', complete: 'Complete', error: 'Failed', skipped: 'Skipped', cancelled: 'Stopped', interrupted: 'Interrupted' }[status] || status));
       const actions = el('div', 'pipeline-actions');
       const move = direction => {
         if (state.running) return;
@@ -154,6 +155,7 @@
         if (state.running) return;
         state.pipeline.splice(index, 1); state.preset = ''; renderPipeline(); renderPresets(); renderAgents();
       }, `Remove ${agent?.label}`); remove.disabled = state.running;
+      if (window.ThreatlintPlatformControls) actions.append(window.ThreatlintPlatformControls.workerControl(agent || { id }, state.running));
       actions.append(up, down, remove); item.append(actions); $('pipeline-list').append(item);
     });
     updateRunControls();
@@ -162,8 +164,8 @@
   function publishContext() {
     const provider = state.preferences.provider;
     document.dispatchEvent(new CustomEvent('threatlint:context', { detail: Object.freeze({
-      session: state.session ? { id: state.session.id, repoPath: state.session.repoPath } : null,
-      connected: state.connected, ready: modelReady() && (!cloudProvider() || state.consent.has(consentKey())),
+      session: state.session ? { id: state.session.id, repoPath: state.session.repoPath, provenance: state.session.provenance } : null,
+      connected: state.connected, running: state.running, ready: modelReady() && (!cloudProvider() || state.consent.has(consentKey())),
       reports: state.reports.length, ran: state.reports.length > 0,
       socket: state.ws, settings: { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
         ...providerKeys(provider) },
@@ -177,13 +179,18 @@
   }
   function updateRunControls() {
     publishContext();
-    $('start-run').disabled = profile?.permissions?.review === false || state.running || !state.connected || !state.session || !state.pipeline.length;
+    const uploading = window.ThreatlintDesignInputs?.busy() || false;
+    $('start-run').disabled = profile?.permissions?.review === false || state.running || uploading || !state.connected || !state.session || !state.pipeline.length;
     $('cancel-run').classList.toggle('hidden', !state.running);
     $('clear-pipeline').disabled = state.running;
     $('browse-agents').disabled = state.running;
     $('target').disabled = state.running;
     $('attach-findings').disabled = state.running;
-    if ($('add-design-inputs')) $('add-design-inputs').disabled = state.running;
+    window.ThreatlintDesignInputs?.setLocked(state.running);
+    window.ThreatlintPlatformControls?.setLocked(state.running);
+    $('review-select-source').disabled = state.running;
+    $('pipeline-execution-mode').disabled = state.running;
+    $('pipeline-concurrency').disabled = state.running || $('pipeline-execution-mode').value === 'sequential';
     $('avit-list').disabled = state.running;
     $('avit-section').hidden = !state.pipeline.includes(FP_REVIEWER);
     $('remove-attachment').disabled = state.running;
@@ -194,10 +201,16 @@
     if (!state.pipeline.length) summary = 'Add at least one specialist';
     if (!state.session) summary = 'Choose a repository to get started';
     if (!state.connected) summary = 'Connecting to the local runner…';
+    if (uploading) summary = 'Reading supporting documents before review…';
     if (state.running) summary = 'Review in progress · source remains unchanged';
     if (profile?.permissions?.review === false) summary = 'Viewer access · browse saved findings and reports. Ask an administrator to enable reviews.';
     $('run-summary').textContent = summary;
     $('run-status-dot').classList.toggle('waiting', !state.session);
+    const source = state.session?.provenance;
+    $('review-source-name').textContent = source?.repository || (state.session ? repoName(state.session.repoPath) : 'No repository selected');
+    $('review-source-name').title = state.session?.repoPath || '';
+    $('review-source-revision').textContent = source ? `${source.provider} · branch ${source.branch} · commit ${source.commit}`
+      : state.session ? `Local working tree · ${state.session.repoPath} · includes uncommitted changes` : 'Choose a connected repository and branch, or open a local folder.';
   }
   function toggleAgent(id) {
     if (state.running) { toast('Wait until the current pipeline has finished.', true); return; }
@@ -850,21 +863,16 @@
     finally { $('discover-models').disabled = false; }
   }
 
+  let activityLog;
+  const activity = () => activityLog ||= window.ThreatlintActivityLog.createActivityLog($('activity-log'), {
+    document, labelFor: id => agentById(id)?.label || id,
+  });
   function log(message, kind = '') {
     $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden');
-    const container = $('activity-log');
-    const follow = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    const node = el('div', `log-event ${kind}`, message); container.append(node);
-    if (++state.activityCount > 1500) container.firstChild?.remove();
-    if (follow) container.scrollTop = container.scrollHeight;
+    activity().event(message, kind);
   }
-  function logText(text) {
-    const container = $('activity-log'); const follow = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    let node = container.lastElementChild;
-    if (!node?.classList.contains('log-text')) { node = el('div', 'log-text'); container.append(node); }
-    node.append(document.createTextNode(text));
-    if (node.textContent.length > 100_000) node.textContent = '[Earlier streaming output omitted from this activity view]\n' + node.textContent.slice(-80_000);
-    if (follow) container.scrollTop = container.scrollHeight;
+  function logText(text, agentId = '') {
+    activity().text(text, agentId);
   }
   function finishRun(result) {
     state.running = false;
@@ -945,10 +953,12 @@
         $('fpreview-error').textContent = event.message; break;
       case 'avit_fetch': log(`Fetching ${event.count} AVIT${event.count > 1 ? 's' : ''} from ${event.instance}…`); break;
       case 'avit_loaded': log(`ServiceNow returned ${event.retrieved} CodeSecurity AVIT${event.retrieved === 1 ? '' : 's'}${event.missing.length ? ` · not found: ${event.missing.join(', ')}` : ''}${event.excluded?.length ? ` · skipped (not CodeSecurity): ${event.excluded.join(', ')}` : ''}`, event.missing.length || event.excluded?.length ? 'error' : 'success'); break;
-      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${displayModel()}`); break;
+      case 'pipeline_start': log(`Review started · ${event.agentIds.length} specialist${event.agentIds.length > 1 ? 's' : ''} · ${displayModel()}${event.execution ? ` · ${event.execution.mode} · concurrency ${event.execution.maxConcurrency}` : ''}`); break;
+      case 'agent_skipped': state.statuses[event.agentId] = 'skipped'; renderPipeline(); log(`${agentById(event.agentId)?.label || event.agentId} skipped · ${event.message || event.reason || 'required evidence unavailable'}`); break;
+      case 'review_stage': log(`${agentById(event.agentId)?.label || event.agentId} · ${event.stage} · ${event.provider || ''} ${event.model || ''} ${event.workerId || ''}`, 'tool'); break;
       case 'agent_start': state.statuses[event.agentId] = 'running'; renderPipeline(); log(`${agentById(event.agentId)?.initials || '→'}  ${event.label} · ${event.skills?.length || agentById(event.agentId)?.skills.length || ''} skills loaded`, 'agent-start'); break;
       case 'iteration': $('activity-detail').textContent = `${agentById(event.agentId)?.label || 'Agent'} · inspection step ${event.n}`; break;
-      case 'text_chunk': logText(event.text); break;
+      case 'text_chunk': logText(event.text, event.agentId); break;
       case 'tool_executing': { const input = event.input || {}; const detail = input.file_path || input.pattern || input.command || ''; log(`↳ ${event.tool} ${String(detail).slice(0, 180)}`); break; }
       case 'tool_result': break;
       case 'agent_complete': state.statuses[event.agentId] = 'complete'; renderPipeline(); log(`${event.label} report saved ${profile?.web ? 'to your profile' : 'locally'}${event.hasDocx ? ' · Word export ready' : ''}`, 'success'); refreshReports().catch(error => toast(error.message, true)); break;
@@ -1012,6 +1022,8 @@
   }
   async function startRun() {
     if (state.running || !state.session || !state.pipeline.length || !state.connected) return;
+    if (window.ThreatlintDesignInputs?.busy()) { toast('Wait until the supporting documents are ready.', true); return; }
+    if (!$('pipeline-concurrency').reportValidity()) return;
     let avits = [];
     if (state.pipeline.includes(FP_REVIEWER)) {
       try { avits = parseAvits($('avit-list').value); } catch (error) { toast(error.message, true); $('avit-list').focus(); return; }
@@ -1023,14 +1035,17 @@
     const provider = state.preferences.provider;
     if (provider !== 'lmstudio' && !state.credentials[provider] && !state.config.providers[provider]) { showSettings(); toast(provider === 'copilot' ? 'Sign in with the GitHub CLI (gh auth login) or enter a GitHub token for Copilot.' : provider === 'claude-code' ? 'Install Claude Code and run `claude` once in a terminal to sign in.' : provider === 'codex' ? 'Install Codex CLI and run `codex login` in a terminal, then reload Settings.' : 'A provider API key is required for this review.', true); return; }
     if (state.pipeline.includes(FP_REVIEWER) && !state.attachment && !avits.length && !$('target').value.trim() && state.pipeline[0] === FP_REVIEWER) { toast('Attach findings, enter ServiceNow AVITs, or specify the findings location in your review scope.', true); $('attach-findings').focus(); return; }
-    if (!await requireSemgrep() || state.running || !state.connected) return;
+    if (!await requireSemgrep() || state.running || !state.connected || window.ThreatlintDesignInputs?.busy()) return;
+    const primarySettings = { provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio, ...providerKeys(provider) };
+    const orchestration = window.ThreatlintPlatformControls?.reviewOptions({ primarySettings, agentIds: state.pipeline }) || {};
     state.running = true; state.statuses = Object.fromEntries(state.pipeline.map(id => [id, 'ready']));
-    $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden'); $('activity-log').replaceChildren(); state.activityCount = 0;
+    $('activity-empty').classList.add('hidden'); $('activity-log').classList.remove('hidden'); activity().clear();
     $('activity-badge').classList.add('running'); $('activity-badge').replaceChildren(el('span', 'status-dot'), document.createTextNode('Reviewing'));
     const payload = { action: 'run_pipeline', sessionId: state.session.id, agentIds: [...state.pipeline], target: $('target').value.trim(), provider,
       model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
       ...providerKeys(provider),
       attachment: state.attachment || undefined, designInputsId: window.ThreatlintDesignInputs?.id() || undefined, continueOnError: false,
+      execution: { mode: $('pipeline-execution-mode').value, maxConcurrency: Number($('pipeline-concurrency').value) }, ...orchestration,
       ...(avits.length ? { avits, servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } } : {}) };
     try { state.ws.send(JSON.stringify(payload)); } catch (error) { finishRun('error'); toast(error.message, true); }
     renderPipeline(); renderPresets(); renderAgents();
@@ -1039,6 +1054,8 @@
   function wireEvents() {
     for (const item of document.querySelectorAll('[data-view]')) item.addEventListener('click', () => showView(item.dataset.view));
     document.addEventListener('threatlint:toast', event => toast(event.detail.message, !!event.detail.error));
+    document.addEventListener('threatlint:design-inputs', updateRunControls);
+    $('pipeline-execution-mode').addEventListener('change', updateRunControls);
     for (const item of document.querySelectorAll('[data-go-view]')) item.addEventListener('click', () => showView(item.dataset.goView));
     for (const close of document.querySelectorAll('.close-dialog')) close.addEventListener('click', () => close.closest('dialog').close());
     for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
@@ -1096,7 +1113,7 @@
       startRun().catch(error => toast(error.message, true)).finally(() => { starting = false; });
     });
     $('cancel-run').addEventListener('click', () => { if (state.running && state.connected) { state.ws.send(JSON.stringify({ action: 'cancel' })); $('activity-detail').textContent = 'Stopping the current model request…'; } });
-    $('clear-activity').addEventListener('click', () => { $('activity-log').replaceChildren(); state.activityCount = 0; if (!state.running) { $('activity-log').classList.add('hidden'); $('activity-empty').classList.remove('hidden'); } });
+    $('clear-activity').addEventListener('click', () => { activity().clear(); if (!state.running) { $('activity-log').classList.add('hidden'); $('activity-empty').classList.remove('hidden'); } });
     $('preview-example').addEventListener('click', openExample); $('reports-example').addEventListener('click', openExample);
     $('report-tab-full').addEventListener('click', () => selectReportTab('full')); $('report-tab-findings').addEventListener('click', () => selectReportTab('findings'));
     $('report-ask').addEventListener('click', () => askAbout({ type: 'report', reportId: state.report.id, label: `${state.report.label} report` }, 'What should I fix first in this report, and why?'));

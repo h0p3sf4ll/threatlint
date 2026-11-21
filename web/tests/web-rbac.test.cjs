@@ -61,7 +61,8 @@ it('enforces company roles before forwarding API calls and rejects forged header
   assert.equal(viewer.body.role, 'viewer'); assert.equal(analyst.body.role, 'analyst');
   assert.equal((await app.call('/api/access', { cookie: viewer.cookie })).body.permissions.manageSettings, false);
   assert.equal((await app.call('/api/agents', { cookie: viewer.cookie })).status, 200);
-  for (const route of ['/api/session/local', '/api/runtime/scans', '/api/servicenow/close-false-positive', '/api/management/findings/create', '/API/GITHUB/SETTINGS']) {
+  const platformMutations = ['/api/security-scanner/scans', '/api/security-scanner/fixes/proposal/apply', '/api/intelligence/findings/finding/reviews'];
+  for (const route of ['/api/session/local', '/api/runtime/scans', '/api/servicenow/close-false-positive', '/api/management/findings/create', '/API/GITHUB/SETTINGS', ...platformMutations]) {
     assert.equal((await app.call(route, { cookie: viewer.cookie, method: 'POST', json: { role: 'administrator' }, headers: { 'X-Threatlint-Role': 'administrator' } })).status, 403, route);
   }
   for (const route of ['/api/github/settings', '/api/ado/service-account', '/api/scanners/dojo/settings', '/api/management/connections']) {
@@ -72,8 +73,11 @@ it('enforces company roles before forwarding API calls and rejects forged header
   assert.equal((await app.call('/api/scm/connections', { cookie: analyst.cookie, method: 'POST', json: {} })).status, 200);
   assert.equal((await app.call('/api/scm/connections/personal-session', { cookie: analyst.cookie, method: 'DELETE' })).status, 200);
   assert.equal((await app.call('/api/session/local', { cookie: analyst.cookie, method: 'POST', json: {} })).status, 200);
+  for (const route of platformMutations) {
+    assert.equal((await app.call(route, { cookie: analyst.cookie, method: 'POST', json: {} })).status, 200, route);
+  }
   assert.equal(await deniedSocket(app.origin, viewer.cookie), 403);
-  assert.deepEqual(app.received, ['/api/agents', '/API/MODEL-PREFERENCES/', '/api/scm/connections', '/api/scm/connections/personal-session', '/api/session/local']);
+  assert.deepEqual(app.received, ['/api/agents', '/API/MODEL-PREFERENCES/', '/api/scm/connections', '/api/scm/connections/personal-session', '/api/session/local', ...platformMutations]);
 });
 
 it('lets company administrators assign persistent tenant-scoped roles with last-admin protection', async t => {

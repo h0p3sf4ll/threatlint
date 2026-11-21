@@ -96,6 +96,24 @@ Small cohesive modules such as `models.py`, `skills.py`, `ide.py`, and
 
 ## Find the right source
 
+The new platform boundaries are documented in [Security platform](security-platform.md).
+Scanner code separates snapshotting, baseline checks, external adapters, normalization,
+fix policy and CLI transport. The Workbench evidence ledger separates normalization/storage,
+causal graph decisions and offline previews. Keep edits out of model transport and keep
+unverified scanner/model assertions distinct from explicit reviewer attestations.
+
+Run the end-to-end platform check with a supported Chromium installation:
+
+```bash
+THREATLINT_BROWSER_EXECUTABLE=/absolute/path/to/chromium node web/tests/security-platform-browser-smoke.cjs
+```
+
+`THREATLINT_TEST_PYTHON` optionally selects a Python interpreter. The check uses the actual
+Python baseline and fix service against a disposable Git repository; it calls no provider.
+Set `THREATLINT_SCREENSHOTS=docs/media` to refresh the documented screenshots. Inspect the
+pixels before committing. [Validation evidence](platform-validation.md) distinguishes unit,
+browser, live-provider and native-desktop coverage.
+
 | Area | Source |
 | --- | --- |
 | Python CLI and integrations | [src/threatlint/](../src/threatlint/) |
@@ -108,6 +126,24 @@ Small cohesive modules such as `models.py`, `skills.py`, `ide.py`, and
 Edit agent customizations deliberately: update their canonical definitions and
 check client mirrors and skill registration together. The
 [agent guide](agents.md) explains the user-facing contracts.
+
+## Validate workflow contracts and scheduling
+
+The [execution contracts](../src/threatlint/data/agent-contracts.json) define each specialist's
+inputs, outputs, boundaries, and `source`/`upstream` evidence mode. Keep them aligned with the
+canonical agents, skill registry, prompt assembly, installed-client exports, and the agent UI.
+A new specialist must not silently inherit an arbitrary scheduling dependency.
+
+Read [Execution controls](architecture.md#execution-controls) before changing concurrency.
+Test independent overlap, deterministic ancestor context, cycles and bad limits, failed
+prerequisites, queued/active cancellation, bounded admission, and stable tool-call identity.
+Use fake providers and temporary repositories so tests do not spend real quotas or mutate
+external findings. Preserve serialized write-capable workflows unless their authorization and
+idempotency contracts are explicitly redesigned.
+
+For documentation/media changes, validate relative links and SVG XML, render each changed
+figure, and inspect its pixels. Use the [current-UI capture procedure](media/README.md) for
+screenshots. Passing DOM tests is not a successful browser capture.
 
 ## Write docs that help someone act
 

@@ -149,7 +149,7 @@ def test_iteration_limit_fails_instead_of_saving_partial_report(monkeypatch):
     sent = []
     def opener(request, timeout):
         sent.append(request)
-        return Response(sse(*turn("Partial.", "tool_use", {"name": "Unknown", "input": {}})))
+        return Response(sse(*turn("Partial.", "tool_use", {"name": "Read", "input": {"file_path": "missing-fixture.txt"}})))
     with pytest.raises(claude_api.MessagesError, match="iteration limit"):
         claude_api.run_agent(claude_api.ANTHROPIC_MESSAGES_URL, "model", "s", "u", ".", "key",
                               opener=opener, progress=lambda text: None)

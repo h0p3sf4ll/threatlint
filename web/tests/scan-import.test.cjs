@@ -140,6 +140,32 @@ describe('Scan evidence redaction', () => {
 });
 
 describe('Scan triage and report', () => {
+  it('honors per-import parallelism and rejects an over-budget review before model dispatch', async () => {
+    const base = await parsed();
+    const report = { ...base, findings: Array.from({ length: 45 }, (_, index) => ({ ...base.findings[0], id: `FP-${index + 1}` })) };
+    let active = 0, peak = 0, calls = 0;
+    const options = { settings: { provider: 'lmstudio', model: 'stub' }, emptyRepo: os.tmpdir(), override: async () => {
+      calls++; peak = Math.max(peak, ++active); await new Promise(resolve => setImmediate(resolve)); active--; return '{"verdicts":[]}';
+    } };
+    await assert.rejects(scan.triage(report, { ...options, execution: { maxModelRuns: 2 } }), /needs 3 model runs/);
+    assert.equal(calls, 0);
+    await scan.triage(report, { ...options, execution: { maxConcurrency: 1, maxModelRuns: 3 } });
+    assert.equal(calls, 3); assert.equal(peak, 1);
+  });
+  it('triages independent batches together and preserves finding order', async () => {
+    // Reuse a known parsed report rather than making an external scanner request.
+    const base = await parsed();
+    const report = { ...base, findings: Array.from({ length: 45 }, (_, index) => ({ ...base.findings[0], id: `FP-${String(index + 1).padStart(3, '0')}` })) };
+    let active = 0, maximum = 0;
+    const verdicts = await scan.triage(report, { settings: { provider: 'lmstudio', model: 'stub' }, emptyRepo: os.tmpdir(), override: async () => {
+      maximum = Math.max(maximum, ++active);
+      await new Promise(resolve => setImmediate(resolve)); active--;
+      return '{"verdicts":[]}';
+    } });
+    assert.equal(maximum, 3);
+    assert.deepEqual([...verdicts.keys()], report.findings.map(finding => finding.id));
+    assert.ok([...verdicts.values()].every(verdict => verdict.unverified));
+  });
   const parsed = () => scan.parseScanReport(fixture('invicti.xml'));
   it('retains every finding as unverified TRUE POSITIVE without a model', async () => {
     const verdicts = await scan.triage(await parsed(), { settings: null });

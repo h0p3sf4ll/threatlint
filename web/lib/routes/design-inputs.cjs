@@ -10,7 +10,7 @@
 
 const express = require('express');
 const { handle, HttpError } = require('../http.cjs');
-const { MAX_TOTAL, MAX_FILES } = require('../design-inputs.cjs');
+const { MAX_TOTAL, MAX_FILES, MAX_FILE } = require('../design-inputs.cjs');
 
 // Base64 is a third larger than the files it carries.
 const JSON_LIMIT = Math.ceil(MAX_TOTAL * 4 / 3) + 64 * 1024;
@@ -20,10 +20,17 @@ function parseFiles(body) {
   const files = body?.files;
   if (!Array.isArray(files) || !files.length) throw new HttpError('Send {files: [{name, content}]} with each file base64-encoded');
   if (files.length > MAX_FILES) throw new HttpError(`Add at most ${MAX_FILES} design inputs per review`);
+  let bytes = 0;
   return files.map(file => {
     const compact = typeof file?.content === 'string' ? file.content.replace(/\s+/g, '') : '';
-    if (!compact || !STRICT_BASE64.test(compact)) throw new HttpError('Each design input needs its content base64-encoded');
-    return { name: typeof file.name === 'string' ? file.name : '', content: Buffer.from(compact, 'base64') };
+    if (!compact || compact.length % 4 !== 0 || !STRICT_BASE64.test(compact)) throw new HttpError('Each design input needs its content base64-encoded');
+    const decodedLength = compact.length / 4 * 3 - (compact.endsWith('==') ? 2 : compact.endsWith('=') ? 1 : 0);
+    bytes += decodedLength;
+    if (decodedLength > MAX_FILE) throw new HttpError('Each design input can be at most 10 MB', 413);
+    if (bytes > MAX_TOTAL) throw new HttpError('Design inputs can total at most 25 MB', 413);
+    const content = Buffer.from(compact, 'base64');
+    if (content.toString('base64') !== compact) throw new HttpError('Each design input needs canonical base64 content');
+    return { name: typeof file.name === 'string' ? file.name : '', content };
   });
 }
 

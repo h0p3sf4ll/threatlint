@@ -204,6 +204,15 @@ describe('Scanner Workbench routes', () => {
     assert.ok(resolve.includes('--yes') && !resolve.includes('--skip-semgrep') && fs.existsSync(resolve[resolve.indexOf('--docx') + 1]));
   });
 
+  it('checks a scanner batch budget before checkout or model work', async () => {
+    events.length = 0; cliCalls.length = 0;
+    socket.send(JSON.stringify({ action: 'run_scanner_batch', tool: 'dojo', references: '1201,1202', provider: 'lmstudio', model: 'fixture', execution: { maxModelRuns: 1 } }));
+    while (!events.some(event => event.type === 'scanner_batch_error')) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(events.find(event => event.type === 'scanner_batch_error').message, /needs 2 model runs/);
+    assert.deepEqual(cliCalls, []);
+    assert.equal(events.some(event => event.type === 'scanner_batch_start'), false);
+  });
+
   it('posts an imported DefectDojo export back to DefectDojo, and SonarQube needs a reference for other uploads', async () => {
     const created = await api('/api/scan-import', { filename: 'dojo.json', content: fixture('defectdojo-findings.json').toString('base64'), provider: 'lmstudio', model: 'fixture' });
     assert.equal(created.status, 201);

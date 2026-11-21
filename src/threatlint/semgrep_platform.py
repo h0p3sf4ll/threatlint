@@ -27,7 +27,6 @@ identify a ruleset-supplied original. Shared-rule republishing remains rejected
 from __future__ import annotations
 
 import base64  # noqa: F401 - kept for parity with ado_login
-import getpass
 import json
 import os
 import re
@@ -42,7 +41,6 @@ import urllib.request
 from pathlib import Path
 
 from threatlint import org_config, parameter_store, semgrep_credentials
-from threatlint import servicenow as sn
 from threatlint import semgrep_rule_text
 from threatlint import semgrep_policies, semgrep_unified
 from threatlint import semgrep_engine

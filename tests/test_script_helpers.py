@@ -227,6 +227,9 @@ def test_copied_snapshot_workflow_fallback_reads_installed_data_without_package(
     (data / 'skills/fixture-skill').mkdir(parents=True)
     (data / 'agent-skills.json').write_text(
         json.dumps({'appsec-threat-modeler': ['fixture-skill']}), encoding='utf-8')
+    (data / 'agent-contracts.json').write_text(json.dumps({'schemaVersion': 1, 'agents': {
+        'appsec-threat-modeler': {'evidenceMode': 'source', 'inputs': 'FIXTURE INPUT', 'outputs': 'FIXTURE OUTPUT', 'boundaries': 'READ ONLY'},
+    }}), encoding='utf-8')
     (data / 'agents/appsec-threat-modeler.md').write_text('---\nname: fixture\n---\nAGENT', encoding='utf-8')
     (data / 'skills/fixture-skill/SKILL.md').write_text('---\nname: fixture\n---\nSKILL', encoding='utf-8')
     result = subprocess.run(
@@ -235,7 +238,10 @@ def test_copied_snapshot_workflow_fallback_reads_installed_data_without_package(
          str(data / 'scripts/appsec_api.py')],
         cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert result.stdout == 'AGENT\n\nSKILL\n'
+    assert result.stdout.startswith('AGENT\n\nSKILL\n')
+    assert 'FIXTURE INPUT' in result.stdout
+    assert 'FIXTURE OUTPUT' in result.stdout
+    assert 'READ ONLY' in result.stdout
 
 
 def test_docx_renderer_remains_standalone_and_preserves_document_blocks(tmp_path):
