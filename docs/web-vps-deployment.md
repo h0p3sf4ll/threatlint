@@ -1,6 +1,6 @@
 # Deploy Threatlint at app.threatlint.dev
 
-This guide deploys the `feature/web-profiles` gateway on an existing Linux VPS, with Docker profile workers, persistent storage, nginx and a Let's Encrypt certificate. It leaves the marketing website at `threatlint.dev` on its current hosting.
+This guide deploys the gateway from `main` on the existing Spaceship Linux VPS, with Docker profile workers, persistent storage, nginx and a Let's Encrypt certificate. It leaves the marketing website at `threatlint.dev` on its Spaceship hosting.
 
 ## Select the runtime
 
@@ -28,7 +28,7 @@ Create the dedicated gateway service account and clone the requested branch:
 sudo useradd --system --create-home --home-dir /var/lib/threatlint-web --shell /usr/sbin/nologin threatlint-web
 sudo usermod -aG docker threatlint-web
 sudo mkdir -p /opt/threatlint
-sudo git clone --branch feature/web-profiles --single-branch https://github.com/h0p3sf4ll/threatlint.git /opt/threatlint/current
+sudo git clone --branch main --single-branch https://github.com/h0p3sf4ll/threatlint.git /opt/threatlint/current
 sudo npm --prefix /opt/threatlint/current/web ci --omit=dev --ignore-scripts
 sudo docker build -f /opt/threatlint/current/Dockerfile.web -t threatlint-profile:local /opt/threatlint/current
 ```

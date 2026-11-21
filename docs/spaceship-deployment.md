@@ -43,15 +43,9 @@ Verify `https://threatlint.dev` loads the homepage, styles, logo and valid TLS. 
 
 Never publish `src/`, `web/`, credentials, or the repository root.
 
-## Existing Cloudflare build connection
+## Deployment targets
 
-The repository also has an existing Cloudflare Workers build connection named `threatlint`.
-The root `wrangler.json` explicitly restricts that Worker to the public `marketing/` assets;
-it does not deploy the Node Workbench or change the domain's DNS. No application secrets or
-profile state belong in this Worker. `marketing/.assetsignore` excludes the Spaceship-only
-Apache configuration from Worker assets.
-
-Validate the connected build locally with `npx wrangler deploy --dry-run`. Its default
-repository-root deploy command can now resolve a complete static-assets configuration.
-Spaceship remains the marketing site's configured hosting destination, and the VPS remains
-the application runtime.
+Spaceship hosts both the marketing website and the application's VPS. An old Cloudflare
+Workers build connection may still publish an obsolete GitHub check; it is not a deployment
+target or release requirement for this application. Do not deploy application code or profile
+state to Cloudflare to satisfy that check.
