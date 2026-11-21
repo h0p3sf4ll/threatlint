@@ -71,13 +71,24 @@ function cli(args, { input, signal } = {}) {
     assert.match(await page.locator('#security-findings').textContent(), /DEBUG|debug/);
     await capture('security-scanner', '#view-security');
     await page.getByRole('button', { name: 'Review suggested change', exact: true }).click();
-    await page.getByRole('button', { name: 'Apply this change & rescan', exact: true }).waitFor();
+    await page.locator('.platform-diff-after').waitFor();
     assert.match(fs.readFileSync(path.join(repo, 'settings.py'), 'utf8'), /DEBUG = True/);
     await capture('security-fix-review', '#security-findings');
-    await page.getByRole('button', { name: 'Apply this change & rescan', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('#security-status').textContent.startsWith('Change applied'));
+    const apply = page.getByRole('button', { name: 'Apply this change & rescan', exact: true });
+    if (wb.securityScanner.list()[0].policy?.localApplySupported === false) {
+      assert.equal(await apply.count(), 0, 'unsupported writers remain advisory');
+      assert.match(await page.locator('#security-findings').textContent(), /apply the reviewed diff manually and scan again/);
+      // Simulate the user editing only this disposable fixture, then verify an actual rescan.
+      fs.writeFileSync(path.join(repo, 'settings.py'), '# Synthetic learning fixture. No production system.\nDEBUG = False\n');
+      await page.locator('#security-scan-start').click();
+      await page.waitForFunction(() => document.querySelector('#security-status').textContent.startsWith('Scan finished'));
+      assert.equal(wb.securityScanner.list()[0].findings.some(item => item.ruleId === 'TL-DEBUG-ENABLED'), false);
+    } else {
+      await apply.click();
+      await page.waitForFunction(() => document.querySelector('#security-status').textContent.startsWith('Change applied'));
+      assert.match(await page.locator('#security-status').textContent(), /application tests have not run/i);
+    }
     assert.match(fs.readFileSync(path.join(repo, 'settings.py'), 'utf8'), /DEBUG = False/);
-    assert.match(await page.locator('#security-status').textContent(), /application tests have not run/i);
     await page.locator('#view-security [data-go-view="intelligence"]').click();
     await page.waitForFunction(() => document.querySelectorAll('#intelligence-findings .platform-finding').length > 0);
     await capture('repository-risk', '#view-intelligence');
@@ -106,7 +117,7 @@ function cli(args, { input, signal } = {}) {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${view} fits mobile width`);
     }
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
-    console.log('PASS: real baseline scan, coverage, reviewed edit, rescan, persisted risk ingestion, advanced controls, consent reset, and mobile layout. Disposable synthetic repository; no provider or external service calls.');
+    console.log('PASS: real baseline scan, coverage, reviewed edit or platform-gated manual diff, rescan, persisted risk ingestion, advanced controls, consent reset, and mobile layout. Disposable synthetic repository; no provider or external service calls.');
   } finally {
     if (browser) await browser.close(); await wb.close(); fs.rmSync(temporary, { recursive: true, force: true });
   }

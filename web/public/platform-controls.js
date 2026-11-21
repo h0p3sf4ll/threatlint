@@ -75,15 +75,17 @@
   function setLocked(locked) {
     for (const input of doc()?.querySelectorAll('#orchestration-options input, #orchestration-options select, #experience-mode') || []) input.disabled = locked;
   }
-  function init() {
+  async function init() {
     const d = doc(); if (!d) return;
     const mode = d.getElementById('experience-mode'); if (!mode) return;
-    try { if (root.localStorage.getItem('threatlint.experience') === 'advanced') mode.value = 'advanced'; } catch { /* optional preference */ }
+    try { await root.ThreatlintProfile?.ready; } catch { return; }
+    const preferences = root.ThreatlintProfile?.storage || root.localStorage;
+    try { if (preferences.getItem('threatlint.experience') === 'advanced') mode.value = 'advanced'; } catch { /* optional preference */ }
     function experience() {
       d.body.dataset.experience = mode.value;
       if (!advanced()) d.getElementById('ensemble-enabled').checked = false;
       d.getElementById('ensemble-options').hidden = !d.getElementById('ensemble-enabled').checked;
-      try { root.localStorage.setItem('threatlint.experience', mode.value); } catch { /* optional preference */ }
+      try { preferences.setItem('threatlint.experience', mode.value); } catch { /* optional preference */ }
     }
     mode.addEventListener('change', experience); experience();
     d.getElementById('ensemble-enabled').addEventListener('change', e => { d.getElementById('ensemble-options').hidden = !e.target.checked; });

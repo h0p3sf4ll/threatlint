@@ -24,6 +24,7 @@ function registerSidekickRoutes(app, { integrations = {} } = {}) {
   const avitBatch = require('../avit-batch.cjs');
   const run = integrations.sidekickCli || ((args, input) => cli(args, input));
   const jobs = new Map();
+  let runningJobs = 0;
 
   /** Run `threatlint sidekick <args>`; resolve {code, json, error}. */
   function cli(args, input, onLine) {
@@ -68,12 +69,12 @@ function registerSidekickRoutes(app, { integrations = {} } = {}) {
       else if (event.type === 'log') { job.log.push(event.message); if (job.log.length > 200) job.log.shift(); }
     };
     const jobArgs = [...args, '--cancel-file', cancelFile];
-    const runner = integrations.sidekickCli ? integrations.sidekickCli(jobArgs, input, onLine) : cli(jobArgs, input, onLine);
-    Promise.resolve(runner).then(result => {
+    runningJobs++;
+    Promise.resolve().then(() => integrations.sidekickCli ? integrations.sidekickCli(jobArgs, input, onLine) : cli(jobArgs, input, onLine)).then(result => {
       job.state = result.code === 0 ? 'done' : job.state === 'cancelling' ? 'cancelled' : 'error';
       job.result = result.json; job.error = result.code === 0 ? null : result.error || 'Sidekick command failed';
       fs.rmSync(cancelFile, { force: true });
-    }, error => { job.state = 'error'; job.error = error.message; fs.rmSync(cancelFile, { force: true }); });
+    }, error => { job.state = 'error'; job.error = error.message; fs.rmSync(cancelFile, { force: true }); }).finally(() => { runningJobs--; });
     while (jobs.size > MAX_JOBS_KEPT) jobs.delete(jobs.keys().next().value);
     return { jobId: id };
   }
@@ -160,6 +161,7 @@ function registerSidekickRoutes(app, { integrations = {} } = {}) {
     if (job.state === 'running') { job.state = 'cancelling'; fs.writeFileSync(job.cancelFile, 'cancel'); }
     return { state: job.state };
   }));
+  return { get active() { return runningJobs > 0; } };
 }
 
 module.exports = { registerSidekickRoutes };

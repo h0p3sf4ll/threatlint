@@ -17,6 +17,11 @@ describe('desktop user PATH', () => {
     assert.equal(userPath({ env: { PATH: '/usr/bin' }, platform: 'darwin', spawnSyncImpl: () => ({}) }), '/usr/bin:/opt/homebrew/bin:/usr/local/bin');
   });
 
+  it('preserves Windows drive letters and semicolon entries without starting a login shell', () => {
+    const env = { PATH: 'C:\\Windows;C:\\Program Files\\Git\\cmd;D:\\tools' };
+    const result = userPath({ env, platform: 'win32', spawnSyncImpl: () => { throw new Error('Windows does not use a login shell'); } });
+    assert.equal(result, env.PATH);
+  });
   it('leaves Windows alone and updates the given environment', () => {
     assert.equal(userPath({ env: { PATH: 'C:\\Windows' }, platform: 'win32' }), 'C:\\Windows');
     const env = { PATH: '/usr/bin' };

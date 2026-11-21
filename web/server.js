@@ -19,7 +19,7 @@ const { createReportWriter } = require('./lib/report-writer.cjs');
 const { createPipeline, buildUserMessage, validateAttachment } = require('./lib/pipeline.cjs');
 const { createConversations } = require('./lib/chat.cjs');
 const { attachSocket } = require('./lib/socket.cjs');
-const { securityHeaders, localRequest } = require('./lib/http.cjs');
+const { securityHeaders, localRequest, activeRequestCount } = require('./lib/http.cjs');
 const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerModelPreferenceRoutes } = require('./lib/routes/model-preferences.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
@@ -36,6 +36,8 @@ const { createDesignInputs } = require('./lib/design-inputs.cjs');
 const { registerDesignInputRoutes, designInputBodyParsers } = require('./lib/routes/design-inputs.cjs');
 const { createScannerBatch } = require('./lib/scanner-batch.cjs');
 const { registerScannerRoutes } = require('./lib/routes/scanners.cjs');
+const { registerManagementRoutes } = require('./lib/routes/management.cjs');
+const { createSavedSourceActivator } = require('./lib/saved-sources.cjs');
 const { createSecurityScanner } = require('./lib/security-scanner.cjs');
 const { registerSecurityScannerRoutes } = require('./lib/routes/security-scanner.cjs');
 const { createFindingIntelligenceStore, ingestionFromScan } = require('./lib/finding-intelligence.cjs');
@@ -71,6 +73,7 @@ function createWorkbench(options = {}) {
   const store = createStore(options.storageDir ?? defaultStorageDir());
   const reports = createReportWriter(store, { convertToWord: options.integrations?.convertToWord });
   const scm = options.sourceManagers || createSourceManagers();
+  const activateSavedSource = createSavedSourceActivator(scm);
   const resolveSource = require('./lib/source-context.cjs').createSourceResolver({ scm, store });
   const runtime = require('./lib/runtime-sandbox.cjs').createSandboxRuntime({ live: options.runtimeScanner || createRuntimeScanner(), store, resolveSource, spawnImpl: options.integrations?.runtimeSpawn });
   const history = createRuntimeHistory(runtime);
@@ -88,8 +91,15 @@ function createWorkbench(options = {}) {
     onScanComplete: (scan, session) => intelligence.ingest(ingestionFromScan(scan, session)) });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: { ...options.integrations, resolveSource } });
-  const issueTrackers = require('./lib/issue-trackers.cjs');
+  const issueTrackers = require('./lib/ticket-ingestion.cjs');
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  // A disconnected socket can leave an aborting provider operation in flight. Keep the worker busy
+  // until those promises settle, in addition to background jobs that intentionally outlive a page.
+  let socketOperations = 0;
+  for (const [service, method] of [[pipeline, 'run'], [conversations, 'ask'], [scannerBatch, 'run']]) {
+    const execute = service[method];
+    service[method] = async (...args) => { socketOperations++; try { return await execute(...args); } finally { socketOperations--; } };
+  }
 
   app.use(securityHeaders(server));
   // Scan reports and design inputs upload up to 25 MB; every other route keeps the 7 MB JSON limit.
@@ -106,13 +116,42 @@ function createWorkbench(options = {}) {
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
   registerTriageRoutes(app, { reports, scannerPolicies, integrations: options.integrations });
-  registerSidekickRoutes(app, { integrations: options.integrations });
+  const sidekick = registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });
   issueTrackers.registerIssueTrackerRoutes(app, { scanImports, integrations: options.integrations });
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
   registerSecurityScannerRoutes(app, { securityScanner });
   registerFindingIntelligenceRoutes(app, { intelligence, store });
+
+  // Native desktop remains an individually owned application. Company authorization and shared
+  // connections are handled by the authenticated gateway before requests reach a profile worker.
+  app.get('/api/access', (_req, res) => res.json({ role: 'administrator',
+    permissions: { read: true, manageSettings: true, manageMembers: false, review: true, manageFindings: true },
+    roles: ['administrator', 'analyst', 'viewer'], members: [], local: true }));
+  registerManagementRoutes(app, { directory: store.directory, reports, integrations: options.integrations,
+    activateSource: (_req, connection) => activateSavedSource(connection) });
+
+  // Only the gateway can call these endpoints, using the private worker transport credential.
+  // Never expose local report paths or source credentials in the response.
+  app.get('/internal/management/report/:id', (req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    const located = reports.find(req.params.id);
+    if (!located) return res.status(404).json({ error: 'Report not found' });
+    res.json({ report: reports.metadata(located.report), parsed: reports.read(located.report) });
+  });
+  app.post('/internal/management/source', async (req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    try {
+      res.json(await activateSavedSource({ provider: req.body?.provider, token: req.body?.token, organization: req.body?.organization }));
+    } catch { res.status(502).json({ error: 'Source connection could not be activated. Check its credentials and permissions.' }); }
+  });
+
+  // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
+  app.get('/internal/activity', (_req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    res.json({ busy: activeRequestCount() > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || [...store.sessions.keys()].some(id => securityScanner.isBusy(id)) || sidekick.active || runtime.active === true || wss.clients.size > 0 });
+  });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
@@ -140,7 +179,7 @@ function createWorkbench(options = {}) {
 const workbench = createWorkbench();
 if (require.main === module) {
   const port = Number(process.env.PORT || DEFAULT_PORT);
-  workbench.server.listen(port, '127.0.0.1', () => console.log(`Threatlint Workbench: http://127.0.0.1:${workbench.server.address().port}\nReports remain local. Provider credentials are never saved.`));
+  workbench.server.listen(port, '127.0.0.1', () => console.log(`Threatlint Workbench: http://127.0.0.1:${workbench.server.address().port}\nReports and saved integrations remain local. Model keys are session-only.`));
   process.once('SIGINT', () => workbench.close().then(() => process.exit(0)));
   process.once('SIGTERM', () => workbench.close().then(() => process.exit(0)));
 }

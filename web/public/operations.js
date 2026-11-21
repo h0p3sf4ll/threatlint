@@ -119,7 +119,7 @@
   }
   async function api(path, { method = 'GET', body, signal } = {}) {
     // No credentials in URLs, storage, logs, or error messages. Do not follow a redirect with a secret-bearing body.
-    const response = await fetch(path, {
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(path, {
       method, signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error', referrerPolicy: 'no-referrer',
       headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -546,6 +546,19 @@
     if (type === 'none') $('runtime-compare-anonymous').checked = false;
     syncRuntimeControls();
   }
+  function configureWebAuthentication() {
+    if (!window.ThreatlintProfile?.web) return;
+    const picker = $('runtime-auth-type');
+    const manual = picker.querySelector('option[value="browser-session"]');
+    if (manual) { manual.disabled = true; manual.textContent = 'Manual browser sign-in · desktop only'; }
+    if (picker.value === 'browser-session') picker.value = 'browser-state';
+    if (!$('runtime-web-auth-note')) {
+      const note = el('p', 'field-note small subtle', 'Manual browser sign-in is available in the desktop app. In the web app, use a token, cookie, or imported browser-state cookies for your authorized test session.');
+      note.id = 'runtime-web-auth-note'; picker.after(note);
+      picker.setAttribute('aria-describedby', 'runtime-auth-help runtime-web-auth-note');
+    }
+    renderAuthFields();
+  }
   function clearAuthInputs(resetBrowser = true) {
     for (const input of $('runtime-auth-fields').querySelectorAll('input, textarea')) input.value = '';
     if (resetBrowser) {
@@ -799,7 +812,8 @@
       const link = $(`runtime-export-${format}`);
       link.setAttribute('aria-disabled', String(!transferable)); link.tabIndex = transferable ? 0 : -1;
       if (transferable) {
-        link.href = `/api/runtime/scans/${scan}/export?format=${format}`;
+        const url = `/api/runtime/scans/${scan}/export?format=${format}`;
+        link.href = window.ThreatlintProfile?.url?.(url) || url;
         link.download = `runtime-evidence.${format}`; link.referrerPolicy = 'no-referrer';
       } else link.removeAttribute('href');
     }
@@ -1362,6 +1376,7 @@
     $('runtime-scan-form').dataset.operationsReady = 'true';
     wireSources(); wireRuntime(); wireLifecycle();
     providerChanged(); renderAuthFields(); renderScan(); syncSourceControls(); viewActivated();
+    Promise.resolve(window.ThreatlintProfile?.ready).then(configureWebAuthentication).catch(() => {});
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
   else initialize();

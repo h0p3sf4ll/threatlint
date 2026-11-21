@@ -1,171 +1,189 @@
 'use strict';
 
-/** Ticket ingestion shared by Finding triage and Metrics. Secrets never leave settings responses. */
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const crypto = require('node:crypto');
-const { HttpError, handle } = require('./http.cjs');
-const { redactText } = require('./scan-import.cjs');
+const { HttpError } = require('./http.cjs');
 
-const LABELS = { github: 'GitHub Issues', jira: 'Jira', 'azure-devops': 'Azure DevOps Boards' };
-const MAX_ITEMS = 10000;
-const E = encodeURIComponent;
-function spec(id) { if (!Object.hasOwn(LABELS, id)) throw new HttpError('Unknown issue tracker'); return LABELS[id]; }
-function configFile(id) { spec(id); return path.join(process.env.THREATLINT_HOME || path.join(os.homedir(), '.threatlint'), `tracker-${id}.json`); }
-function readConfig(id) { try { return JSON.parse(fs.readFileSync(configFile(id), 'utf8')); } catch { return {}; } }
-function publicConfig(id) { const { token, ...config } = readConfig(id); return { id, label: spec(id), ...config, hasToken: !!token }; }
-function validate(id, body, saved = {}) {
-  spec(id);
-  const token = body.token || saved.token;
-  if (typeof token !== 'string' || !/^[\x21-\x7e]{8,4096}$/.test(token)) throw new HttpError('Enter an API token without whitespace');
-  if (id === 'github') {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(body.repository || '') || body.repository.split('/').some(part => ['.', '..'].includes(part))) throw new HttpError('Enter a GitHub repository as owner/repository');
-    return { token, repository: body.repository };
+const MAX_RESPONSE = 4 * 1024 * 1024;
+const PROVIDERS = Object.freeze([
+  { id: 'jira', label: 'Jira Cloud', kind: 'tracker', fields: [
+    { name: 'baseUrl', label: 'Jira site URL', type: 'url', required: true, placeholder: 'https://company.atlassian.net' },
+    { name: 'username', label: 'Account email', required: true }, { name: 'project', label: 'Project key', required: true },
+    { name: 'issueType', label: 'Issue type', placeholder: 'Task' },
+    { name: 'closeTransitionId', label: 'False-positive close transition ID', placeholder: 'Workflow transition to a Done status' },
+  ] },
+  { id: 'azure-boards', label: 'Azure Boards', kind: 'tracker', fields: [
+    { name: 'organization', label: 'Organization slug', required: true }, { name: 'project', label: 'Project', required: true },
+    { name: 'issueType', label: 'Work item type', placeholder: 'Bug' }, { name: 'closeState', label: 'Closed state', placeholder: 'Closed' },
+  ] },
+  { id: 'github-issues', label: 'GitHub Issues', kind: 'tracker', fields: [
+    { name: 'repository', label: 'Repository', required: true, placeholder: 'owner/repository' },
+  ] },
+  { id: 'github', label: 'GitHub', kind: 'scm', fields: [{ name: 'organization', label: 'Organization filter (optional)' }] },
+  { id: 'azure-devops', label: 'Azure DevOps', kind: 'scm', fields: [{ name: 'organization', label: 'Organization slug', required: true }] },
+]);
+
+function text(value, max = 300) { return String(value ?? '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').slice(0, max); }
+function input(value, label, max = 200, optional = false) {
+  if (optional && (value === undefined || value === '')) return '';
+  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\p{Cc}\p{Cf}]/u.test(value)) throw new HttpError(`Enter a valid ${label}`);
+  return value.trim();
+}
+function segment(value) { return encodeURIComponent(value); }
+function validateConnection(raw, previous = null) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError('Enter connection settings');
+  const provider = PROVIDERS.find(item => item.id === raw.provider);
+  if (!provider || raw.kind !== provider.kind) throw new HttpError('Choose a supported connection type and provider');
+  if (previous && (raw.provider !== previous.provider || raw.kind !== previous.kind)) throw new HttpError('Create a new connection to change its provider');
+  const value = { provider: provider.id, kind: provider.kind, name: input(raw.name, 'connection name', 100),
+    enabled: raw.enabled !== false, isDefault: raw.isDefault === true };
+  for (const field of provider.fields) value[field.name] = input(raw[field.name], field.label, field.name === 'baseUrl' ? 300 : 200, !field.required);
+  const token = raw.token === undefined || raw.token === '' ? previous?.token : raw.token;
+  if (typeof token !== 'string' || !token || token.length > 8192 || /\s|[\p{Cc}\p{Cf}]/u.test(token)) throw new HttpError('Enter an API token without whitespace');
+  value.token = token;
+  if (value.organization && !/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(value.organization)) throw new HttpError('Use an organization slug, not a URL');
+  if (provider.id === 'jira') {
+    let url; try { url = new URL(value.baseUrl); } catch { throw new HttpError('Enter the Jira Cloud HTTPS site URL'); }
+    if (url.protocol !== 'https:' || !/^[a-z0-9][a-z0-9-]*\.atlassian\.net$/.test(url.hostname) || url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new HttpError('Use a Jira Cloud site origin such as https://company.atlassian.net');
+    value.baseUrl = url.origin;
+    if (!/^[A-Z][A-Z0-9_]{1,39}$/.test(value.project)) throw new HttpError('Use the Jira project key');
+    if (value.closeTransitionId && !/^\d{1,10}$/.test(value.closeTransitionId)) throw new HttpError('Use a numeric Jira close transition ID');
+    value.issueType ||= 'Task';
   }
-  if (id === 'azure-devops') {
-    if (!/^[a-z0-9][a-z0-9-]{0,99}$/i.test(body.organization || '') || !/^[\w .-]{1,100}$/.test(body.project || '') || ['.', '..'].includes(body.project)) throw new HttpError('Enter an ADO organization slug and project');
-    return { token, organization: body.organization, project: body.project };
-  }
-  let url;
-  try { url = new URL(body.url); } catch { throw new HttpError('Enter your Jira Cloud HTTPS URL'); }
-  if (url.protocol !== 'https:' || !/^[a-z0-9-]+\.atlassian\.net$/i.test(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new HttpError('Use a Jira Cloud origin such as https://team.atlassian.net');
-  if (typeof body.email !== 'string' || !/^[^\s@:]+@[^\s@]+$/.test(body.email)) throw new HttpError('Enter the Jira account email');
-  if (typeof body.query !== 'string' || !body.query.trim() || body.query.length > 2000) throw new HttpError('Enter a bounded JQL query for the security issues to sync');
-  return { token, url: url.origin, email: body.email, query: body.query.trim() };
+  if (provider.id === 'azure-boards') { value.issueType ||= 'Bug'; value.closeState ||= 'Closed'; }
+  if (provider.id === 'github-issues' && !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/.test(value.repository)) throw new HttpError('Use owner/repository for GitHub Issues');
+  return value;
 }
-function richText(value) {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value.map(richText).join('\n');
-  return value && typeof value === 'object' ? [value.text, richText(value.content)].filter(Boolean).join(' ') : '';
+function endpoint(connection, suffix) {
+  if (connection.provider === 'jira') return connection.baseUrl + '/rest/api/3' + suffix;
+  if (connection.provider === 'github-issues') return 'https://api.github.com/repos/' + connection.repository.split('/').map(segment).join('/') + suffix;
+  if (connection.provider === 'github') return 'https://api.github.com' + suffix;
+  return 'https://dev.azure.com/' + segment(connection.organization) + suffix;
 }
-function severity(text) {
-  const match = /\b(critical|high|medium|moderate|low|info(?:rmational)?)\b/i.exec(text);
-  return match ? match[1].toUpperCase().replace('MODERATE', 'MEDIUM').replace('INFORMATIONAL', 'INFO') : 'UNSPECIFIED';
+function headers(connection) {
+  return { Accept: 'application/json', 'User-Agent': 'ThreatLint',
+    Authorization: connection.provider === 'jira' ? `Basic ${Buffer.from(`${connection.username}:${connection.token}`).toString('base64')}`
+      : connection.provider.startsWith('azure-') ? `Basic ${Buffer.from(`:${connection.token}`).toString('base64')}` : `Bearer ${connection.token}`,
+    ...(connection.provider.startsWith('github') ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}) };
 }
-function normalize(id, row, conn) {
-  let item;
-  if (id === 'github') {
-    const labels = (row.labels || []).map(label => typeof label === 'string' ? label : label.name).join(' ');
-    item = { id: `${conn.repository}#${row.number}`, title: row.title, description: row.body, timestamp: row.created_at,
-      severity: severity(labels), disposition: row.state === 'closed' ? 'RESOLVED' : 'OPEN', workspace: conn.repository, labels };
-  } else if (id === 'jira') {
-    const f = row.fields || {};
-    const labels = (f.labels || []).join(' ');
-    item = { id: row.key, title: f.summary, description: richText(f.description), timestamp: f.created, severity: severity(`${f.priority?.name || ''} ${labels}`),
-      disposition: f.status?.statusCategory?.key === 'done' ? 'RESOLVED' : 'OPEN', workspace: f.project?.key || row.key?.split('-')[0], labels };
-  } else {
-    const f = row.fields || {};
-    item = { id: `ADO-${row.id}`, title: f['System.Title'], description: f['System.Description'] || f['Microsoft.VSTS.TCM.ReproSteps'], timestamp: f['System.CreatedDate'],
-      severity: severity(f['Microsoft.VSTS.Common.Severity'] || ''), disposition: /^(closed|done|resolved|removed)$/i.test(f['System.State']) ? 'RESOLVED' : 'OPEN',
-      workspace: `${conn.organization}/${conn.project}`, labels: f['System.Tags'] || '' };
-  }
-  const evidence = `${item.title || ''}\n${item.description || ''}\n${item.labels || ''}`;
-  const scanner = /\b(semgrep|trivy|sonarqube)\b/i.exec(evidence)?.[1]?.toLowerCase() || 'unknown';
-  return { ...item, title: redactText(item.title || item.id).slice(0, 300), description: redactText(item.description || '').slice(0, 12000),
-    scanner, rule: /\bCWE-\d+\b|\bCVE-\d{4}-\d+\b/i.exec(evidence)?.[0] || 'n/a', hasEvidence: /\.[\w]+:\d+\b/.test(evidence) };
+async function responseJson(response) {
+  if (Number(response.headers?.get?.('content-length') || 0) > MAX_RESPONSE) throw new HttpError('Provider response is too large', 502);
+  let body = '';
+  if (response.body?.getReader) {
+    const reader = response.body.getReader(); const chunks = []; let size = 0;
+    try { while (true) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > MAX_RESPONSE) throw new HttpError('Provider response is too large', 502); chunks.push(value); } }
+    finally { reader.releaseLock(); }
+    body = Buffer.concat(chunks).toString('utf8');
+  } else if (typeof response.text === 'function') body = await response.text();
+  else return response.json();
+  if (Buffer.byteLength(body) > MAX_RESPONSE) throw new HttpError('Provider response is too large', 502);
+  if (!body.trim()) return {};
+  try { return JSON.parse(body); } catch { throw new HttpError('Provider returned an invalid JSON response', 502); }
 }
-async function request(id, conn, route, { fetchImpl = fetch, signal, method = 'GET', body } = {}) {
-  const base = id === 'github' ? 'https://api.github.com' : id === 'jira' ? conn.url : `https://dev.azure.com/${E(conn.organization)}/${E(conn.project)}`;
-  const Authorization = id === 'github' ? `Bearer ${conn.token}` : `Basic ${Buffer.from(`${id === 'jira' ? conn.email : ''}:${conn.token}`).toString('base64')}`;
+async function request(connection, suffix, options = {}, fetchImpl = fetch) {
   let response;
-  try { response = await fetchImpl(`${base}${route}`, { method, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
-    headers: { Authorization, Accept: 'application/json', 'Content-Type': 'application/json', ...(id === 'github' ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); }
-  catch { throw new HttpError(`${spec(id)} request failed; check the connection and retry`, 502); }
-  if (!response.ok) throw new HttpError(`${spec(id)} returned HTTP ${response.status}; check access and token permissions`, 502);
-  try {
-    if (response.body?.[Symbol.asyncIterator]) {
-      const chunks = []; let length = 0;
-      for await (const chunk of response.body) {
-        length += chunk.length;
-        if (length > 8 * 1024 * 1024) throw new Error('response limit');
-        chunks.push(Buffer.from(chunk));
-      }
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    }
-    return await response.json();
-  } catch { throw new HttpError(`${spec(id)} returned invalid or oversized JSON; previous snapshot preserved`, 502); }
+  try { response = await fetchImpl(endpoint(connection, suffix), { method: options.method || 'GET',
+    headers: { ...headers(connection), ...(options.body !== undefined ? { 'Content-Type': options.contentType || 'application/json' } : {}) },
+    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}), redirect: 'error', signal: AbortSignal.timeout(15_000) }); }
+  catch { throw new HttpError('Issue provider request failed or timed out. Check connection settings and provider availability.', 502); }
+  if (!response.ok) throw Object.assign(new HttpError(`Issue provider returned HTTP ${response.status}. Check permissions and workflow settings.`, response.status === 401 || response.status === 403 ? 403 : 502), { upstreamStatus: response.status });
+  return responseJson(response);
 }
-function references(id, value) {
-  const refs = [...new Set(String(value || '').split(/[\s,;]+/).filter(Boolean))];
-  if (refs.length > 200) throw new HttpError('Review at most 200 explicit tickets per batch');
-  const pattern = id === 'jira' ? /^[A-Z][A-Z0-9_]*-\d{1,12}$/ : id === 'github' ? /^#?[1-9]\d{0,11}$/ : /^(?:ADO-)?[1-9]\d{0,11}$/i;
-  if (refs.some(ref => !pattern.test(ref))) throw new HttpError(id === 'jira' ? 'Use Jira keys such as SEC-123' : id === 'github' ? 'Use issue numbers from the configured repository, such as #123' : 'Use ADO work item IDs such as 123 or ADO-123');
-  return refs;
+function adf(body) { return { version: 1, type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: text(body, 100_000) || 'ThreatLint finding' }] }] }; }
+function adfText(value) {
+  if (!value || typeof value !== 'object') return text(value || '', 100_000);
+  const parts = []; const visit = (node, depth) => { if (!node || depth > 20 || parts.length > 10000) return; if (node.type === 'text') parts.push(text(node.text, 10000)); for (const child of Array.isArray(node.content) ? node.content.slice(0, 10000) : []) visit(child, depth + 1); };
+  visit(value, 0); return parts.join('\n').slice(0, 100_000);
 }
-async function fetchItems(id, { refs = '', connection, ...options } = {}) {
-  const conn = connection || readConfig(id);
-  if (!conn.token) throw new HttpError(`Configure ${spec(id)} in Settings first`, 412);
-  const selected = references(id, refs);
-  const rows = [];
-  if (id === 'github') {
-    const base = `/repos/${conn.repository.split('/').map(E).join('/')}/issues`;
-    if (selected.length) {
-      for (const ref of selected) { const row = await request(id, conn, `${base}/${ref.replace('#', '')}`, options); if (row.pull_request) throw new HttpError(`${ref} is a pull request; choose a GitHub issue`); rows.push(row); }
-    } else {
-      for (let page = 1; ; page++) {
-        const result = await request(id, conn, `${base}?state=all&per_page=100&page=${page}`, options);
-        if (!Array.isArray(result)) throw new HttpError('GitHub returned an unsupported issue list', 502);
-        rows.push(...result.filter(row => !row.pull_request));
-        if (result.length < 100) break;
-        if (page >= 100) throw new HttpError('GitHub sync exceeded 10,000 records; narrow the repository scope', 413);
-      }
-    }
-  } else if (id === 'jira') {
-    if (selected.length) for (const ref of selected) rows.push(await request(id, conn, `/rest/api/3/issue/${E(ref)}`, options));
-    else {
-      let nextPageToken;
-      const seen = new Set();
-      for (;;) {
-        const result = await request(id, conn, '/rest/api/3/search/jql', { ...options, method: 'POST', body: { jql: conn.query, maxResults: 100, fields: ['summary', 'description', 'priority', 'status', 'created', 'labels', 'project'], ...(nextPageToken ? { nextPageToken } : {}) } });
-        if (!Array.isArray(result.issues)) throw new HttpError('Jira returned an unsupported issue list', 502);
-        rows.push(...result.issues);
-        if (result.isLast === true) break;
-        nextPageToken = result.nextPageToken;
-        if (!nextPageToken || seen.has(nextPageToken) || rows.length >= MAX_ITEMS) throw new HttpError('Jira pagination incomplete; previous snapshot preserved', 502);
-        seen.add(nextPageToken);
-      }
-    }
-  } else {
-    let ids = selected.map(ref => Number(ref.replace(/^ADO-/i, '')));
-    if (!ids.length) {
-      const result = await request(id, conn, '/_apis/wit/wiql?api-version=7.1&$top=10001', { ...options, method: 'POST', body: { query: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project ORDER BY [System.Id]" } });
-      if (!Array.isArray(result.workItems)) throw new HttpError('ADO returned an unsupported work item list', 502);
-      ids = result.workItems.map(row => row.id);
-      if (ids.length > MAX_ITEMS) throw new HttpError('ADO project exceeds 10,000 items; use explicit IDs for triage', 413);
-    }
-    for (let offset = 0; offset < ids.length; offset += 200) {
-      const batch = ids.slice(offset, offset + 200);
-      const result = await request(id, conn, '/_apis/wit/workitemsbatch?api-version=7.1', { ...options, method: 'POST', body: { ids: batch, errorPolicy: 'fail' } });
-      if (!Array.isArray(result.value) || result.value.length !== batch.length) throw new HttpError('ADO returned an incomplete batch; previous snapshot preserved', 502);
-      rows.push(...result.value);
-    }
+function externalId(connection, value) {
+  const id = String(value ?? '').trim();
+  if (connection.provider === 'jira') { if (!new RegExp(`^${connection.project}-[1-9][0-9]{0,14}$`).test(id)) throw new HttpError('Use Jira issue keys in this connection’s project'); }
+  else if (!/^[1-9][0-9]{0,14}$/.test(id)) throw new HttpError('Use positive issue or work item numbers');
+  return id;
+}
+function issueSuffix(connection, id) {
+  externalId(connection, id);
+  if (connection.provider === 'jira') return `/issue/${segment(id)}?fields=summary,status,description,priority,labels`;
+  if (connection.provider === 'github-issues') return `/issues/${id}`;
+  return `/${segment(connection.project)}/_apis/wit/workitems/${id}?api-version=7.1`;
+}
+function normalized(connection, row) {
+  if (!row || typeof row !== 'object') throw new HttpError('Provider returned an invalid ticket', 502);
+  if (connection.provider === 'jira') {
+    const id = externalId(connection, row.key); const fields = row.fields || {};
+    return { externalId: id, title: text(fields.summary), state: text(fields.status?.name, 100), closed: fields.status?.statusCategory?.key === 'done',
+      url: `${connection.baseUrl}/browse/${segment(id)}`, body: adfText(fields.description), severity: text(fields.priority?.name, 50) || 'UNSPECIFIED' };
   }
-  return rows.map(row => normalize(id, row, conn));
+  if (connection.provider === 'github-issues') {
+    if (row.pull_request) throw new HttpError('A pull request cannot be imported as a finding', 400);
+    const id = externalId(connection, row.number);
+    if (!['open', 'closed'].includes(row.state)) throw new HttpError('GitHub returned an invalid issue state', 502);
+    return { externalId: id, title: text(row.title), state: row.state, closed: row.state === 'closed',
+      url: `https://github.com/${connection.repository}/issues/${id}`, body: text(row.body, 100_000), severity: 'UNSPECIFIED' };
+  }
+  const id = externalId(connection, row.id), fields = row.fields || {};
+  // Item IDs are organization-wide. Verify the project before returning or updating one.
+  if (typeof fields['System.TeamProject'] !== 'string' || fields['System.TeamProject'].toLowerCase() !== connection.project.toLowerCase()) throw new HttpError('Azure Boards returned a work item outside this project', 502);
+  return { externalId: id, title: text(fields['System.Title']), state: text(fields['System.State'], 100),
+    closed: String(fields['System.State']).toLowerCase() === connection.closeState.toLowerCase(),
+    url: `https://dev.azure.com/${segment(connection.organization)}/${segment(connection.project)}/_workitems/edit/${id}`,
+    body: text(fields['System.Description'], 100_000), severity: 'UNSPECIFIED', revision: row.rev };
 }
-function registerIssueTrackerRoutes(app, { scanImports, integrations = {} }) {
-  app.get('/api/issue-trackers/:id/settings', handle(req => publicConfig(req.params.id)));
-  app.post('/api/issue-trackers/:id/settings', handle(async req => {
-    const id = req.params.id;
-    const conn = validate(id, req.body || {}, readConfig(id));
-    // A bounded read validates credentials before saving; no defect is changed.
-    const route = id === 'github' ? `/repos/${conn.repository.split('/').map(E).join('/')}` : id === 'jira' ? '/rest/api/3/myself' : '/_apis/wit/workitemtypes?api-version=7.1';
-    await request(id, conn, route, { fetchImpl: integrations.fetchImpl || fetch });
-    const file = configFile(id);
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temp = `${file}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify(conn), { mode: 0o600 }); fs.renameSync(temp, file);
-    return publicConfig(id);
-  }));
-  app.delete('/api/issue-trackers/:id/settings', handle(req => { fs.rmSync(configFile(req.params.id), { force: true }); return publicConfig(req.params.id); }));
-  app.post('/api/issue-trackers/:id/triage', handle(async req => {
-    const id = req.params.id;
-    spec(id);
-    if (!String(req.body?.references || '').trim()) throw new HttpError('Enter the ticket IDs to triage');
-    const items = await fetchItems(id, { refs: req.body.references, fetchImpl: integrations.fetchImpl || fetch });
-    const { accepted } = await scanImports.create({ filename: `${id}-tickets.json`, content: Buffer.from(JSON.stringify({ threatlintFindings: items, target: LABELS[id], tracker: id })),
-      fields: { ...(req.body || {}), source: 'tickets' } });
-    return accepted;
-  }, { status: 201 }));
+async function getIssue(connection, id, { fetchImpl } = {}) {
+  const expected = externalId(connection, id), issue = normalized(connection, await request(connection, issueSuffix(connection, expected), {}, fetchImpl));
+  if (issue.externalId !== expected) throw new HttpError('Provider returned an unexpected ticket identity', 502);
+  return issue;
 }
-module.exports = { LABELS, readConfig, publicConfig, validate, normalize, fetchItems, references, registerIssueTrackerRoutes };
+async function testConnection(connection, { fetchImpl } = {}) {
+  let suffix;
+  if (connection.provider === 'jira') suffix = `/project/${segment(connection.project)}`;
+  else if (connection.provider === 'github-issues') suffix = '';
+  else if (connection.provider === 'github') suffix = '/user';
+  else suffix = connection.provider === 'azure-boards' ? `/_apis/projects/${segment(connection.project)}?api-version=7.1` : '/_apis/projects?$top=1&api-version=7.1';
+  await request(connection, suffix, {}, fetchImpl);
+  return { ok: true };
+}
+async function createIssue(connection, finding, { fetchImpl, onCreated } = {}) {
+  const title = text(`[ThreatLint] ${finding.title}`, 250), body = finding.body;
+  let response;
+  try {
+    if (connection.provider === 'jira') response = await request(connection, '/issue', { method: 'POST', body: { fields: { project: { key: connection.project }, summary: title, description: adf(body), issuetype: { name: connection.issueType }, labels: ['threatlint'] } } }, fetchImpl);
+    else if (connection.provider === 'github-issues') response = await request(connection, '/issues', { method: 'POST', body: { title, body } }, fetchImpl);
+    else response = await request(connection, `/${segment(connection.project)}/_apis/wit/workitems/$${segment(connection.issueType)}?api-version=7.1`, { method: 'POST', contentType: 'application/json-patch+json', body: [
+      { op: 'add', path: '/fields/System.Title', value: title }, { op: 'add', path: '/fields/System.Description', value: `<pre>${escapeHtml(body)}</pre>` }, { op: 'add', path: '/fields/System.Tags', value: 'ThreatLint' },
+    ] }, fetchImpl);
+  } catch (error) {
+    // An explicit client rejection of the POST did not create a ticket. Readback errors below remain uncertain.
+    if ([400, 401, 403, 404, 405, 409, 422, 429].includes(error.upstreamStatus)) error.safeToRetry = true;
+    throw error;
+  }
+  const id = externalId(connection, connection.provider === 'jira' ? response.key : connection.provider === 'github-issues' ? response.number : response.id);
+  if (onCreated) await onCreated(id);
+  return getIssue(connection, id, { fetchImpl });
+}
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+async function closeIssue(connection, id, note, { fetchImpl, onClosed } = {}) {
+  const before = await getIssue(connection, id, { fetchImpl });
+  if (before.closed) return { ...before, alreadyClosed: true };
+  if (connection.provider === 'jira') {
+    if (!connection.closeTransitionId) throw new HttpError('Configure the Jira false-positive close transition ID before closing tickets', 409);
+    const transitions = await request(connection, `/issue/${segment(id)}/transitions`, {}, fetchImpl);
+    const transition = Array.isArray(transitions.transitions) && transitions.transitions.find(item => String(item.id) === connection.closeTransitionId);
+    if (!transition || transition.to?.statusCategory?.key !== 'done') throw new HttpError('The configured Jira transition must be available and lead to a Done status', 409);
+    await request(connection, `/issue/${segment(id)}/transitions`, { method: 'POST', body: { transition: { id: connection.closeTransitionId }, update: { comment: [{ add: { body: adf(note) } }] } } }, fetchImpl);
+  } else if (connection.provider === 'github-issues') {
+    await request(connection, `/issues/${id}/comments`, { method: 'POST', body: { body: note } }, fetchImpl);
+    await request(connection, `/issues/${id}`, { method: 'PATCH', body: { state: 'closed', state_reason: 'not_planned' } }, fetchImpl);
+  } else {
+    if (!Number.isSafeInteger(before.revision)) throw new HttpError('Azure Boards did not return the work item revision', 502);
+    await request(connection, `/${segment(connection.project)}/_apis/wit/workitems/${id}?api-version=7.1`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [
+      { op: 'test', path: '/rev', value: before.revision }, { op: 'add', path: '/fields/System.History', value: escapeHtml(note) }, { op: 'add', path: '/fields/System.State', value: connection.closeState },
+    ] }, fetchImpl);
+  }
+  // Record only an acknowledged closing mutation. A failed or merely attempted request cannot
+  // justify reclassifying a ticket that a later read finds closed by somebody else.
+  if (onClosed) await onClosed();
+  const after = await getIssue(connection, id, { fetchImpl });
+  if (!after.closed) throw new HttpError('The provider did not confirm closure. Check its workflow or approval rules.', 409);
+  return after;
+}
+
+module.exports = { PROVIDERS, validateConnection, externalId, testConnection, getIssue, createIssue, closeIssue, text };

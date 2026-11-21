@@ -27,7 +27,10 @@ attacker path, and proposes a fix and a regression assertion.
 **Find. Explain. Act.** Less time translating security output into engineering work.
 More time making the next change with a clear reason.
 
-### Security platform foundation · branch preview
+Workbench also supports [centralized findings management](docs/integrations.md) in Jira Cloud,
+Azure Boards, and GitHub Issues, with multiple organization connections and basic role controls.
+
+### Security platform foundation
 
 The Workbench now connects **scan → understand → fix → measure**. Guided mode provides a
 starting path for developers who want help with their code; Advanced mode exposes scoped
@@ -49,7 +52,7 @@ ServiceNow chain export and private developer coaching are explicitly **offline 
 stubs**. This is a foundation for local testing, not a claim of complete scanner coverage.
 Read [what changed, benefits and limits](docs/security-platform.md) and
 [validation evidence](docs/platform-validation.md) and the
-[original-request audit](docs/request-completion.md) before merging.
+[original-request audit](docs/request-completion.md) for scope and validation details.
 
 ### What a useful answer looks like
 
@@ -88,6 +91,12 @@ not a security approval.
 **Next:** [IDE setup and guard behavior](docs/ide.md).
 
 ### Prefer a visual review?
+
+For a hosted Workbench using Auth0 sign-in at `https://app.threatlint.dev`, see the
+[web app deployment guide](docs/web-app.md). Google, Apple, GitHub or approved
+enterprise SSO identities receive an isolated runtime and persistent settings.
+The guide covers Auth0 tenant configuration, Docker setup and environment
+variables. The web app has no local password login.
 
 From this checkout:
 

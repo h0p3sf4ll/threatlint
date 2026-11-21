@@ -26,7 +26,7 @@
     node.addEventListener('click', action); return node;
   }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     if (response.status === 204) return null;
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
@@ -41,6 +41,11 @@
 
   // ── Tooltips ───────────────────────────────────────────────────────────────
   function installTips(tooltips) {
+    if (window.ThreatlintProfile?.web) tooltips = { ...tooltips,
+      'open-repo': 'Open a folder inside your personal profile runtime, or check out code from Connect source. This browser cannot browse folders on your laptop.',
+      provider: 'Choose a model provider reachable from your profile runtime on the server. Model API keys entered here stay in memory for the session.',
+      'dashboard-builder': 'Add widgets, pick a metric, a dimension, and a chart. Dashboards are saved to your profile on the server.',
+    };
     const popover = $('tip-popover');
     for (const anchor of document.querySelectorAll('[data-tip]')) {
       const text = tooltips[anchor.dataset.tip];
@@ -274,7 +279,8 @@
     setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ block: 'start' }), 0);
   }
   function updateExportLink() {
-    $('metrics-export').href = state.source === 'all' ? '/api/metrics/export' : `/api/metrics/export?source=${encodeURIComponent(state.source)}`;
+    const url = state.source === 'all' ? '/api/metrics/export' : `/api/metrics/export?source=${encodeURIComponent(state.source)}`;
+    $('metrics-export').href = window.ThreatlintProfile?.url?.(url) || url;
   }
   function renderSources(sources) {
     const node = $('metrics-source'); node.replaceChildren();
@@ -497,6 +503,7 @@
       if (event.detail.view === 'metrics') loadMetrics();
     });
     try {
+      await window.ThreatlintProfile?.ready;
       state.help = await api('/api/help');
       // View modules may contribute help for their own pages; server-provided entries win on a shared key or id.
       const extras = window.ThreatlintHelpExtras || {};

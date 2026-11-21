@@ -68,7 +68,7 @@
       if (files.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL) throw new Error('Design inputs can total at most 25 MB.');
       if (!files.length) { state.bundle = null; return; }
       const body = JSON.stringify({ files: await Promise.all(files.map(async file => ({ name: file.name, content: await base64(file) }))) });
-      const response = await fetch('/api/design-inputs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const response = await (window.ThreatlintProfile?.fetch || fetch)('/api/design-inputs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Upload failed (${response.status})`);
       state.bundle = payload;
@@ -78,7 +78,7 @@
       state.bundle = previous;
       toast(error.message, true);
     } finally {
-      if (previous && previous !== state.bundle) fetch(`/api/design-inputs/${encodeURIComponent(previous.id)}`, { method: 'DELETE' }).catch(() => {});
+      if (previous && previous !== state.bundle) (window.ThreatlintProfile?.fetch || fetch)(`/api/design-inputs/${encodeURIComponent(previous.id)}`, { method: 'DELETE' }).catch(() => {});
       state.busy = false; render(); changed();
     }
   }

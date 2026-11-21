@@ -19,15 +19,37 @@ class DetailEvent extends Event { constructor(name, input = {}) { super(name); t
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const response = data => ({ ok: true, json: async () => data });
 const scan = { id: 'initial', status: 'partial', findings: [{ id: 'debug', title: '<img src=x> debug setting', severity: 'MEDIUM', path: 'settings.py', line: 1, snippet: 'DEBUG = True', fixAvailable: true, ruleId: 'TL-DEBUG-ENABLED' }], engines: [], coverage: { status: 'partial' } };
-function fixture(fetch) {
+function fixture(fetch, profile) {
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element()]));
   const document = new EventTarget();
   document.getElementById = id => nodes.get(id); document.createElement = tag => new Element(tag);
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/security-platform.js'), 'utf8'), { document, fetch, CustomEvent: DetailEvent, setTimeout });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/security-platform.js'), 'utf8'), { document, fetch, window: { ThreatlintProfile: profile }, CustomEvent: DetailEvent, setTimeout });
   const session = id => document.dispatchEvent(new DetailEvent('threatlint:context', { detail: { session: { id, repoPath: `/repos/${id}` } } }));
   return { nodes, document, session };
 }
+
+test('scanner requests wait for identity and use the profile-bound transport for reads and writes', async () => {
+  let ready;
+  const calls = [];
+  const app = fixture(() => { throw new Error('Unscoped transport must not be used'); }, {
+    ready: new Promise(resolve => { ready = resolve; }),
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      if (url.includes('?sessionId=')) return response([]);
+      if (url === '/api/security-scanner/scans') return response({ id: 'initial' });
+      return response(scan);
+    },
+  });
+  app.session('profile-workspace'); await settle();
+  assert.equal(calls.length, 0, 'a pending identity must not issue an unbound request');
+  ready(); await settle();
+  app.nodes.get('security-scan-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  assert.equal(calls[0].url, '/api/security-scanner/scans?sessionId=profile-workspace');
+  const created = calls.find(call => call.options.method === 'POST');
+  assert.equal(created.url, '/api/security-scanner/scans');
+  assert.equal(JSON.parse(created.options.body).sessionId, 'profile-workspace');
+});
 
 test('switching workspace during automatic apply does not relock or overwrite the new workspace', async () => {
   let release;

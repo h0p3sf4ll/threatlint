@@ -1,0 +1,26 @@
+name: Web profile image
+on:
+  pull_request:
+    paths: ['Dockerfile.web', '.dockerignore', 'web/**', 'src/**', 'pyproject.toml', '.github/workflows/web-image.yml']
+  push:
+    branches: [main, 'feature/**']
+    paths: ['Dockerfile.web', '.dockerignore', 'web/**', 'src/**', 'pyproject.toml', '.github/workflows/web-image.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - run: npm --prefix web ci --omit=dev --ignore-scripts
+      - name: Build the production worker
+        run: docker build --file Dockerfile.web --tag threatlint-profile:ci .
+      - name: Verify isolated, persistent profile containers
+        run: node web/scripts/profile-image-smoke.cjs
+        env:
+          THREATLINT_PROFILE_IMAGE: threatlint-profile:ci

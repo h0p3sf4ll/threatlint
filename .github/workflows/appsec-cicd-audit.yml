@@ -24,7 +24,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  configuration:
+    name: Model review configuration
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.configuration.outputs.enabled }}
+    steps:
+      - name: Check out review configuration
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check model review setup
+        id: configuration
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          APPSEC_ENABLED: ${{ vars.APPSEC_REVIEWS_ENABLED }}
+          APPSEC_PROVIDER: ${{ vars.APPSEC_PROVIDER }}
+          APPSEC_GATE_MODE: ${{ vars.APPSEC_GATE_MODE }}
+          HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: python3 .github/scripts/appsec_configuration.py
+
   cicd-audit:
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

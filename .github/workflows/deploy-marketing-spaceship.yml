@@ -1,0 +1,164 @@
+name: Deploy marketing site to Spaceship
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "marketing/**"
+      - ".github/workflows/deploy-marketing-spaceship.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: threatlint-marketing-spaceship-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate static website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate assets and prepare deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          for required in index.html styles.css assets/mark.svg robots.txt sitemap.xml .htaccess; do
+            test -s "marketing/$required" || { echo "::error::Missing marketing/$required"; exit 1; }
+          done
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          class Parser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.refs = []
+              def handle_starttag(self, tag, attrs):
+                  for name, value in attrs:
+                      if name in ("href", "src") and value and value.startswith("/") and not value.startswith("//"):
+                          self.refs.append(value.split("#", 1)[0].split("?", 1)[0])
+          parser = Parser()
+          parser.feed(Path("marketing/index.html").read_text())
+          for ref in parser.refs:
+              target = Path("marketing") / ref.lstrip("/")
+              if target.is_dir():
+                  target /= "index.html"
+              if ref and not target.is_file():
+                  raise SystemExit(f"Missing internal asset: {ref}")
+          print("Static website validation passed")
+          PY
+          mkdir -p dist
+          cp -a marketing/. dist/
+          # Cloudflare-specific configuration is not interpreted by Spaceship/LiteSpeed.
+          rm -f dist/_headers
+          test -s dist/index.html
+
+  deploy:
+    name: Deploy to Spaceship via FTPS
+    needs: validate
+    # Explicit opt-in until the server and repository secrets are configured.
+    if: ${{ github.ref == 'refs/heads/main' && vars.SPACESHIP_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://threatlint.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate and stage website
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s marketing/index.html
+          mkdir -p dist
+          cp -a marketing/. dist/
+          rm -f dist/_headers
+      - name: Validate Spaceship connection settings
+        env:
+          FTP_HOST: ${{ secrets.SPACESHIP_FTP_HOST }}
+          FTP_USER: ${{ secrets.SPACESHIP_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.SPACESHIP_FTP_PASSWORD }}
+          FTP_PATH: ${{ vars.SPACESHIP_FTP_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in FTP_HOST FTP_USER FTP_PASSWORD; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing required GitHub Actions secret: SPACESHIP_${key}"
+              exit 1
+            fi
+          done
+          target="${FTP_PATH:-/}"
+          if [[ ! "$target" =~ ^/[A-Za-z0-9._/-]*$ || "$target" == *".."* ]]; then
+            echo "::error::Invalid SPACESHIP_FTP_PATH. Use / for an FTP account restricted to the website document root."
+            exit 1
+          fi
+          if [[ "$FTP_HOST" == *"/"* || "$FTP_HOST" == *":"* ]]; then
+            echo "::error::SPACESHIP_FTP_HOST must be a hostname only, without a scheme or port."
+            exit 1
+          fi
+      - name: Install lftp
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends lftp
+      - name: Upload static site over verified FTPS
+        env:
+          FTP_HOST: ${{ secrets.SPACESHIP_FTP_HOST }}
+          FTP_USER: ${{ secrets.SPACESHIP_FTP_USER }}
+          LFTP_PASSWORD: ${{ secrets.SPACESHIP_FTP_PASSWORD }}
+          FTP_PATH: ${{ vars.SPACESHIP_FTP_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${FTP_PATH:-/}"
+          # FTP account should be jailed to the website's exact document root.
+          # TLS is required and certificates are validated. No delete is performed.
+          lftp --user "$FTP_USER" --env-password "ftp://$FTP_HOST" <<EOF
+          set cmd:fail-exit yes
+          set ftp:ssl-allow yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set ssl:verify-certificate yes
+          set ftp:passive-mode yes
+          set net:timeout 30
+          set net:max-retries 2
+          mirror --reverse --verbose --parallel=1 dist "$target"
+          bye
+          EOF
+      - name: Verify public website matches deployed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import time
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          for name in ("index.html", "styles.css", "assets/mark.svg", "robots.txt", "sitemap.xml"):
+              path = "/" if name == "index.html" else f"/{name}"
+              url = f"https://threatlint.dev{path}?deployment={os.environ['GITHUB_SHA']}"
+              expected = (Path("marketing") / name).read_bytes()
+              for attempt in range(3):
+                  try:
+                      request = Request(url, headers={"Cache-Control": "no-cache"})
+                      with urlopen(request, timeout=30) as response:
+                          if response.status != 200 or response.read() != expected:
+                              raise ValueError(f"Published content does not match source: {name}")
+                      print(f"Verified {name}")
+                      break
+                  except Exception:
+                      if attempt == 2:
+                          raise
+                      time.sleep(5)
+          PY

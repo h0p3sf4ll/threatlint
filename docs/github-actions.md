@@ -15,6 +15,23 @@ The two workflows below are the main entry points. Other
 scheduled analysis; [`appsec-auto-fix.yml`](#auto-fix-is-a-separate-write-path) is
 a separate write path.
 
+Automatic model reviews are optional integrations that require provider setup.
+Their **Model review configuration** job always reports whether a review can run.
+With no provider configuration or opt-in, it records **No AI security review ran**
+and the paid model job is skipped. Tests, builds and other checks remain separate.
+Set the repository variable `APPSEC_REVIEWS_ENABLED=true` and add the selected
+provider's credential to enable automatic reviews. Manual dispatches always
+request a real review and fail explicitly if its credential is unavailable.
+
+Existing configured analysis remains active: a selected `APPSEC_PROVIDER`, an
+existing Anthropic/OpenAI credential, or `APPSEC_GATE_MODE=fail` enables preflight
+even without the new opt-in variable. Missing credentials then fail the run;
+a blocking gate cannot become an unconfigured skip. Fork restrictions, the PR
+review's draft restriction, reports, publication and severity gates still apply.
+A successful configuration job is not a completed security review: the separate
+review job must run successfully and produce its report. No model review has
+been completed when only the configuration check passes.
+
 | Workflow | File | Trigger | Provider | Output |
 | --- | --- | --- | --- | --- |
 | AppSec PR Review | [.github/workflows/appsec-pr-review.yml](../.github/workflows/appsec-pr-review.yml) | Non-draft, same-repository PR | `APPSEC_PROVIDER` variable (default: `claude`) | Report artifact (30 days), PR summary, SARIF, qualifying issues |
@@ -44,7 +61,7 @@ elevated comment-publishing step. See [Scanner coverage and remediation](securit
 | --- | --- | --- |
 | `claude` | `ANTHROPIC_API_KEY` repository secret (or `CLAUDE_CODE_OAUTH_TOKEN`) | Full agentic loop — reads files, runs git commands, walks the codebase interactively |
 | `openai` | `OPENAI_API_KEY` repository secret | Prompt-based — diff and key context files are bundled into the request |
-| `github-models` | `GITHUB_TOKEN` (automatic — no extra secret needed) | Same prompt-based approach; uses the GitHub Models API endpoint |
+| `github-models` (retired) | No longer available | GitHub retired the inference API on July 30, 2026; automatic preflight fails explicitly and requires another provider. |
 
 A larger tool surface is not a coverage guarantee. Review provider data handling
 and allowed tools before enabling analysis.
@@ -80,13 +97,18 @@ or desktop build is not evidence that a model-backed scan ran.
 2. Add `OPENAI_API_KEY` as a repository or organization secret.
 
 **For `github-models`:**
-No additional provider secret is required. The workflow uses `GITHUB_TOKEN`;
-confirm that your organization and token can access GitHub Models.
+GitHub Models, including its inference API, was [retired on July 30,
+2026](https://docs.github.com/en/github-models). Select `claude` or `openai` and
+configure its provider secret. A GitHub token is not a replacement for that
+provider credential.
 
-### 2. Configure the provider (PR review only)
+### 2. Configure automatic model reviews
 
 Under **Settings → Secrets and variables → Actions → Variables**, set
-`APPSEC_PROVIDER` to `claude` (default), `openai`, or `github-models`.
+`APPSEC_REVIEWS_ENABLED=true` and choose `APPSEC_PROVIDER=claude` (default) or
+`APPSEC_PROVIDER=openai`. This covers automatic PR, specialist, push-triggered
+and scheduled model reviews. The configuration job receives only booleans for
+credential availability; actual keys remain confined to the review job.
 `APPSEC_MIN_ISSUE_SEVERITY` controls issue filing: `HIGH` by default; valid values
 are `CRITICAL`, `HIGH`, `MEDIUM`, and `LOW`.
 

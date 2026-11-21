@@ -1139,7 +1139,8 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   const idle = async () => { while (pending.size) await Promise.all([...pending.values()].map(item => item.done)); };
   const close = async () => { closed = true; for (const item of pending.values()) item.controller.abort(); await idle(); };
   return { create, post, postScanner, get: id => summary(jobFor(id)), list: () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(job => summary(job, false)),
-    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle, close };
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle, close,
+    get active() { return pending.size > 0; } };
 }
 
 module.exports = { createScanImports, reviewSemgrepAvit, parseScanReport, readReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,

@@ -21,13 +21,13 @@ class Element extends EventTarget {
 class DetailEvent extends Event { constructor(name, input = {}) { super(name); this.detail = input.detail; } }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const descend = (root, predicate) => root.children.flatMap(item => [item, ...descend(item, predicate)]).filter(predicate);
-function fixture(fetch) {
+function fixture(fetch, profile) {
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element()]));
   nodes.get('view-metrics').hidden = true;
   const document = new EventTarget(); document.readyState = 'loading'; document.body = new Element('body');
   document.getElementById = id => nodes.get(id); document.createElement = tag => new Element(tag);
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/finding-intelligence.js'), 'utf8'), { document, fetch, CustomEvent: DetailEvent, setTimeout, URL, Blob });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/finding-intelligence.js'), 'utf8'), { document, fetch, window: { ThreatlintProfile: profile }, CustomEvent: DetailEvent, setTimeout, URL, Blob });
   document.dispatchEvent(new Event('DOMContentLoaded'));
   const session = id => document.dispatchEvent(new DetailEvent('threatlint:context', { detail: { session: id ? { id, repoPath: `/repos/${id}` } : null } }));
   return { nodes, document, session };
@@ -38,6 +38,25 @@ function overview(title = 'Fixture finding', evidence = []) {
   return { summary: { findings: 1, open: 1, high: 0, critical: 0, verifiedRemediated: 0, openRiskPoints: 3 }, findings: [finding], revisionFindings: [finding], repositories: [], composites: [], trends: [] };
 }
 const response = data => ({ ok: true, json: async () => data });
+
+it('waits for identity and keeps evidence requests on the profile-bound transport', async () => {
+  let ready;
+  const calls = [];
+  const app = fixture(() => { throw new Error('Unscoped transport must not be used'); }, {
+    ready: new Promise(resolve => { ready = resolve; }),
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: false, json: async () => ({ error: 'Your active profile changed. Reload this page.' }) };
+    },
+  });
+  app.session('profile-workspace'); await settle();
+  assert.equal(calls.length, 0);
+  ready(); await settle();
+  assert.equal(calls[0].url, '/api/intelligence/sync');
+  assert.equal(JSON.parse(calls[0].options.body).sessionId, 'profile-workspace');
+  assert.equal(app.nodes.get('intelligence-status').textContent, 'Your active profile changed. Reload this page.');
+  assert.equal(app.nodes.get('intelligence-findings').children.length, 0);
+});
 
 it('discards an old workspace response and renders repository text without HTML sinks', async () => {
   const pending = [];

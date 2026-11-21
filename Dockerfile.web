@@ -1,0 +1,106 @@
+# syntax=docker/dockerfile:1
+# Build from the repository root: docker build -f Dockerfile.web -t threatlint-profile:local .
+# This image runs a single user's Workbench, behind the authenticated web gateway.
+FROM node:22-bookworm-slim AS profile-tools
+
+# Download helpers stay in this build stage. Every executable is pinned; no account
+# credentials are needed for installation or copied into the final image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN <<'TOOLS'
+set -eu
+mkdir -p /opt/profile-tools/bin
+curl --fail --location --proto '=https' --tlsv1.2 'https://registry.npmjs.org/@openai/codex/-/codex-0.171.0.tgz' -o /tmp/codex.tgz
+curl --fail --location --proto '=https' --tlsv1.2 'https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.330.tgz' -o /tmp/claude-code.tgz
+node <<'INTEGRITY'
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+// Integrity values published in the exact versions' official npm metadata.
+for (const [file, expected] of [
+  ['/tmp/codex.tgz', '1IOFzL2Xg86tLdw6kDo3GoKbkQENgQi7TI6rlEvN132R7ngSw7SNOIQoTcnKzSZZ8kf9N9GynCweSoaFbqk2Eg=='],
+  ['/tmp/claude-code.tgz', 'KQMl6kixLMGHRCDUhkUPebuBhw13MpxlH3+17QzHQx40FNVd1z3uFKUSqQXB5zF9vLQGcpoC/8wWe5R35lsWvQ=='],
+]) {
+  if (crypto.createHash('sha512').update(fs.readFileSync(file)).digest('base64') !== expected) throw new Error(`Package integrity mismatch: ${file}`);
+}
+INTEGRITY
+# Both packages use exact-version official per-platform optional dependencies;
+# npm verifies their registry integrity. Claude's official postinstall links its
+# native executable, so scripts must remain enabled for this tools-only install.
+npm install --global --prefix /opt/profile-tools --omit=dev /tmp/codex.tgz /tmp/claude-code.tgz
+
+case "$(dpkg --print-architecture)" in
+  amd64) tool_arch=amd64; gh_sha=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f ;;
+  arm64) tool_arch=arm64; gh_sha=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02 ;;
+  *) echo 'Profile tools require amd64 or arm64' >&2; exit 1 ;;
+esac
+curl --fail --location --proto '=https' --tlsv1.2 "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_linux_${tool_arch}.tar.gz" -o /tmp/gh.tar.gz
+printf '%s  /tmp/gh.tar.gz\n' "$gh_sha" | sha256sum --check --strict -
+mkdir /tmp/gh
+tar -xzf /tmp/gh.tar.gz -C /tmp/gh --strip-components=1
+install -m 0755 /tmp/gh/bin/gh /opt/profile-tools/bin/gh
+
+# The pinned official AWS installer verifies the versioned CLI package's detached
+# PGP signature using its embedded AWS signing key; verification is not skipped.
+curl --fail --location --proto '=https' --tlsv1.2 'https://awscli.amazonaws.com/v2/install.sh' -o /tmp/aws-install.sh
+printf '%s  /tmp/aws-install.sh\n' '14491acef7619fb49e98f62d37c49a1cc86937d4053e5a96599c0bc04ac01b01' | sha256sum --check --strict -
+XDG_DATA_HOME=/opt XDG_BIN_HOME=/opt/profile-tools/bin bash /tmp/aws-install.sh --version 2.42.1
+rm -rf /tmp/codex.tgz /tmp/claude-code.tgz /tmp/gh.tar.gz /tmp/gh /tmp/aws-install.sh
+npm cache clean --force
+TOOLS
+
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git python3 python3-venv ripgrep file libstdc++6 less groff \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/threatlint-venv \
+    && python3 -m venv /opt/semgrep-venv
+
+# This release supplies Python 3.11 / glibc 2.34+ Linux wheels on amd64 and arm64.
+# Keep the scanner's dependency graph separate from the application's Python environment.
+RUN /opt/semgrep-venv/bin/python -m pip install --no-cache-dir semgrep==1.186.0
+
+COPY --from=profile-tools /opt/profile-tools /opt/profile-tools
+COPY --from=profile-tools /opt/aws-cli /opt/aws-cli
+
+ENV PATH="/opt/profile-tools/bin:/opt/threatlint-venv/bin:/opt/semgrep-venv/bin:${PATH}" \
+    NODE_ENV=production \
+    HOME=/home/threatlint \
+    USERPROFILE=/home/threatlint \
+    THREATLINT_HOME=/home/threatlint/.threatlint \
+    THREATLINT_STATE_DIR=/home/threatlint/.threatlint/workbench \
+    THREATLINT_WORKER_HOST=0.0.0.0 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DISABLE_UPDATES=1 \
+    GH_NO_UPDATE_NOTIFIER=1 \
+    AWS_CLI_AUTO_PROMPT=off \
+    PORT=3000
+
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+RUN pip install --no-cache-dir .
+COPY web ./web
+
+# The official Node image already provides uid/gid 1000. Named home volumes inherit
+# these permissions when first mounted; application files remain root-owned.
+RUN mkdir -p /home/threatlint/.threatlint/workbench \
+    && chown -R node:node /home/threatlint
+
+USER node
+# Check executable availability as the runtime user without credentials or remote scans.
+RUN SEMGREP_SEND_METRICS=off SEMGREP_ENABLE_VERSION_CHECK=0 semgrep --version \
+    && threatlint --help >/dev/null \
+    && codex --version \
+    && claude --version \
+    && aws --version \
+    && gh --version
+EXPOSE 3000
+CMD ["node", "web/profile-worker.cjs"]

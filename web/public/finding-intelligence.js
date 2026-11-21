@@ -30,7 +30,8 @@
   const evidenceLabel = item => `${item.kind}: ${item.path || item.reference}${item.line ? `:${item.line}` : ''} · ${item.quote.slice(0, 70) || 'reference only'}`;
   async function request(url, body, sessionId = state.session?.id) {
     if (!sessionId) throw new Error('Open a workspace first.');
-    const response = await fetch(`/api/intelligence${url}${body === undefined ? `${url.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}` : ''}`,
+    if (window.ThreatlintProfile) await window.ThreatlintProfile.ready;
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(`/api/intelligence${url}${body === undefined ? `${url.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}` : ''}`,
       body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, sessionId }) });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Evidence request failed'); return result;
   }

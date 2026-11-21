@@ -13,7 +13,8 @@
     return element;
   }
   async function request(url, body) {
-    const response = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (window.ThreatlintProfile) await window.ThreatlintProfile.ready;
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'The request could not be completed.');
     return result;
