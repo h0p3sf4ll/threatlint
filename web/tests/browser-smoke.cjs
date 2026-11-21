@@ -214,7 +214,7 @@ async function scanImport(page) {
     return alert.top >= header.bottom && alert.bottom <= innerHeight;
   });
   await page.setViewportSize(viewport);
-  await page.locator('#settings-button').click();
+  await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
   await page.locator('#cloud-consent').check();
   await page.locator('#settings-form button[type=submit]').click();
   await page.locator('[data-view="fpreview"]').click();
@@ -323,11 +323,11 @@ async function scannerFlows(page) {
     calls.resolve.push({ tool, ...request.postDataJSON() });
     return json(200, { ok: true, reference: 'DOJO-1201', lines: ['✓ Attached DOJO-1201-threatlint-fp-review.docx', '✓ Note added', '✓ Marked false positive (inactive)'] });
   });
-  await page.locator('#settings-button').click();
+  await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
   // The remote fixture model from the earlier step needs consent before any review can start.
   await page.locator('#cloud-consent').check(); await page.locator('#settings-form button[type=submit]').click();
-  await page.locator('#settings-button').click();
-  await page.locator('[data-settings-category=scanners]').click();
+  await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
+  await page.locator('.settings-nav [data-settings-category=scanners]').click();
   await page.locator('#dojo-form').scrollIntoViewIfNeeded();
   await page.locator('#dojo-url').fill('https://dojo.example.test');
   await page.locator('#dojo-token').fill('synthetic-dojo-token-0000');
@@ -386,7 +386,8 @@ async function githubSettings(page) {
     if (request.method() === 'POST') { posted.push(request.postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...status(true), repositories: 2, owner: 'example-org' }) }); }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(status(posted.length > 0)) });
   });
-  await page.locator('#settings-button').click();
+  await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
+  await page.locator('.settings-nav [data-settings-category=scanners]').click();
   await page.locator('#github-form').scrollIntoViewIfNeeded();
   assert.equal(await page.locator('#github-app-fields').isVisible(), false, 'App fields stay hidden until "Use GitHub App" is checked');
   await page.locator('#github-use-app').check();
@@ -404,7 +405,7 @@ function base(page) { return new URL(page.url()).origin; }
 // Claude with no model picked: Settings shows the policy, the default option saves, and review runs use the scanning model.
 async function claudeDefaults(page) {
   await page.route(/\/api\/models$/, route => route.fulfill({ json: { models: [{ id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' }], source: 'session' } }));
-  await page.locator('#settings-button').click(); await page.locator('input[name=provider][value=claude]').check();
+  await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click(); await page.locator('input[name=provider][value=claude]').check();
   await page.waitForFunction(() => document.getElementById('model-source').textContent.includes('1 model'));
   assert.match(await page.locator('#model-policy-note').innerText(), /Scanning: claude-opus-5-5 · Chat: claude-opus-5-5/);
   assert.equal(await page.locator('#model-select').inputValue(), '', 'Threatlint default is preselected');
@@ -610,7 +611,7 @@ async function fpReviewRun(page) {
     assert.equal(await page.locator('.skill-card').count(), new Set(Object.values(SKILL_MAP).flat()).size);
     await page.locator('#choose-repo').click(); await page.locator('#repo-path').fill(repo); await page.locator('#open-repository').click();
     await page.locator('#repository-dialog').waitFor({ state: 'hidden' });
-    await page.locator('#settings-button').click(); await page.locator('summary', { hasText: 'Enter a model ID manually' }).click(); await page.locator('#model-id').fill('fixture-local-model'); await page.locator('#settings-form button[type=submit]').click();
+    await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click(); await page.locator('summary', { hasText: 'Enter a model ID manually' }).click(); await page.locator('#model-id').fill('fixture-local-model'); await page.locator('#settings-form button[type=submit]').click();
     await page.locator('[data-view="workbench"]').click(); await page.getByRole('button', { name: /Find signal in the noise/ }).click();
     await page.locator('#findings-file').setInputFiles({ name: 'scan.sarif', mimeType: 'application/json', buffer: Buffer.from('{"runs":[]}') });
     await page.locator('#start-run').click();
@@ -630,7 +631,7 @@ async function fpReviewRun(page) {
     await page.locator('.pipeline-item.running').first().waitFor(); await page.locator('#cancel-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review stopped'));
     assert.equal(await page.locator('#stat-reports').innerText(), '1');
-    await page.locator('#settings-button').click(); await page.locator('input[name=provider][value=openai]').check();
+    await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click(); await page.locator('input[name=provider][value=openai]').check();
     if (!(await page.locator('#model-id').isVisible())) await page.locator('summary', { hasText: 'Enter a model ID manually' }).click();
     await page.locator('#model-id').fill('fixture-remote-model'); await page.locator('#api-key').fill('synthetic-key-not-a-secret'); await page.locator('#settings-form button[type=submit]').click();
     const saved = await page.evaluate(() => JSON.stringify(Object.fromEntries(Object.entries(localStorage))));

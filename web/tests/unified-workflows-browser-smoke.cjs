@@ -86,6 +86,7 @@ const { createWorkbench } = require('../server.js');
     await page.getByRole('button', { name: 'Save GitHub Issues', exact: true }).click();
     await page.locator('#issue-settings-github p', { hasText: 'Configured. Token' }).waitFor();
     assert.equal(await page.locator('#tracker-github-token').inputValue(), '');
+    await page.locator('.settings-nav [data-settings-category=general]').click();
     await page.locator('input[name=provider][value=lmstudio]').check();
     if (!await page.locator('#model-id').isVisible()) await page.locator('summary', { hasText: 'Enter a model ID manually' }).click();
     await page.locator('#model-id').fill('synthetic-model'); await page.locator('#settings-form button[type=submit]').click();

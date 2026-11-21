@@ -62,7 +62,7 @@
         for (const agent of available) {
           const card = node('article', 'specialist-review-card'); card.dataset.agentId = agent.id;
           card.append(node('h3', '', agent.label), node('p', '', agent.description), node('p', 'specialist-deliverable', `Deliverable: ${agent.deliverable}`));
-          const button = node('button', 'button primary', 'Prepare review →'); button.type = 'button'; button.setAttribute('aria-label', `Prepare ${agent.label} review`);
+          const button = node('button', 'button primary', 'Prepare review →'); button.type = 'button'; button.setAttribute('aria-label', `Prepare review: ${agent.label}`);
           button.dataset.reviewAgents = agent.id; button.addEventListener('click', () => prepare([agent.id])); card.append(button); grid.append(card);
         }
         if (!available.length) grid.append(node('p', '', 'These specialists are unavailable in this installation.'));

@@ -42,6 +42,11 @@ const { SKILL_MAP } = require('../lib/agents.cjs');
     assert.equal(await page.locator('.skill-card').count(), new Set(Object.values(SKILL_MAP).flat()).size);
     assert.equal(await page.evaluate(() => window.threatlintDesktop?.isDesktop), true);
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
+    await page.locator('[data-view=specialistreviews]').click();
+    await page.locator('#specialistreviews-data-tab').click();
+    await page.locator('[data-agent-id=appsec-ai-security-reviewer] button').click();
+    assert.equal(await page.locator('#pipeline-list > *').count(), 1);
+    assert.match(await page.locator('#pipeline-list').innerText(), /AI.*security/);
     await page.locator('#preview-example').click(); await page.locator('#report-dialog[open]').waitFor();
     await page.locator('#report-tab-findings').click(); assert.equal(await page.locator('.finding-card').count(), 2);
     const isolation = await application.evaluate(({ BrowserWindow }) => {
