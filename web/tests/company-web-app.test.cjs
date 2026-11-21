@@ -99,6 +99,11 @@ it('authorizes company entry pages from verified organization membership and rej
   assert.equal(config.status, 200); assert.deepEqual(config.body.company, { slug: 'acme', name: 'Acme', organizationId: 'org_Acme123' });
   assert.equal(Object.hasOwn((await app.call('/auth/config')).body, 'company'), false);
   const good = await app.signIn(COMPANIES[0]); assert.equal(good.status, 200);
+  for (const path of ['/c/acme/login', '/c/acme/login?next=https://evil.example', '/c/acme/login?redirect=//evil.example']) {
+    const redirect = await app.call(path, { cookie: good.cookie });
+    assert.equal(redirect.status, 302); assert.equal(redirect.headers.get('location'), '/c/acme/');
+  }
+  assert.equal((await app.call('/c/%2F%2Fevil.example/login', { cookie: good.cookie })).status, 404);
   const matched = await app.call('/c/acme/', { cookie: good.cookie });
   assert.equal(matched.status, 200); assert.match(matched.body, /id="view-workbench"/);
   const other = await app.call('/c/beta/', { cookie: good.cookie });

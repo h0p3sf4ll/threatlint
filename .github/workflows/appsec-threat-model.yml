@@ -111,7 +111,7 @@ jobs:
       # ─── OpenAI / GitHub Models ───────────────────────────────────────────
       - name: Set up Python
         if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -122,19 +122,20 @@ jobs:
       - name: Run AppSec threat model (OpenAI / GitHub Models)
         if: env.PROVIDER == 'openai' || env.PROVIDER == 'github-models'
         env:
+          REVIEW_TARGET: ${{ inputs.target }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 .github/scripts/appsec_api.py \
             --mode threat-model \
             --provider "$PROVIDER" \
-            --target "${{ inputs.target }}" \
+            --target "$REVIEW_TARGET" \
             --output "$REPORT_FILE"
 
       # ─── Upload report artifact ───────────────────────────────────────────
       - name: Upload threat model report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: appsec-threat-model-${{ github.run_id }}
           path: ${{ env.REPORT_FILE }}
@@ -155,7 +156,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
         with:
           sarif_file: /tmp/appsec-threat-model.sarif
         continue-on-error: true
@@ -177,6 +178,8 @@ jobs:
       - name: Create GitHub issues for findings
         if: inputs.create_issues == 'true'
         env:
+          REVIEW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MIN_ISSUE_SEVERITY: ${{ inputs.min_issue_severity || 'HIGH' }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ ! -f "$REPORT_FILE" ]; then
@@ -185,5 +188,5 @@ jobs:
           fi
           python3 .github/scripts/create_issues.py \
             --report "$REPORT_FILE" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --min-severity "${{ inputs.min_issue_severity || 'HIGH' }}"
+            --run-url "$REVIEW_RUN_URL" \
+            --min-severity "$MIN_ISSUE_SEVERITY"
