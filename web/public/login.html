@@ -25,6 +25,12 @@
       <p class="login-eyebrow">THREATLINT WEB</p>
       <h2 id="login-title">Welcome back.</h2>
       <p class="login-card-description" id="login-description">Use your personal account or your organization’s single sign-on.</p>
+      <div class="company-context" id="company-context" hidden><strong id="company-name"></strong><span id="company-slug"></span></div>
+      <form class="company-picker" id="company-form">
+        <label for="company-input">Company workspace</label>
+        <div class="company-input-row"><input id="company-input" name="companySlug" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="your-company" minlength="3" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9\-]{1,61}[A-Za-z0-9]" aria-describedby="company-hint" required><button type="submit">Continue</button></div>
+        <p id="company-hint">Enter your company’s workspace slug, or sign in personally below.</p>
+      </form>
       <div class="identity-options" id="identity-options" aria-label="Sign-in options" aria-describedby="login-error login-status" aria-busy="true">
         <button class="identity-button" type="button" data-identity="google" disabled>Continue with Google</button>
         <button class="identity-button" type="button" data-identity="apple" disabled>Continue with Apple</button>
@@ -34,6 +40,7 @@
       </div>
       <p class="login-status" id="login-status" role="status" aria-live="polite">Loading secure sign-in…</p>
       <p class="login-error" id="login-error" role="alert" aria-live="polite"></p>
+      <a class="personal-login-link" id="personal-login-link" href="/login" hidden>Use a personal workspace</a>
       <p class="login-footnote">Secure sign-in is provided by Auth0. Your settings and security work stay with your Threatlint profile.</p>
     </section>
     <footer class="login-footer">Evidence-led security. A clear next step.</footer>

@@ -15,7 +15,33 @@
   });
   profile.storage = scoped('localStorage');
   profile.sessionStorage = scoped('sessionStorage');
-  const redirect = () => { location.replace('/login'); };
+  profile.url = url => {
+    if (!profile.web || !identityResolved) return url;
+    let target;
+    try { target = new URL(String(url), location.href); } catch { return url; }
+    if (target.origin !== location.origin || !target.pathname.startsWith('/api/')) return url;
+    target.searchParams.set('_profile', profile.user.id);
+    return `${target.pathname}${target.search}${target.hash}`;
+  };
+  profile.fetch = async (url, options = {}) => {
+    if (!profile.web || !identityResolved) return fetch(url, options);
+    let target;
+    try { target = new URL(typeof url === 'string' ? url : url?.url || String(url), location.href); }
+    catch { return fetch(url, options); }
+    const protectedRequest = target.origin === location.origin && (target.pathname.startsWith('/api/') || target.pathname === '/auth/logout');
+    if (!protectedRequest) return fetch(url, options);
+    const headers = new Headers(options.headers || url?.headers);
+    headers.set('X-Threatlint-Profile', profile.user.id);
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 409) profile.check().catch(() => {});
+    return response;
+  };
+  function loginPath() {
+    const company = profile.user?.company?.slug || /^\/c\/([a-z0-9][a-z0-9-]{1,61}[a-z0-9])(?:\/|$)/.exec(location.pathname || '/')?.[1];
+    return company ? `/c/${company}/login` : '/login';
+  }
+  profile.loginPath = loginPath;
+  const redirect = () => { location.replace(loginPath()); };
   let channel;
   try { channel = new BroadcastChannel('threatlint-auth'); } catch { /* older browsers still recheck on focus */ }
   channel?.addEventListener('message', () => { if (profile.web) location.reload(); });
@@ -26,6 +52,14 @@
     if (!response.ok) return false;
     const current = await response.json();
     if (current.user?.id !== profile.user.id) { location.reload(); return false; }
+    if (current.user.company?.slug !== profile.user.company?.slug) {
+      profile.user = current.user;
+      const slug = current.user.company?.slug;
+      const canonical = typeof slug === 'string' && /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(slug) ? `/c/${slug}/` : '/';
+      location.replace(`${canonical}${location.hash || ''}`);
+      return false;
+    }
+    if (current.user.company?.name !== profile.user.company?.name) { profile.user = current.user; location.reload(); return false; }
     return true;
   };
   function showIdentity() {
@@ -47,31 +81,35 @@
     if (browserButton) browserButton.textContent = 'Browse profile…';
     const repoPath = document.getElementById('repo-path');
     if (repoPath) repoPath.placeholder = '/home/threatlint/path/to/repository';
+    const metricsExport = document.getElementById('metrics-export');
+    if (metricsExport) metricsExport.href = profile.url(metricsExport.href);
     const account = document.getElementById('web-profile');
     const name = document.getElementById('web-profile-name');
     const signout = document.getElementById('web-signout');
     if (!account || !name || !signout) return;
     account.hidden = false;
-    name.textContent = profile.user.displayName || profile.user.email;
-    name.title = profile.user.email;
+    name.textContent = `${profile.user.company ? `${profile.user.company.name} · ` : ''}${profile.user.displayName || profile.user.email}`;
+    name.title = `${profile.user.email}${profile.user.company ? ` · ${profile.user.company.name} (${profile.user.company.slug})` : ''}`;
     const avatar = document.getElementById('profile-avatar');
     if (avatar) { avatar.textContent = (profile.user.displayName || profile.user.email).slice(0, 2).toUpperCase(); avatar.setAttribute('aria-label', profile.user.email); }
     signout.addEventListener('click', async () => {
       signout.disabled = true;
       let sessionRevoked = false;
       try {
-        const response = await fetch('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' });
+        const response = await profile.fetch('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' });
         if (!response.ok && response.status !== 401) throw new Error('Sign out could not complete. Please try again.');
         sessionRevoked = true;
         channel?.postMessage({ type: 'session-changed' });
         await window.ThreatlintAuth.logout();
       } catch (error) {
-        if (sessionRevoked) { location.replace('/login?notice=provider-logout'); return; }
+        if (sessionRevoked) { location.replace(`${loginPath()}?notice=provider-logout`); return; }
         signout.disabled = false; document.getElementById('web-profile-error').textContent = error.message;
       }
     });
   }
   profile.ready = (async () => {
+    // Native desktop is an individual local application, even when no network is available.
+    if (window.threatlintDesktop) { identityResolved = true; return; }
     // The Electron/local server has no auth endpoint and serves its app HTML instead.
     const response = await fetch('/auth/session', { cache: 'no-store', credentials: 'same-origin' });
     if (response.status === 401) { redirect(); throw new Error('Sign in to continue.'); }

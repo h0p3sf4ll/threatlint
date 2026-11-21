@@ -25,7 +25,7 @@
     for (const anchor of node.querySelectorAll('a')) { if (!(anchor.getAttribute('href') || '').startsWith('https://')) anchor.removeAttribute('href'); else { anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; } }
   }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options });
     if (response.status === 204) return null;
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);

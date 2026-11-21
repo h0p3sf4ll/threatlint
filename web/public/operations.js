@@ -117,7 +117,7 @@
   }
   async function api(path, { method = 'GET', body, signal } = {}) {
     // No credentials in URLs, storage, logs, or error messages. Do not follow a redirect with a secret-bearing body.
-    const response = await fetch(path, {
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(path, {
       method, signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error', referrerPolicy: 'no-referrer',
       headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -784,7 +784,8 @@
       const link = $(`runtime-export-${format}`);
       link.setAttribute('aria-disabled', String(!transferable)); link.tabIndex = transferable ? 0 : -1;
       if (transferable) {
-        link.href = `/api/runtime/scans/${scan}/export?format=${format}`;
+        const url = `/api/runtime/scans/${scan}/export?format=${format}`;
+        link.href = window.ThreatlintProfile?.url?.(url) || url;
         link.download = `runtime-evidence.${format}`; link.referrerPolicy = 'no-referrer';
       } else link.removeAttribute('href');
     }

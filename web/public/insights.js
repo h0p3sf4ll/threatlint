@@ -26,7 +26,7 @@
     node.addEventListener('click', action); return node;
   }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     if (response.status === 204) return null;
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
@@ -278,7 +278,8 @@
     document.querySelector(`.settings-nav a[href="#settings-${section}"]`)?.click();
   }
   function updateExportLink() {
-    $('metrics-export').href = state.source === 'all' ? '/api/metrics/export' : `/api/metrics/export?source=${encodeURIComponent(state.source)}`;
+    const url = state.source === 'all' ? '/api/metrics/export' : `/api/metrics/export?source=${encodeURIComponent(state.source)}`;
+    $('metrics-export').href = window.ThreatlintProfile?.url?.(url) || url;
   }
   function renderSources(sources) {
     const node = $('metrics-source'); node.replaceChildren();

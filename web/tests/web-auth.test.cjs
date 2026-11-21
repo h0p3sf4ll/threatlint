@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createAuth, sessionCookie, clearCookie } = require('../lib/web-auth.cjs');
+const { createCompanies } = require('../lib/companies.cjs');
 
 const ISSUER = 'https://tenant.example.auth0.com/';
 const request = token => ({ headers: { cookie: `unrelated=1; threatlint_session=${token}` } });
@@ -28,7 +29,7 @@ it('restores a stable issuer/subject profile without persisting provider or sess
   const profile = path.join(root, 'profiles', first.user.id);
   fs.mkdirSync(profile, { recursive: true }); fs.writeFileSync(path.join(profile, 'settings.json'), '{"provider":"fixture"}');
   const filename = path.join(root, 'identities.json'), contents = fs.readFileSync(filename, 'utf8'), saved = JSON.parse(contents);
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   assert.equal(saved.users[0].issuer, ISSUER); assert.equal(saved.users[0].subject, 'google-oauth2|user-123');
   assert.equal(contents.includes(first.token), false);
   assert.doesNotMatch(contents, /unpersisted-oidc|password|salt|accessToken|idToken|refreshToken/);
@@ -126,4 +127,58 @@ it('fails closed on corrupt federated state and sets secure HTTP-only cookies', 
   assert.doesNotMatch(sessionCookie(value, { secure: false }), /Secure/);
   assert.match(clearCookie(), /HttpOnly; SameSite=Lax; Secure; Max-Age=0/);
   assert.throws(() => sessionCookie({ token: '\r\ninjected=1' }), /valid session/);
+});
+
+it('gives the same verified person separate personal and company profiles, scoped by immutable organization IDs', t => {
+  const root = directory(t), auth = createAuth({ directory: root });
+  const registry = createCompanies({ companies: [{ slug: 'acme', name: 'Acme', auth0OrganizationId: 'org_Acme' },
+    { slug: 'example', name: 'Example', auth0OrganizationId: 'org_Example' }] });
+  const personal = auth.establish(identity());
+  const acme = auth.establish(identity({ company: registry.get('acme') }));
+  const example = auth.establish(identity({ company: registry.get('example') }));
+  assert.equal(new Set([personal.user.id, acme.user.id, example.user.id]).size, 3);
+  assert.equal(Object.hasOwn(personal.user, 'company'), false);
+  assert.deepEqual(acme.user.company, { slug: 'acme', name: 'Acme', organizationId: 'org_Acme' });
+  assert.equal(auth.authenticate(request(acme.token)).user.company.organizationId, 'org_Acme');
+  assert.equal(auth.authenticate(request(example.token)).user.company.organizationId, 'org_Example');
+  auth.logout(request(acme.token));
+  assert.equal(auth.authenticate(request(acme.token)), null);
+  assert.ok(auth.authenticate(request(example.token))); assert.ok(auth.authenticate(request(personal.token)));
+  const changed = auth.establish(identity({ company: { slug: 'acme-renamed', name: 'Acme Renamed', organizationId: 'org_Acme' } }));
+  assert.equal(changed.user.id, acme.user.id); assert.equal(changed.user.company.slug, 'acme-renamed');
+  const restored = createAuth({ directory: root });
+  assert.equal(restored.establish(identity({ company: changed.user.company })).user.id, acme.user.id);
+  assert.equal(restored.establish(identity()).user.id, personal.user.id);
+});
+
+it('preserves version 2 personal UUIDs, sessions and settings when upgrading the identity store', t => {
+  const root = directory(t), first = createAuth({ directory: root }).establish(identity());
+  const filename = path.join(root, 'identities.json'), version2 = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  version2.version = 2; fs.writeFileSync(filename, JSON.stringify(version2));
+  const profile = path.join(root, 'profiles', first.user.id); fs.mkdirSync(profile, { recursive: true });
+  fs.writeFileSync(path.join(profile, 'settings.json'), 'existing personal settings');
+  const restored = createAuth({ directory: root });
+  assert.equal(restored.authenticate(request(first.token)).user.id, first.user.id);
+  assert.equal(Object.hasOwn(restored.authenticate(request(first.token)).user, 'company'), false);
+  const company = restored.establish(identity({ company: { slug: 'acme', name: 'Acme', organizationId: 'org_Acme' } }));
+  assert.notEqual(company.user.id, first.user.id);
+  assert.equal(restored.establish(identity()).user.id, first.user.id);
+  assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).version, 3);
+  assert.equal(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'), 'existing personal settings');
+});
+
+it('does not infer company membership from client-shaped org fields and rejects corrupt company metadata', t => {
+  const root = directory(t), auth = createAuth({ directory: root }), personal = auth.establish(identity());
+  const untrusted = auth.establish(identity({ org_id: 'org_Attacker', organizationId: 'org_Attacker', slug: 'attacker' }));
+  assert.equal(untrusted.user.id, personal.user.id); assert.equal(Object.hasOwn(untrusted.user, 'company'), false);
+  for (const company of [null, 'acme', { slug: 'acme', name: 'Acme' }, { slug: '../acme', name: 'Acme', organizationId: 'org_Acme' },
+    { slug: 'acme', name: 'Acme', organizationId: 'org_Acme', accessToken: 'forged' }]) {
+    assert.throws(() => auth.establish(identity({ company })), error => error.status === 401);
+  }
+  auth.establish(identity({ company: { slug: 'acme', name: 'Acme', organizationId: 'org_Acme' } }));
+  const filename = path.join(root, 'identities.json'), stored = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  stored.users.find(user => user.company).company.organizationId = '../invalid';
+  const corrupt = JSON.stringify(stored); fs.writeFileSync(filename, corrupt);
+  assert.throws(() => createAuth({ directory: root }), /original data was preserved/);
+  assert.equal(fs.readFileSync(filename, 'utf8'), corrupt);
 });

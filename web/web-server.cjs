@@ -9,6 +9,7 @@ const { stateDirectory, acquireStateLock } = require('./lib/web-state.cjs');
 const { auth0Configuration, permittedSubject } = require('./lib/auth0-config.cjs');
 const { createAuth0Api, requiresAuth } = require('@auth0/auth0-express-api');
 const { AuthClient } = require('@auth0/auth0-auth-js');
+const { createCompanies } = require('./lib/companies.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -21,7 +22,8 @@ function webOrigin(value) {
 }
 
 function createWebApp(options = {}) {
-  const origin = webOrigin(options.origin || process.env.THREATLINT_WEB_ORIGIN || 'https://threatlint.dev');
+  const origin = webOrigin(options.origin || process.env.THREATLINT_WEB_ORIGIN || 'https://app.threatlint.dev');
+  const companies = createCompanies({ companies: options.companies });
   const configuration = auth0Configuration(origin, options.auth0);
   const tenantOrigin = `https://${configuration.domain}`;
   const csp = `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss: ${tenantOrigin}; frame-src ${tenantOrigin}; worker-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
@@ -49,9 +51,16 @@ function createWebApp(options = {}) {
   const buckets = new Map();
   let authPending = 0, closing = false;
 
+  function activeSession(req) {
+    const session = auth.authenticate(req);
+    if (!session?.user.company) return session;
+    const company = companies.forOrganization(session.user.company.organizationId);
+    return company ? { ...session, user: { ...session.user, company } } : null;
+  }
+
   function allowed(req, mutation = false) {
     // Universal Login and logout return by cross-site top-level navigation. The SPA SDK validates callback state.
-    const entryNavigation = !mutation && req.method === 'GET' && ['/', '/login', '/login.html'].includes(req.path)
+    const entryNavigation = !mutation && req.method === 'GET' && (['/', '/login', '/login.html'].includes(req.path) || /^\/c\/[^/]+\/?(?:login)?$/.test(req.path))
       && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
     if (req.headers.host?.toLowerCase() !== origin.host || (req.headers['sec-fetch-site'] === 'cross-site' && !entryNavigation)) return false;
     if (req.headers.origin && req.headers.origin !== origin.origin) return false;
@@ -69,7 +78,7 @@ function createWebApp(options = {}) {
     return true;
   }
   function expireTunnels() {
-    for (const tunnel of tunnels) if (!auth.authenticate(tunnel.req)) { tunnel.socket.destroy(); tunnel.upstream?.destroy(); tunnels.delete(tunnel); }
+    for (const tunnel of tunnels) if (!activeSession(tunnel.req)) { tunnel.socket.destroy(); tunnel.upstream?.destroy(); tunnels.delete(tunnel); }
   }
   const sweep = setInterval(expireTunnels, 1000); sweep.unref();
   function workerHeaders(req, worker) {
@@ -88,9 +97,14 @@ function createWebApp(options = {}) {
     next();
   });
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
-  app.get('/auth/config', (_req, res) => res.json(configuration));
+  app.get('/auth/config', (req, res) => {
+    if (req.query.company === undefined) return res.json(configuration);
+    const company = companies.get(req.query.company);
+    if (!company) return res.status(404).json({ error: 'Company workspace not found' });
+    res.json({ ...configuration, company });
+  });
   app.get('/auth/session', (req, res) => {
-    const session = auth.authenticate(req);
+    const session = activeSession(req);
     if (!session) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
     res.json({ user: session.user, web: true });
   });
@@ -113,8 +127,15 @@ function createWebApp(options = {}) {
       }
       const identity = await auth0Client.getUserInfo({ accessToken: req.auth0.token, expectedSubject: claims.sub });
       if (identity.sub !== claims.sub) return res.status(401).json({ error: 'Auth0 identity could not be verified' });
+      const requestedSlug = req.headers['x-threatlint-company'];
+      const requestedCompany = requestedSlug === undefined ? null : companies.get(requestedSlug);
+      const company = claims.org_id === undefined ? null : companies.forOrganization(claims.org_id);
+      if ((requestedSlug !== undefined && (!requestedCompany || !company || requestedCompany.organizationId !== company.organizationId))
+          || (claims.org_id !== undefined && !company)) {
+        return res.status(403).json({ error: 'Sign in through this company’s Auth0 organization with an authorized membership.' });
+      }
       const result = auth.establish({ issuer: claims.iss, subject: claims.sub, displayName: identity.name || identity.nickname,
-        email: identity.email, expiresAt: claims.exp * 1000 });
+        email: identity.email, expiresAt: claims.exp * 1000, ...(company ? { company } : {}) });
       // Only the verified issuer + subject determines ownership; email never links profiles.
       auth.logout(req); expireTunnels();
       res.set('Set-Cookie', sessionCookie(result, { secure })).json({ user: result.user });
@@ -124,32 +145,56 @@ function createWebApp(options = {}) {
     }
   });
   app.post('/auth/logout', (req, res, next) => {
-    try { auth.logout(req); expireTunnels(); res.set('Set-Cookie', clearCookie({ secure })).json({ ok: true }); }
+    try {
+      const profile = req.headers['x-threatlint-profile'];
+      if (profile && activeSession(req)?.user.id !== profile) return res.status(409).json({ error: 'Your active profile changed. Reload this page.' });
+      auth.logout(req); expireTunnels(); res.set('Set-Cookie', clearCookie({ secure })).json({ ok: true });
+    }
     catch (error) { next(error); }
   });
   app.use('/auth', (_req, res) => res.status(404).json({ error: 'Unknown account route' }));
   app.get('/vendor/auth0-spa-js.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@auth0/auth0-spa-js/dist/auth0-spa-js.production.js')));
   for (const [url, file] of Object.entries({ '/login': 'login.html', '/login.html': 'login.html', '/login.js': 'login.js', '/auth0-client.js': 'auth0-client.js', '/login.css': 'login.css', '/mark.svg': 'mark.svg' })) {
     app.get(url, (req, res) => {
-      if (file === 'login.html' && auth.authenticate(req)) return res.redirect('/');
       res.sendFile(path.join(PUBLIC, file));
     });
   }
   // Auth0's configured SPA callback is the root URL, including when replacing an existing login.
   app.get('/', (req, res, next) => {
-    if (!auth.authenticate(req) || (req.query.state && (req.query.code || req.query.error))) return res.sendFile(path.join(PUBLIC, 'login.html'));
+    if (!activeSession(req) || (req.query.state && (req.query.code || req.query.error))) return res.sendFile(path.join(PUBLIC, 'login.html'));
+    next();
+  });
+  app.get(['/c/:slug', '/c/:slug/', '/c/:slug/login'], (req, res, next) => {
+    const company = companies.get(req.params.slug);
+    if (!company) return res.status(404).send('Company workspace not found');
+    const session = activeSession(req);
+    if (session?.user.company?.organizationId !== company.organizationId) return res.sendFile(path.join(PUBLIC, 'login.html'));
+    if (req.path.endsWith('/login')) return res.redirect(`/c/${company.slug}/`);
+    req.workbenchPath = '/';
     next();
   });
   app.use(async (req, res, next) => {
-    const session = auth.authenticate(req);
+    const session = activeSession(req);
     if (!session) {
       if (req.path.startsWith('/api/') || req.headers.accept?.includes('application/json')) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
       return res.redirect('/login');
     }
+    if (req.path.startsWith('/api/')) {
+      const headerProfile = req.headers['x-threatlint-profile'];
+      const linkProfile = req.query._profile;
+      if ((headerProfile !== undefined && headerProfile !== session.user.id) || (linkProfile !== undefined && linkProfile !== session.user.id)) {
+        return res.status(409).json({ error: 'Your active profile changed. Reload this page.' });
+      }
+      if (linkProfile !== undefined) {
+        const target = new URL(req.originalUrl, origin);
+        target.searchParams.delete('_profile');
+        req.workbenchPath = target.pathname + target.search;
+      }
+    }
     try {
       const worker = await workers.get(session.user);
-      if (!auth.authenticate(req)) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
-      const upstream = http.request({ hostname: '127.0.0.1', port: worker.port, method: req.method, path: req.originalUrl,
+      if (!activeSession(req)) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
+      const upstream = http.request({ hostname: '127.0.0.1', port: worker.port, method: req.method, path: req.workbenchPath || req.originalUrl,
         headers: workerHeaders(req, worker) }, response => {
         const headers = { ...response.headers, 'cache-control': 'no-store', 'content-security-policy': csp };
         delete headers['set-cookie'];
@@ -168,14 +213,17 @@ function createWebApp(options = {}) {
   server.on('upgrade', async (req, socket, head) => {
     const reject = status => { if (!socket.destroyed) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
     if (!allowed(req) || req.headers.origin !== origin.origin) return reject('403 Forbidden');
-    const session = auth.authenticate(req);
+    const session = activeSession(req);
     if (!session) return reject('401 Unauthorized');
-    if (req.url !== '/') return reject('404 Not Found');
+    let socketUrl;
+    try { socketUrl = new URL(req.url, origin); } catch { return reject('400 Bad Request'); }
+    if (socketUrl.pathname !== '/' || [...socketUrl.searchParams.keys()].some(key => key !== 'profile')) return reject('404 Not Found');
+    if (socketUrl.searchParams.has('profile') && socketUrl.searchParams.get('profile') !== session.user.id) return reject('403 Forbidden');
     const tunnel = { req, socket, upstream: null };
     tunnels.add(tunnel); socket.once('close', () => { tunnel.upstream?.destroy(); tunnels.delete(tunnel); });
     try {
       const worker = await workers.get(session.user);
-      if (socket.destroyed || !auth.authenticate(req)) return reject('401 Unauthorized');
+      if (socket.destroyed || !activeSession(req)) return reject('401 Unauthorized');
       const request = http.request({ hostname: '127.0.0.1', port: worker.port, path: '/', headers: workerHeaders(req, worker) });
       request.on('upgrade', (response, upstream, upstreamHead) => {
         tunnel.upstream = upstream;

@@ -29,6 +29,8 @@ dist
 build
 .env
 .env.*
+**/.env
+**/.env.*
 **/*.pem
 **/*.key
 **/auth.json

@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { companyMetadata } = require('./companies.cjs');
 const COOKIE_NAME = 'threatlint_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -33,7 +34,10 @@ function displayValue(value) {
   if (typeof value !== 'string') throw failure();
   return value.replace(/[\x00-\x1f\x7f]/g, ' ').trim().replace(/\s+/g, ' ').slice(0, 80);
 }
-function publicUser(user) { return { id: user.id, email: user.email, displayName: user.displayName }; }
+function publicUser(user) {
+  return { id: user.id, email: user.email, displayName: user.displayName,
+    ...(user.company ? { company: { ...user.company } } : {}) };
+}
 function tokenHash(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
 
 function requestToken(req) {
@@ -55,13 +59,16 @@ function clearCookie({ secure = true } = {}) {
 }
 
 function validateState(value) {
-  if (!value || value.version !== 2 || !Array.isArray(value.users) || !Array.isArray(value.sessions)) throw new Error('Invalid identity store');
+  if (!value || ![2, 3].includes(value.version) || !Array.isArray(value.users) || !Array.isArray(value.sessions)) throw new Error('Invalid identity store');
   const ids = new Set(), identities = new Set(), hashes = new Set();
   for (const user of value.users) {
-    const identity = JSON.stringify([user?.issuer, user?.subject]);
+    const company = user?.company === undefined ? undefined : companyMetadata(user.company);
+    const identity = JSON.stringify([user?.issuer, user?.subject, company?.organizationId || null]);
     if (!user || !UUID.test(user.id) || !validIssuer(user.issuer) || !validSubject(user.subject) ||
         emailValue(user.email) !== user.email || typeof user.displayName !== 'string' ||
         !user.displayName || user.displayName.length > 80 || /[\x00-\x1f\x7f]/.test(user.displayName) ||
+        (value.version === 2 && company) || (company && company.name !== user.company.name) ||
+        Object.keys(user).some(key => !['id', 'issuer', 'subject', 'email', 'displayName', 'company'].includes(key)) ||
         ids.has(user.id) || identities.has(identity)) throw new Error('Invalid identity store');
     ids.add(user.id); identities.add(identity);
   }
@@ -70,20 +77,23 @@ function validateState(value) {
         hashes.has(session.tokenHash)) throw new Error('Invalid identity store');
     hashes.add(session.tokenHash);
   }
-  return value;
+  // Version 2 users and sessions remain personal; upgrading never changes a profile UUID or directory.
+  return { ...value, version: 3 };
 }
 
 /**
  * One gateway owns this identity store. establish() accepts only identity metadata already verified by
  * the gateway's OIDC SDK; it does not verify a JWT and must never be exposed as a client-facing API.
- * Identities are keyed by the exact issuer and subject, never by email. Legacy accounts.json is ignored.
+ * Identities are keyed by the exact issuer, subject and organization ID, never by email or company slug.
+ * The gateway validates company membership from a verified JWT before passing registry metadata here.
+ * A company slug or org_id received directly from a client grants no access. Legacy accounts.json is ignored.
  */
 function createAuth({ directory, sessionTtlMs = SESSION_TTL_MS, now = Date.now } = {}) {
   if (typeof directory !== 'string' || !directory) throw new TypeError('An identity storage directory is required');
   if (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs < 1000 || sessionTtlMs > 30 * 24 * 60 * 60 * 1000) throw new TypeError('Invalid session lifetime');
   const file = path.join(directory, 'identities.json');
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  let state = { version: 2, users: [], sessions: [] };
+  let state = { version: 3, users: [], sessions: [] };
   if (fs.existsSync(file)) {
     try { state = validateState(JSON.parse(fs.readFileSync(file, 'utf8'))); }
     catch { throw new Error('The identity store could not be read; original data was preserved'); }
@@ -109,17 +119,21 @@ function createAuth({ directory, sessionTtlMs = SESSION_TTL_MS, now = Date.now }
     // Bound active sessions per profile. Establishing a session retires the oldest excess sessions.
     const own = sessions.filter(item => item.userId === user.id);
     const retired = new Set(own.slice(0, Math.max(0, own.length - 19)).map(item => item.tokenHash));
-    persist({ version: 2, users: nextUsers, sessions: [...sessions.filter(item => !retired.has(item.tokenHash)), { tokenHash: tokenHash(token), userId: user.id, expiresAt }] });
+    persist({ version: 3, users: nextUsers, sessions: [...sessions.filter(item => !retired.has(item.tokenHash)), { tokenHash: tokenHash(token), userId: user.id, expiresAt }] });
     return { user: publicUser(user), token, expiresAt };
   }
   function establish(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input) || !validIssuer(input.issuer) ||
         !validSubject(input.subject) || !Number.isSafeInteger(input.expiresAt) || input.expiresAt <= now()) throw failure();
-    const existing = state.users.find(user => user.issuer === input.issuer && user.subject === input.subject);
+    let company;
+    try { company = input.company === undefined ? undefined : companyMetadata(input.company); }
+    catch { throw failure(); }
+    const existing = state.users.find(user => user.issuer === input.issuer && user.subject === input.subject &&
+      (user.company?.organizationId || null) === (company?.organizationId || null));
     const email = input.email === undefined ? (existing?.email || '') : emailValue(input.email);
     const displayName = displayValue(input.displayName) || existing?.displayName || email || 'Threatlint user';
     const user = { id: existing?.id || crypto.randomUUID(), issuer: input.issuer, subject: input.subject,
-      displayName: displayName.slice(0, 80), email };
+      displayName: displayName.slice(0, 80), email, ...(company ? { company } : {}) };
     const users = existing ? state.users.map(item => item.id === existing.id ? user : item) : [...state.users, user];
     return issue(user, input.expiresAt, users);
   }

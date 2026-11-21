@@ -59,8 +59,8 @@
     state.toastTimer = setTimeout(() => $('toast').classList.add('hidden'), error ? 8500 : 4000);
   }
   async function request(url, options = {}) {
-    const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
-    if (response.status === 401 && profile?.web && response.headers.get('x-threatlint-auth') === 'required') { location.replace('/login'); throw new Error('Your session expired. Sign in to continue.'); }
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
+    if (response.status === 401 && profile?.web && response.headers.get('x-threatlint-auth') === 'required') { location.replace(profile?.loginPath?.() || '/login'); throw new Error('Your session expired. Sign in to continue.'); }
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
     return payload;
@@ -304,8 +304,8 @@
       const info = el('div', 'report-card-info'); info.append(el('h3', '', report.title || report.label), el('p', '', `${formatTime(report.timestamp)} · ${report.findings?.length || 0} parsed findings · ${report.hasDocx ? 'Markdown + Word' : 'Markdown'}`));
       if (report.quality?.issues?.length) info.append(el('div', 'report-card-status', `${report.quality.issues.length} format item${report.quality.issues.length > 1 ? 's' : ''} need review`));
       const actions = el('div', 'report-card-actions'); actions.append(button('Read report ↗', 'button primary small-button', () => openReportUrl(report.previewUrl).catch(error => toast(error.message, true))));
-      const download = el('a', 'button secondary small-button', '↓ Markdown'); download.href = report.mdUrl; download.download = ''; actions.append(download);
-      if (report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = report.docxUrl; word.download = ''; actions.append(word); }
+      const download = el('a', 'button secondary small-button', '↓ Markdown'); download.href = profile?.url?.(report.mdUrl) || report.mdUrl; download.download = ''; actions.append(download);
+      if (report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = profile?.url?.(report.docxUrl) || report.docxUrl; word.download = ''; actions.append(word); }
       actions.append(button('Delete…', 'button danger small-button', event => deleteReport(report, event.currentTarget), `Delete ${report.title || report.label}`));
       card.append(el('span', 'agent-monogram', agent?.initials || 'TL'), info, actions); list.append(card);
     }
@@ -351,7 +351,7 @@
     $('report-ask').hidden = !!report.example || !report.id;
     $('report-attach-review').hidden = !!report.example || !report.id || report.agentId !== FP_REVIEWER;
     for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl], ['download-pptx', powerPointUrl(report)]]) {
-      $(id).classList.toggle('hidden', !url || report.example); if (url) $(id).href = url; else $(id).removeAttribute('href');
+      $(id).classList.toggle('hidden', !url || report.example); if (url) $(id).href = profile?.url?.(url) || url; else $(id).removeAttribute('href');
     }
     $('reader-finding-count').textContent = report.findings?.length || 0;
     $('severity-filter').value = ''; $('disposition-filter').value = '';
@@ -388,7 +388,7 @@
       const slideUrl = powerPointUrl(state.report, finding.id);
       if (slideUrl) {
         const slide = el('a', 'button secondary small-button', '↓ PowerPoint');
-        slide.href = slideUrl;
+        slide.href = profile?.url?.(slideUrl) || slideUrl;
         slide.download = '';
         slide.setAttribute('aria-label', `Download one-slide PowerPoint for ${finding.id}`);
         actions.append(slide);
@@ -958,7 +958,7 @@
   }
   function connectSocket() {
     clearTimeout(state.reconnectTimer);
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/`);
+    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/${profile?.web ? `?profile=${encodeURIComponent(profile.user.id)}` : ''}`);
     state.ws = socket;
     socket.addEventListener('open', () => {
       state.connected = true; $('connection-status').textContent = 'Connected'; $('connection-status').className = 'connection online'; updateRunControls();
