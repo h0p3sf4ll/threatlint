@@ -10,7 +10,7 @@ const helperScript = new vm.Script(fs.readFileSync(path.join(__dirname, '../publ
 const loginScript = new vm.Script(fs.readFileSync(path.join(__dirname, '../public/login.js'), 'utf8'));
 const publicConfig = { provider: 'auth0', domain: 'threatlint.us.auth0.com', clientId: 'eysUAb8yPNapU4TXqRHpIfhSX4xC4Qqy',
   audience: 'https://threatlint.dev/api', redirectUri: 'https://app.threatlint.dev/',
-  connections: { google: 'google-oauth2', apple: 'apple', github: 'github' } };
+  connections: { google: 'google-oauth2', apple: 'apple', github: 'github' }, enabledProviders: ['google', 'apple', 'github', 'sso'] };
 const plain = value => JSON.parse(JSON.stringify(value));
 function setup({ search = '', pathname = '/', config = publicConfig, lazy = false, callbackError, token = 'api-access-token', status = 200,
   pendingCompany, callbackCompany = null, desktop = false } = {}) {
@@ -70,7 +70,7 @@ test('Google, Apple, and GitHub redirects select the configured connections; SSO
     { appState: { companySlug: null }, authorizationParams: { connection: 'github' } },
   ]);
   assert.deepEqual(plain(redirects[3].options), { appState: { companySlug: null } });
-  await assert.rejects(auth.login('password'), /unavailable/);
+  await assert.rejects(auth.login('password'), /not configured/);
   assert.equal(calls.filter(call => call.kind === 'login').length, 4);
 });
 
@@ -119,7 +119,7 @@ test('login page offers only social and SSO buttons and does not automatically r
   assert.doesNotMatch(html, /type=["']password|name=["'](?:email|password|displayName)["']|\/auth\/(?:register|login)/i);
   assert.match(html, /name="companySlug"/);
   assert.deepEqual([...html.matchAll(/data-identity="([^"]+)"/g)].map(match => match[1]), ['google', 'apple', 'github', 'sso']);
-  const nodes = Object.fromEntries(['identity-options', 'login-status', 'login-error', 'company-form'].map(id => [id,
+  const nodes = Object.fromEntries(['identity-options', 'login-status', 'login-error', 'company-form', 'identity-sso-divider'].map(id => [id,
     { textContent: '', setAttribute: () => {}, addEventListener: () => {} }]));
   const buttons = ['google', 'apple', 'github', 'sso'].map(identity => ({ disabled: true, dataset: { identity }, addEventListener: () => {} }));
   let redirects = 0;
@@ -135,6 +135,34 @@ test('login page offers only social and SSO buttons and does not automatically r
   assert.equal(exchanges, 0);
   assert.ok(buttons.every(button => !button.disabled));
   assert.match(nodes['login-error'].textContent, /signed out of Threatlint/);
+});
+
+test('the SDK never redirects to an unavailable provider even if its connection name is known', async () => {
+  const { auth, calls } = setup({ config: { ...publicConfig, enabledProviders: ['google'] } });
+  await auth.login('google');
+  for (const provider of ['apple', 'github', 'sso']) await assert.rejects(auth.login(provider), /not configured/);
+  assert.equal(calls.filter(call => call.kind === 'login').length, 1);
+  assert.equal(calls.find(call => call.kind === 'login').options.authorizationParams.connection, 'google-oauth2');
+});
+
+test('login options remain hidden until configuration resolves and Google-only deployments hide unavailable buttons and SSO divider', async () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/login.html'), 'utf8');
+  for (const provider of ['google', 'apple', 'github', 'sso']) assert.match(html, new RegExp(`data-identity="${provider}" hidden disabled`));
+  const nodes = Object.fromEntries(['identity-options', 'login-status', 'login-error', 'company-form', 'identity-sso-divider'].map(id => [id,
+    { hidden: true, textContent: '', setAttribute: () => {}, addEventListener: () => {} }]));
+  const buttons = ['google', 'apple', 'github', 'sso'].map(identity => ({ hidden: true, disabled: true, dataset: { identity }, addEventListener: () => {} }));
+  let finishConfiguration;
+  const pendingConfiguration = new Promise(resolve => { finishConfiguration = resolve; });
+  loginScript.runInContext(vm.createContext({ URLSearchParams,
+    document: { getElementById: id => nodes[id], querySelectorAll: () => buttons }, location: { search: '' },
+    window: { ThreatlintAuth: { initialize: () => pendingConfiguration, callbackPresent: () => false } },
+  }));
+  assert.ok(buttons.every(button => button.hidden && button.disabled));
+  finishConfiguration({ config: { ...publicConfig, enabledProviders: ['google'] } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(buttons[0].hidden, false); assert.equal(buttons[0].disabled, false);
+  assert.ok(buttons.slice(1).every(button => button.hidden && button.disabled));
+  assert.equal(nodes['identity-sso-divider'].hidden, true);
 });
 
 test('company sign-in selects its Auth0 organization and preserves the slug inside the SDK transaction', async () => {

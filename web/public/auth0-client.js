@@ -64,6 +64,7 @@
   }
   async function login(provider = 'sso') {
     const { client, config } = await initialize();
+    if (!Array.isArray(config.enabledProviders) || !config.enabledProviders.includes(provider)) throw new Error('That sign-in option is not configured for this workspace. Choose an available provider.');
     if (provider !== 'sso' && (!['google', 'apple', 'github'].includes(provider) || !config.connections?.[provider])) throw new Error('That sign-in option is unavailable. Use your organization’s single sign-on.');
     const companySlug = config.company?.slug || null;
     if (companySlug) { try { window.sessionStorage.setItem(PENDING_COMPANY, companySlug); } catch { /* SDK appState also preserves the route */ } }

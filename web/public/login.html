@@ -24,7 +24,7 @@
     <section class="login-card" aria-labelledby="login-title">
       <p class="login-eyebrow">THREATLINT WEB</p>
       <h2 id="login-title">Welcome back.</h2>
-      <p class="login-card-description" id="login-description">Use your personal account or your organization’s single sign-on.</p>
+      <p class="login-card-description" id="login-description">Sign in to your Threatlint workspace.</p>
       <div class="company-context" id="company-context" hidden><strong id="company-name"></strong><span id="company-slug"></span></div>
       <form class="company-picker" id="company-form">
         <label for="company-input">Company workspace</label>
@@ -32,11 +32,11 @@
         <p id="company-hint">Enter your company’s workspace slug, or sign in personally below.</p>
       </form>
       <div class="identity-options" id="identity-options" aria-label="Sign-in options" aria-describedby="login-error login-status" aria-busy="true">
-        <button class="identity-button" type="button" data-identity="google" disabled>Continue with Google</button>
-        <button class="identity-button" type="button" data-identity="apple" disabled>Continue with Apple</button>
-        <button class="identity-button" type="button" data-identity="github" disabled>Continue with GitHub</button>
-        <div class="identity-divider"><span>OR USE YOUR ORGANIZATION</span></div>
-        <button class="identity-button identity-sso" type="button" data-identity="sso" disabled>Continue with SSO</button>
+        <button class="identity-button" type="button" data-identity="google" hidden disabled>Continue with Google</button>
+        <button class="identity-button" type="button" data-identity="apple" hidden disabled>Continue with Apple</button>
+        <button class="identity-button" type="button" data-identity="github" hidden disabled>Continue with GitHub</button>
+        <div class="identity-divider" id="identity-sso-divider" hidden><span>OR USE YOUR ORGANIZATION</span></div>
+        <button class="identity-button identity-sso" type="button" data-identity="sso" hidden disabled>Continue with SSO</button>
       </div>
       <p class="login-status" id="login-status" role="status" aria-live="polite">Loading secure sign-in…</p>
       <p class="login-error" id="login-error" role="alert" aria-live="polite"></p>
