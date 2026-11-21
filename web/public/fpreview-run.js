@@ -345,7 +345,7 @@
       clearTimeout(saveTimer);
       saveTimer = setTimeout(save, 200);
     }
-    function save() { try { sessionStorage.setItem(STORE_KEY, JSON.stringify(stored)); } catch { /* the history stays on the page */ } }
+    function save() { try { (window.ThreatlintProfile?.sessionStorage || sessionStorage).setItem(STORE_KEY, JSON.stringify(stored)); } catch { /* the history stays on the page */ } }
 
     function handle(event) {
       const stamped = event.at ? event : { ...event, at: new Date().toISOString() };
@@ -357,7 +357,7 @@
      *  It is not marked interrupted here: the run may still be going, and the server's replay decides. */
     function restore() {
       let events = [];
-      try { events = JSON.parse(sessionStorage.getItem(STORE_KEY) || '[]'); } catch { events = []; }
+      try { events = JSON.parse((window.ThreatlintProfile?.sessionStorage || sessionStorage).getItem(STORE_KEY) || '[]'); } catch { events = []; }
       if (!Array.isArray(events) || !events.length || events[0]?.type !== 'fp_run_start') return false;
       stored = events; persist = false;
       try { for (const event of events) apply(event); } finally { persist = true; }

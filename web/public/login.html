@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Sign in to your personal Threatlint security workbench.">
+  <title>Sign in · Threatlint</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/login.css">
+  <script src="/vendor/auth0-spa-js.js" defer></script>
+  <script src="/auth0-client.js" defer></script>
+  <script src="/login.js" defer></script>
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-intro" aria-labelledby="intro-title">
+      <a class="login-brand" href="/login"><img src="/mark.svg" width="38" height="44" alt=""><span>threatlint<small>SECURITY WORKBENCH</small></span></a>
+      <p class="login-eyebrow">YOUR SECURITY WORK, CONNECTED</p>
+      <h1 id="intro-title">Find it before<br>it ships.</h1>
+      <p class="login-description">Review code, triage findings, and track your security work from your browser.</p>
+      <div class="login-benefits"><p><span aria-hidden="true">◫</span><span><strong>A familiar workbench</strong>Run the same specialist workflows as on desktop.</span></p><p><span aria-hidden="true">◇</span><span><strong>Your personal profile</strong>Return to your settings, workspaces, and reports.</span></p></div>
+    </section>
+    <section class="login-card" aria-labelledby="login-title">
+      <p class="login-eyebrow">THREATLINT WEB</p>
+      <h2 id="login-title">Welcome back.</h2>
+      <p class="login-card-description" id="login-description">Sign in to your Threatlint workspace.</p>
+      <div class="company-context" id="company-context" hidden><strong id="company-name"></strong><span id="company-slug"></span></div>
+      <form class="company-picker" id="company-form">
+        <label for="company-input">Company workspace</label>
+        <div class="company-input-row"><input id="company-input" name="companySlug" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="your-company" minlength="3" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9\-]{1,61}[A-Za-z0-9]" aria-describedby="company-hint" required><button type="submit">Continue</button></div>
+        <p id="company-hint">Enter your company’s workspace slug, or sign in personally below.</p>
+      </form>
+      <div class="identity-options" id="identity-options" aria-label="Sign-in options" aria-describedby="login-error login-status" aria-busy="true">
+        <button class="identity-button" type="button" data-identity="google" hidden disabled>Continue with Google</button>
+        <button class="identity-button" type="button" data-identity="apple" hidden disabled>Continue with Apple</button>
+        <button class="identity-button" type="button" data-identity="github" hidden disabled>Continue with GitHub</button>
+        <div class="identity-divider" id="identity-sso-divider" hidden><span>OR USE YOUR ORGANIZATION</span></div>
+        <button class="identity-button identity-sso" type="button" data-identity="sso" hidden disabled>Continue with SSO</button>
+      </div>
+      <p class="login-status" id="login-status" role="status" aria-live="polite">Loading secure sign-in…</p>
+      <p class="login-error" id="login-error" role="alert" aria-live="polite"></p>
+      <a class="personal-login-link" id="personal-login-link" href="/login" hidden>Use a personal workspace</a>
+      <p class="login-footnote">Secure sign-in is provided by Auth0. Your settings and security work stay with your Threatlint profile.</p>
+    </section>
+    <footer class="login-footer">Evidence-led security. A clear next step.</footer>
+  </main>
+</body>
+</html>

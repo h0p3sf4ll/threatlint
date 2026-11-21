@@ -46,8 +46,9 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
       createdThrough: snapshot?.createdThrough || null, scope: snapshot?.scope || null };
   };
   const trackers = async () => ({ trackers: [await tracker('servicenow-avit'), await tracker('defectdojo'),
-    { id: 'jira', label: 'Jira', kind: 'defect-tracker', available: false, connected: false, status: 'not-supported', count: 0, lastSyncedAt: null },
-    { id: 'azure-devops', label: 'Azure DevOps Boards', kind: 'defect-tracker', available: false, connected: false, status: 'not-supported', count: 0, lastSyncedAt: null }] });
+    { id: 'jira', label: 'Jira', kind: 'defect-tracker', available: false, connected: false, status: 'managed-findings', description: 'Manage tickets and view their status in Issue management.', count: 0, lastSyncedAt: null },
+    { id: 'azure-devops', label: 'Azure DevOps Boards', kind: 'defect-tracker', available: false, connected: false, status: 'managed-findings', description: 'Manage tickets and view their status in Issue management.', count: 0, lastSyncedAt: null },
+    { id: 'github-issues', label: 'GitHub Issues', kind: 'defect-tracker', available: false, connected: false, status: 'managed-findings', description: 'Manage tickets and view their status in Issue management.', count: 0, lastSyncedAt: null }] });
   const inFlight = new Map();
   let aggregateInFlight = null;
   async function loadAvitAggregate(filters) {

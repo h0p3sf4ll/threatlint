@@ -52,7 +52,7 @@
   }
   function toast(message, error) { document.dispatchEvent(new CustomEvent('threatlint:toast', { detail: { message, error } })); }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 413) throw new Error(payload.error || 'The report is too large for the runner to accept.');
     if (!response.ok || payload?.error) throw new Error(payload?.error || `Request failed (${response.status})`);
@@ -258,7 +258,7 @@
   function setReportLinks(report) {
     for (const [id, url] of [['scanimport-download-md', report?.mdUrl], ['scanimport-download-docx', report?.docxUrl]]) {
       const link = $(id);
-      if (url) { link.href = url; link.removeAttribute('aria-disabled'); link.removeAttribute('tabindex'); }
+      if (url) { link.href = window.ThreatlintProfile?.url?.(url) || url; link.removeAttribute('aria-disabled'); link.removeAttribute('tabindex'); }
       else { link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); link.tabIndex = -1; }
     }
     $('scanimport-download-docx').title = report && !report.docxUrl ? 'Word export is unavailable on this machine' : '';

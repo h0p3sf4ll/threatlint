@@ -1,0 +1,12 @@
+[
+  {
+    "slug": "acme",
+    "name": "Acme",
+    "auth0OrganizationId": "org_0000000000000001"
+  },
+  {
+    "slug": "northstar",
+    "name": "Northstar",
+    "auth0OrganizationId": "org_0000000000000002"
+  }
+]

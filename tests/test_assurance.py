@@ -134,7 +134,7 @@ def test_critical_sast_disqualifies_but_dynamic_still_runs(tmp_path, fake_repo):
     # The finish line was still crossed: the dynamic stage ran to completion despite the SAST disqualification.
     dynamic = next(stage for stage in state["stages"] if stage["kind"] == "dast")
     assert dynamic["status"] == "ran" and dynamic.get("endpoints", 0) >= 1 and "teardown" not in dynamic.get("note", "")
-    report_text = (tmp_path / "run" / pipeline.REPORT_FILE).read_text()
+    report_text = (tmp_path / "run" / pipeline.REPORT_FILE).read_text(encoding="utf-8")
     assert "DISQUALIFIED" in report_text and "Invicti submission is stubbed" in report_text
 
 

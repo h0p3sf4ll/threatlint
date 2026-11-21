@@ -30,7 +30,7 @@
   function button(label, className, action, type = 'button') { const node = el('button', className, label); node.type = type; if (action) node.addEventListener('click', action); return node; }
   function toast(message, error) { document.dispatchEvent(new CustomEvent('threatlint:toast', { detail: { message, error } })); }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload?.error) throw new Error(payload?.error || `Request failed (${response.status})`);
     return payload;
@@ -182,7 +182,7 @@
     if (event.report && !node.querySelector('.avit-actions button')) {
       const actions = node.querySelector('.avit-actions');
       actions.append(button('Read report ↗', 'button secondary small-button', () => document.dispatchEvent(new CustomEvent('threatlint:open-report', { detail: { sessionId: event.report.sessionId, previewUrl: event.report.previewUrl } }))));
-      if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; actions.append(word); }
+      if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = window.ThreatlintProfile?.url?.(event.report.docxUrl) || event.report.docxUrl; word.download = ''; actions.append(word); }
       if (['TRUE POSITIVE', 'FALSE POSITIVE'].includes(event.disposition)) {
         const post = button(`Post to ${TOOLS[event.tool].label}…`, 'button primary small-button', () => openPost({ kind: 'review', tool: event.tool, reference: event.reference, disposition: event.disposition, unverified: event.unverified, reportId: event.report.id, card: node }));
         post.dataset.post = 'true'; actions.append(post);

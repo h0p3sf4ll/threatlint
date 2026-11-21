@@ -5,6 +5,7 @@
   "author": "threatlint contributors",
   "main": "desktop/main.cjs",
   "scripts": {
+    "start:web": "node web-server.cjs",
     "start": "node server.js",
     "dev": "node --watch server.js",
     "desktop": "electron .",
@@ -33,6 +34,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.53.0",
+    "@auth0/auth0-auth-js": "1.18.0",
+    "@auth0/auth0-express-api": "1.0.1",
+    "@auth0/auth0-spa-js": "2.30.0",
     "dompurify": "3.4.17",
     "express": "^4.22.3",
     "jszip": "3.10.2",
@@ -54,7 +58,7 @@
     }
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "build": {
     "appId": "io.threatlint.workbench",

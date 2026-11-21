@@ -27,6 +27,9 @@ attacker path, and proposes a fix and a regression assertion.
 **Find. Explain. Act.** Less time translating security output into engineering work.
 More time making the next change with a clear reason.
 
+Workbench also supports [centralized findings management](docs/integrations.md) in Jira Cloud,
+Azure Boards, and GitHub Issues, with multiple organization connections and basic role controls.
+
 ### What a useful answer looks like
 
 An illustrative finding, not a result from your repository:
@@ -64,6 +67,12 @@ not a security approval.
 **Next:** [IDE setup and guard behavior](docs/ide.md).
 
 ### Prefer a visual review?
+
+For a hosted Workbench using Auth0 sign-in at `https://app.threatlint.dev`, see the
+[web app deployment guide](docs/web-app.md). Google, Apple, GitHub or approved
+enterprise SSO identities receive an isolated runtime and persistent settings.
+The guide covers Auth0 tenant configuration, Docker setup and environment
+variables. The web app has no local password login.
 
 From this checkout:
 

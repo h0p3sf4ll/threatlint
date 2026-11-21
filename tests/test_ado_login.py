@@ -12,6 +12,7 @@ import pytest
 from threatlint import ado_login, cli, org_config, parameter_store, servicenow
 
 PAT = "a" * 52
+_REAL_KEYRING = ado_login._keyring
 
 
 class Response(io.BytesIO):
@@ -72,6 +73,25 @@ def test_keyring_is_used_when_available(monkeypatch):
     assert ado_login.save("contoso", PAT) == "the OS credential store"
     assert PAT not in ado_login.store_path().read_text(encoding="utf-8")
     assert ado_login.load() == (PAT, "OS credential store")
+
+
+def test_web_profiles_save_and_reload_pats_without_accessing_host_keyring(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setenv("THREATLINT_PROFILE_WORKER", "1")
+    monkeypatch.setattr(ado_login, "_keyring", _REAL_KEYRING)
+    monkeypatch.setitem(sys.modules, "keyring", types.SimpleNamespace(
+        get_keyring=lambda: pytest.fail("a web profile must not inspect the host keyring")))
+    alice, bob = tmp_path / "alice", tmp_path / "bob"
+    monkeypatch.setenv("THREATLINT_HOME", str(alice))
+    assert ado_login.save("contoso", PAT) == str(alice / "ado.json")
+    assert ado_login.load("contoso") == (PAT, str(alice / "ado.json"))
+    monkeypatch.setenv("THREATLINT_HOME", str(bob))
+    assert ado_login.load("contoso") == ("", "")
+    ado_login.save("contoso", "b" * 52)
+    assert ado_login.load("contoso")[0] == "b" * 52
+    monkeypatch.setenv("THREATLINT_HOME", str(alice))
+    assert ado_login.load("contoso")[0] == PAT
+    assert ado_login._secret({"storage": "keyring", "keyring_user": "pat:contoso"}) == ("", "")
 
 
 def test_pat_stdin_for_non_interactive_setup(monkeypatch):

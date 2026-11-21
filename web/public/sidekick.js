@@ -24,7 +24,7 @@
   function note(text, warn) { return el('p', `field-note small ${warn ? 'fp-status-warn' : 'subtle'}`, text); }
   function toast(message, error) { document.dispatchEvent(new CustomEvent('threatlint:toast', { detail: { message, error } })); if (error) console.warn(message); }
   async function api(url, options = {}) {
-    const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const response = await (window.ThreatlintProfile?.fetch || fetch)(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload?.error || `Request failed (${response.status})`);
     return payload;
@@ -38,7 +38,7 @@
     for (const row of rows) { const tr = el('tr'); for (const value of cells(row)) { const td = el('td'); if (value instanceof Node) td.append(value); else td.textContent = value ?? ''; tr.append(td); } tbody.append(tr); }
     t.append(thead, tbody); wrap.append(t); return wrap;
   }
-  function link(href, text) { const a = el('a', '', text || href); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; }
+  function link(href, text) { const a = el('a', '', text || href); a.href = window.ThreatlintProfile?.url?.(href) || href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; }
 
   /** A job panel: progress bar, log tail, Stop, and a completion callback. */
   async function runJob(container, body, onDone) {
@@ -82,7 +82,7 @@
     await loadLoadouts();
     const picker = loadoutPicker(); const stale = input('number', '90', { min: '1', max: '365' }); const result = el('div');
     const go = button('Generate vReport', 'button primary', () => runJob(result, { kind: 'report', loadout: picker.value, staleDays: Number(stale.value) || 90 }, done => {
-      result.append(note(`${fmt(done.rows)} repositories · ${fmt(done.failed)} failed.`), button('Download workbook', 'button secondary', () => { window.location.href = `/api/sidekick/runs/${done.runId}/workbook`; }),
+      result.append(note(`${fmt(done.rows)} repositories · ${fmt(done.failed)} failed.`), button('Download workbook', 'button secondary', () => { const url = `/api/sidekick/runs/${done.runId}/workbook`; window.location.href = window.ThreatlintProfile?.url?.(url) || url; }),
         ...(done.failed ? [button('Retry failed', 'button secondary', () => runJob(result, { kind: 'report', loadout: picker.value, onlyFailedFrom: done.runId }))] : []));
     }));
     body.replaceChildren(card(...[setupNote()].filter(Boolean), field('Loadout', picker), field('Stale after (days)', stale), go, result));
@@ -161,7 +161,7 @@
       const { runs } = await api(`/api/sidekick/runs?limit=20&offset=${state.runsOffset}${filter.value ? `&loadout=${encodeURIComponent(filter.value)}` : ''}`);
       list.replaceChildren(runs.length ? table(['Date', 'Loadout', 'Repos', 'Critical', 'High', 'Secrets', 'Total', ''], runs, r => [r.created_at.slice(0, 16).replace('T', ' '), r.loadout || 'ad hoc', fmt(r.rows),
         fmt(r.total_critical), fmt(r.total_high), fmt(r.open_secrets), fmt(r.total_vulns), (() => { const w = el('span', 'sk-actions');
-          w.append(button('Rows', 'button secondary small-button', () => rows(r.id)), button('Workbook', 'button secondary small-button', () => { window.location.href = `/api/sidekick/runs/${r.id}/workbook`; }),
+          w.append(button('Rows', 'button secondary small-button', () => rows(r.id)), button('Workbook', 'button secondary small-button', () => { const url = `/api/sidekick/runs/${r.id}/workbook`; window.location.href = window.ThreatlintProfile?.url?.(url) || url; }),
             button('Delete', 'button secondary small-button', async () => { if (!confirm('Delete this run and its workbook?')) return; await api(`/api/sidekick/runs/${r.id}`, { method: 'DELETE' }); refresh(); })); return w; })()]) : note('No reports yet.'));
     }
     async function rows(id) {

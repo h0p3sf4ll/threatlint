@@ -1,6 +1,6 @@
 # ThreatLint marketing deployment to Spaceship
 
-The website is static and lives in `marketing/`; the real Workbench in `web/` is **not** publicly deployed.
+The website is static and lives in `marketing/`. The authenticated Workbench at `app.threatlint.dev` runs on its own VPS; see [web deployment](web-vps-deployment.md).
 
 The verified Spaceship server is `server66.shared.spaceship.host`, and the `threatlint.dev` document root is `/home/xpqbpgplls/threatlint.dev`.
 
@@ -51,3 +51,10 @@ The workflow stages only the marketing site, excludes the Cloudflare-only `_head
 Verify `https://threatlint.dev` loads the homepage, styles, logo and valid TLS. If a default placeholder persists, remove or rename an old `index.php` or fix the document root in cPanel. Don't delete other site files until you've confirmed their purpose. Domain DNS must point at your Spaceship hosting; use the domain's hosting connection settings in Spaceship.
 
 Never publish `src/`, `web/`, credentials, or the repository root.
+
+## Deployment targets
+
+Spaceship hosts both the marketing website and the application's VPS. An old Cloudflare
+Workers build connection may still publish an obsolete GitHub check; it is not a deployment
+target or release requirement for this application. Do not deploy application code or profile
+state to Cloudflare to satisfy that check.

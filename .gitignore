@@ -14,6 +14,11 @@ __pycache__/
 
 # Web UI
 web/node_modules/
+web/.web-state/
+web/.env
+web/.env.*
+!web/.env.example
+.web-state/
 web/npm-debug.log*
 web/*.log
 web/release/

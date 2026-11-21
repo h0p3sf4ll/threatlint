@@ -26,7 +26,7 @@ def checkout(tmp_path, monkeypatch):
     git(repo, "init", "-b", "main")
     git(repo, "config", "user.name", "Fixture")
     git(repo, "config", "user.email", "fixture@example.test")
-    (repo / "app.py").write_text(SOURCE)
+    (repo / "app.py").write_bytes(SOURCE.encode("utf-8"))
     git(repo, "add", "app.py")
     git(repo, "commit", "-m", "fixture")
     git(repo, "remote", "add", "origin", "https://github.com/contoso/api.git")
@@ -199,7 +199,7 @@ def test_existing_pr_can_be_promoted_to_ready(checkout, api):
 def test_tree_preserves_executable_mode_and_handles_additions_and_deletions(checkout, api, monkeypatch):
     git(checkout, "update-index", "--chmod=+x", "app.py")
     (checkout / "app.py").chmod(0o755)
-    (checkout / "old.txt").write_text("old\n")
+    (checkout / "old.txt").write_bytes(b"old\n")
     git(checkout, "add", "old.txt")
     git(checkout, "commit", "-m", "fixture files")
     patch = PATCH.replace("100644", "100755") + """diff --git a/new.txt b/new.txt
@@ -295,7 +295,8 @@ def test_only_optional_get_404_is_treated_as_missing(monkeypatch):
         github_pr._request("https://api.github.com/repos/contoso/api", TOKEN, body={"draft": True}, missing_ok=True)
 
 
-@pytest.mark.parametrize("payload", [b"not-json", b"null", b"x" * (2 * 1024 * 1024 + 1)])
+@pytest.mark.parametrize("payload", [b"not-json", b"null", b"x" * (2 * 1024 * 1024 + 1)],
+                         ids=["invalid-json", "null-json", "oversized"])
 def test_transport_rejects_malformed_or_oversized_responses(monkeypatch, payload):
     class Opener:
         def open(self, request, timeout):
