@@ -176,12 +176,20 @@ function createWebApp(options = {}) {
     if (!activeSession(req) || (req.query.state && (req.query.code || req.query.error))) return res.sendFile(path.join(PUBLIC, 'login.html'));
     next();
   });
+  // Bind each login destination to a validated startup record, independently of request data.
+  for (const entry of companies.list()) {
+    const company = companies.get(entry.slug);
+    const home = `/c/${company.slug}/`;
+    app.get(`${home}login`, (req, res) => {
+      if (activeSession(req)?.user.company?.organizationId !== company.organizationId) return res.sendFile(path.join(PUBLIC, 'login.html'));
+      return res.redirect(home);
+    });
+  }
   app.get(['/c/:slug', '/c/:slug/', '/c/:slug/login'], (req, res, next) => {
     const company = companies.get(req.params.slug);
     if (!company) return res.status(404).send('Company workspace not found');
     const session = activeSession(req);
     if (session?.user.company?.organizationId !== company.organizationId) return res.sendFile(path.join(PUBLIC, 'login.html'));
-    if (req.path.endsWith('/login')) return res.redirect(`/c/${company.slug}/`);
     req.workbenchPath = '/';
     next();
   });

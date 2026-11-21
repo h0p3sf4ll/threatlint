@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07131b">
-  <meta name="description" content="ThreatLint turns security findings into engineering decisions. Evidence-led AI application security reviews, clear attack paths, actionable fixes, and validation steps.">
+  <meta name="description" content="One security workbench for code review, scanner triage, source-aware tuning, and multi-tracker metrics. Work in your browser or on desktop with 22 specialist agents.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="ThreatLint — Find. Explain. Act.">
   <meta property="og:description" content="Security should help you ship, not hand you another unread report. Evidence-led application security for the way developers work.">
@@ -18,8 +18,7 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <div class="ambient ambient-one" aria-hidden="true"></div>
-  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div class="ambient-layer" aria-hidden="true"><div class="ambient ambient-one"></div><div class="ambient ambient-two"></div></div>
 
   <header class="site-header">
     <nav class="nav-shell container" aria-label="Primary">
@@ -31,8 +30,9 @@
         <a href="#why">Why ThreatLint</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#how-it-works">How it works</a>
+        <a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a>
       </div>
-      <a class="nav-action" href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+      <a class="nav-action nav-login" href="https://app.threatlint.dev">Log in <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
 
@@ -41,9 +41,9 @@
       <div class="hero-copy">
         <div class="eyebrow"><span class="status-indicator" aria-hidden="true"></span> EVIDENCE-LED APPLICATION SECURITY</div>
         <h1 id="hero-title">Find the risk.<br>Explain the path.<br><span class="headline-accent">Ship the fix.</span></h1>
-        <p class="hero-description">Your scanners found something. Now what? ThreatLint brings specialist security reviewers into your workflow to connect findings to code, explain impact, and give developers a clear next action.</p>
+        <p class="hero-description">Bring code, scanner reports, and security tickets into one workbench. ThreatLint connects findings to source, explains what matters, and prepares the fix, the scanner tuning, and the next engineering decision.</p>
         <div class="actions">
-          <a class="button button-primary" href="https://github.com/h0p3sf4ll/threatlint#try-the-workflow-that-fits-your-day" target="_blank" rel="noopener noreferrer">Explore ThreatLint <span aria-hidden="true">↗</span></a>
+          <a class="button button-primary" href="https://app.threatlint.dev">Open web workbench <span aria-hidden="true">↗</span></a>
           <a class="button button-outline" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
         </div>
         <div class="hero-support"><span class="support-line"></span> Built for developers, AppSec teams, and the space between them.</div>
@@ -84,14 +84,24 @@
       <div class="container">
         <div class="section-intro"><div class="section-kicker">02 / CAPABILITIES</div><h2 id="capabilities-title">A security teammate<br><span class="muted">for the entire lifecycle.</span></h2><p>Use focused reviewers where the questions happen: during design, in the pull request, after a scan, and before closing a finding.</p></div>
         <div class="capability-grid">
-          <article class="capability"><div class="cap-icon" aria-hidden="true">&lt;/&gt;</div><h3>Security code review</h3><p>Inspect changes, connect risks to source, and propose remediations with evidence.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">⟡</div><h3>Threat modeling</h3><p>Explore assets, trust boundaries, and attacker paths early in the design process.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">≋</div><h3>Findings triage</h3><p>Turn scanner results into defensible dispositions, priorities, and next steps.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">✓</div><h3>Fix verification</h3><p>Revisit the original weakness and identify what was confirmed and what remains unknown.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">⌘</div><h3>Developer-native workflows</h3><p>Work through editor, CLI, pull request, or the visual Workbench.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">↔</div><h3>Connected security context</h3><p>Bring in reports and supported findings platforms instead of starting every review from zero.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">&lt;/&gt;</div><h3>Review code in one place</h3><p>Connect a repository, run scanners, and prepare a specialist review from the same workflow. Semgrep Pro is selected when the current login and engine are verified.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">⟡</div><h3>Choose focused expertise</h3><p>Find all 22 agents in grouped design, application security, AI and data, delivery, and verification workflows. Choose one specialist or prepare a coordinated review.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">≋</div><h3>Triage across your tools</h3><p>Review ServiceNow records, Azure DevOps work items, Jira tickets, GitHub issues, DefectDojo, SonarQube, or uploaded scan reports. Add an optional source link for more context.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">✓</div><h3>Fix and tune at the source</h3><p>Keep each finding's scanner origin. Proven false positives can lead to scoped Semgrep, Trivy, or SonarQube tuning, with explicit review before changes are applied.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">▦</div><h3>Measure the individual findings</h3><p>Combine supported trackers in saved metrics views. Group findings by types such as exposed secrets, SQL injection, and XSS, and keep repository risk alongside actionable findings.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">↔</div><h3>Work in your browser or on desktop</h3><p>Use the same review workflows in either app. The web workbench keeps personal profiles separate and supports organization roles and shared issue management.</p></article>
         </div>
       </div>
+    </section>
+
+    <section class="section container workspace-overview" aria-labelledby="workspaces-title">
+      <div class="section-intro"><h2 id="workspaces-title">Start where the question is.</h2><p>Clear entry points keep related work together, from the first design question to a verified fix.</p></div>
+      <div class="workspace-paths">
+        <article><h3>Design &amp; threats</h3><p>Model the system, explore attack paths, and prepare bounded adversarial scenarios.</p></article>
+        <article><h3>Specialist reviews</h3><p>Focus on application security, AI and data, delivery and infrastructure, or verification and assurance.</p></article>
+        <article><h3>Finding triage &amp; metrics</h3><p>Adjudicate each finding, preserve its origin, and track progress across the tools your organization uses.</p></article>
+      </div>
+      <p class="runtime-preview"><strong>Runtime scanning preview</strong> can correlate an authorized live app with its source. Source-backed builds require an isolated Docker environment and test credentials, or an explicit anonymous-only choice.</p>
     </section>
 
     <section class="section container" id="how-it-works" aria-labelledby="how-title">
@@ -116,8 +126,8 @@
     <section class="closing container" aria-labelledby="closing-title">
       <span class="section-kicker">THE NEXT CHANGE STARTS HERE</span>
       <h2 id="closing-title">Security should help you ship.</h2>
-      <p>Less time translating alerts into tickets. More time making the next engineering decision with a clear reason.</p>
-      <div class="actions actions-center"><a class="button button-primary" href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">Get started on GitHub <span aria-hidden="true">↗</span></a><a class="button button-outline" href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/setup.md" target="_blank" rel="noopener noreferrer">Read setup guide <span aria-hidden="true">↗</span></a></div>
+      <p>Bring your source, choose a focused workflow, and turn the next finding into an engineering decision you can explain.</p>
+      <div class="actions actions-center"><a class="button button-primary" href="https://app.threatlint.dev">Log in to ThreatLint <span aria-hidden="true">↗</span></a><a class="button button-outline" href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/setup.md" target="_blank" rel="noopener noreferrer">Read setup guide <span aria-hidden="true">↗</span></a></div>
     </section>
   </main>
 
