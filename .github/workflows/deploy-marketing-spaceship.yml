@@ -45,7 +45,10 @@ jobs:
           parser = Parser()
           parser.feed(Path("marketing/index.html").read_text())
           for ref in parser.refs:
-              if ref and not (Path("marketing") / ref.lstrip("/")).is_file():
+              target = Path("marketing") / ref.lstrip("/")
+              if target.is_dir():
+                  target /= "index.html"
+              if ref and not target.is_file():
                   raise SystemExit(f"Missing internal asset: {ref}")
           print("Static website validation passed")
           PY
@@ -59,8 +62,9 @@ jobs:
     name: Deploy to Spaceship via FTPS
     needs: validate
     # Explicit opt-in until the server and repository secrets are configured.
-    if: ${{ vars.SPACESHIP_DEPLOY_ENABLED == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && vars.SPACESHIP_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: production
     steps:
       - name: Checkout
@@ -109,7 +113,7 @@ jobs:
         env:
           FTP_HOST: ${{ secrets.SPACESHIP_FTP_HOST }}
           FTP_USER: ${{ secrets.SPACESHIP_FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.SPACESHIP_FTP_PASSWORD }}
+          LFTP_PASSWORD: ${{ secrets.SPACESHIP_FTP_PASSWORD }}
           FTP_PATH: ${{ vars.SPACESHIP_FTP_PATH }}
         shell: bash
         run: |
@@ -117,7 +121,7 @@ jobs:
           target="${FTP_PATH:-/}"
           # FTP account should be jailed to the website's exact document root.
           # TLS is required and certificates are validated. No delete is performed.
-          lftp -u "$FTP_USER","$FTP_PASSWORD" "ftp://$FTP_HOST" <<EOF
+          lftp --user "$FTP_USER" --env-password "ftp://$FTP_HOST" <<EOF
           set cmd:fail-exit yes
           set ftp:ssl-allow yes
           set ftp:ssl-force yes
@@ -129,3 +133,30 @@ jobs:
           mirror --reverse --verbose --parallel=1 dist "$target"
           bye
           EOF
+      - name: Verify public website matches deployed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import time
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          for name in ("index.html", "styles.css", "assets/mark.svg", "robots.txt", "sitemap.xml"):
+              path = "/" if name == "index.html" else f"/{name}"
+              url = f"https://threatlint.dev{path}?deployment={os.environ['GITHUB_SHA']}"
+              expected = (Path("marketing") / name).read_bytes()
+              for attempt in range(3):
+                  try:
+                      request = Request(url, headers={"Cache-Control": "no-cache"})
+                      with urlopen(request, timeout=30) as response:
+                          if response.status != 200 or response.read() != expected:
+                              raise ValueError(f"Published content does not match source: {name}")
+                      print(f"Verified {name}")
+                      break
+                  except Exception:
+                      if attempt == 2:
+                          raise
+                      time.sleep(5)
+          PY

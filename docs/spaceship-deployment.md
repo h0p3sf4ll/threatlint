@@ -2,13 +2,15 @@
 
 The website is static and lives in `marketing/`; the real Workbench in `web/` is **not** publicly deployed.
 
+The verified Spaceship server is `server66.shared.spaceship.host`, and the `threatlint.dev` document root is `/home/xpqbpgplls/threatlint.dev`.
+
 ## Spaceship hosting setup
 
 1. Open [Spaceship Hosting Manager](https://www.spaceship.com/) and select **Manage** next to the active hosting plan.
 2. Confirm `threatlint.dev` is connected to this hosting subscription. In **Advanced → Document root folder**, confirm the domain's exact website directory. Ensure HTTPS/SSL is active.
 3. Open cPanel via **Access → Access your cPanel**; find **Files → FTP Accounts**.
-4. Create a **dedicated FTP account** with a strong generated password; set its **Directory** to the exact website document root (often `public_html`, but inspect your actual Spaceship configuration). **Do not** set the account directory to `/` in the cPanel form: that would grant access to your entire home directory. The remote path seen *after login* by a folder-scoped FTP account is `/`.
-5. Under that account, select **Configure FTP Client**. Copy the **full FTP username** and the precise **server hostname**. Use the real server hostname, such as `serverX.shared.spaceship.host`, not a guessed hostname or IP. Spaceship documents explicit FTPS on port 21.
+4. Create a **dedicated FTP account** with a strong generated password; set its **Directory** to `/home/xpqbpgplls/threatlint.dev` (cPanel may already display the `/home/xpqbpgplls/` prefix). **Do not** set the account directory to `/` in the cPanel form: that would grant access to your entire home directory. The remote path seen *after login* by a folder-scoped FTP account is `/`.
+5. Under that account, select **Configure FTP Client**. Copy the **full FTP username**. Use the verified server hostname `server66.shared.spaceship.host`. Spaceship documents explicit FTPS on port 21.
 
 See [Spaceship's official FTP guide](https://www.spaceship.com/knowledgebase/how-to-create-and-access-ftp-accounts/).
 
@@ -18,7 +20,7 @@ Open [repository Actions secrets and variables](https://github.com/h0p3sf4ll/thr
 
 | Name | Value |
 | --- | --- |
-| `SPACESHIP_FTP_HOST` | Exact Spaceship server hostname (without `ftp://` or port) |
+| `SPACESHIP_FTP_HOST` | `server66.shared.spaceship.host` (without `ftp://` or port) |
 | `SPACESHIP_FTP_USER` | Dedicated FTP account's **full** username |
 | `SPACESHIP_FTP_PASSWORD` | Dedicated FTP account password |
 
@@ -33,9 +35,9 @@ Under **Variables**, add:
 
 ## First deploy and ongoing delivery
 
-Open [Deploy marketing site to Spaceship — GitHub Actions](https://github.com/h0p3sf4ll/threatlint/actions/workflows/deploy-marketing-spaceship.yml), choose **Run workflow** on `main`. The validation job works before deployment is enabled; the deployment job is skipped until `SPACESHIP_DEPLOY_ENABLED=true`. Once enabled, the workflow deploys automatically when `marketing/**` or the deployment workflow changes on `main`. You can also run it manually.
+Open [Deploy marketing site to Spaceship — GitHub Actions](https://github.com/h0p3sf4ll/threatlint/actions/workflows/deploy-marketing-spaceship.yml), choose **Run workflow** on `main`. The validation job works before deployment is enabled; the deployment job is skipped until `SPACESHIP_DEPLOY_ENABLED=true`. Once enabled, the workflow deploys automatically when `marketing/**` or the deployment workflow changes on `main`. Manual runs deploy only from `main`; other branches can run validation but cannot deploy. For unattended delivery, the `production` environment must allow these deployments without a required reviewer or wait timer.
 
-The workflow stages only the marketing site, excludes the Cloudflare-only `_headers` file, and publishes using certificate-verified **explicit FTPS**. The included `marketing/.htaccess` is intended for Spaceship's LiteSpeed/Apache-compatible shared hosting.
+The workflow stages only the marketing site, excludes the Cloudflare-only `_headers` file, and publishes using certificate-verified **explicit FTPS**. The password is passed through `LFTP_PASSWORD`, not a command-line argument. After upload, it verifies that the public HTTPS homepage, stylesheet, logo, robots.txt and sitemap.xml exactly match the deployed source. The deployment job has a ten-minute timeout. The included `marketing/.htaccess` is intended for Spaceship's LiteSpeed/Apache-compatible shared hosting.
 
 Verify `https://threatlint.dev` loads the homepage, styles, logo and valid TLS. If a default placeholder persists, remove or rename an old `index.php` or fix the document root in cPanel. Don't delete other site files until you've confirmed their purpose. Domain DNS must point at your Spaceship hosting; use the domain's hosting connection settings in Spaceship.
 
