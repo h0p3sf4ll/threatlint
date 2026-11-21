@@ -4,6 +4,7 @@
 
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+let activeHandlers = 0;
 
 /** Same-origin loopback only: the runner is a single-user local service, not a web server. */
 function localRequest(req, server) {
@@ -48,12 +49,14 @@ function sendError(res, error, fallback = 'Request could not be processed') {
  */
 function handle(work, { status = 200, fallback } = {}) {
   return async (req, res) => {
+    activeHandlers++;
     try {
       const payload = await work(req, res);
       if (res.headersSent) return;
       if (payload === undefined) res.status(204).end();
       else res.status(status).json(payload);
     } catch (error) { sendError(res, error, fallback); }
+    finally { activeHandlers--; }
   };
 }
 
@@ -61,4 +64,5 @@ class HttpError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
-module.exports = { localRequest, securityHeaders, sendError, handle, HttpError, LOOPBACK_HOSTS };
+module.exports = { localRequest, securityHeaders, sendError, handle, HttpError, LOOPBACK_HOSTS,
+  activeRequestCount: () => activeHandlers };

@@ -10,6 +10,64 @@ const { promisify } = require('node:util');
 const exec = promisify(execFile);
 const ENTRY = path.join(__dirname, '../profile-worker.cjs');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const IDLE_TIMEOUT_MS = 15 * 60_000;
+const PROFILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const pendingCleanup = cleanup => Object.assign(new Error('Profile startup cleanup could not be confirmed'),
+  { code: 'profile_cleanup_pending', cleanup });
+
+async function removeContainer(name, run = exec) {
+  try { await run('docker', ['rm', '--force', name], { windowsHide: true, timeout: 15_000 }); }
+  catch {
+    // A failed Docker connection is not proof that the container has stopped.
+    const inventory = await run('docker', ['container', 'ls', '--all', '--filter', `name=^/${name}$`, '--format', '{{.Names}}'],
+      { windowsHide: true, timeout: 15_000 });
+    if (inventory.stdout.trim()) throw new Error('Profile container could not be stopped');
+  }
+}
+
+async function recoverNamespace(namespace, run = exec) {
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(namespace)) throw new Error('Invalid profile namespace');
+  const deadline = Date.now() + 30_000;
+  const boundedRun = (command, args, options = {}) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Profile recovery timed out');
+    return run(command, args, { ...options, windowsHide: true, timeout: Math.min(15_000, remaining), maxBuffer: 1024 * 1024 });
+  };
+  const prefix = `threatlint-${namespace}-`;
+  const owned = value => value.startsWith(prefix) && PROFILE_ID.test(value.slice(prefix.length));
+  const inventory = await boundedRun('docker', ['container', 'ls', '--all', '--filter', `name=^/${prefix}`, '--format', '{{.Names}}']);
+  const names = inventory.stdout.trim().split(/\r?\n/).filter(owned);
+  if (names.length > 100) throw new Error('Too many orphaned profile containers to recover automatically');
+  for (const name of names) await removeContainer(name, boundedRun);
+  const networkInventory = await boundedRun('docker', ['network', 'ls', '--filter', `name=^${prefix}`, '--format', '{{.Name}}']);
+  const networks = networkInventory.stdout.trim().split(/\r?\n/).filter(value => value.endsWith('-net') && owned(value.slice(0, -4)));
+  if (networks.length > 100) throw new Error('Too many orphaned profile networks to recover automatically');
+  for (const network of networks) await boundedRun('docker', ['network', 'rm', network]);
+  // Home volumes are deliberately never enumerated or removed during crash recovery.
+}
+
+function probeWorkerActivity(worker) {
+  return new Promise(resolve => {
+    let settled = false, timer;
+    const done = value => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
+    const request = http.get({ hostname: '127.0.0.1', port: worker.port, path: '/internal/activity',
+      headers: { Host: `127.0.0.1:${worker.workerPort}`, 'x-threatlint-worker': worker.token } }, response => {
+      if (response.statusCode !== 200) { done(null); request.destroy(); return; }
+      let body = '';
+      response.on('data', chunk => {
+        body += chunk;
+        if (body.length > 4096) { done(null); request.destroy(); }
+      });
+      response.on('end', () => {
+        try { const value = JSON.parse(body); done(typeof value?.busy === 'boolean' ? value : null); }
+        catch { done(null); }
+      });
+      response.on('error', () => done(null));
+    });
+    request.on('error', () => done(null));
+    timer = setTimeout(() => { done(null); request.destroy(); }, 2000);
+  });
+}
 
 function profileEnvironment(directory, parent = process.env) {
   // Do not copy API tokens, inherited CLI logins, proxy credentials, or NODE_OPTIONS.
@@ -44,15 +102,32 @@ function containerArguments({ name, network, volume, image }) {
 }
 
 function createProfileWorkers({ directory, mode = 'docker', image = 'threatlint-profile:local', maxWorkers = 8,
-  namespace = crypto.createHash('sha256').update(path.resolve(directory)).digest('hex').slice(0, 12) }) {
+  namespace = crypto.createHash('sha256').update(path.resolve(directory)).digest('hex').slice(0, 12),
+  idleTimeoutMs = IDLE_TIMEOUT_MS, sweepIntervalMs = 60_000, now = Date.now,
+  startWorker, activityProbe = probeWorkerActivity, recoverRuntime }) {
   if (!['docker', 'process'].includes(mode)) throw new Error('Unknown profile worker mode');
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(namespace)) throw new Error('Invalid profile namespace');
   if (!Number.isInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > 100) throw new Error('Invalid profile worker limit');
+  if (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs < 1000 || !Number.isSafeInteger(sweepIntervalMs) || sweepIntervalMs < 0) throw new Error('Invalid profile idle timeout');
+  if (typeof now !== 'function' || typeof activityProbe !== 'function' || (startWorker !== undefined && typeof startWorker !== 'function') ||
+      (recoverRuntime !== undefined && typeof recoverRuntime !== 'function')) throw new Error('Invalid profile runtime adapter');
   const workers = new Map();
-  let closed = false;
+  let closed = false, recovered = false, operations = Promise.resolve(), sweeping = null, closing = null;
 
-  async function start(user) {
-    if (!/^[a-f0-9-]{36}$/.test(user.id)) throw new Error('Invalid profile ID');
+  // Admission, readiness reservations and eviction are serialized. No new lease can arrive
+  // between a candidate's activity check and teardown; background jobs report busy in the worker.
+  function serialized(work) {
+    const result = operations.then(work);
+    operations = result.catch(() => {});
+    return result;
+  }
+  function capacityError() {
+    return Object.assign(new Error('All Workbench slots are in use. Try again shortly.'),
+      { status: 503, code: 'profile_capacity', retryAfter: 30 });
+  }
+
+  async function startRuntime(user) {
+    if (!PROFILE_ID.test(user.id)) throw new Error('Invalid profile ID');
     const token = crypto.randomBytes(32).toString('hex');
     if (mode === 'process') {
       const home = path.join(directory, 'profiles', user.id);
@@ -62,10 +137,18 @@ function createProfileWorkers({ directory, mode = 'docker', image = 'threatlint-
       // Do not print worker output: it can contain repository or integration details.
       child.stdout.resume(); child.stderr.resume();
       const stop = async () => {
-        if (child.exitCode !== null || child.signalCode !== null) return;
-        child.send?.({ action: 'close' }, () => {});
-        await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(3000)]);
-        if (child.exitCode === null && child.signalCode === null) child.kill();
+        const exited = () => child.exitCode !== null || child.signalCode !== null;
+        const waitForExit = timeout => new Promise(resolve => {
+          if (exited()) { resolve(true); return; }
+          const done = () => { clearTimeout(timer); child.removeListener('exit', done); resolve(true); };
+          const timer = setTimeout(() => { child.removeListener('exit', done); resolve(exited()); }, timeout);
+          child.once('exit', done);
+        });
+        if (exited()) return;
+        try { child.send?.({ action: 'close' }, () => {}); } catch { /* force termination below */ }
+        if (await waitForExit(3000)) return;
+        if (!child.kill() && !exited()) throw new Error('Profile process could not be stopped');
+        if (!(await waitForExit(2000))) throw new Error('Profile process termination could not be confirmed');
       };
       try {
         const port = await new Promise((resolve, reject) => {
@@ -76,7 +159,10 @@ function createProfileWorkers({ directory, mode = 'docker', image = 'threatlint-
           child.once('message', message => message.type === 'ready' ? done(null, message.port) : done(new Error('Profile could not start')));
         });
         return { port, workerPort: port, token, stop, alive: () => child.exitCode === null && child.signalCode === null };
-      } catch (error) { await stop(); throw error; }
+      } catch (error) {
+        try { await stop(); } catch { throw pendingCleanup(stop); }
+        throw error;
+      }
     }
 
     // Each profile also gets its own bridge: workers cannot bypass the gateway over a shared network.
@@ -86,7 +172,7 @@ function createProfileWorkers({ directory, mode = 'docker', image = 'threatlint-
     const volume = `threatlint-${namespace}-${user.id}`;
     let child;
     const stop = async () => {
-      await exec('docker', ['rm', '--force', name], { windowsHide: true, timeout: 15_000 }).catch(() => {});
+      await removeContainer(name);
       child?.kill();
       await exec('docker', ['network', 'rm', network], { windowsHide: true, timeout: 15_000 }).catch(() => {});
     };
@@ -118,37 +204,114 @@ function createProfileWorkers({ directory, mode = 'docker', image = 'threatlint-
         await delay(500);
       }
       throw new Error('Profile container startup timed out');
-    } catch (error) { await stop(); throw error; }
+    } catch (error) {
+      try { await stop(); }
+      catch {
+        // Retain a capacity reservation when startup failed but its container may still exist.
+        throw pendingCleanup(stop);
+      }
+      throw error;
+    }
   }
 
-  async function get(user) {
-    if (closed) throw new Error('Profile manager is closed');
-    let pending = workers.get(user.id);
-    if (pending && !(await pending).alive()) {
-      if (workers.get(user.id) !== pending) return get(user);
-      const previous = await pending;
-      // Reserve the replacement before awaiting teardown; simultaneous requests share one writer.
-      pending = previous.stop().then(() => start(user));
-      workers.set(user.id, pending);
-      const replacement = pending;
-      pending.catch(() => { if (workers.get(user.id) === replacement) workers.delete(user.id); });
-    }
-    if (!pending) {
-      if (workers.size >= maxWorkers) { const error = new Error('Workbench capacity reached. Contact the administrator.'); error.status = 503; throw error; }
-      pending = start(user);
-      workers.set(user.id, pending);
-      pending.catch(() => { if (workers.get(user.id) === pending) workers.delete(user.id); });
-    }
-    const worker = await pending;
-    if (closed) { await worker.stop(); throw new Error('Profile manager is closed'); }
-    return worker;
+  async function retire(entry) {
+    const previous = entry.state;
+    entry.state = 'draining';
+    try { await entry.worker.stop(); }
+    catch { entry.state = previous; return false; }
+    if (workers.get(entry.id) === entry) workers.delete(entry.id);
+    return true;
   }
-  async function close() {
+  async function evict({ pressure = false } = {}) {
+    let removed = 0;
+    const candidates = [...workers.values()].filter(entry => ['ready', 'cleanup'].includes(entry.state) && entry.leases === 0)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
+    for (const entry of candidates) {
+      if (closed) break;
+      if (entry.state !== 'cleanup' && !pressure && now() - entry.lastUsed < idleTimeoutMs) continue;
+      if (entry.state !== 'cleanup' && entry.worker.alive()) {
+        let activity;
+        try { activity = await activityProbe(entry.worker); } catch { continue; }
+        // Missing, failed or malformed worker activity information always fails closed.
+        if (activity?.busy !== false) continue;
+      }
+      if (await retire(entry)) removed++;
+      if (pressure && removed) break;
+    }
+    return removed;
+  }
+  async function reserve(user, leased) {
+    const entry = await serialized(async () => {
+      if (closed) throw new Error('Profile manager is closed');
+      if (!PROFILE_ID.test(user?.id || '')) throw new Error('Invalid profile ID');
+      if (!recovered) {
+        if (recoverRuntime) await recoverRuntime();
+        else if (!startWorker && mode === 'docker') await recoverNamespace(namespace);
+        recovered = true;
+      }
+      if (closed) throw new Error('Profile manager is closed');
+      let entry = workers.get(user.id);
+      if (entry?.state === 'cleanup' || (entry?.state === 'ready' && !entry.worker.alive())) {
+        if (!(await retire(entry))) throw capacityError();
+        entry = null;
+      }
+      if (!entry) {
+        if (workers.size >= maxWorkers) await evict({ pressure: true });
+        if (closed) throw new Error('Profile manager is closed');
+        if (workers.size >= maxWorkers) throw capacityError();
+        entry = { id: user.id, state: 'starting', leases: 0, lastUsed: now(), worker: null, ready: null };
+        workers.set(user.id, entry);
+        entry.ready = Promise.resolve().then(() => (startWorker || startRuntime)(user)).then(worker => {
+          entry.worker = worker; entry.state = 'ready'; return worker;
+        }, error => {
+          if (typeof error?.cleanup === 'function') {
+            entry.state = 'cleanup'; entry.worker = { stop: error.cleanup };
+          } else if (workers.get(user.id) === entry) workers.delete(user.id);
+          throw error;
+        });
+        entry.ready.catch(() => {});
+      }
+      if (leased) entry.leases++;
+      entry.lastUsed = now();
+      return entry;
+    });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (leased) entry.leases--;
+      entry.lastUsed = now();
+    };
+    try {
+      const worker = await entry.ready;
+      if (closed) throw new Error('Profile manager is closed');
+      return { worker, release };
+    } catch (error) { release(); throw error; }
+  }
+  async function acquire(user) { return reserve(user, true); }
+  // Compatibility for callers that only inspect a worker. Proxied requests must use acquire().
+  async function get(user) { return (await reserve(user, false)).worker; }
+  function sweep() {
+    if (closed) return Promise.resolve(0);
+    if (!sweeping) sweeping = serialized(() => evict()).finally(() => { sweeping = null; });
+    return sweeping;
+  }
+  const timer = sweepIntervalMs ? setInterval(() => { sweep().catch(() => {}); }, sweepIntervalMs) : null;
+  timer?.unref();
+  function close() {
+    if (closing) return closing;
     closed = true;
-    await Promise.allSettled([...workers.values()].map(async pending => (await pending).stop()));
-    workers.clear();
+    if (timer) clearInterval(timer);
+    closing = serialized(async () => {
+      await Promise.allSettled([...workers.values()].map(async entry => {
+        try { await entry.ready; } catch { /* a rejected startup can still require cleanup */ }
+        if (entry.worker) await entry.worker.stop();
+      }));
+      workers.clear();
+    });
+    return closing;
   }
-  return { get, close };
+  return { get, acquire, sweep, close };
 }
 
-module.exports = { createProfileWorkers, profileEnvironment, containerArguments };
+module.exports = { createProfileWorkers, profileEnvironment, containerArguments, probeWorkerActivity, recoverNamespace, IDLE_TIMEOUT_MS };

@@ -571,7 +571,8 @@ function createRuntimeScanner(options = {}) {
     browsers.clear();
   }
 
-  return { start, get, cancel, exportScan, startBrowser, finishBrowser, close };
+  return { start, get, cancel, exportScan, startBrowser, finishBrowser, close,
+    get active() { return [...scans.values()].some(scan => scan.status === 'running') || [...browsers.values()].some(session => session.expires > Date.now()); } };
 }
 
 module.exports = { createRuntimeScanner, RuntimeError, LIMITS, AUTH_TYPES, privateAddress, analyzeResponse, validateConfig, markdownExport, htmlExport };

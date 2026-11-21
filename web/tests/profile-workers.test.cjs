@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createProfileWorkers, profileEnvironment, containerArguments } = require('../lib/profile-workers.cjs');
+const http = require('node:http');
+const { createProfileWorkers, profileEnvironment, containerArguments, probeWorkerActivity, recoverNamespace, IDLE_TIMEOUT_MS } = require('../lib/profile-workers.cjs');
 
 function directory(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-worker-tests-'));
@@ -79,7 +80,8 @@ it('builds the profile image with an unprivileged runtime user and no gateway en
 
 it('rejects invalid modes, namespaces, worker limits, and profile IDs before starting a runtime', async t => {
   const root = directory(t);
-  for (const options of [{ mode: 'shared' }, { namespace: '../escape' }, { namespace: '' }, { maxWorkers: 0 }, { maxWorkers: 101 }, { maxWorkers: 1.5 }]) {
+  for (const options of [{ mode: 'shared' }, { namespace: '../escape' }, { namespace: '' }, { maxWorkers: 0 }, { maxWorkers: 101 }, { maxWorkers: 1.5 },
+    { idleTimeoutMs: 0 }, { sweepIntervalMs: -1 }, { startWorker: true }, { activityProbe: null }]) {
     assert.throws(() => createProfileWorkers({ directory: root, ...options }));
   }
   const manager = createProfileWorkers({ directory: root, mode: 'process' });
@@ -87,4 +89,271 @@ it('rejects invalid modes, namespaces, worker limits, and profile IDs before sta
     for (const id of ['../escape', 'not-a-uuid', 'a'.repeat(37), '']) await assert.rejects(manager.get({ id }), /Invalid profile ID/);
   } finally { await manager.close(); }
   await assert.rejects(manager.get({ id: '00000000-0000-4000-8000-000000000001' }), /closed/);
+});
+
+const profile = index => ({ id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` });
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function runtimeFixture(t, options = {}) {
+  let time = 0;
+  const states = new Map(), started = [], stopped = [];
+  const startWorker = async user => {
+    started.push(user.id);
+    const state = { id: user.id, busy: false, alive: true, stopError: false, activity: null };
+    states.set(user.id, state);
+    return { id: user.id, alive: () => state.alive, stop: async () => {
+      if (state.stopError) throw new Error('Runtime unavailable');
+      state.alive = false; stopped.push(user.id);
+    } };
+  };
+  const manager = createProfileWorkers({ directory: directory(t), maxWorkers: 1, sweepIntervalMs: 0,
+    now: () => time, startWorker, activityProbe: async worker => {
+      const state = states.get(worker.id);
+      return state.activity ? state.activity() : { busy: state.busy };
+    }, ...options });
+  t.after(() => manager.close());
+  return { manager, states, started, stopped, time: value => { time = value; }, startWorker };
+}
+
+it('reuses a slot after an idle profile leaves while retaining leases for every open client', async t => {
+  const { manager, stopped } = runtimeFixture(t);
+  const first = await manager.acquire(profile(1));
+  const secondTab = await manager.acquire(profile(1));
+  assert.strictEqual(secondTab.worker, first.worker);
+  first.release(); first.release();
+  await assert.rejects(manager.acquire(profile(2)), error => error.status === 503 && error.retryAfter === 30 && error.code === 'profile_capacity');
+  assert.deepEqual(stopped, []);
+  secondTab.release();
+  const replacement = await manager.acquire(profile(2));
+  assert.equal(replacement.worker.id, profile(2).id);
+  assert.deepEqual(stopped, [profile(1).id]);
+  replacement.release();
+});
+
+it('never evicts detached jobs or a worker whose activity cannot be established', async t => {
+  const { manager, states, started, stopped } = runtimeFixture(t);
+  const first = await manager.acquire(profile(1)); first.release();
+  const state = states.get(profile(1).id);
+  for (const activity of [() => ({ busy: true }), () => ({}), () => ({ busy: 'false' }), () => null,
+    () => { throw new Error('Activity unavailable'); }]) {
+    state.activity = activity;
+    await assert.rejects(manager.acquire(profile(2)), error => error.status === 503);
+    assert.deepEqual(stopped, []);
+    assert.deepEqual(started, [profile(1).id]);
+  }
+  state.activity = () => ({ busy: false });
+  const next = await manager.acquire(profile(2)); next.release();
+  assert.deepEqual(stopped, [profile(1).id]);
+});
+
+it('evicts the least recently used safe idle worker rather than an older busy worker', async t => {
+  const { manager, states, stopped, time } = runtimeFixture(t, { maxWorkers: 3 });
+  await manager.get(profile(1));
+  time(100); await manager.get(profile(2));
+  time(200); await manager.get(profile(3));
+  time(300); await manager.get(profile(2));
+  states.get(profile(1).id).busy = true;
+  const newcomer = await manager.acquire(profile(4)); newcomer.release();
+  assert.deepEqual(stopped, [profile(3).id]);
+  assert.equal(states.get(profile(1).id).alive, true);
+  assert.equal(states.get(profile(2).id).alive, true);
+});
+
+it('sweeps expired idle workers while preserving clients and background jobs', async t => {
+  const { manager, states, stopped, time } = runtimeFixture(t, { maxWorkers: 3 });
+  const client = await manager.acquire(profile(1));
+  await manager.get(profile(2));
+  await manager.get(profile(3));
+  states.get(profile(3).id).busy = true;
+  time(IDLE_TIMEOUT_MS - 1);
+  assert.equal(await manager.sweep(), 0);
+  time(IDLE_TIMEOUT_MS);
+  assert.equal(await manager.sweep(), 1);
+  assert.deepEqual(stopped, [profile(2).id]);
+  states.get(profile(3).id).busy = false;
+  assert.equal(await manager.sweep(), 1);
+  client.release();
+  assert.equal(await manager.sweep(), 0, 'releasing a client starts a fresh idle interval');
+  time(IDLE_TIMEOUT_MS * 2);
+  assert.equal(await manager.sweep(), 1);
+});
+
+it('reserves capacity and shares readiness while concurrent requests start the same profile', async t => {
+  const ready = deferred(), entered = deferred();
+  let launches = 0;
+  const fixture = runtimeFixture(t, { startWorker: async user => {
+    launches++; entered.resolve(); await ready.promise; return fixture.startWorker(user);
+  } });
+  const first = fixture.manager.acquire(profile(1));
+  const second = fixture.manager.acquire(profile(1));
+  await entered.promise;
+  await assert.rejects(fixture.manager.acquire(profile(2)), error => error.status === 503);
+  assert.equal(launches, 1);
+  ready.resolve();
+  const [a, b] = await Promise.all([first, second]);
+  assert.strictEqual(a.worker, b.worker);
+  a.release();
+  await assert.rejects(fixture.manager.acquire(profile(2)), error => error.status === 503);
+  b.release();
+  const next = await fixture.manager.acquire(profile(2)); next.release();
+  assert.equal(launches, 2);
+});
+
+it('serializes new leases behind an eviction decision so callers never receive a stopped worker', async t => {
+  const checked = deferred(), answer = deferred();
+  const { manager, states, stopped } = runtimeFixture(t);
+  const first = await manager.acquire(profile(1)); first.release();
+  states.get(profile(1).id).activity = async () => { checked.resolve(); return answer.promise; };
+  const replacement = manager.acquire(profile(2));
+  await checked.promise;
+  const returning = manager.acquire(profile(1));
+  const rejected = assert.rejects(returning, error => error.status === 503);
+  answer.resolve({ busy: false });
+  const current = await replacement;
+  await rejected;
+  assert.equal(current.worker.id, profile(2).id);
+  assert.deepEqual(stopped, [profile(1).id]);
+  current.release();
+});
+
+it('retains a capacity reservation when the runtime cannot confirm successful teardown', async t => {
+  const { manager, states, started } = runtimeFixture(t);
+  const first = await manager.acquire(profile(1)); first.release();
+  states.get(profile(1).id).stopError = true;
+  await assert.rejects(manager.acquire(profile(2)), error => error.status === 503);
+  const stillLive = await manager.acquire(profile(1));
+  assert.strictEqual(stillLive.worker, first.worker);
+  assert.deepEqual(started, [profile(1).id]);
+  states.get(profile(1).id).stopError = false;
+  stillLive.release();
+});
+
+it('frees capacity after failed startup and supports repeated close calls', async t => {
+  let attempts = 0;
+  const fixture = runtimeFixture(t, { startWorker: user => {
+    if (++attempts === 1) throw new Error('Startup failed');
+    return fixture.startWorker(user);
+  } });
+  await assert.rejects(fixture.manager.acquire(profile(1)), /Startup failed/);
+  const next = await fixture.manager.acquire(profile(2));
+  assert.equal(next.worker.id, profile(2).id);
+  next.release();
+  await Promise.all([fixture.manager.close(), fixture.manager.close()]);
+  await assert.rejects(fixture.manager.acquire(profile(2)), /closed/);
+});
+
+it('waits for a pending startup during close and never returns its worker to an awaiting client', async t => {
+  const entered = deferred(), ready = deferred();
+  const fixture = runtimeFixture(t, { startWorker: async user => {
+    entered.resolve(); await ready.promise; return fixture.startWorker(user);
+  } });
+  const pending = fixture.manager.acquire(profile(1));
+  await entered.promise;
+  const rejected = assert.rejects(pending, /closed/);
+  const closing = fixture.manager.close();
+  ready.resolve();
+  await Promise.all([closing, rejected]);
+  assert.deepEqual(fixture.stopped, [profile(1).id]);
+});
+
+it('retains failed-startup capacity until uncertain cleanup is confirmed, including during close', async t => {
+  let mayClean = false, cleanupCalls = 0, launches = 0;
+  const cleanup = async () => { cleanupCalls++; if (!mayClean) throw new Error('Docker unavailable'); };
+  const fixture = runtimeFixture(t, { startWorker: user => {
+    if (++launches === 1) throw Object.assign(new Error('Unconfirmed startup cleanup'), { code: 'profile_cleanup_pending', cleanup });
+    return fixture.startWorker(user);
+  } });
+  await assert.rejects(fixture.manager.acquire(profile(1)), /Unconfirmed startup cleanup/);
+  await assert.rejects(fixture.manager.acquire(profile(2)), error => error.status === 503);
+  await assert.rejects(fixture.manager.acquire(profile(1)), error => error.status === 503);
+  assert.equal(launches, 1, 'an uncertain container still occupies the only slot');
+  assert.equal(cleanupCalls, 2);
+  mayClean = true;
+  const next = await fixture.manager.acquire(profile(2)); next.release();
+  assert.equal(launches, 2);
+  assert.equal(cleanupCalls, 3);
+
+  let closeCleanup = 0;
+  const orphan = runtimeFixture(t, { startWorker: () => { throw Object.assign(new Error('Orphaned startup'),
+    { cleanup: async () => { closeCleanup++; } }); } });
+  await assert.rejects(orphan.manager.acquire(profile(1)), /Orphaned startup/);
+  await orphan.manager.close();
+  assert.equal(closeCleanup, 1, 'close retries cleanup despite the rejected readiness promise');
+});
+
+it('completes namespace recovery once before concurrent admissions and retries a failed inventory safely', async t => {
+  const entered = deferred(), ready = deferred();
+  let calls = 0;
+  const fixture = runtimeFixture(t, { maxWorkers: 2, recoverRuntime: async () => {
+    calls++; entered.resolve(); await ready.promise;
+  } });
+  const first = fixture.manager.acquire(profile(1)), second = fixture.manager.acquire(profile(2));
+  await entered.promise;
+  assert.deepEqual(fixture.started, []);
+  ready.resolve();
+  const clients = await Promise.all([first, second]); clients.forEach(client => client.release());
+  assert.equal(calls, 1);
+  assert.equal(fixture.started.length, 2);
+
+  let inventories = 0;
+  const retry = runtimeFixture(t, { recoverRuntime: async () => {
+    if (++inventories === 1) throw new Error('Inventory unavailable');
+  } });
+  await assert.rejects(retry.manager.acquire(profile(1)), /Inventory unavailable/);
+  assert.deepEqual(retry.started, []);
+  const accepted = await retry.manager.acquire(profile(1)); accepted.release();
+  assert.equal(inventories, 2);
+});
+
+it('recovers only exact owned stable container/network names and never removes profile volumes or unrelated resources', async () => {
+  const own = `threatlint-production-${profile(1).id}`, other = `threatlint-other-${profile(2).id}`;
+  const unrelated = [other, `${own}-abcd1234`, 'threatlint-production-not-a-profile', 'unrelated-application'];
+  const commands = [];
+  await recoverNamespace('production', async (command, args, options) => {
+    assert.equal(command, 'docker');
+    assert.ok(options.timeout > 0 && options.timeout <= 15000);
+    commands.push(args);
+    if (args[0] === 'container' && args[1] === 'ls') return { stdout: [own, ...unrelated].join('\n') };
+    if (args[0] === 'network' && args[1] === 'ls') return { stdout: [own, ...unrelated].map(value => `${value}-net`).join('\n') };
+    return { stdout: '' };
+  });
+  assert.deepEqual(commands.filter(args => args[0] === 'rm'), [['rm', '--force', own]]);
+  assert.deepEqual(commands.filter(args => args[0] === 'network' && args[1] === 'rm'), [['network', 'rm', `${own}-net`]]);
+  assert.equal(commands.some(args => args.includes('volume') || args.includes('--volumes') || args.includes('-v')), false);
+  await assert.rejects(recoverNamespace('../invalid', async () => assert.fail('invalid namespace must not run Docker')), /namespace/);
+});
+
+it('refuses namespace recovery when container removal is uncertain', async () => {
+  const own = `threatlint-production-${profile(1).id}`;
+  const commands = [];
+  await assert.rejects(recoverNamespace('production', async (_command, args) => {
+    commands.push(args);
+    if (args[0] === 'rm') throw new Error('Removal failed');
+    if (args[0] === 'container' && args[1] === 'ls') return { stdout: own };
+    throw new Error('Must not proceed to network cleanup');
+  }), /could not be stopped/);
+  assert.equal(commands.some(args => args[0] === 'network'), false);
+});
+
+it('uses the internal worker token and internal Host when probing runtime activity', async t => {
+  let status = 200, body = '{"busy":false}', headers;
+  const server = http.createServer((request, response) => {
+    headers = request.headers;
+    assert.equal(request.url, '/internal/activity');
+    response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(body);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const worker = { port: server.address().port, workerPort: 3000, token: 'internal-only-token' };
+  assert.deepEqual(await probeWorkerActivity(worker), { busy: false });
+  assert.equal(headers.host, '127.0.0.1:3000');
+  assert.equal(headers['x-threatlint-worker'], worker.token);
+  for (const value of ['not json', '{"busy":"false"}', '{"unrelated":true}', 'x'.repeat(4097)]) {
+    body = value; assert.equal(await probeWorkerActivity(worker), null);
+  }
+  status = 403; body = '{"busy":false}';
+  assert.equal(await probeWorkerActivity(worker), null);
 });

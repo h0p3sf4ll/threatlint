@@ -97,6 +97,8 @@ function createWebApp(options = {}) {
     next();
   });
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
+  // Worker lifecycle probes are gateway-internal and are never forwarded from browser requests.
+  app.use('/internal', (_req, res) => res.status(404).json({ error: 'Not found' }));
   app.get('/auth/config', (req, res) => {
     if (req.query.company === undefined) return res.json(configuration);
     const company = companies.get(req.query.company);
@@ -191,23 +193,30 @@ function createWebApp(options = {}) {
         req.workbenchPath = target.pathname + target.search;
       }
     }
+    let lease;
     try {
-      const worker = await workers.get(session.user);
-      if (!activeSession(req)) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
+      lease = await workers.acquire(session.user);
+      const { worker } = lease;
+      if (req.aborted || res.destroyed) { lease.release(); return; }
+      if (!activeSession(req)) { lease.release(); return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' }); }
       const upstream = http.request({ hostname: '127.0.0.1', port: worker.port, method: req.method, path: req.workbenchPath || req.originalUrl,
         headers: workerHeaders(req, worker) }, response => {
         const headers = { ...response.headers, 'cache-control': 'no-store', 'content-security-policy': csp };
         delete headers['set-cookie'];
         res.writeHead(response.statusCode, headers); response.pipe(res);
       });
-      upstream.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'Your Workbench is unavailable. Try again.' }); else res.destroy(); });
-      req.on('aborted', () => upstream.destroy()); res.on('close', () => upstream.destroy());
+      const releaseLease = () => { upstream.destroy(); lease.release(); };
+      upstream.on('error', () => { lease.release(); if (!res.headersSent) res.status(502).json({ error: 'Your Workbench is unavailable. Try again.' }); else res.destroy(); });
+      req.once('aborted', releaseLease); res.once('close', releaseLease); res.once('finish', releaseLease);
       req.pipe(upstream);
-    } catch (error) { next(error); }
+    } catch (error) { lease?.release(); next(error); }
   });
   app.use((error, _req, res, _next) => {
     const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
-    res.status(status).json({ error: status < 500 ? (status === 413 ? 'Account request is too large' : error.message) : 'Your Workbench could not start. Ask the administrator to check the profile runtime.' });
+    if (Number.isInteger(error.retryAfter) && error.retryAfter > 0 && error.retryAfter <= 3600) res.set('Retry-After', String(error.retryAfter));
+    const capacity = error.code === 'profile_capacity';
+    res.status(status).json({ error: capacity ? error.message : status < 500 ? (status === 413 ? 'Account request is too large' : error.message) : 'Your Workbench could not start. Ask the administrator to check the profile runtime.',
+      ...(capacity ? { code: error.code } : {}) });
   });
 
   server.on('upgrade', async (req, socket, head) => {
@@ -219,15 +228,17 @@ function createWebApp(options = {}) {
     try { socketUrl = new URL(req.url, origin); } catch { return reject('400 Bad Request'); }
     if (socketUrl.pathname !== '/' || [...socketUrl.searchParams.keys()].some(key => key !== 'profile')) return reject('404 Not Found');
     if (socketUrl.searchParams.has('profile') && socketUrl.searchParams.get('profile') !== session.user.id) return reject('403 Forbidden');
-    const tunnel = { req, socket, upstream: null };
-    tunnels.add(tunnel); socket.once('close', () => { tunnel.upstream?.destroy(); tunnels.delete(tunnel); });
+    const tunnel = { req, socket, upstream: null, release: null };
+    tunnels.add(tunnel); socket.once('close', () => { tunnel.upstream?.destroy(); tunnel.release?.(); tunnels.delete(tunnel); });
     try {
-      const worker = await workers.get(session.user);
-      if (socket.destroyed || !activeSession(req)) return reject('401 Unauthorized');
+      const lease = await workers.acquire(session.user);
+      tunnel.release = lease.release;
+      const { worker } = lease;
+      if (socket.destroyed || !activeSession(req)) { lease.release(); return reject('401 Unauthorized'); }
       const request = http.request({ hostname: '127.0.0.1', port: worker.port, path: '/', headers: workerHeaders(req, worker) });
       request.on('upgrade', (response, upstream, upstreamHead) => {
         tunnel.upstream = upstream;
-        if (socket.destroyed) return upstream.destroy();
+        if (socket.destroyed) { lease.release(); return upstream.destroy(); }
         const headers = Object.entries(response.headers).flatMap(([key, value]) => (Array.isArray(value) ? value : [value]).map(item => `${key}: ${item}`));
         socket.write(`HTTP/1.1 101 Switching Protocols\r\n${headers.join('\r\n')}\r\n\r\n`);
         if (upstreamHead.length) socket.write(upstreamHead);
@@ -236,9 +247,9 @@ function createWebApp(options = {}) {
         upstream.once('close', () => socket.destroy());
         socket.pipe(upstream); upstream.pipe(socket);
       });
-      request.on('response', () => reject('502 Bad Gateway'));
-      request.on('error', () => reject('502 Bad Gateway')); request.end();
-    } catch { reject('503 Service Unavailable'); }
+      request.on('response', response => { response.resume(); lease.release(); reject('502 Bad Gateway'); });
+      request.on('error', () => { lease.release(); reject('502 Bad Gateway'); }); request.end();
+    } catch { tunnel.release?.(); reject('503 Service Unavailable'); }
   });
 
   async function close() {

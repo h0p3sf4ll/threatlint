@@ -35,7 +35,7 @@ sudo docker build -f /opt/threatlint/current/Dockerfile.web -t threatlint-profil
 
 If the account or checkout already exists, inspect and reuse it rather than recreating it. Docker-group membership gives the gateway administrative control over Docker on this host. Use a dedicated VPS service account; profile containers receive neither the Docker socket nor that group access.
 
-The profile image installs its own Python virtual environment, Threatlint CLI, Word-export dependency, Git and production Node dependencies. Optional model/scanner CLIs require a derived image, as described in the [web app guide](web-app.md#what-is-saved-to-a-profile).
+The profile image includes its own Python environment, Threatlint CLI, Word export, Git, Semgrep, Codex, Claude Code, AWS CLI and GitHub CLI. Configure each profile's credentials before using connected workflows. A manual browser sign-in window is unavailable through the remote web app; use the supported token, cookie or browser-state inputs instead. See the [tool availability notes](web-app.md#what-is-saved-to-a-profile).
 
 Install the environment file, then edit it for the server:
 
@@ -54,11 +54,12 @@ THREATLINT_WEB_STATE_DIR=/var/lib/threatlint-web
 THREATLINT_PROFILE_MODE=docker
 THREATLINT_PROFILE_IMAGE=threatlint-profile:local
 THREATLINT_PROFILE_NAMESPACE=threatlint-production
+THREATLINT_MAX_PROFILES=3
 THREATLINT_WEB_HOST=127.0.0.1
 PORT=3000
 ```
 
-Adjust `THREATLINT_MAX_PROFILES` to the server's capacity. Keep the namespace stable across updates and migrations. Do not put integration credentials or an Auth0 client secret in the profile image.
+The three-worker example leaves operating-system and gateway headroom on the selected 8 GiB server; adjust `THREATLINT_MAX_PROFILES` to the actual server's capacity. Keep the namespace stable across updates and migrations. Do not put integration credentials or an Auth0 client secret in the profile image.
 
 For company entry points, create the service-owned registry only after creating the corresponding Auth0 Organizations and adding their members:
 

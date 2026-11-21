@@ -861,6 +861,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   const jobs = new Map();
   const listeners = new Set();
   let queue = Promise.resolve();
+  let pendingJobs = 0;
   if (index && fs.existsSync(index)) {
     try {
       for (const job of JSON.parse(fs.readFileSync(index, 'utf8'))) {
@@ -966,7 +967,8 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     // The caller's answer describes the job as accepted; the background run starts mutating `job` immediately.
     const accepted = { id: job.id, status: job.status };
     // One import triages at a time. Supporting evidence and provider settings live only in this closure.
-    const done = queue.then(() => runJob(job, detected, settings, workspace, supportingEvidence));
+    pendingJobs++;
+    const done = queue.then(() => runJob(job, detected, settings, workspace, supportingEvidence)).finally(() => { pendingJobs--; });
     queue = done.catch(() => {});
     return { job, accepted, done };
   }
@@ -1068,7 +1070,8 @@ function createScanImports({ store, reports, override, integrations = {} }) {
   }
 
   return { create, post, postScanner, get: id => summary(jobFor(id)), list: () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(job => summary(job, false)),
-    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle: () => queue };
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, idle: () => queue,
+    get active() { return pendingJobs > 0; } };
 }
 
 module.exports = { createScanImports, reviewSemgrepAvit, parseScanReport, readReport, parseXml, detect, decodeUpload, extract, redactHttp, redactText, describeSecret, parseVerdicts, triage, reportMarkdown, reportTitle,

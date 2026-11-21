@@ -19,7 +19,7 @@ const { createReportWriter } = require('./lib/report-writer.cjs');
 const { createPipeline, buildUserMessage, validateAttachment } = require('./lib/pipeline.cjs');
 const { createConversations } = require('./lib/chat.cjs');
 const { attachSocket } = require('./lib/socket.cjs');
-const { securityHeaders, localRequest } = require('./lib/http.cjs');
+const { securityHeaders, localRequest, activeRequestCount } = require('./lib/http.cjs');
 const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerModelPreferenceRoutes } = require('./lib/routes/model-preferences.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
@@ -77,6 +77,13 @@ function createWorkbench(options = {}) {
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  // A disconnected socket can leave an aborting provider operation in flight. Keep the worker busy
+  // until those promises settle, in addition to background jobs that intentionally outlive a page.
+  let socketOperations = 0;
+  for (const [service, method] of [[pipeline, 'run'], [conversations, 'ask'], [scannerBatch, 'run']]) {
+    const execute = service[method];
+    service[method] = async (...args) => { socketOperations++; try { return await execute(...args); } finally { socketOperations--; } };
+  }
 
   app.use(securityHeaders(server));
   // Scan reports and design inputs upload up to 25 MB; every other route keeps the 7 MB JSON limit.
@@ -93,10 +100,16 @@ function createWorkbench(options = {}) {
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
   registerTriageRoutes(app, { reports, integrations: options.integrations });
-  registerSidekickRoutes(app, { integrations: options.integrations });
+  const sidekick = registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
+
+  // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
+  app.get('/internal/activity', (_req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    res.json({ busy: activeRequestCount() > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || sidekick.active || runtime.active === true || wss.clients.size > 0 });
+  });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
