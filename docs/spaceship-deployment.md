@@ -1,6 +1,6 @@
 # ThreatLint marketing deployment to Spaceship
 
-The website is static and lives in `marketing/`; the real Workbench in `web/` is **not** publicly deployed.
+The website is static and lives in `marketing/`. The authenticated Workbench at `app.threatlint.dev` runs on its own VPS; see [web deployment](web-vps-deployment.md).
 
 The verified Spaceship server is `server66.shared.spaceship.host`, and the `threatlint.dev` document root is `/home/xpqbpgplls/threatlint.dev`.
 
@@ -42,3 +42,16 @@ The workflow stages only the marketing site, excludes the Cloudflare-only `_head
 Verify `https://threatlint.dev` loads the homepage, styles, logo and valid TLS. If a default placeholder persists, remove or rename an old `index.php` or fix the document root in cPanel. Don't delete other site files until you've confirmed their purpose. Domain DNS must point at your Spaceship hosting; use the domain's hosting connection settings in Spaceship.
 
 Never publish `src/`, `web/`, credentials, or the repository root.
+
+## Existing Cloudflare build connection
+
+The repository also has an existing Cloudflare Workers build connection named `threatlint`.
+The root `wrangler.json` explicitly restricts that Worker to the public `marketing/` assets;
+it does not deploy the Node Workbench or change the domain's DNS. No application secrets or
+profile state belong in this Worker. `marketing/.assetsignore` excludes the Spaceship-only
+Apache configuration from Worker assets.
+
+Validate the connected build locally with `npx wrangler deploy --dry-run`. Its default
+repository-root deploy command can now resolve a complete static-assets configuration.
+Spaceship remains the marketing site's configured hosting destination, and the VPS remains
+the application runtime.

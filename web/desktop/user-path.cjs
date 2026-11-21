@@ -23,8 +23,8 @@ function loginShellPath({ shell = process.env.SHELL || '/bin/zsh', spawnSyncImpl
 /** The user's PATH: login shell entries first, then the inherited ones and common install dirs, without duplicates. */
 function userPath({ env = process.env, platform = process.platform, ...probe } = {}) {
   if (platform === 'win32') return env.PATH || '';
-  const entries = [loginShellPath(probe), env.PATH, ...COMMON_DIRS].filter(Boolean).flatMap(value => value.split(path.delimiter));
-  return [...new Set(entries.filter(Boolean))].join(path.delimiter);
+  const entries = [loginShellPath(probe), env.PATH, ...COMMON_DIRS].filter(Boolean).flatMap(value => value.split(path.posix.delimiter));
+  return [...new Set(entries.filter(Boolean))].join(path.posix.delimiter);
 }
 
 /** Adopts the user's PATH for this process and everything it starts. */

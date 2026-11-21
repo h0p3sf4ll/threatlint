@@ -12,6 +12,7 @@ before(() => {
   outside = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-outside-'));
   fs.mkdirSync(path.join(directory, 'src'));
   fs.writeFileSync(path.join(directory, 'src/example.js'), 'const name = "visible";\nmodule.exports = name;\n');
+  fs.writeFileSync(path.join(directory, 'src/example[1].js'), 'literal-path-target\n');
   fs.writeFileSync(path.join(outside, 'secret.txt'), 'outside-secret');
   fs.symlinkSync(outside, path.join(directory, 'escape'));
 });
@@ -49,10 +50,20 @@ describe('Actual repository tool boundary', () => {
     assert.match(await executeTool('Glob', { pattern: '**/*.js' }, directory), /src\/example.js/);
     assert.doesNotMatch(await executeTool('Glob', { pattern: '**/*' }, directory), /escape/);
   });
-  it('searches actual source with grep rather than executing interpolated commands', async () => {
+  it('searches actual source with Git grep rather than executing interpolated commands', async () => {
     const result = await executeTool('Grep', { pattern: 'visible', path: 'src' }, directory);
     assert.match(result, /example.js:1:/);
     assert.match(result, /visible/);
+  });
+  it('searches case-insensitively and passes patterns as data without a shell', async () => {
+    assert.match(await executeTool('Grep', { pattern: 'VISIBLE', flags: 'i', path: 'src' }, directory), /example.js:1:/);
+    assert.equal(await executeTool('Grep', { pattern: 'VISIBLE', path: 'src' }, directory), '(no matches within inspection limits)');
+    assert.equal(await executeTool('Grep', { pattern: 'visible; touch owned', path: 'src' }, directory), '(no matches within inspection limits)');
+    assert.equal(fs.existsSync(path.join(directory, 'owned')), false);
+  });
+  it('searches a literal file name without interpreting Git pathspec syntax', async () => {
+    const result = await executeTool('Grep', { pattern: 'literal-path-target', path: 'src/example[1].js' }, directory);
+    assert.match(result, /example\[1\]\.js:1:literal-path-target/);
   });
   it('does not read outside the selected repository when given a grep path', async () => {
     const result = await executeTool('Grep', { pattern: 'secret', path: outside }, directory);

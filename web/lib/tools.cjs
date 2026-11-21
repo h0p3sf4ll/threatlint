@@ -121,12 +121,18 @@ function globTool(root, input) {
   return matches.slice(0, 1000).join('\n') || '(no matches within the 20,000-file inventory limit)';
 }
 
-// Runs grep over fixed-size batches one after another so output stays bounded and ordered.
+// Git ships the same bounded native regex search on Windows and POSIX; no standalone grep is required.
+// Run fixed-size batches one after another so output stays bounded and ordered.
 async function grepBatches(root, flags, pattern, files, index = 0, result = '') {
   if (index >= files.length || result.length >= OUTPUT_LIMIT) return result;
   let stdout = '';
   try {
-    ({ stdout } = await execFileAsync('grep', [flags, '-e', pattern, '--', ...files.slice(index, index + GREP_BATCH)], { cwd: root, timeout: 10_000, maxBuffer: 1024 * 1024 }));
+    const args = ['--no-pager', '--no-optional-locks', '--literal-pathspecs', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat',
+      'grep', '--no-index', '-n', '-H', '-I', '-E', ...(flags.includes('i') ? ['-i'] : []), '-e', pattern,
+      '--', ...files.slice(index, index + GREP_BATCH).map(file => path.relative(root, file).split(path.sep).join('/'))];
+    ({ stdout } = await execFileAsync('git', args, { cwd: root, timeout: 10_000, maxBuffer: 1024 * 1024,
+      windowsHide: true, env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'en_US.UTF-8',
+        GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: osNull(), GIT_TERMINAL_PROMPT: '0' } }));
   } catch (error) {
     if (error.code !== 1) throw new Error(error.message.slice(0, 300));
   }
@@ -138,7 +144,7 @@ async function grepTool(root, input) {
   const target = safeResolvePath(root, input.path || '.');
   if (!target) return 'Error: search path is outside the repository';
   const files = fs.statSync(target).isFile() ? [target] : walkFiles(target).map(file => path.join(target, file));
-  // Use grep's regex engine rather than an unbounded model-controlled JavaScript regex.
+  // Use Git's native regex engine rather than an unbounded model-controlled JavaScript regex.
   const selected = files.filter(file => fs.statSync(file).size <= GREP_FILE_MAX_BYTES).slice(0, GREP_MAX_FILES);
   const flags = String(input.flags || '').includes('i') ? '-nHiE' : '-nHE';
   try {
