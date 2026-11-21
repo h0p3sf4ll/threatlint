@@ -3,10 +3,11 @@
 (() => {
   const $ = id => document.getElementById(id);
   const buttons = [...document.querySelectorAll('[data-identity]')];
+  const enabledProviders = new Set();
   let pending = true;
   function setPending(value, status = '') {
     pending = value;
-    for (const button of buttons) button.disabled = value;
+    for (const button of buttons) button.disabled = value || !enabledProviders.has(button.dataset.identity);
     $('identity-options').setAttribute('aria-busy', String(value));
     $('login-status').textContent = status;
   }
@@ -14,6 +15,12 @@
     $('login-error').textContent = error?.error === 'access_denied'
       ? 'Sign-in was not completed. Choose an account to try again.'
       : error?.message || 'Secure sign-in could not complete. Please try again.';
+  }
+  function showProviders(config) {
+    for (const provider of Array.isArray(config.enabledProviders) ? config.enabledProviders : []) enabledProviders.add(provider);
+    for (const button of buttons) button.hidden = !enabledProviders.has(button.dataset.identity);
+    $('identity-sso-divider').hidden = !enabledProviders.has('sso') || !['google', 'apple', 'github'].some(provider => enabledProviders.has(provider));
+    if (!buttons.some(button => !button.hidden)) throw new Error('Sign-in is not configured. Contact your administrator.');
   }
   function showCompany(company) {
     if (!company) return;
@@ -34,7 +41,7 @@
     } catch (error) { showError(error); $('company-input').focus(); }
   });
   for (const button of buttons) button.addEventListener('click', async () => {
-    if (pending) return;
+    if (pending || !enabledProviders.has(button.dataset.identity)) return;
     setPending(true, 'Opening secure sign-in…');
     $('login-error').textContent = '';
     try { await window.ThreatlintAuth.login(button.dataset.identity); }
@@ -43,6 +50,7 @@
   (async () => {
     try {
       const { config } = await window.ThreatlintAuth.initialize();
+      showProviders(config);
       showCompany(config.company);
       if (window.ThreatlintAuth.callbackPresent()) {
         setPending(true, 'Completing sign-in…');
