@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07131b">
+  <meta name="description" content="ThreatLint turns security findings into engineering decisions. Evidence-led AI application security reviews, clear attack paths, actionable fixes, and validation steps.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="ThreatLint — Find. Explain. Act.">
+  <meta property="og:description" content="Security should help you ship, not hand you another unread report. Evidence-led application security for the way developers work.">
+  <meta property="og:url" content="https://threatlint.dev/">
+  <meta property="og:site_name" content="ThreatLint">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://threatlint.dev/">
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>ThreatLint — Find. Explain. Act.</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav-shell container" aria-label="Primary">
+      <a class="brand" href="/" aria-label="ThreatLint home">
+        <img src="/assets/mark.svg" width="38" height="42" alt="">
+        <span>threat<span class="brand-light">lint</span><small>APPLICATION SECURITY</small></span>
+      </a>
+      <div class="nav-links">
+        <a href="#why">Why ThreatLint</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#how-it-works">How it works</a>
+      </div>
+      <a class="nav-action" href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero container" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="status-indicator" aria-hidden="true"></span> EVIDENCE-LED APPLICATION SECURITY</div>
+        <h1 id="hero-title">Find the risk.<br>Explain the path.<br><span class="headline-accent">Ship the fix.</span></h1>
+        <p class="hero-description">Your scanners found something. Now what? ThreatLint brings specialist security reviewers into your workflow to connect findings to code, explain impact, and give developers a clear next action.</p>
+        <div class="actions">
+          <a class="button button-primary" href="https://github.com/h0p3sf4ll/threatlint#try-the-workflow-that-fits-your-day" target="_blank" rel="noopener noreferrer">Explore ThreatLint <span aria-hidden="true">↗</span></a>
+          <a class="button button-outline" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="hero-support"><span class="support-line"></span> Built for developers, AppSec teams, and the space between them.</div>
+      </div>
+      <div class="hero-visual" aria-label="Illustrative security review finding with evidence, impact, and next action">
+        <div class="visual-chrome"><span class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>THREATLINT / REVIEW</span><span class="chrome-right">EXAMPLE OUTPUT</span></div>
+        <div class="visual-content">
+          <div class="report-heading"><div><span class="report-eyebrow">SECURITY REVIEW · SYNTHETIC EXAMPLE</span><h2>From signal to action.</h2></div><span class="report-label">EVIDENCE FIRST</span></div>
+          <div class="finding">
+            <div class="finding-top"><span class="finding-id">CR-001 <span class="dot">·</span> <span class="high">HIGH</span></span><span class="file-tag">api/customers.py:42</span></div>
+            <div class="code-preview" aria-label="Illustrative insecure query"><span class="line-num">42</span><code>query = <span class="code-string">"SELECT * FROM customers WHERE id="</span> + user_id</code></div>
+            <div class="finding-row"><span class="row-symbol impact" aria-hidden="true">!</span><div><strong>Why it matters</strong><p>Request-controlled input changes the structure of a database query.</p></div></div>
+            <div class="finding-row"><span class="row-symbol action" aria-hidden="true">✓</span><div><strong>Recommended change</strong><p>Use a parameterized query instead of string concatenation.</p></div></div>
+            <div class="finding-row"><span class="row-symbol verify" aria-hidden="true">↗</span><div><strong>Acceptance check</strong><p>Submit an injection-shaped test value and verify query structure cannot change. <b>NOT RUN</b></p></div></div>
+          </div>
+          <div class="visual-footer"><span><span class="mini-dot"></span> Findings tied to evidence</span><span>Unknowns stay explicit</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="metric-ribbon container" aria-label="Product highlights">
+      <div class="metric"><strong>22</strong><span>specialist agents</span></div>
+      <div class="metric"><strong>26</strong><span>focused skills</span></div>
+      <div class="metric"><strong>Cloud <em>/</em> Local</strong><span>model options</span></div>
+      <div class="metric"><strong>One</strong><span>clear next action</span></div>
+    </section>
+
+    <section class="section container" id="why" aria-labelledby="why-title">
+      <div class="section-intro"><div class="section-kicker">01 / THE PROBLEM</div><h2 id="why-title">More findings don't mean<br><span class="muted">better decisions.</span></h2><p>Security tools surface issues. Engineering teams still have to decide what is real, what matters, and how to fix it. ThreatLint is built to close that gap.</p></div>
+      <div class="outcome-grid">
+        <article class="outcome-card"><span class="outcome-number">01</span><div class="outcome-icon" aria-hidden="true">⌕</div><h3>Find</h3><p>Connect scanner signals, source code, and design context to discover the issue behind the alert.</p><span class="outcome-bottom">From alerts to evidence <span aria-hidden="true">↗</span></span></article>
+        <article class="outcome-card"><span class="outcome-number">02</span><div class="outcome-icon" aria-hidden="true">◇</div><h3>Explain</h3><p>Describe the attack path, conditions, and impact without pretending missing evidence is proof.</p><span class="outcome-bottom">From findings to clarity <span aria-hidden="true">↗</span></span></article>
+        <article class="outcome-card"><span class="outcome-number">03</span><div class="outcome-icon" aria-hidden="true">↗</div><h3>Act</h3><p>Hand off a proposed fix, a validation check, and the next decision developers can take.</p><span class="outcome-bottom">From reports to action <span aria-hidden="true">↗</span></span></article>
+      </div>
+    </section>
+
+    <section class="section section-capabilities" id="capabilities" aria-labelledby="capabilities-title">
+      <div class="container">
+        <div class="section-intro"><div class="section-kicker">02 / CAPABILITIES</div><h2 id="capabilities-title">A security teammate<br><span class="muted">for the entire lifecycle.</span></h2><p>Use focused reviewers where the questions happen: during design, in the pull request, after a scan, and before closing a finding.</p></div>
+        <div class="capability-grid">
+          <article class="capability"><div class="cap-icon" aria-hidden="true">&lt;/&gt;</div><h3>Security code review</h3><p>Inspect changes, connect risks to source, and propose remediations with evidence.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">⟡</div><h3>Threat modeling</h3><p>Explore assets, trust boundaries, and attacker paths early in the design process.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">≋</div><h3>Findings triage</h3><p>Turn scanner results into defensible dispositions, priorities, and next steps.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">✓</div><h3>Fix verification</h3><p>Revisit the original weakness and identify what was confirmed and what remains unknown.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">⌘</div><h3>Developer-native workflows</h3><p>Work through editor, CLI, pull request, or the visual Workbench.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">↔</div><h3>Connected security context</h3><p>Bring in reports and supported findings platforms instead of starting every review from zero.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section container" id="how-it-works" aria-labelledby="how-title">
+      <div class="split-section">
+        <div class="section-intro"><div class="section-kicker">03 / HOW IT WORKS</div><h2 id="how-title">A clear answer.<br><span class="muted">Not another wall of text.</span></h2><p>Start with a real engineering question. ThreatLint's specialist workflows turn available evidence into a review you can discuss, verify, and act on.</p><a class="inline-link" href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/workbench.md" target="_blank" rel="noopener noreferrer">Explore the Workbench guide <span aria-hidden="true">↗</span></a></div>
+        <ol class="steps">
+          <li><span class="step-index">01</span><div><h3>Choose your workflow</h3><p>Review a diff, model a threat, or triage findings. Start with the question you need answered.</p></div></li>
+          <li><span class="step-index">02</span><div><h3>Ground the analysis</h3><p>Specialists inspect the available code and context, with evidence, assumptions, and gaps made visible.</p></div></li>
+          <li><span class="step-index">03</span><div><h3>Make the next decision</h3><p>Review proposed changes and acceptance checks. Validate before treating a fix as complete.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section container" aria-labelledby="trust-title">
+      <div class="trust-panel"><div class="trust-intro"><div class="section-kicker">BUILT FOR ACCOUNTABILITY</div><h2 id="trust-title">Powerful analysis.<br><span>Explicit boundaries.</span></h2><p>Good security outcomes require traceable evidence and human judgment. ThreatLint keeps proposed actions distinct from confirmed execution.</p></div><div class="trust-points">
+        <div><span class="trust-icon" aria-hidden="true">✓</span><p><strong>Evidence over confidence</strong><br>Reviewed code, sources, and verification gaps stay visible.</p></div>
+        <div><span class="trust-icon" aria-hidden="true">✓</span><p><strong>Advisory by default</strong><br>Analysis agents propose; separate authorized workflows may act.</p></div>
+        <div><span class="trust-icon" aria-hidden="true">✓</span><p><strong>Your choice of model</strong><br>Cloud and local model options, with different data-handling tradeoffs.</p></div>
+      </div></div>
+    </section>
+
+    <section class="closing container" aria-labelledby="closing-title">
+      <span class="section-kicker">THE NEXT CHANGE STARTS HERE</span>
+      <h2 id="closing-title">Security should help you ship.</h2>
+      <p>Less time translating alerts into tickets. More time making the next engineering decision with a clear reason.</p>
+      <div class="actions actions-center"><a class="button button-primary" href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">Get started on GitHub <span aria-hidden="true">↗</span></a><a class="button button-outline" href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/setup.md" target="_blank" rel="noopener noreferrer">Read setup guide <span aria-hidden="true">↗</span></a></div>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/agents.md" target="_blank" rel="noopener noreferrer">Agents</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
+</body>
+</html>
