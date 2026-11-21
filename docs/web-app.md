@@ -1,16 +1,50 @@
 # Threatlint web app
 
-The web app adds account sign-in to the same Workbench used by the desktop app. Each account has its own Workbench, settings, repository sessions, reports, conversations, dashboards and running jobs. Account identity comes from the server session; visitors cannot select another account's workspace by supplying a profile ID.
+The web app adds Auth0 sign-in to the same Workbench used by the desktop app. Users sign in with Google, Apple, GitHub or an approved enterprise SSO connection. Threatlint does not provide a local username/password login or password registration. Each verified identity has its own settings, repository sessions, reports, conversations, dashboards and running jobs. Visitors cannot select another identity's workspace by supplying a profile ID.
 
 The default deployment runs each user's Workbench in a separate Docker container with a separate named home volume. The gateway authenticates HTTP and WebSocket requests before forwarding them to that user's container. Desktop startup remains available through `npm run desktop` and the original local Workbench through `npm start`.
 
+## Configure Auth0
+
+The application uses these values:
+
+| Setting | Value |
+| --- | --- |
+| Auth0 domain | `threatlint.us.auth0.com` |
+| SPA client ID | `eysUAb8yPNapU4TXqRHpIfhSX4xC4Qqy` |
+| Application origin | `https://threatlint.dev` |
+| Allowed Callback URLs | `https://threatlint.dev/` |
+| Allowed Logout URLs | `https://threatlint.dev/` |
+| Allowed Web Origins | `https://threatlint.dev` |
+| API identifier / token audience | `https://threatlint.dev/api` |
+
+These are application configuration values, including a public SPA client ID. This flow does not use an Auth0 client secret.
+
+Complete the following in the Auth0 Dashboard before a production sign-in:
+
+1. Open the existing application with the client ID above and confirm its type is **Single Page Application**, token endpoint authentication method is **None**, and its callback, logout and web-origin allowlists match the table. Use Authorization Code with PKCE through the browser SDK. Set the JWT signature algorithm to **RS256** and enable OIDC Conformant. See the [official SPA configuration guide](https://auth0.github.io/auth0-spa-js/index.html#configure-auth0).
+2. Create or confirm the custom API with identifier **`https://threatlint.dev/api`** and **RS256** signing. Authorize this SPA to request access to that API under the tenant's application-access policy. The audience must identify this custom API, rather than the Auth0 Management API. The browser requests the `openid profile email` scopes for identity information. An access token may contain both this API and the tenant's `/userinfo` URL in its audience array; no custom claims or Auth0 Action are required. See [Auth0's audience documentation](https://auth0.com/docs/secure/tokens/access-tokens/get-access-tokens#multiple-audiences).
+3. Under **Authentication > Social**, configure Google, Apple and GitHub using your own production identity-provider credentials, then enable those connections for this SPA. The expected connection names are `google-oauth2`, `apple` and `github`; environment overrides are available when the tenant uses other names. Follow each provider's Auth0 setup guide for its provider-side callback and credential requirements. See [Auth0 social identity providers](https://auth0.com/docs/authenticate/identity-providers/social-identity-providers).
+4. Configure approved enterprise identity providers under **Authentication > Enterprise** and enable them for this SPA. The SSO action uses Auth0 Universal Login, where the tenant's connection discovery and enterprise policy select the provider.
+5. Disable **all Database connections** for this SPA, including `Username-Password-Authentication`, and disable database sign-up. Enable only the three social connections and approved enterprise connections. The backend also rejects Auth0 database identities whose subject starts with `auth0|`.
+
+Auth0 Dashboard changes require tenant administration. This repository does not include an Auth0 Management connection or credentials and does not automatically create APIs, enable connections or configure provider secrets. The supplied domain and client ID alone do not establish that those tenant settings are complete.
+
+## Authentication and profile identity
+
+The browser uses the official `@auth0/auth0-spa-js` SDK for Authorization Code with PKCE. The gateway uses the official `@auth0/auth0-express-api` SDK to validate the API access token's signature, issuer, audience and authorized SPA client. It then obtains identity information through the official `@auth0/auth0-auth-js` SDK's UserInfo operation and binds the resulting server session to that identity. Session cookies are HttpOnly and bounded by the validated access token's expiry.
+
+Profiles use the verified issuer and subject (`iss` + `sub`), which map to a stable internal profile ID. Email addresses are display information and never merge profiles. Signing into the same federated identity on another browser restores that identity's saved settings. Different identity-provider accounts remain separate unless Auth0 has already linked them under the same verified subject.
+
+There are no password-creation commands, local password endpoints or development authentication bypasses. Old `accounts.json` files from the earlier local-account implementation are ignored. Their profile files are retained, but federated sign-in creates its own profile; legacy data is not automatically associated by matching email. Any future migration must explicitly prove the destination identity and preserve the source data.
+
 ## Requirements
 
-- Node.js 22 or later and npm on the gateway host.
+- Node.js 22.12.0 or later and npm on the gateway host.
 - Docker Engine, with the Docker CLI available to the gateway service account.
-- A persistent, access-restricted directory for the gateway's account and session data.
+- A persistent, access-restricted directory for profile identity and session data.
 - An HTTPS reverse proxy for a public deployment.
-- Network access from profile containers to the model providers, source hosts, trackers and applications users choose to assess.
+- Network access to the configured Auth0 domain and from profile containers to the model providers, source hosts, trackers and applications users choose to assess.
 
 The gateway needs permission to create containers and named volumes. Run it as a dedicated service account on a dedicated host. Profile containers do not receive the Docker socket, gateway credentials, gateway state directory or another profile's volume.
 
@@ -24,10 +58,19 @@ cd web
 npm ci --omit=dev --ignore-scripts
 ```
 
-Configure the gateway environment. For example, in a POSIX shell:
+Copy `.env.example` to `.env`, adjust the state directory for your host, and start with Node's environment-file support:
 
 ```sh
-export THREATLINT_WEB_ORIGIN=https://threatlint.example.com
+node --env-file=.env web-server.cjs
+```
+
+Alternatively, configure environment variables in your service manager or shell and run `npm run start:web`. The default origin is `https://threatlint.dev`. For example, in a POSIX shell:
+
+```sh
+export AUTH0_DOMAIN=threatlint.us.auth0.com
+export AUTH0_CLIENT_ID=eysUAb8yPNapU4TXqRHpIfhSX4xC4Qqy
+export AUTH0_AUDIENCE=https://threatlint.dev/api
+export THREATLINT_WEB_ORIGIN=https://threatlint.dev
 export THREATLINT_WEB_STATE_DIR=/var/lib/threatlint-web
 export THREATLINT_PROFILE_IMAGE=threatlint-profile:local
 export THREATLINT_PROFILE_NAMESPACE=threatlint-production
@@ -36,26 +79,28 @@ export THREATLINT_PROFILE_NAMESPACE=threatlint-production
 Or in PowerShell:
 
 ```powershell
-$env:THREATLINT_WEB_ORIGIN = 'https://threatlint.example.com'
+$env:AUTH0_DOMAIN = 'threatlint.us.auth0.com'
+$env:AUTH0_CLIENT_ID = 'eysUAb8yPNapU4TXqRHpIfhSX4xC4Qqy'
+$env:AUTH0_AUDIENCE = 'https://threatlint.dev/api'
+$env:THREATLINT_WEB_ORIGIN = 'https://threatlint.dev'
 $env:THREATLINT_WEB_STATE_DIR = 'C:\ProgramData\ThreatlintWeb'
 $env:THREATLINT_PROFILE_IMAGE = 'threatlint-profile:local'
 $env:THREATLINT_PROFILE_NAMESPACE = 'threatlint-production'
 ```
 
-Create the first account in the same environment, then start the gateway:
+Start the gateway in the configured environment:
 
 ```sh
-npm run web:create-user -- --email analyst@example.com --name "Security Analyst"
 npm run start:web
 ```
 
-The account command prompts for the password without putting it in command-line arguments. Stop the gateway before running the account command again; an exclusive state lock prevents simultaneous account-store writers. Restart the gateway after provisioning additional users. Public self-registration is disabled by default. Set `THREATLINT_WEB_REGISTRATION=1` only when visitors should be able to create their own accounts; remove it and restart the gateway to close registration.
+Auth0 controls which identities may sign in. Threatlint creates the durable profile on the first accepted federated sign-in. Do not add a client secret to the SPA environment.
 
 The gateway binds to `127.0.0.1:3000` by default. Point the reverse proxy at that address and preserve the incoming Host header. The externally visible origin must match `THREATLINT_WEB_ORIGIN`, including the port when nonstandard. Forward WebSocket upgrades as well as HTTP requests. Terminate TLS at the proxy and keep the backend listener off the public network.
 
 `THREATLINT_MAX_PROFILES` limits active profile workers and defaults to `8`. Workers stay active until the gateway stops; signing out does not evict a worker or cancel its background jobs. Size this limit and host resources for your expected users. A request from a new account receives an unavailable response when the limit is reached.
 
-An nginx location, inside the HTTPS server block for the configured hostname:
+An nginx location, inside the HTTPS server block for `threatlint.dev`:
 
 ```nginx
 location / {
@@ -86,9 +131,11 @@ Container isolation is required for a shared deployment. The Workbench intention
 
 Keep the gateway state directory and every named profile volume across restarts and upgrades. Do not prune these volumes as disposable containers. Repository checkouts use `/home/threatlint/tmp` in the persistent home volume, so saved sessions can reopen their repositories after a restart; `/tmp` remains disposable.
 
-Back up the account directory and profile volumes together, stop the gateway before restoration, and recreate workers from the matching image. Preserve `THREATLINT_PROFILE_NAMESPACE` when moving hosts or changing the absolute state-directory path: the namespace determines named profile-volume identities. If this setting is omitted, its default is the first 12 hexadecimal characters of SHA-256 of the resolved absolute state-directory path. Record that default before a move and explicitly configure the same value on the destination; changing it selects different, initially empty profile volumes. The example above sets a stable explicit namespace to simplify migration. Namespace values use lowercase letters, digits and hyphens, start with a letter or digit, and contain at most 40 characters.
+Back up the profile identity/session directory and profile volumes together, stop the gateway before restoration or migration, and recreate workers from the matching image. An exclusive state lock prevents two gateways from writing the same state directory. Preserve `THREATLINT_PROFILE_NAMESPACE` when moving hosts or changing the absolute state-directory path: the namespace determines named profile-volume identities. If this setting is omitted, its default is the first 12 hexadecimal characters of SHA-256 of the resolved absolute state-directory path. Record that default before a move and explicitly configure the same value on the destination; changing it selects different, initially empty profile volumes. The example above sets a stable explicit namespace to simplify migration. Namespace values use lowercase letters, digits and hyphens, start with a letter or digit, and contain at most 40 characters.
 
-## Local development
+## Local development and verification
+
+Local development still requires a real Auth0 sign-in. Add the exact local root callback, root logout URL and origin to the SPA's Auth0 allowlists before changing `THREATLINT_WEB_ORIGIN`. For example, use callback/logout `http://127.0.0.1:3000/` and web origin `http://127.0.0.1:3000`. Keep the same API audience unless you have configured a separate development API.
 
 For local development without Docker, explicitly select process mode and a loopback origin:
 
@@ -96,8 +143,9 @@ For local development without Docker, explicitly select process mode and a loopb
 export THREATLINT_PROFILE_MODE=process
 export THREATLINT_WEB_ORIGIN=http://127.0.0.1:3000
 export THREATLINT_WEB_STATE_DIR=./.web-state
-npm run web:create-user -- --email developer@example.com --name Developer
 npm run start:web
 ```
 
 Use the PowerShell `$env:NAME = 'value'` syntax on Windows. Process mode accepts only loopback origins and is for development with trusted accounts. It creates separate profile directories and processes, but does not sandbox operating-system file access. Use the default container mode for shared or public hosting.
+
+Authentication tests use a mocked issuer and tokens to verify the integration. They do not prove the production tenant's API, social connections, SSO configuration or a live end-to-end sign-in. No production authentication bypass is provided for those tests. Docker image execution also requires a running Docker Engine.

@@ -12,10 +12,10 @@ function acquireStateLock(directory) {
   catch (error) {
     if (error.code !== 'EEXIST') throw error;
     let prior;
-    try { prior = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { throw new Error('Account store is locked; inspect gateway.lock before removing it'); }
+    try { prior = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { throw new Error('Profile state is locked; inspect gateway.lock before removing it'); }
     let alive = true;
     try { process.kill(prior.pid, 0); } catch (probe) { if (probe.code === 'ESRCH') alive = false; }
-    if (alive) throw new Error('Account store is in use. Stop the gateway before provisioning users or starting another gateway.');
+    if (alive) throw new Error('Profile state is in use. Stop the gateway before starting another gateway or migrating profile state.');
     fs.unlinkSync(file);
     return acquireStateLock(directory);
   }

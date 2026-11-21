@@ -6,14 +6,11 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { fork, spawn } = require('node:child_process');
+const { fork } = require('node:child_process');
 const { profileEnvironment } = require('../lib/profile-workers.cjs');
 const { createAuth } = require('../lib/web-auth.cjs');
-const { acquireStateLock } = require('../lib/web-state.cjs');
 
 const WORKER = path.join(__dirname, '../profile-worker.cjs');
-const PROVISION = path.join(__dirname, '../scripts/web-create-user.cjs');
-const PASSWORD = 'entrypoint fixture password 2026';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-entrypoints-'));
@@ -54,20 +51,6 @@ async function startWorker(home, token) {
   return { stop, call, output: () => output };
 }
 
-function provision(directory, password = PASSWORD) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [PROVISION, '--email', 'provisioned@example.test', '--name', 'Provisioned User'], {
-      env: { ...profileEnvironment(directory), THREATLINT_WEB_STATE_DIR: directory }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-    let output = '';
-    child.stdout.on('data', data => { output += data.toString(); }); child.stderr.on('data', data => { output += data.toString(); });
-    child.stdin.on('error', () => {});
-    child.once('error', reject);
-    const timeout = setTimeout(() => { child.kill(); reject(new Error('Provisioning timed out')); }, 15000);
-    child.once('exit', code => { clearTimeout(timeout); resolve({ code, output }); });
-    child.stdin.end(`${password}\n`);
-  });
-}
-
 it('boots a profile from stdin, gates its port, and restores durable state with a rotated gateway secret', async t => {
   const { root, workers } = fixture(t), firstToken = crypto.randomBytes(32).toString('hex');
   const first = await startWorker(root, firstToken); workers.push(first);
@@ -95,23 +78,15 @@ it('boots a profile from stdin, gates its port, and restores durable state with 
   assert.equal(second.output().includes(secondToken), false);
 });
 
-it('provisions usable accounts from stdin without exposing passwords and respects the gateway state lock', async t => {
+it('ships federated sign-in without local account creation commands or credential forms', t => {
   const { root } = fixture(t);
-  const created = await provision(root);
-  assert.equal(created.code, 0); assert.match(created.output, /Account created: provisioned@example\.test/);
-  assert.equal(created.output.includes(PASSWORD), false);
-  assert.equal(fs.existsSync(path.join(root, 'gateway.lock')), false);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'accounts.json'), 'utf8')).sessions, []);
-  const auth = createAuth({ directory: root }), signedIn = await auth.login({ email: 'provisioned@example.test', password: PASSWORD });
-  assert.equal(signedIn.user.displayName, 'Provisioned User');
-  const stored = fs.readFileSync(path.join(root, 'accounts.json'), 'utf8');
-  assert.equal(stored.includes(PASSWORD), false); assert.equal(stored.includes(signedIn.token), false);
-  const release = acquireStateLock(root);
-  try {
-    const blocked = await provision(root);
-    assert.equal(blocked.code, 1); assert.match(blocked.output, /Account store is in use/);
-    assert.equal(blocked.output.includes(PASSWORD), false);
-    assert.equal(fs.readFileSync(path.join(root, 'accounts.json'), 'utf8'), stored);
-  } finally { release(); }
-  assert.equal(fs.existsSync(path.join(root, 'gateway.lock')), false);
+  assert.equal(fs.existsSync(path.join(__dirname, '../scripts/web-create-user.cjs')), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+  assert.equal(Object.hasOwn(manifest.scripts, 'web:create-user'), false);
+  const auth = createAuth({ directory: root });
+  assert.equal(typeof auth.establish, 'function');
+  assert.equal(Object.hasOwn(auth, 'register'), false); assert.equal(Object.hasOwn(auth, 'login'), false);
+  const html = fs.readFileSync(path.join(__dirname, '../public/login.html'), 'utf8');
+  assert.doesNotMatch(html, /<input[^>]*type=["']password["']/i);
+  assert.doesNotMatch(html, /<form[^>]*action=["']\/auth\/(?:login|register)["']/i);
 });

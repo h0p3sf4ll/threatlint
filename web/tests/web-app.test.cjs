@@ -11,8 +11,8 @@ const WebSocket = require('ws');
 const { createWebApp } = require('../web-server.cjs');
 const { createStore } = require('../lib/store.cjs');
 const { createReportWriter } = require('../lib/report-writer.cjs');
+const { createAuth0Fixture } = require('./helpers/auth0.cjs');
 
-const PASSWORD = 'integration test password 2026';
 const PREFERENCES = { provider: 'openai', models: { openai: 'fixture-model-a' }, codexDaybreak: false,
   bedrockRegion: 'us-east-1', lmstudioUrl: 'http://localhost:1234/v1' };
 const running = new Map();
@@ -30,7 +30,8 @@ async function freePort() {
 }
 async function start(root, options = {}) {
   const port = await freePort(), origin = `http://127.0.0.1:${port}`;
-  const web = createWebApp({ directory: root, origin, mode: 'process', registrationEnabled: true, ...options });
+  const provider = createAuth0Fixture();
+  const web = createWebApp({ directory: root, origin, mode: 'process', auth0: provider.configuration, auth0Fetch: provider.fetch, ...options });
   running.set(root, web);
   await new Promise(resolve => web.server.listen(port, '127.0.0.1', resolve));
   async function call(route, { method = 'GET', cookie, json, headers = {} } = {}) {
@@ -42,9 +43,9 @@ async function start(root, options = {}) {
     let body = text; try { body = JSON.parse(text); } catch { /* asset or empty body */ }
     return { status: response.status, body, headers: response.headers, cookie: response.headers.get('set-cookie')?.split(';')[0] };
   }
-  const register = (email, displayName = email) => call('/auth/register', { method: 'POST', json: { email, displayName, password: PASSWORD } });
-  const login = email => call('/auth/login', { method: 'POST', json: { email, password: PASSWORD } });
-  return { web, origin, call, register, login };
+  const exchange = token => call('/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  const signIn = (email, displayName = email) => exchange(provider.issue({ email, displayName, subject: `google-oauth2|${email.split('@')[0]}` }));
+  return { web, origin, call, signIn, exchange, provider };
 }
 function wrongHost(origin) {
   return new Promise((resolve, reject) => {
@@ -87,17 +88,18 @@ it('protects the full workbench and rejects incorrect hosts and cross-origin mut
   assert.equal((await fixture.call('/healthz')).status, 200);
   assert.equal((await fixture.call('/login')).status, 200);
   assert.equal((await fixture.call('/login.js')).status, 200);
+  assert.equal((await fixture.call('/')).status, 200);
   assert.equal((await fixture.call('/auth/session')).status, 401);
   assert.equal((await fixture.call('/api/sessions')).status, 401);
-  for (const route of ['/', '/app.js', '/styles.css', '/vendor/marked.js']) {
+  for (const route of ['/app.js', '/styles.css', '/vendor/marked.js']) {
     const denied = await fixture.call(route);
     assert.equal(denied.status, 302); assert.equal(denied.headers.get('location'), '/login');
   }
   assert.equal(await wrongHost(fixture.origin), 403);
   assert.equal((await fixture.call('/healthz', { headers: { Origin: 'https://evil.example' } })).status, 403);
   assert.equal((await fixture.call('/healthz', { headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
-  assert.equal((await fixture.call('/auth/register', { method: 'POST', headers: { Origin: 'https://evil.example' }, json: { email: 'a@example.test', password: PASSWORD } })).status, 403);
-  const account = await fixture.register('a@example.test', 'Alice');
+  assert.equal((await fixture.call('/auth/session', { method: 'POST', headers: { Origin: 'https://evil.example' } })).status, 403);
+  const account = await fixture.signIn('a@example.test', 'Alice');
   assert.equal(account.status, 200);
   assert.match(account.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
   assert.equal((await fixture.call('/', { cookie: account.cookie })).status, 200);
@@ -112,7 +114,7 @@ it('protects the full workbench and rejects incorrect hosts and cross-origin mut
 it('keeps settings, integration secrets, sessions and reports separate and persistent across gateway restarts', async t => {
   const root = directory(t); let fixture = await start(root);
   t.after(() => fixture.web.close());
-  const alice = await fixture.register('alice@example.test', 'Alice'), bob = await fixture.register('bob@example.test', 'Bob');
+  const alice = await fixture.signIn('alice@example.test', 'Alice'), bob = await fixture.signIn('bob@example.test', 'Bob');
   assert.equal(alice.status, 200); assert.equal(bob.status, 200);
   assert.notEqual(alice.body.user.id, bob.body.user.id);
   assert.deepEqual((await fixture.call('/api/model-preferences', { cookie: bob.cookie })).body, { preferences: null });
@@ -138,7 +140,7 @@ it('keeps settings, integration secrets, sessions and reports separate and persi
   const reportPath = `/api/report/${sessionId}/${report.agentId}/${report.timestamp}`;
   fixture = await start(root);
   assert.equal((await fixture.call('/auth/session', { cookie: alice.cookie })).body.user.id, alice.body.user.id);
-  const aliceAgain = await fixture.login('alice@example.test'), bobAgain = await fixture.login('bob@example.test');
+  const aliceAgain = await fixture.signIn('alice@example.test'), bobAgain = await fixture.signIn('bob@example.test');
   assert.equal(aliceAgain.status, 200); assert.equal(bobAgain.status, 200);
   assert.notEqual(alice.cookie, aliceAgain.cookie);
   assert.deepEqual((await fixture.call('/api/model-preferences', { cookie: aliceAgain.cookie })).body.preferences, PREFERENCES);
@@ -152,8 +154,7 @@ it('keeps settings, integration secrets, sessions and reports separate and persi
     assert.equal((await fixture.call(route, { cookie: bobAgain.cookie })).status, 404, route);
   }
   assert.equal((await fixture.call(`/api/session/${sessionId}/reports/${report.id}`, { method: 'DELETE', cookie: bobAgain.cookie })).status, 404);
-  const raw = fs.readFileSync(path.join(root, 'accounts.json'), 'utf8');
-  assert.equal(raw.includes(PASSWORD), false);
+  const raw = fs.readFileSync(path.join(root, 'identities.json'), 'utf8');
   assert.equal(raw.includes(alice.cookie.split('=')[1]), false);
   assert.throws(() => createWebApp({ directory: root, origin: fixture.origin, mode: 'process' }), /in use/);
 });
@@ -161,7 +162,7 @@ it('keeps settings, integration secrets, sessions and reports separate and persi
 it('authenticates WebSockets, scopes actions to the signed-in profile and revokes active sockets on logout', async t => {
   const root = directory(t), fixture = await start(root); t.after(() => fixture.web.close());
   assert.equal(await deniedSocket(fixture.origin), 401);
-  const alice = await fixture.register('alice@example.test'), bob = await fixture.register('bob@example.test');
+  const alice = await fixture.signIn('alice@example.test'), bob = await fixture.signIn('bob@example.test');
   assert.equal(await deniedSocket(fixture.origin, alice.cookie, 'https://evil.example'), 403);
   const socket = await openSocket(fixture.origin, alice.cookie); t.after(() => socket.terminate());
   assert.deepEqual(await message(socket, { action: 'avit_batch_attach' }), { type: 'avit_batch_replay', runId: null, active: false, events: [] });
@@ -186,18 +187,57 @@ it('authenticates WebSockets, scopes actions to the signed-in profile and revoke
 it('expires HTTP and existing WebSocket sessions without waiting for a new login', async t => {
   let current = Date.now();
   const fixture = await start(directory(t), { sessionTtlMs: 1000, now: () => current }); t.after(() => fixture.web.close());
-  const account = await fixture.register('alice@example.test');
+  const account = await fixture.signIn('alice@example.test');
   const socket = await openSocket(fixture.origin, account.cookie); t.after(() => socket.terminate());
   const closed = socketClosed(socket); current += 1001;
   assert.equal((await fixture.call('/auth/session', { cookie: account.cookie })).status, 401);
   await closed;
 });
 
-it('keeps self-registration configurable and rate-limits repeated account attempts', async t => {
-  const fixture = await start(directory(t), { registrationEnabled: false }); t.after(() => fixture.web.close());
-  assert.deepEqual((await fixture.call('/auth/config')).body, { registrationEnabled: false });
-  assert.equal((await fixture.register('alice@example.test')).status, 403);
-  let status;
-  for (let attempt = 0; attempt < 16; attempt++) status = (await fixture.call('/auth/login', { method: 'POST', json: { email: 'unknown@example.test', password: PASSWORD } })).status;
-  assert.equal(status, 429);
+it('uses official Auth0 SDK verification and rejects invalid claims, signatures and identity mismatches', async t => {
+  const fixture = await start(directory(t)); t.after(() => fixture.web.close());
+  const config = (await fixture.call('/auth/config')).body;
+  assert.equal(config.provider, 'auth0'); assert.equal(config.domain, fixture.provider.configuration.domain);
+  const deniedClaims = [{ iss: 'https://wrong.auth0.test/' }, { aud: 'https://wrong-api.test' }, { azp: 'different-client' },
+    { exp: Math.floor(Date.now() / 1000) - 3600 }, { sub: 'auth0|database-user' }, { sub: 'client-id@clients', gty: 'client-credentials' },
+    { sub: 'oauth2|machine', gty: 'client-credentials' }, { azp: fixture.provider.configuration.clientId, client_id: 'different-client' }];
+  for (const claims of deniedClaims) {
+    const result = await fixture.exchange(fixture.provider.issue({ claims }));
+    assert.ok([401, 403].includes(result.status), `Expected rejection for ${JSON.stringify(claims)}, got ${result.status}: ${JSON.stringify(result.body)}`);
+    assert.equal(result.cookie, undefined);
+  }
+  const signed = fixture.provider.issue(), parts = signed.split('.');
+  parts[2] = (parts[2][0] === 'a' ? 'b' : 'a') + parts[2].slice(1);
+  assert.equal((await fixture.exchange(parts.join('.'))).status, 401);
+  assert.equal((await fixture.call('/auth/session', { method: 'POST' })).status, 401);
+  const mismatch = fixture.provider.issue({ subject: 'google-oauth2|alice', userInfo: { sub: 'github|other', name: 'Other' } });
+  assert.equal((await fixture.exchange(mismatch)).status, 401);
+  const valid = await fixture.exchange(fixture.provider.issue({ subject: 'github|verified-user' }));
+  assert.equal(valid.status, 200);
+  const rfcProfile = await fixture.exchange(fixture.provider.issue({ subject: 'github|verified-user',
+    claims: { azp: undefined, client_id: fixture.provider.configuration.clientId } }));
+  assert.equal(rfcProfile.status, 200); assert.equal(rfcProfile.body.user.id, valid.body.user.id);
+  assert.ok(fixture.provider.requests.some(url => url.endsWith('/.well-known/openid-configuration')));
+  assert.ok(fixture.provider.requests.some(url => url.endsWith('/.well-known/jwks.json')));
+  assert.ok(fixture.provider.requests.some(url => url.endsWith('/userinfo')));
+});
+
+it('serves OAuth callback navigation while keeping mutations same-origin and local account endpoints unavailable', async t => {
+  const prior = process.env.THREATLINT_WEB_REGISTRATION; process.env.THREATLINT_WEB_REGISTRATION = '1';
+  const fixture = await start(directory(t));
+  t.after(() => { if (prior === undefined) delete process.env.THREATLINT_WEB_REGISTRATION; else process.env.THREATLINT_WEB_REGISTRATION = prior; });
+  t.after(() => fixture.web.close());
+  // Native HTTP preserves Fetch Metadata headers, which fetch implementations may synthesize.
+  const response = await new Promise((resolve, reject) => {
+    http.get(`${fixture.origin}/?code=fixture-code&state=fixture-state`, { headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' } }, res => {
+      res.resume(); res.once('end', () => resolve(res.statusCode));
+    }).on('error', reject);
+  });
+  assert.equal(response, 200);
+  assert.equal((await fixture.call('/auth/session', { method: 'POST', headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
+  for (const route of ['/auth/login', '/auth/register']) assert.equal((await fixture.call(route, { method: 'POST', json: {} })).status, 404);
+  const signed = fixture.provider.issue();
+  let last;
+  for (let attempt = 0; attempt < 101; attempt++) last = await fixture.exchange(signed);
+  assert.equal(last.status, 429); assert.equal(last.headers.get('retry-after'), '900');
 });

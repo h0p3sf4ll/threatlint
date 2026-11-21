@@ -6,10 +6,12 @@ const path = require('node:path');
 const { createAuth, sessionCookie, clearCookie } = require('./lib/web-auth.cjs');
 const { createProfileWorkers } = require('./lib/profile-workers.cjs');
 const { stateDirectory, acquireStateLock } = require('./lib/web-state.cjs');
+const { auth0Configuration, permittedSubject } = require('./lib/auth0-config.cjs');
+const { createAuth0Api, requiresAuth } = require('@auth0/auth0-express-api');
+const { AuthClient } = require('@auth0/auth0-auth-js');
 
 const PUBLIC = path.join(__dirname, 'public');
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 function webOrigin(value) {
   const url = new URL(value);
@@ -19,7 +21,14 @@ function webOrigin(value) {
 }
 
 function createWebApp(options = {}) {
-  const origin = webOrigin(options.origin || process.env.THREATLINT_WEB_ORIGIN || 'http://127.0.0.1:3000');
+  const origin = webOrigin(options.origin || process.env.THREATLINT_WEB_ORIGIN || 'https://threatlint.dev');
+  const configuration = auth0Configuration(origin, options.auth0);
+  const tenantOrigin = `https://${configuration.domain}`;
+  const csp = `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss: ${tenantOrigin}; frame-src ${tenantOrigin}; worker-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+  // These are official SDK transports. Test injection changes transport, never token validation.
+  const sdkFetch = async (url, init = {}) => (options.auth0Fetch || fetch)(url, { ...init, redirect: 'error', signal: init.signal || AbortSignal.timeout(10_000) });
+  const auth0Router = createAuth0Api({ domain: configuration.domain, clientId: configuration.clientId, audience: configuration.audience, customFetch: sdkFetch });
+  const auth0Client = new AuthClient({ domain: configuration.domain, clientId: configuration.clientId, customFetch: sdkFetch });
   const directory = options.directory || stateDirectory();
   const mode = options.mode || process.env.THREATLINT_PROFILE_MODE || 'docker';
   if (mode === 'process' && !LOOPBACK.has(origin.hostname)) throw new Error('Process profiles are only available for trusted loopback development');
@@ -32,7 +41,6 @@ function createWebApp(options = {}) {
       maxWorkers: Number(process.env.THREATLINT_MAX_PROFILES || 8),
       ...(process.env.THREATLINT_PROFILE_NAMESPACE ? { namespace: process.env.THREATLINT_PROFILE_NAMESPACE } : {}) });
   } catch (error) { release(); throw error; }
-  const registrationEnabled = options.registrationEnabled ?? process.env.THREATLINT_WEB_REGISTRATION === '1';
   const secure = origin.protocol === 'https:';
   const app = express(); app.disable('x-powered-by');
   const server = http.createServer(app);
@@ -42,15 +50,17 @@ function createWebApp(options = {}) {
   let authPending = 0, closing = false;
 
   function allowed(req, mutation = false) {
-    if (req.headers.host?.toLowerCase() !== origin.host || req.headers['sec-fetch-site'] === 'cross-site') return false;
+    // Universal Login and logout return by cross-site top-level navigation. The SPA SDK validates callback state.
+    const entryNavigation = !mutation && req.method === 'GET' && ['/', '/login', '/login.html'].includes(req.path)
+      && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+    if (req.headers.host?.toLowerCase() !== origin.host || (req.headers['sec-fetch-site'] === 'cross-site' && !entryNavigation)) return false;
     if (req.headers.origin && req.headers.origin !== origin.origin) return false;
     return !mutation || req.headers.origin === origin.origin;
   }
-  function limit(req, action) {
+  function limit(req) {
     const now = Date.now();
     for (const [key, bucket] of buckets) if (bucket.expires <= now) buckets.delete(key);
-    const account = String(req.body?.email || '').toLowerCase().slice(0, 254);
-    const keys = [[`ip:${req.socket.remoteAddress}`, 100], [`account:${action}:${account}`, 15]];
+    const keys = [[`ip:${req.socket.remoteAddress}`, 100]];
     for (const [key, max] of keys) {
       const bucket = buckets.get(key) || { count: 0, expires: now + 15 * 60_000 };
       if (bucket.count >= max || buckets.size >= 10000 || authPending >= 4) return false;
@@ -72,42 +82,64 @@ function createWebApp(options = {}) {
 
   app.use((req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-      'X-Frame-Options': 'DENY', 'Content-Security-Policy': CSP });
+      'X-Frame-Options': 'DENY', 'Content-Security-Policy': csp });
     if (secure) res.set('Strict-Transport-Security', 'max-age=31536000');
     if (!allowed(req, !['GET', 'HEAD', 'OPTIONS'].includes(req.method))) return res.status(403).json({ error: 'Use the configured same-origin web app' });
     next();
   });
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
-  app.get('/auth/config', (_req, res) => res.json({ registrationEnabled }));
+  app.get('/auth/config', (_req, res) => res.json(configuration));
   app.get('/auth/session', (req, res) => {
     const session = auth.authenticate(req);
     if (!session) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
     res.json({ user: session.user, web: true });
   });
   app.use('/auth', express.json({ limit: '8kb' }));
-  for (const action of ['login', 'register']) app.post(`/auth/${action}`, async (req, res, next) => {
-    if (action === 'register' && !registrationEnabled) return res.status(403).json({ error: 'Registration is closed. Ask your administrator for an account.' });
-    if (!limit(req, action)) { res.set('Retry-After', '900'); return res.status(429).json({ error: 'Too many attempts. Try again later.' }); }
+  app.post('/auth/session', (req, res, next) => {
+    if (!limit(req)) { res.set('Retry-After', '900'); return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' }); }
     authPending++;
+    let counted = true;
+    const releaseAttempt = () => { if (counted) { counted = false; authPending--; } };
+    res.once('finish', releaseAttempt); res.once('close', releaseAttempt);
+    next();
+  }, auth0Router, requiresAuth({ scopes: 'openid' }), async (req, res, next) => {
     try {
-      const result = await auth[action](req.body);
-      // Replacing a login in the same browser revokes its previous session as well.
+      const claims = req.auth0.user;
+      const authorizedClient = claims.azp ?? claims.client_id;
+      if (claims.iss !== `${tenantOrigin}/` || authorizedClient !== configuration.clientId
+          || (claims.azp && claims.client_id && claims.azp !== claims.client_id) || !permittedSubject(claims.sub)
+          || claims.gty === 'client-credentials' || claims.act || !Number.isSafeInteger(claims.exp)) {
+        return res.status(403).json({ error: 'Use Google, Apple, GitHub, or an approved enterprise SSO connection for Threatlint.' });
+      }
+      const identity = await auth0Client.getUserInfo({ accessToken: req.auth0.token, expectedSubject: claims.sub });
+      if (identity.sub !== claims.sub) return res.status(401).json({ error: 'Auth0 identity could not be verified' });
+      const result = auth.establish({ issuer: claims.iss, subject: claims.sub, displayName: identity.name || identity.nickname,
+        email: identity.email, expiresAt: claims.exp * 1000 });
+      // Only the verified issuer + subject determines ownership; email never links profiles.
       auth.logout(req); expireTunnels();
       res.set('Set-Cookie', sessionCookie(result, { secure })).json({ user: result.user });
-    } catch (error) { next(error); }
-    finally { authPending--; }
+    } catch (error) {
+      if (error.code === 'userinfo_error' || error.name === 'UserInfoError') return res.status(401).json({ error: 'Auth0 identity could not be verified. Sign in again.' });
+      next(error);
+    }
   });
   app.post('/auth/logout', (req, res, next) => {
     try { auth.logout(req); expireTunnels(); res.set('Set-Cookie', clearCookie({ secure })).json({ ok: true }); }
     catch (error) { next(error); }
   });
   app.use('/auth', (_req, res) => res.status(404).json({ error: 'Unknown account route' }));
-  for (const [url, file] of Object.entries({ '/login': 'login.html', '/login.html': 'login.html', '/login.js': 'login.js', '/login.css': 'login.css', '/mark.svg': 'mark.svg' })) {
+  app.get('/vendor/auth0-spa-js.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@auth0/auth0-spa-js/dist/auth0-spa-js.production.js')));
+  for (const [url, file] of Object.entries({ '/login': 'login.html', '/login.html': 'login.html', '/login.js': 'login.js', '/auth0-client.js': 'auth0-client.js', '/login.css': 'login.css', '/mark.svg': 'mark.svg' })) {
     app.get(url, (req, res) => {
       if (file === 'login.html' && auth.authenticate(req)) return res.redirect('/');
       res.sendFile(path.join(PUBLIC, file));
     });
   }
+  // Auth0's configured SPA callback is the root URL, including when replacing an existing login.
+  app.get('/', (req, res, next) => {
+    if (!auth.authenticate(req) || (req.query.state && (req.query.code || req.query.error))) return res.sendFile(path.join(PUBLIC, 'login.html'));
+    next();
+  });
   app.use(async (req, res, next) => {
     const session = auth.authenticate(req);
     if (!session) {
@@ -119,7 +151,7 @@ function createWebApp(options = {}) {
       if (!auth.authenticate(req)) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
       const upstream = http.request({ hostname: '127.0.0.1', port: worker.port, method: req.method, path: req.originalUrl,
         headers: workerHeaders(req, worker) }, response => {
-        const headers = { ...response.headers, 'cache-control': 'no-store' };
+        const headers = { ...response.headers, 'cache-control': 'no-store', 'content-security-policy': csp };
         delete headers['set-cookie'];
         res.writeHead(response.statusCode, headers); response.pipe(res);
       });

@@ -65,9 +65,11 @@ not a security approval.
 
 ### Prefer a visual review?
 
-For a hosted Workbench with user sign-in and persistent settings per profile, see
-the [web app deployment guide](docs/web-app.md). It uses the desktop workflows
-with an isolated runtime and storage for each account.
+For a hosted Workbench using Auth0 sign-in at `https://threatlint.dev`, see the
+[web app deployment guide](docs/web-app.md). Google, Apple, GitHub or approved
+enterprise SSO identities receive an isolated runtime and persistent settings.
+The guide covers Auth0 tenant configuration, Docker setup and environment
+variables. The web app has no local password login.
 
 From this checkout:
 

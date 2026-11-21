@@ -13,16 +13,17 @@ const storage = () => {
   const values = new Map();
   return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
 };
-function start(fetchImpl, { local = storage(), session = storage() } = {}) {
+function start(fetchImpl, { local = storage(), session = storage(), nodes = {}, authLogout = async () => {} } = {}) {
   const events = {};
   const navigations = [];
   let reloads = 0;
   const context = vm.createContext({
-    window: { localStorage: local, sessionStorage: session, addEventListener: () => {} },
-    document: { readyState: 'loading', addEventListener: () => {}, body: { classList: { add: () => {} } } },
+    window: { localStorage: local, sessionStorage: session, addEventListener: () => {}, ThreatlintAuth: { logout: authLogout } },
+    document: { readyState: 'loading', addEventListener: (type, listener) => { events[`document:${type}`] = listener; },
+      getElementById: id => nodes[id] || null, body: { classList: { add: () => {} } } },
     location: { replace: target => navigations.push(target), reload: () => { reloads += 1; } },
     fetch: fetchImpl, setInterval: () => 1,
-    BroadcastChannel: class { addEventListener(type, listener) { events[type] = listener; } },
+    BroadcastChannel: class { addEventListener(type, listener) { events[type] = listener; } postMessage() {} },
   });
   bootstrap.runInContext(context);
   return { profile: context.window.ThreatlintProfile, local, session, events, navigations, get reloads() { return reloads; } };
@@ -95,4 +96,30 @@ test('expired login redirects and account changes reload stale in-memory work', 
   assert.deepEqual(client.navigations, ['/login']);
   client.events.message({ data: { type: 'session-changed' } });
   assert.equal(client.reloads, 2);
+});
+
+test('sign out revokes the application session before redirecting through Auth0 logout', async () => {
+  const order = [];
+  const nodes = Object.fromEntries(['web-profile', 'web-profile-name', 'web-signout', 'web-profile-error'].map(id => [id,
+    { textContent: '', hidden: true, handlers: {}, addEventListener(type, listener) { this.handlers[type] = listener; } }]));
+  const client = start(async (url, options) => {
+    if (url === '/auth/logout') { assert.equal(options.method, 'POST'); order.push('revoke-cookie'); return response(204, null); }
+    return userResponse('alice');
+  }, { nodes, authLogout: async () => { order.push('auth0-logout'); } });
+  await client.profile.ready;
+  client.events['document:DOMContentLoaded']();
+  await nodes['web-signout'].handlers.click();
+  assert.deepEqual(order, ['revoke-cookie', 'auth0-logout']);
+  assert.deepEqual(client.navigations, []);
+});
+
+test('a provider logout failure still leaves the revoked Threatlint session and returns to explicit sign in', async () => {
+  const nodes = Object.fromEntries(['web-profile', 'web-profile-name', 'web-signout', 'web-profile-error'].map(id => [id,
+    { textContent: '', handlers: {}, addEventListener(type, listener) { this.handlers[type] = listener; } }]));
+  const client = start(async url => url === '/auth/logout' ? response(204, null) : userResponse('alice'),
+    { nodes, authLogout: async () => { throw new Error('Auth0 temporarily unavailable'); } });
+  await client.profile.ready;
+  client.events['document:DOMContentLoaded']();
+  await nodes['web-signout'].handlers.click();
+  assert.deepEqual(client.navigations, ['/login?notice=provider-logout']);
 });

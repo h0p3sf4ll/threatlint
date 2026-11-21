@@ -58,12 +58,17 @@
     if (avatar) { avatar.textContent = (profile.user.displayName || profile.user.email).slice(0, 2).toUpperCase(); avatar.setAttribute('aria-label', profile.user.email); }
     signout.addEventListener('click', async () => {
       signout.disabled = true;
+      let sessionRevoked = false;
       try {
         const response = await fetch('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' });
         if (!response.ok && response.status !== 401) throw new Error('Sign out could not complete. Please try again.');
+        sessionRevoked = true;
         channel?.postMessage({ type: 'session-changed' });
-        redirect();
-      } catch (error) { signout.disabled = false; document.getElementById('web-profile-error').textContent = error.message; }
+        await window.ThreatlintAuth.logout();
+      } catch (error) {
+        if (sessionRevoked) { location.replace('/login?notice=provider-logout'); return; }
+        signout.disabled = false; document.getElementById('web-profile-error').textContent = error.message;
+      }
     });
   }
   profile.ready = (async () => {
