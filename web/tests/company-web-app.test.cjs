@@ -77,7 +77,7 @@ it('separates personal and two organization profiles for the same identity, pers
     else assert.equal(Object.hasOwn(user, 'company'), false);
     assert.equal((await app.call('/api/model-preferences', { method: 'PUT', cookie: session.cookie, profile: user.id, json: PREFERENCES(index) })).status, 200);
     const home = await app.call('/api/fs/browse', { cookie: session.cookie, profile: user.id });
-    assert.equal(home.status, 200); assert.equal(home.body.path, path.join(root, 'profiles', user.id));
+    assert.equal(home.status, 200); assert.equal(home.body.path, fs.realpathSync(path.join(root, 'profiles', user.id)));
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home.body.path, '.threatlint/workbench/model-preferences.json'), 'utf8')), PREFERENCES(index));
   }
   assert.equal(new Set(profiles.map(session => session.body.user.id)).size, 3);

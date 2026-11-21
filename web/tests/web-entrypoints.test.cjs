@@ -72,7 +72,7 @@ it('boots a profile from stdin, gates its port, and restores durable state with 
   assert.equal((await second.call('/api/agents', { secret: firstToken })).status, 403);
   assert.equal((await second.call('/api/agents')).status, 200);
   assert.deepEqual((await second.call('/api/model-preferences')).body.preferences, preferences);
-  assert.equal((await second.call(`/api/session/${session.body.sessionId}`)).body.repoPath, checkout);
+  assert.equal((await second.call(`/api/session/${session.body.sessionId}`)).body.repoPath, fs.realpathSync(checkout));
   assert.equal(fs.readFileSync(path.join(checkout, 'durable.txt'), 'utf8'), 'private repository fixture');
   await second.stop();
   assert.equal(second.output().includes(secondToken), false);
