@@ -10,6 +10,8 @@ const { auth0Configuration, permittedSubject } = require('./lib/auth0-config.cjs
 const { createAuth0Api, requiresAuth } = require('@auth0/auth0-express-api');
 const { AuthClient } = require('@auth0/auth0-auth-js');
 const { createCompanies } = require('./lib/companies.cjs');
+const { createAccessControl, requiredPermission, ROLE_CLAIM } = require('./lib/rbac.cjs');
+const { registerGatewayManagement } = require('./lib/management-gateway.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -35,9 +37,10 @@ function createWebApp(options = {}) {
   const mode = options.mode || process.env.THREATLINT_PROFILE_MODE || 'docker';
   if (mode === 'process' && !LOOPBACK.has(origin.hostname)) throw new Error('Process profiles are only available for trusted loopback development');
   const release = acquireStateLock(directory);
-  let auth, workers;
+  let auth, workers, access;
   try {
     auth = createAuth({ directory, sessionTtlMs: options.sessionTtlMs, now: options.now });
+    access = createAccessControl({ directory, adminSubjects: options.adminSubjects });
     workers = options.workers || createProfileWorkers({ directory, mode,
       image: process.env.THREATLINT_PROFILE_IMAGE || 'threatlint-profile:local',
       maxWorkers: Number(process.env.THREATLINT_MAX_PROFILES || 8),
@@ -78,7 +81,12 @@ function createWebApp(options = {}) {
     return true;
   }
   function expireTunnels() {
-    for (const tunnel of tunnels) if (!activeSession(tunnel.req)) { tunnel.socket.destroy(); tunnel.upstream?.destroy(); tunnels.delete(tunnel); }
+    for (const tunnel of tunnels) {
+      let permitted = false;
+      try { const session = activeSession(tunnel.req); permitted = !!session && access.access(session.user).permissions.review; }
+      catch { /* A broken role store cannot leave an existing socket authorized. */ }
+      if (!permitted) { tunnel.socket.destroy(); tunnel.upstream?.destroy(); tunnels.delete(tunnel); }
+    }
   }
   const sweep = setInterval(expireTunnels, 1000); sweep.unref();
   function workerHeaders(req, worker) {
@@ -108,7 +116,8 @@ function createWebApp(options = {}) {
   app.get('/auth/session', (req, res) => {
     const session = activeSession(req);
     if (!session) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
-    res.json({ user: session.user, web: true });
+    const current = access.access(session.user);
+    res.json({ user: session.user, web: true, role: current.role, permissions: current.permissions });
   });
   app.use('/auth', express.json({ limit: '8kb' }));
   app.post('/auth/session', (req, res, next) => {
@@ -138,9 +147,10 @@ function createWebApp(options = {}) {
       }
       const result = auth.establish({ issuer: claims.iss, subject: claims.sub, displayName: identity.name || identity.nickname,
         email: identity.email, expiresAt: claims.exp * 1000, ...(company ? { company } : {}) });
+      const current = access.observe(result.user, { subject: claims.sub, roles: claims[ROLE_CLAIM] });
       // Only the verified issuer + subject determines ownership; email never links profiles.
       auth.logout(req); expireTunnels();
-      res.set('Set-Cookie', sessionCookie(result, { secure })).json({ user: result.user });
+      res.set('Set-Cookie', sessionCookie(result, { secure })).json({ user: result.user, role: current.role, permissions: current.permissions });
     } catch (error) {
       if (error.code === 'userinfo_error' || error.name === 'UserInfoError') return res.status(401).json({ error: 'Auth0 identity could not be verified. Sign in again.' });
       next(error);
@@ -175,13 +185,13 @@ function createWebApp(options = {}) {
     req.workbenchPath = '/';
     next();
   });
-  app.use(async (req, res, next) => {
+  app.use((req, res, next) => {
     const session = activeSession(req);
     if (!session) {
-      if (req.path.startsWith('/api/') || req.headers.accept?.includes('application/json')) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
+      if (req.path.toLowerCase().startsWith('/api/') || req.headers.accept?.includes('application/json')) return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' });
       return res.redirect('/login');
     }
-    if (req.path.startsWith('/api/')) {
+    if (req.path.toLowerCase().startsWith('/api/')) {
       const headerProfile = req.headers['x-threatlint-profile'];
       const linkProfile = req.query._profile;
       if ((headerProfile !== undefined && headerProfile !== session.user.id) || (linkProfile !== undefined && linkProfile !== session.user.id)) {
@@ -192,13 +202,34 @@ function createWebApp(options = {}) {
         target.searchParams.delete('_profile');
         req.workbenchPath = target.pathname + target.search;
       }
+      const current = access.access(session.user);
+      const permission = requiredPermission(req.method, req.path);
+      if (!current.permissions[permission]) return res.status(403).json({ error: `Your ${current.role} role cannot perform this action`, code: 'role_forbidden' });
+      req.threatlintAccess = current;
     }
+    req.threatlintSession = session;
+    next();
+  });
+  app.get('/api/access', (req, res) => res.json(access.access(req.threatlintSession.user)));
+  app.post('/api/access/members', express.json({ limit: '8kb' }), (req, res, next) => {
+    try { const current = access.update(req.threatlintSession.user, req.body); expireTunnels(); res.json(current); }
+    catch (error) { next(error); }
+  });
+  // Organization management routes share their own verified tenant scope, before personal-worker proxying.
+  registerGatewayManagement(app, { scopeDirectory: req => access.scopeDirectory(req.threatlintSession.user),
+    userForRequest: req => req.threatlintSession.user, workers, integrations: options.integrations || {} });
+  app.use(async (req, res, next) => {
+    const session = req.threatlintSession;
     let lease;
     try {
       lease = await workers.acquire(session.user);
       const { worker } = lease;
       if (req.aborted || res.destroyed) { lease.release(); return; }
-      if (!activeSession(req)) { lease.release(); return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' }); }
+      const currentSession = activeSession(req);
+      if (!currentSession) { lease.release(); return res.set('X-Threatlint-Auth', 'required').status(401).json({ error: 'Sign in to continue' }); }
+      if (req.path.toLowerCase().startsWith('/api/') && !access.access(currentSession.user).permissions[requiredPermission(req.method, req.path)]) {
+        lease.release(); return res.status(403).json({ error: 'Your role changed. Reload this page.', code: 'role_forbidden' });
+      }
       const upstream = http.request({ hostname: '127.0.0.1', port: worker.port, method: req.method, path: req.workbenchPath || req.originalUrl,
         headers: workerHeaders(req, worker) }, response => {
         const headers = { ...response.headers, 'cache-control': 'no-store', 'content-security-policy': csp };
@@ -224,6 +255,8 @@ function createWebApp(options = {}) {
     if (!allowed(req) || req.headers.origin !== origin.origin) return reject('403 Forbidden');
     const session = activeSession(req);
     if (!session) return reject('401 Unauthorized');
+    try { if (!access.access(session.user).permissions.review) return reject('403 Forbidden'); }
+    catch { return reject('403 Forbidden'); }
     let socketUrl;
     try { socketUrl = new URL(req.url, origin); } catch { return reject('400 Bad Request'); }
     if (socketUrl.pathname !== '/' || [...socketUrl.searchParams.keys()].some(key => key !== 'profile')) return reject('404 Not Found');
@@ -234,7 +267,9 @@ function createWebApp(options = {}) {
       const lease = await workers.acquire(session.user);
       tunnel.release = lease.release;
       const { worker } = lease;
-      if (socket.destroyed || !activeSession(req)) { lease.release(); return reject('401 Unauthorized'); }
+      const currentSession = activeSession(req);
+      if (socket.destroyed || !currentSession) { lease.release(); return reject('401 Unauthorized'); }
+      if (!access.access(currentSession.user).permissions.review) { lease.release(); return reject('403 Forbidden'); }
       const request = http.request({ hostname: '127.0.0.1', port: worker.port, path: '/', headers: workerHeaders(req, worker) });
       request.on('upgrade', (response, upstream, upstreamHead) => {
         tunnel.upstream = upstream;
@@ -261,7 +296,7 @@ function createWebApp(options = {}) {
       if (server.listening) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
     } finally { release(); }
   }
-  return { app, server, auth, workers, close, origin: origin.origin };
+  return { app, server, auth, workers, access, close, origin: origin.origin };
 }
 
 if (require.main === module) {

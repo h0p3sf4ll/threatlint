@@ -2,7 +2,7 @@
 
 // Resolve identity before the workbench reads browser preferences. Desktop keeps its existing storage keys.
 (() => {
-  const profile = { web: false, user: null, ready: null };
+  const profile = { web: false, user: null, role: 'administrator', permissions: { read: true, review: true, manageFindings: true, manageSettings: true, manageMembers: true }, ready: null };
   let identityResolved = false;
   function storageKey(key) {
     if (!identityResolved) throw new Error('Profile is still loading.');
@@ -59,6 +59,7 @@
       location.replace(`${canonical}${location.hash || ''}`);
       return false;
     }
+    if (current.role && current.role !== profile.role) { location.reload(); return false; }
     if (current.user.company?.name !== profile.user.company?.name) { profile.user = current.user; location.reload(); return false; }
     return true;
   };
@@ -66,7 +67,7 @@
     if (!profile.web || !profile.user) return;
     document.body.classList.add('web-workbench');
     const setCopy = (id, text) => { const node = document.getElementById(id); if (node) node.textContent = text; };
-    setCopy('settings-description', 'Choose the model that runs reviews. ServiceNow, Semgrep, Azure DevOps, and scanner connections are saved in your personal profile, shared with the CLI inside your profile runtime. Saved secrets are never shown again.');
+    setCopy('settings-description', 'Choose your models, connect the tools your organization uses, and manage access. Organization integrations are shared with your company; model and scanner preferences stay in your profile. Saved secrets are never shown again.');
     setCopy('settings-provider-note', 'Choose a provider and model ID. Use a session key or a credential configured in your personal profile runtime.');
     setCopy('settings-model-privacy', 'Model API keys entered here remain in memory for this session. Non-secret model preferences and report history are saved to your profile on the server. Integration credentials saved in the connection sections are also kept in your profile. A remote model provider receives prompts and the source inspected by its agents.');
     setCopy('model-server-note', 'This URL is reached from your profile runtime on the server. Loopback refers to that runtime, so it cannot reach a model running only on your laptop. Use an accessible HTTPS model server.');
@@ -118,6 +119,8 @@
     const data = await response.json();
     if (!data.web || !data.user?.id) throw new Error('Your profile could not be loaded. Reload to try again.');
     profile.web = true; profile.user = data.user;
+    profile.role = data.role || 'viewer';
+    profile.permissions = data.permissions || { read: true, review: false, manageFindings: false, manageSettings: false, manageMembers: false };
     identityResolved = true;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showIdentity, { once: true });
     else showIdentity();

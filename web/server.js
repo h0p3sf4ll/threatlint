@@ -36,6 +36,8 @@ const { createDesignInputs } = require('./lib/design-inputs.cjs');
 const { registerDesignInputRoutes, designInputBodyParsers } = require('./lib/routes/design-inputs.cjs');
 const { createScannerBatch } = require('./lib/scanner-batch.cjs');
 const { registerScannerRoutes } = require('./lib/routes/scanners.cjs');
+const { registerManagementRoutes } = require('./lib/routes/management.cjs');
+const { createSavedSourceActivator } = require('./lib/saved-sources.cjs');
 
 const BODY_LIMIT = '7mb';
 const DEFAULT_PORT = 3000;
@@ -67,6 +69,7 @@ function createWorkbench(options = {}) {
   const store = createStore(options.storageDir ?? defaultStorageDir());
   const reports = createReportWriter(store, { convertToWord: options.integrations?.convertToWord });
   const scm = options.sourceManagers || createSourceManagers();
+  const activateSavedSource = createSavedSourceActivator(scm);
   const runtime = options.runtimeScanner || createRuntimeScanner();
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
@@ -105,6 +108,29 @@ function createWorkbench(options = {}) {
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
 
+  // Native desktop remains an individually owned application. Company authorization and shared
+  // connections are handled by the authenticated gateway before requests reach a profile worker.
+  app.get('/api/access', (_req, res) => res.json({ role: 'administrator',
+    permissions: { read: true, manageSettings: true, manageMembers: false, review: true, manageFindings: true },
+    roles: ['administrator', 'analyst', 'viewer'], members: [], local: true }));
+  registerManagementRoutes(app, { directory: store.directory, reports, integrations: options.integrations,
+    activateSource: (_req, connection) => activateSavedSource(connection) });
+
+  // Only the gateway can call these endpoints, using the private worker transport credential.
+  // Never expose local report paths or source credentials in the response.
+  app.get('/internal/management/report/:id', (req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    const located = reports.find(req.params.id);
+    if (!located) return res.status(404).json({ error: 'Report not found' });
+    res.json({ report: reports.metadata(located.report), parsed: reports.read(located.report) });
+  });
+  app.post('/internal/management/source', async (req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    try {
+      res.json(await activateSavedSource({ provider: req.body?.provider, token: req.body?.token, organization: req.body?.organization }));
+    } catch { res.status(502).json({ error: 'Source connection could not be activated. Check its credentials and permissions.' }); }
+  });
+
   // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
   app.get('/internal/activity', (_req, res) => {
     if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
@@ -136,7 +162,7 @@ function createWorkbench(options = {}) {
 const workbench = createWorkbench();
 if (require.main === module) {
   const port = Number(process.env.PORT || DEFAULT_PORT);
-  workbench.server.listen(port, '127.0.0.1', () => console.log(`Threatlint Workbench: http://127.0.0.1:${workbench.server.address().port}\nReports remain local. Provider credentials are never saved.`));
+  workbench.server.listen(port, '127.0.0.1', () => console.log(`Threatlint Workbench: http://127.0.0.1:${workbench.server.address().port}\nReports and saved integrations remain local. Model keys are session-only.`));
   process.once('SIGINT', () => workbench.close().then(() => process.exit(0)));
   process.once('SIGTERM', () => workbench.close().then(() => process.exit(0)));
 }

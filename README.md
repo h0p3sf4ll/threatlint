@@ -27,6 +27,9 @@ attacker path, and proposes a fix and a regression assertion.
 **Find. Explain. Act.** Less time translating security output into engineering work.
 More time making the next change with a clear reason.
 
+Workbench also supports [centralized findings management](docs/integrations.md) in Jira Cloud,
+Azure Boards, and GitHub Issues, with multiple organization connections and basic role controls.
+
 ### What a useful answer looks like
 
 An illustrative finding, not a result from your repository:

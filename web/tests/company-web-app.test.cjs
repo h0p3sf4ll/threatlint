@@ -39,7 +39,7 @@ async function start(root, active, companies = COMPANIES) {
   }
   function signIn(company) {
     const token = provider.issue({ subject: 'google-oauth2|same-person', email: 'same@example.test', displayName: 'Same Person',
-      ...(company ? { claims: { org_id: company.auth0OrganizationId } } : {}) });
+      ...(company ? { claims: { org_id: company.auth0OrganizationId, 'https://threatlint.dev/roles': ['administrator'] } } : {}) });
     return call('/auth/session', { method: 'POST', headers: { Authorization: `Bearer ${token}`,
       ...(company ? { 'X-Threatlint-Company': company.slug } : {}) } });
   }

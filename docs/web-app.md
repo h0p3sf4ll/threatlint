@@ -56,6 +56,28 @@ The browser SDK passes the registry's immutable Organization ID through its `org
 
 There are no password-creation commands, local password endpoints or development authentication bypasses. Old `accounts.json` files from the earlier local-account implementation are ignored. Their profile files are retained, but federated sign-in creates its own profile; legacy data is not automatically associated by matching email. Any future migration must explicitly prove the destination identity and preserve the source data.
 
+## Organization access controls
+
+Company members have one of three roles. The gateway enforces roles on every API request before forwarding it to a profile or the shared integration service; browser controls are only a convenience.
+
+| Role | Access |
+| --- | --- |
+| Administrator | Read data, run reviews, manage findings, configure connections and settings, and assign company roles. |
+| Analyst | Read data, select personal models and session credentials, connect personal source sessions, run reviews, import or create tracker findings, sync tickets, and close proven false positives. Persisted integration credentials and organization connections are read-only. |
+| Viewer | Read data and reports. Cannot run reviews, open review WebSockets, change settings or update trackers. |
+
+Personal web profiles and the local desktop are owned by their individual user and have administrator permissions. New company members default to **analyst**. The first member is never automatically promoted. For the first company administrator, set `THREATLINT_ADMIN_SUBJECTS` on the gateway to a comma-separated list of exact, verified Auth0 subjects (for example, `github|123456`). This service-owned setting applies only after that subject signs into an organization of which it is a verified member. Restart the gateway after changing it and sign in again. Never use email addresses or unverified request headers as administrator selectors.
+
+Analysts can save their own model preferences (`/api/model-preferences`), use session model credentials, and connect or disconnect in-memory source sessions (`/api/scm/connections`) inside their isolated profile. Those choices cannot change another member's runtime or the shared organization connections. Administrator permission remains required for the persisted connections in **Settings > Integrations** and for legacy saved ServiceNow, Semgrep, GitHub App, Azure DevOps and scanner credentials. Analysts can activate an administrator-configured source connection in their own runtime without seeing its token.
+
+Alternatively, a trusted Auth0 Action may put `['administrator']`, `['analyst']`, or `['viewer']` in the access token's `https://threatlint.dev/roles` custom claim. The gateway reads this claim only after the existing official SDK verifies the token and the organization membership. A plain `role` claim, request body, UserInfo field or `X-Threatlint-Role` header cannot assign a role. When multiple recognized roles are supplied, administrator takes precedence, followed by analyst and viewer. Claim-based changes take effect at the next login. Existing sessions created before roles were introduced default to analyst until the user signs in again.
+
+Use **Settings > Access control** to assign roles to members who have already signed in. An administrator assignment persists across later logins, including subsequent identity-provider role claims. Company membership itself remains controlled by Auth0. Role assignments cannot target another company's members, and the API prevents removing the last company administrator. Role changes affect the next API request immediately; a demotion to viewer also closes an existing review socket. Removing a company from the registry revokes its sessions as before.
+
+The gateway stores roles and central connection/finding records under `management/organizations/<sha256 of verified organization ID>/` inside `THREATLINT_WEB_STATE_DIR`. Personal central records use `management/personal/<profile UUID>/`. Company rename/slug changes retain this shared scope. These directories are private gateway state and are never mounted in a profile worker. Keep the gateway state volume persistent and access-restricted alongside `identities.json`. Existing individual repository sessions, reports and legacy integration credentials remain isolated in each profile; only connections and findings configured through the organization management interface are shared.
+
+`GET /api/access` exposes the current `role`, boolean `permissions`, supported `roles`, and (for company administrators) known `members`. `POST /api/access/members` accepts `{ "userId": "<existing company profile UUID>", "role": "viewer" }`. Normal session, same-origin and active-profile checks apply to both routes.
+
 ## Requirements
 
 - Node.js 22.12.0 or later and npm on the gateway host.

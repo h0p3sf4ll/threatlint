@@ -100,7 +100,7 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
-    const titles = { fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { management: 'Issue management', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -177,7 +177,7 @@
   }
   function updateRunControls() {
     publishContext();
-    $('start-run').disabled = state.running || !state.connected || !state.session || !state.pipeline.length;
+    $('start-run').disabled = profile?.permissions?.review === false || state.running || !state.connected || !state.session || !state.pipeline.length;
     $('cancel-run').classList.toggle('hidden', !state.running);
     $('clear-pipeline').disabled = state.running;
     $('browse-agents').disabled = state.running;
@@ -195,6 +195,7 @@
     if (!state.session) summary = 'Choose a repository to get started';
     if (!state.connected) summary = 'Connecting to the local runner…';
     if (state.running) summary = 'Review in progress · source remains unchanged';
+    if (profile?.permissions?.review === false) summary = 'Viewer access · browse saved findings and reports. Ask an administrator to enable reviews.';
     $('run-summary').textContent = summary;
     $('run-status-dot').classList.toggle('waiting', !state.session);
   }
@@ -384,6 +385,10 @@
       if (!state.report.example && state.report.id && state.report.agentId === FP_REVIEWER && finding.disposition === 'FALSE POSITIVE') {
         actions.append(button('Close FP & tune Semgrep…', 'button primary small-button', () => openFalsePositiveActions(finding)));
       }
+      if (!state.report.example && state.report.id && profile?.permissions?.manageFindings !== false) actions.append(button('Create tracker ticket…', 'button secondary small-button', () => {
+        $('report-dialog').close();
+        document.dispatchEvent(new CustomEvent('threatlint:ticket-create', { detail: { reportId: state.report.id, sessionId: state.report.sessionId || state.session?.id, findingId: finding.id } }));
+      }));
       if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
       const slideUrl = powerPointUrl(state.report, finding.id);
       if (slideUrl) {
@@ -420,7 +425,7 @@
     $('fp-snow-section').hidden = !target.avit;
     $('fp-close-avit').hidden = !target.avit; $('fp-close-avit').disabled = false;
     $('fp-attachment-name').textContent = target.avit ? `${target.avit}-threatlint-fp-review.md` : '';
-    fpStatus('fp-snow-status', servicenowReady() ? '' : 'ServiceNow is not configured. Add the instance, client ID, and secret in Model & settings first.', servicenowReady() ? '' : 'warn');
+    fpStatus('fp-snow-status', servicenowReady() ? '' : 'ServiceNow is not configured. Add the instance, client ID, and secret in Settings first.', servicenowReady() ? '' : 'warn');
     $('fp-semgrep-rule').value = target.rule; $('fp-semgrep-path').value = target.path; $('fp-semgrep-line').value = target.line;
     if (!$('fp-semgrep-repo').value && state.session?.repoPath) $('fp-semgrep-repo').value = state.session.provenance?.repository || repoName(state.session.repoPath);
     $('fp-semgrep-matches').replaceChildren(); fpStatus('fp-semgrep-status', ''); $('fp-action-error').textContent = '';
@@ -429,7 +434,7 @@
   }
   async function closeAvitFalsePositive() {
     const action = state.fpAction; if (!action?.avit) return;
-    if (!servicenowReady()) { fpStatus('fp-snow-status', 'Configure ServiceNow in Model & settings first.', 'warn'); return; }
+    if (!servicenowReady()) { fpStatus('fp-snow-status', 'Configure ServiceNow in Settings first.', 'warn'); return; }
     if (!window.confirm(`Close ${action.avit} in ServiceNow as Closed / False Positive and attach this report?`)) return;
     $('fp-close-avit').disabled = true; fpStatus('fp-snow-status', `Attaching the report and closing ${action.avit}…`);
     try {
@@ -546,9 +551,9 @@
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube'].includes(section) ? section : 'model'}`);
+    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube', 'integrations', 'access'].includes(section) ? section : 'model'}`);
+    document.dispatchEvent(new CustomEvent('threatlint:settings-section', { detail: { section } }));
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
-    for (const link of document.querySelectorAll('.settings-nav a')) link.classList.toggle('active', link.getAttribute('href') === `#${target?.id}`);
   }
   // The saved connection lives in the Threatlint config (shared with the CLI); the secret never reaches the page.
   const MASK = '••••••••••••';
@@ -958,6 +963,9 @@
   }
   function connectSocket() {
     clearTimeout(state.reconnectTimer);
+    if (profile?.permissions?.review === false) {
+      state.connected = false; $('connection-status').textContent = 'Viewer access'; $('connection-status').className = 'connection'; updateRunControls(); return;
+    }
     const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/${profile?.web ? `?profile=${encodeURIComponent(profile.user.id)}` : ''}`);
     state.ws = socket;
     socket.addEventListener('open', () => {
