@@ -1143,7 +1143,7 @@
     // The last false positive review of this browser session, as far as it got (see fpreview-run.js).
     try { fpRun()?.restore(); } catch (error) { console.error('Could not restore the false positive review history', error.message); }
     if (desktop) { $('runtime-badge').textContent = 'DESKTOP WORKBENCH'; $('app-version').textContent = desktop.version; }
-    else if (profile?.web) $('runtime-badge').textContent = 'PERSONAL WEB WORKBENCH';
+    else if (profile?.web) $('runtime-badge').textContent = profile.user.company ? 'COMPANY WEB WORKBENCH' : 'PERSONAL WEB WORKBENCH';
     try {
       [state.agents, state.skills, state.config] = await Promise.all([request('/api/agents'), request('/api/skills'), request('/api/config')]);
       await loadSavedServiceNow();
