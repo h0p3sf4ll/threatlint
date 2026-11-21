@@ -28,7 +28,7 @@ def workflow(monkeypatch):
         git(repo, "init", "-b", "main")
         git(repo, "config", "user.name", "Fixture")
         git(repo, "config", "user.email", "fixture@example.test")
-        (repo / "app.py").write_text(SOURCE)
+        (repo / "app.py").write_bytes(SOURCE.encode("utf-8"))
         git(repo, "add", "app.py")
         git(repo, "commit", "-m", "fixture")
         git(repo, "remote", "add", "origin", ORIGIN)
@@ -44,7 +44,7 @@ def workflow(monkeypatch):
     monkeypatch.setattr(avit_pr, "_request", lambda *args, **kwargs: state["api"](*args, **kwargs))
     def resolve(args):
         assert not any(body for _, _, body in state["api"].calls), "no provider mutation before final write-back"
-        state["resolved"].append(Path(args.report).read_text())
+        state["resolved"].append(Path(args.report).read_text(encoding="utf-8"))
         return 0
     monkeypatch.setattr(avit_resolve, "cmd_resolve", resolve)
     return state

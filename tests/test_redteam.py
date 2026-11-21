@@ -99,7 +99,9 @@ def test_learning_persists_and_reorders(tmp_path):
     ruleset.record("RT-RT-XSS", endpoint, confirmed=False, signal="not reflected", run_id="r1")
     save_ruleset(ruleset, path)
     import os
-    assert oct(os.stat(path).st_mode)[-3:] == "600"
+    # Windows uses ACLs and does not expose POSIX owner/group mode bits.
+    if os.name != "nt":
+        assert oct(os.stat(path).st_mode)[-3:] == "600"
     reloaded = load_ruleset(path)
     assert reloaded.rules["RT-RT-SQLI"].hits == 1 and reloaded.rules["RT-RT-SQLI"].runs == 1
     assert reloaded.rules["RT-RT-SQLI"].affinity.get("pay") == 1

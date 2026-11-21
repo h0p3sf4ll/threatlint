@@ -188,7 +188,7 @@ def test_remaining_blocker_is_named_and_redacted_in_issues(checkout):
 
 def test_prepare_fix_cli_does_not_require_confirmation_or_authentication(checkout, tmp_path, monkeypatch, capsys):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
     target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}))
     monkeypatch.setattr(avit_cli, "confirm", lambda *_: pytest.fail("Local inspection needs no confirmation"))
@@ -199,7 +199,7 @@ def test_prepare_fix_cli_does_not_require_confirmation_or_authentication(checkou
 
 def test_prepare_fix_cli_rejects_other_avit_target(checkout, tmp_path):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
     target.write_text(json.dumps({**TARGET, "avit": "AVIT000000000000002"}))
     args = SimpleNamespace(number=AVIT, report=str(markdown), checkout=str(checkout), target=str(target))
@@ -209,7 +209,7 @@ def test_prepare_fix_cli_rejects_other_avit_target(checkout, tmp_path):
 
 def test_prepare_fix_command_dispatches_without_tracker_settings(checkout, tmp_path):
     markdown = tmp_path / "review.md"
-    markdown.write_text(confirmed())
+    markdown.write_text(confirmed(), encoding="utf-8")
     target = tmp_path / "target.json"
     target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}))
     result = subprocess.run([sys.executable, "-c", "from threatlint.cli import main; main()",

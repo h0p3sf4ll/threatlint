@@ -47,7 +47,8 @@ def checkout(tmp_path):
     git(repo, "init", "-b", "main")
     git(repo, "config", "user.name", "Fixture")
     git(repo, "config", "user.email", "fixture@example.test")
-    (repo / "app.py").write_text(SOURCE)
+    # Git patches are byte-oriented; do not translate fixture LF to Windows CRLF.
+    (repo / "app.py").write_bytes(SOURCE.encode("utf-8"))
     git(repo, "add", "app.py")
     git(repo, "commit", "-m", "fixture")
     git(repo, "remote", "add", "origin", ORIGIN)

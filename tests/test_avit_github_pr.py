@@ -26,7 +26,7 @@ def checkout(tmp_path, monkeypatch):
     git(repo, "init", "-b", "main")
     git(repo, "config", "user.name", "Fixture")
     git(repo, "config", "user.email", "fixture@example.test")
-    (repo / "app.py").write_text(SOURCE)
+    (repo / "app.py").write_bytes(SOURCE.encode("utf-8"))
     git(repo, "add", "app.py")
     git(repo, "commit", "-m", "fixture")
     git(repo, "remote", "add", "origin", "https://github.com/contoso/api.git")
@@ -199,7 +199,7 @@ def test_existing_pr_can_be_promoted_to_ready(checkout, api):
 def test_tree_preserves_executable_mode_and_handles_additions_and_deletions(checkout, api, monkeypatch):
     git(checkout, "update-index", "--chmod=+x", "app.py")
     (checkout / "app.py").chmod(0o755)
-    (checkout / "old.txt").write_text("old\n")
+    (checkout / "old.txt").write_bytes(b"old\n")
     git(checkout, "add", "old.txt")
     git(checkout, "commit", "-m", "fixture files")
     patch = PATCH.replace("100644", "100755") + """diff --git a/new.txt b/new.txt
