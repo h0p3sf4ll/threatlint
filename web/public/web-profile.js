@@ -1,0 +1,88 @@
+'use strict';
+
+// Resolve identity before the workbench reads browser preferences. Desktop keeps its existing storage keys.
+(() => {
+  const profile = { web: false, user: null, ready: null };
+  let identityResolved = false;
+  function storageKey(key) {
+    if (!identityResolved) throw new Error('Profile is still loading.');
+    return profile.web ? `threatlint.profile.${profile.user.id}.${key}` : key;
+  }
+  const scoped = storageName => ({
+    getItem(key) { return window[storageName].getItem(storageKey(key)); },
+    setItem(key, value) { window[storageName].setItem(storageKey(key), value); },
+    removeItem(key) { window[storageName].removeItem(storageKey(key)); },
+  });
+  profile.storage = scoped('localStorage');
+  profile.sessionStorage = scoped('sessionStorage');
+  const redirect = () => { location.replace('/login'); };
+  let channel;
+  try { channel = new BroadcastChannel('threatlint-auth'); } catch { /* older browsers still recheck on focus */ }
+  channel?.addEventListener('message', () => { if (profile.web) location.reload(); });
+  profile.check = async () => {
+    if (!profile.web) return true;
+    const response = await fetch('/auth/session', { cache: 'no-store', credentials: 'same-origin' });
+    if (response.status === 401) { redirect(); return false; }
+    if (!response.ok) return false;
+    const current = await response.json();
+    if (current.user?.id !== profile.user.id) { location.reload(); return false; }
+    return true;
+  };
+  function showIdentity() {
+    if (!profile.web || !profile.user) return;
+    document.body.classList.add('web-workbench');
+    const setCopy = (id, text) => { const node = document.getElementById(id); if (node) node.textContent = text; };
+    setCopy('settings-description', 'Choose the model that runs reviews. ServiceNow, Semgrep, Azure DevOps, and scanner connections are saved in your personal profile, shared with the CLI inside your profile runtime. Saved secrets are never shown again.');
+    setCopy('settings-provider-note', 'Choose a provider and model ID. Use a session key or a credential configured in your personal profile runtime.');
+    setCopy('settings-model-privacy', 'Model API keys entered here remain in memory for this session. Non-secret model preferences and report history are saved to your profile on the server. Integration credentials saved in the connection sections are also kept in your profile. A remote model provider receives prompts and the source inspected by its agents.');
+    setCopy('model-server-note', 'This URL is reached from your profile runtime on the server. Loopback refers to that runtime, so it cannot reach a model running only on your laptop. Use an accessible HTTPS model server.');
+    setCopy('github-private-key-note', 'Use a private key file provisioned inside your profile runtime. Only its path is saved; the key stays in that file. This server cannot read a path on your laptop. Leave fields blank to keep saved values.');
+    setCopy('repository-description', 'Open source already available in your personal profile runtime, or check out a repository from Connect source. This browser cannot browse folders on your laptop.');
+    setCopy('repo-path-label', 'Profile folder');
+    setCopy('repository-history-note', 'Report history is saved to your profile on the server.');
+    setCopy('runtime-auth-storage-note', 'Auth material is sent to your profile runtime on the server for this scan and is not persisted by this interface. Imported browser state replays cookies only. Sanitized evidence can be shared with specialists.');
+    const repoDescription = document.getElementById('onboarding-repo-description');
+    if (repoDescription?.firstChild) repoDescription.firstChild.textContent = 'A profile folder, or ';
+    const browserButton = document.getElementById('browse-repository');
+    if (browserButton) browserButton.textContent = 'Browse profile…';
+    const repoPath = document.getElementById('repo-path');
+    if (repoPath) repoPath.placeholder = '/home/threatlint/path/to/repository';
+    const account = document.getElementById('web-profile');
+    const name = document.getElementById('web-profile-name');
+    const signout = document.getElementById('web-signout');
+    if (!account || !name || !signout) return;
+    account.hidden = false;
+    name.textContent = profile.user.displayName || profile.user.email;
+    name.title = profile.user.email;
+    const avatar = document.getElementById('profile-avatar');
+    if (avatar) { avatar.textContent = (profile.user.displayName || profile.user.email).slice(0, 2).toUpperCase(); avatar.setAttribute('aria-label', profile.user.email); }
+    signout.addEventListener('click', async () => {
+      signout.disabled = true;
+      try {
+        const response = await fetch('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' });
+        if (!response.ok && response.status !== 401) throw new Error('Sign out could not complete. Please try again.');
+        channel?.postMessage({ type: 'session-changed' });
+        redirect();
+      } catch (error) { signout.disabled = false; document.getElementById('web-profile-error').textContent = error.message; }
+    });
+  }
+  profile.ready = (async () => {
+    // The Electron/local server has no auth endpoint and serves its app HTML instead.
+    const response = await fetch('/auth/session', { cache: 'no-store', credentials: 'same-origin' });
+    if (response.status === 401) { redirect(); throw new Error('Sign in to continue.'); }
+    if (response.status === 404 || !response.headers.get('content-type')?.includes('application/json')) { identityResolved = true; return; }
+    if (!response.ok) throw new Error('Your profile could not be loaded. Reload to try again.');
+    const data = await response.json();
+    if (!data.web || !data.user?.id) throw new Error('Your profile could not be loaded. Reload to try again.');
+    profile.web = true; profile.user = data.user;
+    identityResolved = true;
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showIdentity, { once: true });
+    else showIdentity();
+    window.addEventListener('focus', () => profile.check().catch(() => {}));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) profile.check().catch(() => {}); });
+    setInterval(() => profile.check().catch(() => {}), 60_000);
+  })();
+  // app.js handles a failed identity lookup without using unscoped browser data.
+  profile.ready.catch(() => {});
+  window.ThreatlintProfile = profile;
+})();

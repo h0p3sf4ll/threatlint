@@ -14,6 +14,8 @@ __pycache__/
 
 # Web UI
 web/node_modules/
+web/.web-state/
+.web-state/
 web/npm-debug.log*
 web/*.log
 web/release/

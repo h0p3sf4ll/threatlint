@@ -65,6 +65,10 @@ not a security approval.
 
 ### Prefer a visual review?
 
+For a hosted Workbench with user sign-in and persistent settings per profile, see
+the [web app deployment guide](docs/web-app.md). It uses the desktop workflows
+with an isolated runtime and storage for each account.
+
 From this checkout:
 
 ```bash

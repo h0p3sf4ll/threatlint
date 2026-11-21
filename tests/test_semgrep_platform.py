@@ -11,6 +11,8 @@ import pytest
 from threatlint import parameter_store
 from threatlint import semgrep_platform as sp
 
+_REAL_KEYRING = sp._keyring
+
 REPORT = """#### [FP-001] — safe
 **Original finding**: AVIT000000041277488; js.rule; Semgrep Code; a.js:10
 **Disposition**: FALSE POSITIVE
@@ -43,6 +45,26 @@ def test_token_is_saved_privately_and_resolved_first(monkeypatch):
     assert sp.resolve_token() == ("t" * 64, str(sp.store_path()))
     monkeypatch.setenv("SEMGREP_APP_TOKEN", "env-token-value-123456")
     assert sp.resolve_token()[1] == "SEMGREP_APP_TOKEN"
+
+
+def test_web_profiles_save_and_reload_tokens_without_accessing_host_keyring(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setenv("THREATLINT_PROFILE_WORKER", "1")
+    monkeypatch.setattr(sp, "_keyring", _REAL_KEYRING)
+    monkeypatch.setitem(sys.modules, "keyring", types.SimpleNamespace(
+        get_keyring=lambda: pytest.fail("a web profile must not inspect the host keyring")))
+    alice, bob = tmp_path / "alice", tmp_path / "bob"
+    monkeypatch.setenv("THREATLINT_HOME", str(alice))
+    assert sp.save_token("a" * 64, "alice-deployment") == str(alice / "semgrep.json")
+    assert sp.saved_token() == ("a" * 64, str(alice / "semgrep.json"))
+    monkeypatch.setenv("THREATLINT_HOME", str(bob))
+    assert sp.saved_token() == ("", "")
+    sp.save_token("b" * 64, "bob-deployment")
+    assert sp.saved_token()[0] == "b" * 64
+    monkeypatch.setenv("THREATLINT_HOME", str(alice))
+    assert sp.saved_token()[0] == "a" * 64
+    monkeypatch.setattr(sp, "_read_store", lambda: {"storage": "keyring"})
+    assert sp.saved_token() == ("", "")
 
 
 def test_parameter_store_token_is_optional_when_no_parameter_is_configured(monkeypatch):

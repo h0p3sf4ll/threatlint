@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Sign in to your personal Threatlint security workbench.">
+  <title>Sign in · Threatlint</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/login.css">
+  <script src="/login.js" defer></script>
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-intro" aria-labelledby="intro-title">
+      <a class="login-brand" href="/login"><img src="/mark.svg" width="38" height="44" alt=""><span>threatlint<small>SECURITY WORKBENCH</small></span></a>
+      <p class="login-eyebrow">YOUR SECURITY WORK, CONNECTED</p>
+      <h1 id="intro-title">Find it before<br>it ships.</h1>
+      <p class="login-description">Review code, triage findings, and track your security work from your browser.</p>
+      <div class="login-benefits"><p><span aria-hidden="true">◫</span><span><strong>A familiar workbench</strong>Run the same specialist workflows as on desktop.</span></p><p><span aria-hidden="true">◇</span><span><strong>Your personal profile</strong>Return to your settings, workspaces, and reports.</span></p></div>
+    </section>
+    <section class="login-card" aria-labelledby="login-title">
+      <p class="login-eyebrow">THREATLINT WEB</p>
+      <h2 id="login-title">Welcome back.</h2>
+      <p class="login-card-description" id="login-description">Sign in to your security workbench.</p>
+      <div class="login-tabs" id="login-tabs" hidden aria-label="Account action"><button type="button" id="login-mode" aria-pressed="true">Sign in</button><button type="button" id="register-mode" aria-pressed="false">Create account</button></div>
+      <form id="login-form" aria-describedby="login-error">
+        <div class="login-field" id="display-name-field" hidden><label for="display-name">Name</label><input id="display-name" name="displayName" autocomplete="name" maxlength="80"></div>
+        <div class="login-field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" required autofocus></div>
+        <div class="login-field"><label for="password">Password</label><div class="password-input"><input id="password" name="password" type="password" autocomplete="current-password" maxlength="128" required><button type="button" id="password-visibility" aria-label="Show password" aria-pressed="false">Show</button></div><p class="login-hint" id="password-hint" hidden>Use at least 12 characters.</p></div>
+        <p class="login-error" id="login-error" role="alert" aria-live="polite"></p>
+        <button class="login-submit" id="login-submit" type="submit">Sign in</button>
+      </form>
+      <p class="login-footnote" id="registration-note">Use the account provided by your administrator.</p>
+    </section>
+    <footer class="login-footer">Evidence-led security. A clear next step.</footer>
+  </main>
+</body>
+</html>

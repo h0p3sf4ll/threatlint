@@ -1,8 +1,12 @@
 /* global marked, DOMPurify */
 'use strict';
 
-(() => {
+(async () => {
   const $ = id => document.getElementById(id);
+  try { await window.ThreatlintProfile?.ready; }
+  catch (error) { $('connection-status').textContent = 'Profile unavailable'; $('run-summary').textContent = error.message; return; }
+  const profile = window.ThreatlintProfile;
+  const preferencesStorage = profile?.storage || localStorage;
   const desktop = window.threatlintDesktop;
   const PRESETS = [
     { id: 'full', title: 'Security baseline', icon: '◎', description: 'Understand your exposure, credentials, and dependency trust.', agents: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'], label: 'DISCOVER & PRIORITIZE' },
@@ -24,14 +28,14 @@
       lmstudioUrl: typeof source.lmstudioUrl === 'string' ? source.lmstudioUrl : DEFAULTS.lmstudioUrl };
   }
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
+  try { saved = JSON.parse(preferencesStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
   const legacyModelPreferences = saved && typeof saved === 'object' && Object.keys(saved).some(key => Object.hasOwn(modelPreferences({}), key));
   const state = {
     agents: [], skills: [], sessions: [], reports: [], pipeline: ['appsec-threat-modeler', 'appsec-secrets-scanner', 'appsec-dependency-auditor'],
     statuses: {}, session: null, attachment: null, running: false, connected: false, ws: null,
     preferences: { ...DEFAULTS, ...modelPreferences(saved), snowInstance: typeof saved?.snowInstance === 'string' ? saved.snowInstance : '' },
     credentials: { claude: '', bedrock: '', daybreak: '', 'daybreak-bedrock': '', openai: '', copilot: '', snowClientId: '', snowClientSecret: '' }, consent: new Set(), config: { providers: {} }, preset: 'full',
-    view: 'workbench', report: null, asked: (() => { try { return localStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
+    view: 'workbench', report: null, asked: (() => { try { return preferencesStorage.getItem('threatlint.asked') === '1'; } catch { return false; } })(), activityCount: 0, toastTimer: null, reconnectTimer: null, intentionalClose: false,
   };
 
   function el(tag, className, text) {
@@ -56,6 +60,7 @@
   }
   async function request(url, options = {}) {
     const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
+    if (response.status === 401 && profile?.web && response.headers.get('x-threatlint-auth') === 'required') { location.replace('/login'); throw new Error('Your session expired. Sign in to continue.'); }
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
     return payload;
@@ -275,7 +280,7 @@
     $('workspace-label').textContent = repoName(data.repoPath);
     $('workspace-label').title = data.repoPath;
     $('reports-workspace').textContent = data.repoPath;
-    localStorage.setItem('threatlint.last-session.v2', data.id);
+    preferencesStorage.setItem('threatlint.last-session.v2', data.id);
     await refreshReports(); renderSessions(); updateRunControls();
   }
   async function refreshReports() {
@@ -283,7 +288,7 @@
     state.reports = await request(`/api/session/${state.session.id}/reports`);
     $('stat-reports').textContent = state.reports.length;
     $('report-nav-count').textContent = state.reports.length;
-    $('stat-reports-note').textContent = state.reports.length ? 'Saved locally · ready for handoff' : 'Ready when you are';
+    $('stat-reports-note').textContent = state.reports.length ? (profile?.web ? 'Saved to your profile · ready for handoff' : 'Saved locally · ready for handoff') : 'Ready when you are';
     renderReports(); publishContext();
   }
   function renderReports() {
@@ -718,6 +723,17 @@
     } else $('api-key').placeholder = 'Leave empty to use the configured key';
     if (daybreakBedrock) $('model-source').textContent = 'GPT-5.6 Sol Daybreak Blue on Bedrock requires approved AWS model access in us-east-2. Selecting this option does not grant access.';
     if (codex) $('model-source').textContent = 'Uses the Codex built-in default model. Enter an exact model ID only to override it.';
+    if (profile?.web && !local) {
+      if (login) $('environment-key-note').textContent = source
+        ? `Using ${source} configured inside your profile runtime on the server. Your laptop's CLI login is separate.`
+        : `${codex ? 'Codex' : 'Claude Code'} must be installed and signed in inside your profile runtime. Ask your administrator to provision it, or choose an API-key provider.`;
+      else if (provider === 'daybreak') $('environment-key-note').textContent = $('api-key').value.trim()
+        ? 'Using the OpenAI project API key entered for this session.'
+        : 'Use an API key from an approved Daybreak Blue project, or a Codex login provisioned inside your profile runtime.';
+      else $('environment-key-note').textContent = source
+        ? `Using ${source} configured in your profile runtime. Leave this empty, or enter a key for this session only.`
+        : 'Enter a key for this browser session, or use a credential provisioned inside your profile runtime on the server.';
+    }
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
     if (!local && !bedrock && !fixedModel && !codex && !$('model-select').dataset.loaded) void discoverModels();
     // Remote LM Studio-compatible servers also require explicit data-sharing consent.
@@ -763,7 +779,7 @@
   }
   function cachePreferences() {
     const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
-    try { localStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+    try { preferencesStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
   }
   async function restoreModelPreferences() {
     try {
@@ -930,7 +946,7 @@
       case 'text_chunk': logText(event.text); break;
       case 'tool_executing': { const input = event.input || {}; const detail = input.file_path || input.pattern || input.command || ''; log(`↳ ${event.tool} ${String(detail).slice(0, 180)}`); break; }
       case 'tool_result': break;
-      case 'agent_complete': state.statuses[event.agentId] = 'complete'; renderPipeline(); log(`${event.label} report saved locally${event.hasDocx ? ' · Word export ready' : ''}`, 'success'); refreshReports().catch(error => toast(error.message, true)); break;
+      case 'agent_complete': state.statuses[event.agentId] = 'complete'; renderPipeline(); log(`${event.label} report saved ${profile?.web ? 'to your profile' : 'locally'}${event.hasDocx ? ' · Word export ready' : ''}`, 'success'); refreshReports().catch(error => toast(error.message, true)); break;
       case 'agent_error': state.statuses[event.agentId] = 'error'; renderPipeline(); log(event.message, 'error'); toast(event.message, true); break;
       case 'pipeline_complete': finishRun(event.status || 'complete'); break;
       case 'cancelled': log('Cancellation acknowledged. No incomplete report will be marked complete.'); break;
@@ -954,6 +970,7 @@
       if (state.running) finishRun('interrupted');
       // A finding-triage run lives on the Workbench and continues; reconnecting replays it (resumeAvitBatch).
       updateRunControls();
+      if (profile?.web) profile.check().catch(() => {});
       if (!state.intentionalClose) state.reconnectTimer = setTimeout(connectSocket, 3000);
     });
     socket.addEventListener('error', () => { $('connection-status').textContent = 'Reconnecting'; });
@@ -1102,7 +1119,7 @@
         .then(() => { showView('reports'); return openReportUrl(previewUrl); })
         .catch(error => toast(error.message, true));
     });
-    document.addEventListener('threatlint:asked', () => { state.asked = true; try { localStorage.setItem('threatlint.asked', '1'); } catch { /* optional */ } publishContext(); });
+    document.addEventListener('threatlint:asked', () => { state.asked = true; try { preferencesStorage.setItem('threatlint.asked', '1'); } catch { /* optional */ } publishContext(); });
     document.addEventListener('threatlint:request-context', publishContext);
     window.addEventListener('beforeunload', () => { state.intentionalClose = true; if (state.running && state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'cancel' })); });
     document.addEventListener('keydown', event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o' && !document.querySelector('dialog[open]')) { event.preventDefault(); void chooseRepository(); } });
@@ -1111,13 +1128,14 @@
   async function initialize() {
     // Retire secret-bearing preferences used by the old UI; do not migrate stored credentials.
     try {
-      for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) localStorage.removeItem(key);
+      for (const key of ['tl_apikey', 'tl_openai_apikey', 'tl-settings', 'threatlint-settings', 'apiKey', 'openaiApiKey', 'anthropicApiKey', 'tl_api_key', 'tl_openai_key', 'tlApiKey']) preferencesStorage.removeItem(key);
     } catch { /* durable model settings also work when browser storage is unavailable */ }
     await restoreModelPreferences();
     wireEvents(); renderPresets(); renderPipeline(); renderReports(); updateProviderDisplay();
     // The last false positive review of this browser session, as far as it got (see fpreview-run.js).
     try { fpRun()?.restore(); } catch (error) { console.error('Could not restore the false positive review history', error.message); }
     if (desktop) { $('runtime-badge').textContent = 'DESKTOP WORKBENCH'; $('app-version').textContent = desktop.version; }
+    else if (profile?.web) $('runtime-badge').textContent = 'PERSONAL WEB WORKBENCH';
     try {
       [state.agents, state.skills, state.config] = await Promise.all([request('/api/agents'), request('/api/skills'), request('/api/config')]);
       await loadSavedServiceNow();
@@ -1134,7 +1152,7 @@
       renderPipeline(); renderAgents(); renderSkills();
       await refreshSessions();
       let last;
-      try { last = localStorage.getItem('threatlint.last-session.v2'); } catch { /* browser session history is optional */ }
+      try { last = preferencesStorage.getItem('threatlint.last-session.v2'); } catch { /* browser session history is optional */ }
       if (last && state.sessions.some(session => session.id === last)) await openSession({ id: last });
       connectSocket();
     } catch (error) { toast(`Workbench could not initialize: ${error.message}`, true); $('connection-status').textContent = 'Unavailable'; }

@@ -7,6 +7,11 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** Same-origin loopback only: the runner is a single-user local service, not a web server. */
 function localRequest(req, server) {
+  // A web worker additionally requires a per-launch gateway secret, including WebSocket upgrades.
+  if (process.env.THREATLINT_PROFILE_WORKER === '1') {
+    const token = process.env.THREATLINT_WORKER_TOKEN;
+    if (!token || req.headers['x-threatlint-worker'] !== token) return false;
+  }
   const port = server.address()?.port;
   let host;
   try { host = new URL(`http://${req.headers.host}`); } catch { return false; }

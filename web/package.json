@@ -5,6 +5,8 @@
   "author": "threatlint contributors",
   "main": "desktop/main.cjs",
   "scripts": {
+    "start:web": "node web-server.cjs",
+    "web:create-user": "node scripts/web-create-user.cjs",
     "start": "node server.js",
     "dev": "node --watch server.js",
     "desktop": "electron .",

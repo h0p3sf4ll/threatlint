@@ -79,6 +79,9 @@ def store_path() -> Path:
 
 
 def _keyring():
+    # Web profiles must not read or write the host user's shared OS credential store.
+    if os.environ.get("THREATLINT_PROFILE_WORKER") == "1":
+        return None
     try:
         import keyring  # noqa: PLC0415 - optional
         keyring.get_keyring()
