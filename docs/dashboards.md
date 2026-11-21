@@ -12,7 +12,7 @@ A workspace bar chart shows where reported HIGH findings cluster; inspect those 
 ## First useful view
 
 1. [Run a review](workbench.md#review-experience) so the Workbench has a saved report, or sync a connected tracker as described below.
-2. Open **Metrics → Security posture** and choose a **Source** and **Time range**: all, 7, 30, or 90 days.
+2. Open **Metrics → Security posture** and choose one or more **Sources** and a **Time range**: all, 7, 30, or 90 days.
 3. Inspect severity and workspace charts. Use hover/focus values or **Table** on supported charts.
 
 **Expected result:** retained evidence counts, not a fresh scan. Build a release view below.
@@ -54,8 +54,7 @@ count can understate triaged false positives.
 
 Refreshes are explicit and read-only; opening a dashboard does not query or update a tracker.
 The page shows the last successful refresh and its scope. Choose an individual detailed source
-to avoid combining the same issue from a report and its tracker record. Other tracker types in
-the catalog are marked unavailable until a Metrics adapter exists.
+to avoid combining the same issue from a report and its tracker record. GitHub Issues, Jira Cloud, and Azure DevOps Boards have detailed sync adapters as well. Configure them in Settings, then sync each source. The selected source combination is saved in the Workbench store and restored across desktop ports; sanitized snapshots are saved in the Workbench store and restored after restart. Failed or incomplete syncs preserve the previous snapshot. GitHub scopes to one repository, Jira to the configured JQL, and ADO to one project (up to 10,000 items per detailed sync).
 
 ## The built-in dashboard
 
@@ -68,7 +67,8 @@ the catalog are marked unavailable until a Metrics adapter exists.
 | Evidence coverage % | Findings with parsed evidence references; runtime observations count as evidenced. Not proof evidence is correct |
 | Reports & scans | Distinct local reports and runtime scans; tracker records are findings, not reports |
 | Findings by severity / over time | Severity distribution and report/scan dates—not verified remediation progress |
-| Risk by specialist or tracker / workspace | Weighted open findings grouped by specialist, tracker, or workspace label |
+| Risk by specialist or tracker / Repository risk | Weighted open findings grouped by specialist, tracker, or workspace label |
+| Finding types | Groups secrets, SQL injection, XSS, and other types from recorded CWE, rule, or title; unknowns remain unclassified |
 | Specialist / tracker × severity | Finding counts; darker cells mean more findings |
 
 Workspace labels use repository basenames or runtime target URLs; identical basenames can

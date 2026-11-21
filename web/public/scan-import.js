@@ -15,7 +15,7 @@
   const STEPS = ['queued', 'parsing', 'triaging', 'done'];
   const STATUS_LABELS = { queued: 'Queued', parsing: 'Parsing', triaging: 'Triaging', done: 'Done', error: 'Error' };
   const STATUS_DETAIL = { queued: 'Queued. The runner starts it shortly.', parsing: 'Parsing the report into findings…', triaging: 'Triaging each finding against the evidence…' };
-  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'PDF report', auto: 'Auto-detect' };
+  const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'PDF report', semgrep: 'Semgrep', trivy: 'Trivy', sarif: 'SARIF', tickets: 'Tracker tickets', auto: 'Auto-detect' };
   const AVIT = /^AVIT\d{7,15}$/;
   const TICKET = /^(?:(?:AVIT|ISST)\d{7,15}|SCTASK\d{7,10})$/;
   const state = { workspaceChosen: false, file: null, context: null, job: null, jobId: null, pollTimer: null, lastStep: 'queued', report: null, submitting: false, posting: false, snow: null };
@@ -95,7 +95,7 @@
   }
   function setFile(file) {
     if (!file) return;
-    if (!/\.(pdf|xml|json)$/i.test(file.name)) { rejectFile(`Unsupported file: ${file.name}. Choose a PDF report or a supported XML or JSON export.`); return; }
+    if (!/\.(pdf|xml|json|sarif)$/i.test(file.name)) { rejectFile(`Unsupported file: ${file.name}. Choose a PDF report or a supported XML or JSON export.`); return; }
     if (!file.size) { rejectFile(`${file.name} is empty. Export the scan report again.`); return; }
     if (file.size > MAX_BYTES) { rejectFile(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 25 MB. Export a smaller report or split it.`); return; }
     setError('');
@@ -157,6 +157,7 @@
       const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value,
         execution: window.ThreatlintPlatformControls.batchOptions('scanimport') };
       if ($('scanimport-workspace').value) body.workspaceId = $('scanimport-workspace').value;
+      if ($('scanimport-source-url').value.trim()) { body.sourceUrl = $('scanimport-source-url').value.trim(); body.sourceBranch = $('scanimport-source-branch').value.trim(); }
       if (number) body[AVIT.test(number) ? 'avit' : 'number'] = number;
       if (supportingEvidence) body.supportingEvidence = supportingEvidence;
       const created = await api('/api/scan-import', { method: 'POST', body: JSON.stringify(body) });
@@ -403,11 +404,13 @@
     $('scanimport-form').insertBefore(window.ThreatlintPlatformControls.batchControls('scanimport'), $('scanimport-start').parentElement);
     $('scanimport-form').addEventListener('submit', event => { submit(event).catch(error => setError(error.message, { reveal: true })); });
     $('scanimport-avit').addEventListener('input', () => setAvitError(''));
+    $('scanimport-source-url').addEventListener('input', () => { if ($('scanimport-source-url').value.trim()) { $('scanimport-workspace').value = ''; state.workspaceChosen = true; } });
     $('scanimport-workspace').addEventListener('change', () => { state.workspaceChosen = true; });
     $('scanimport-open-repo').addEventListener('click', () => $('choose-repo').click());
     $('scanimport-refresh').addEventListener('click', () => { void loadHistory(); void loadWorkspaces(); });
     $('scanimport-open-report').addEventListener('click', openReport);
     $('scanimport-post').addEventListener('click', () => openServiceNow());
+    document.addEventListener('threatlint:triage-accepted', event => startJob(event.detail, true));
     document.addEventListener('threatlint:attach-review-servicenow', event => openServiceNow(event.detail));
     $('scanimport-snow-avit').addEventListener('input', () => { $('scanimport-snow-error').textContent = ''; updateServiceNowSteps(); });
     $('scanimport-snow-form').addEventListener('submit', postServiceNow);

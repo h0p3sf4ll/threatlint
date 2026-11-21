@@ -2,12 +2,16 @@
 
 /** Connector-neutral, locally persisted finding snapshots for metrics. No credentials or raw tracker rows are stored. */
 
+const { findingType } = require('./finding-types.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const SOURCE_META = Object.freeze({
   'servicenow-avit': { label: 'ServiceNow AVIT', kind: 'defect-tracker' },
+  github: { label: 'GitHub Issues', kind: 'defect-tracker' },
+  jira: { label: 'Jira', kind: 'defect-tracker' },
+  'azure-devops': { label: 'Azure DevOps Boards', kind: 'defect-tracker' },
   defectdojo: { label: 'DefectDojo', kind: 'defect-tracker' },
 });
 const SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNSPECIFIED']);
@@ -36,7 +40,7 @@ function fact(source, item, syncedAt) {
     timestamp, day: new Date(timestamp).toISOString().slice(0, 10), week: week(timestamp),
     severity: SEVERITIES.has(severity) ? severity : 'UNSPECIFIED', confidence: 'TRACKER',
     disposition: DISPOSITIONS.has(disposition) ? disposition : 'OPEN',
-    findingId: id, rule: bounded(item.rule, 120) || 'n/a', title: bounded(item.title, 300) || id,
+    findingType: findingType(item), findingId: id, rule: bounded(item.rule, 120) || 'n/a', title: bounded(item.title, 300) || id,
     fingerprint: bounded(item.fingerprint, 150).startsWith(source + '|') ? bounded(item.fingerprint, 150)
       : source + '|' + (bounded(item.fingerprint, 150) || id), hasEvidence: item.hasEvidence === true,
   };

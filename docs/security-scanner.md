@@ -14,9 +14,9 @@ threatlint security-scanner scan --repo /path/to/repository --engine semgrep --e
 ```
 
 Optional engines must already be installed. Semgrep adds its `p/security-audit`
-rules using the existing shared **Semgrep Pro** engine policy and configured
-authentication. A missing matching Pro engine is reported as unavailable; there
-is no silent Community Edition fallback. Trivy adds vulnerability-database,
+rules using **Semgrep Pro** when the current login and installed Pro engine pass verification, otherwise explicit Community Edition, with the selected engine recorded alongside the configured
+authentication. If Pro cannot be verified, the descriptor explains the explicit
+Community Edition selection. A selected Pro scan that fails is never retried as OSS. Approved Trivy exceptions from Finding triage are stored outside the repository, expire after 90 days, and apply only to the exact reviewed file bytes. Trivy adds vulnerability-database,
 infrastructure, and secret checks.
 Opting in can download rules or vulnerability databases. Threatlint does not
 install packages, run project build hooks, validate discovered credentials, or

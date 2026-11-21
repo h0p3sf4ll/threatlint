@@ -12,6 +12,7 @@ const { field } = require('../reports.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
 const semgrep = require('../semgrep-cloud.cjs');
+const scanners = require('../scanners.cjs');
 const { reviewSemgrepAvit } = require('../scan-import.cjs');
 
 const FP_REVIEWER = 'appsec-fp-reviewer';
@@ -29,7 +30,7 @@ function avitFor(finding) {
 
 function closingNote() { return servicenow.CLOSING_COMMENT; }
 
-function registerTriageRoutes(app, { reports, integrations = {} }) {
+function registerTriageRoutes(app, { reports, scannerPolicies, integrations = {} }) {
   const fetchImpl = integrations.fetchImpl;
   const tokenFor = integrations.semgrepToken || semgrep.semgrepToken;
 
@@ -41,8 +42,36 @@ function registerTriageRoutes(app, { reports, integrations = {} }) {
     const finding = reports.read(report).findings.find(item => item.id === findingId);
     if (!finding) throw new HttpError('Finding not found in this report', 404);
     if (finding.disposition !== 'FALSE POSITIVE') throw new HttpError(`${finding.id} is ${finding.disposition || 'not triaged'}, not FALSE POSITIVE`);
-    return { report, finding };
+    return { report, finding, session: located.session };
   }
+
+  // Scanner-native handling is deliberately per finding; never deactivate a shared rule/profile.
+  app.post('/api/triage/scanner-tuning', handle(async req => {
+    if (req.body?.confirm !== true) throw new HttpError('Confirm scanner tuning first');
+    const { report, finding, session } = falsePositive(req.body?.reportId, req.body?.findingId);
+    const origin = (field(finding.body, 'Scanner origin') || (report.source?.tool === 'sonar' ? 'sonarqube' : report.source?.scanner) || '').toLowerCase();
+    if (/sonarqube/.test(origin)) {
+      const ref = /\bSONAR-(?:HOTSPOT-)?[A-Za-z0-9_-]{6,64}\b/.exec(field(finding.body, 'Original finding'))?.[0] || (report.source?.tool === 'sonar' ? report.source.reference : null);
+      if (!ref) throw new HttpError('No exact SonarQube issue reference was recorded; supply a SonarQube export with issue keys', 409);
+      const result = await scanners.resolveSonar(scanners.connection('sonar'), ref, { disposition: 'FALSE POSITIVE', summary: finding.title, where: `Threatlint Findings: ${report.id} / ${finding.id}` }, { fetchImpl });
+      return { scanner: 'sonarqube', ...result };
+    }
+    if (origin === 'trivy') {
+      let target;
+      try { target = field(finding.body, 'Scanner target') ? JSON.parse(field(finding.body, 'Scanner target')) : report.source?.tuning; if (!target) throw new Error(); } catch { throw new HttpError('The original Trivy finding has no precise ignore scope', 409); }
+      if (!['vulnerabilities', 'misconfigurations', 'secrets', 'licenses'].includes(target.kind) || typeof target.rule !== 'string' || !target.rule || target.rule.length > 200 || /[\r\n]/.test(target.rule) || typeof target.path !== 'string' || !target.path || target.path.length > 600 || /[\r\n*?\[\]{}]/.test(target.path)) throw new HttpError('Trivy tuning requires a finding kind, ID, and exact target path', 409);
+      const expires = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+      // JSON is valid YAML and quotes untrusted paths/IDs safely. An explicit path avoids a global ID suppression.
+      const policy = { [target.kind]: [{ id: target.rule, paths: [target.path], ...(target.kind === 'vulnerabilities' && typeof target.purl === 'string' && /^pkg:[^\r\n]{1,500}$/.test(target.purl) ? { purls: [target.purl] } : {}), statement: `False positive per Threatlint ${report.id}/${finding.id}`, expired_at: expires }] };
+      const content = `${JSON.stringify(policy, null, 2)}\n`;
+      const file = require('node:path').join(require('node:path').dirname(report.mdPath), `${report.id}-${finding.id}.trivyignore.yaml`);
+      fs.writeFileSync(file, content, { mode: 0o600 });
+      const appliedLocally = scannerPolicies?.save(session, target, expires, report.id, finding.id) || false;
+      return { scanner: 'trivy', action: 'saved-local-policy', appliedLocally, content, filename: '.trivyignore.yaml', expires,
+        detail: appliedLocally ? 'Approved exception saved for future Workbench Trivy scans of these exact file bytes. Changed files require a new review. The downloadable policy supports external Trivy runs; no validation scan was run by this action.' : 'Path-scoped policy saved with this report. Merge it into your Trivy ignore policy and pass --ignorefile .trivyignore.yaml on subsequent scans. No matching source file was available for automatic Workbench tuning.' };
+    }
+    throw new HttpError('Use the scanner-specific action for the recorded origin. Unknown scanner origins must be established before tuning.', 409);
+  }));
 
   app.post('/api/servicenow/attach-review', handle(async req => {
     const { reportId, number, confirm, servicenow: connection } = req.body || {};

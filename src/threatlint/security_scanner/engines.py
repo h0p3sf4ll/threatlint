@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from datetime import date
 
 from threatlint.assurance.sast import _severity
 
@@ -22,6 +24,37 @@ ENGINE_CATEGORIES = {"semgrep": ["sast"], "trivy": ["sca", "secrets", "iac"]}
 
 class EngineUnavailable(ScannerError):
     pass
+
+
+def reviewed_trivy_policy(root: str) -> dict:
+    """Only host-approved, unexpired exceptions for the exact captured file bytes."""
+    manifest = os.environ.get("THREATLINT_REVIEWED_TRIVY_POLICY", "")
+    if not manifest:
+        return {}
+    raw = Path(manifest).read_bytes()
+    if len(raw) > 2_000_000:
+        raise ScannerError("Reviewed Trivy policy exceeds its budget")
+    entries = json.loads(raw)
+    if not isinstance(entries, list) or len(entries) > 2000:
+        raise ScannerError("Reviewed Trivy policy is invalid")
+    policy = {}
+    for entry in entries:
+        kind, relative = entry.get("kind"), entry.get("path", "")
+        if kind not in {"vulnerabilities", "misconfigurations", "secrets", "licenses"} or not isinstance(relative, str):
+            raise ScannerError("Reviewed Trivy policy has an invalid finding scope")
+        if not relative or Path(relative).is_absolute() or any(part in {"..", "."} for part in relative.split("/")) or re.search(r"[\r\n*?\[\]{}]", relative):
+            raise ScannerError("Reviewed Trivy policy must name an exact relative file")
+        path = Path(root) / relative
+        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(Path(root).resolve()):
+            continue
+        if date.fromisoformat(entry["expires"]) < date.today() or hashlib.sha256(path.read_bytes()).hexdigest() != entry["fileHash"]:
+            continue
+        exception = {"id": entry["id"], "paths": [relative], "expired_at": entry["expires"],
+                     "statement": f"Threatlint reviewed false positive {entry['reportId']}/{entry['findingId']}"}
+        if kind == "vulnerabilities" and entry.get("purl"):
+            exception["purls"] = [entry["purl"]]
+        policy.setdefault(kind, []).append(exception)
+    return policy
 
 
 def _path(raw: str, root: str, files: dict) -> str:
@@ -121,27 +154,31 @@ def run_engine(engine: str, root: str):
     environment = tool_env()
     if engine == "semgrep":
         from threatlint import semgrep_platform
+        from threatlint import semgrep_engine
+        token = None
         try:
-            flags = semgrep_platform.engine_flags("pro")
-        except semgrep_platform.SemgrepError as exc:
-            raise EngineUnavailable("Matching Semgrep Pro engine is unavailable; no Community Edition fallback was used.") from exc
-        try:
-            environment["SEMGREP_APP_TOKEN"] = semgrep_platform.resolve_token()[0]
+            token = semgrep_platform.resolve_token()[0]
+            environment["SEMGREP_APP_TOKEN"] = token
         except semgrep_platform.SemgrepError:
-            pass  # The explicitly requested Pro scan fails closed if authentication is required.
+            pass
+        selected = semgrep_engine.scanner_status(environment=tool_env, token=token)
+        if not selected.get("cli_version"):
+            raise EngineUnavailable("Semgrep CLI is unavailable; detection coverage was not evaluated")
+        flags = ["--pro"] if selected["engine"] == "pro" else ["--oss-only"]
         environment.update(SEMGREP_SEND_METRICS="off", SEMGREP_ENABLE_VERSION_CHECK="0")
         completed = _run([shutil.which("semgrep") or "semgrep", "scan", *flags, "--config", "p/security-audit", "--json", "--quiet", "--metrics", "off",
                           "--disable-version-check", "--no-secrets-validation", "."], root, environment)
         # Semgrep includes its engine version in scan JSON. The mutable registry
         # rule pack has no proven immutable revision here; say so explicitly.
-        completed.provenance = engine_provenance(engine, completed.stdout)
+        completed.provenance = {**engine_provenance(engine, completed.stdout), "engineMode": selected["engine"], "descriptor": selected["descriptor"]}
         return completed
     # Do not interpret a scanned repository's trivy.yaml or .trivyignore as trusted scanner policy.
     with tempfile.TemporaryDirectory(prefix="threatlint-trivy-policy-") as directory:
         config = Path(directory) / "config.yaml"
-        ignore = Path(directory) / "ignore"
+        ignore = Path(directory) / "ignore.yaml"
         config.write_text("{}\n", encoding="utf-8")
-        ignore.write_text("", encoding="utf-8")
+        policy = reviewed_trivy_policy(root)
+        ignore.write_text(json.dumps(policy), encoding="utf-8")
         completed = _run([shutil.which("trivy") or "trivy", "fs", "--config", str(config), "--ignorefile", str(ignore),
                           "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "."], root, environment)
         version = "{}"
@@ -152,6 +189,7 @@ def run_engine(engine: str, root: str):
         except (OSError, ValueError, subprocess.SubprocessError):
             pass  # Missing provenance is explicit, never fabricated from the current time.
         completed.provenance = engine_provenance(engine, version)
+        completed.provenance["reviewedExceptions"] = sum(len(entries) for entries in policy.values())
         return completed
 
 
@@ -193,7 +231,7 @@ def external_scans(files: dict[str, bytes], requested: list[str], *, runner=run_
         status = {"id": engine, "categories": categories, "status": "not_requested", "findings": 0,
                   "detail": "Available but not requested; opt-in may download rules or vulnerability databases."}
         if engine == "semgrep":
-            status["mode"] = "pro"
+            status["mode"] = "auto"
         if not which(engine):
             status.update(status="unavailable", detail=f"{engine} is not installed; its detection coverage was not evaluated.")
         elif engine in requested:
@@ -214,8 +252,11 @@ def external_scans(files: dict[str, bytes], requested: list[str], *, runner=run_
                     findings.extend(normalized)
                     partial = (bool(payload.get("errors")) if engine == "semgrep" else False) or len(normalized) >= MAX_FINDINGS
                     status.update(status="partial" if partial else "completed", findings=len(normalized),
-                                  detail="Engine reported incomplete coverage." if partial else "Scanned the bounded text snapshot; engine matches require review." + (" Semgrep Pro was required; no Community Edition fallback." if engine == "semgrep" else ""))
+                                  detail="Engine reported incomplete coverage." if partial else "Scanned the bounded text snapshot; engine matches require review.")
                     status["provenance"] = getattr(completed, "provenance", engine_provenance(engine, completed.stdout if engine == "semgrep" else "{}"))
+                    if engine == "semgrep":
+                        status["mode"] = status["provenance"].get("engineMode", "unrecorded")
+                        status["descriptor"] = status["provenance"].get("descriptor", "Semgrep engine mode not recorded")
             except EngineUnavailable as exc:
                 status.update(status="unavailable", detail=str(exc))
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):

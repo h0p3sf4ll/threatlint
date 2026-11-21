@@ -71,21 +71,24 @@ function createWorkbench(options = {}) {
   const store = createStore(options.storageDir ?? defaultStorageDir());
   const reports = createReportWriter(store, { convertToWord: options.integrations?.convertToWord });
   const scm = options.sourceManagers || createSourceManagers();
-  const runtime = options.runtimeScanner || createRuntimeScanner();
+  const resolveSource = require('./lib/source-context.cjs').createSourceResolver({ scm, store });
+  const runtime = require('./lib/runtime-sandbox.cjs').createSandboxRuntime({ live: options.runtimeScanner || createRuntimeScanner(), store, resolveSource, spawnImpl: options.integrations?.runtimeSpawn });
   const history = createRuntimeHistory(runtime);
   const dashboards = createDashboardStore(store.directory);
   const trackerMetrics = createTrackerMetrics(store.directory);
+  const scannerPolicies = require('./lib/scanner-policies.cjs').createScannerPolicies(store.directory);
   const avitAggregate = createAvitAggregateStore(store.directory);
   const designInputs = createDesignInputs();
   const intelligence = createFindingIntelligenceStore({ directory: store.directory });
   let securityScanner;
   const pipeline = createPipeline({ sessions: store.sessions, reports, override: options.runProvider, integrations: options.integrations, designInputs,
     isSessionBusy: sessionId => securityScanner?.isBusy(sessionId) || false });
-  securityScanner = createSecurityScanner({ store, integrations: options.integrations,
+  securityScanner = createSecurityScanner({ store, scannerPolicies, integrations: options.integrations,
     isSessionBusy: sessionId => pipeline.isSessionBusy(sessionId),
     onScanComplete: (scan, session) => intelligence.ingest(ingestionFromScan(scan, session)) });
   const conversations = createConversations({ store, reports, runtime, override: options.runProvider });
-  const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: { ...options.integrations, resolveSource } });
+  const issueTrackers = require('./lib/issue-trackers.cjs');
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
 
   app.use(securityHeaders(server));
@@ -102,9 +105,10 @@ function createWorkbench(options = {}) {
   registerSourceRoutes(app, { store, scm, integrations: options.integrations });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
-  registerTriageRoutes(app, { reports, integrations: options.integrations });
+  registerTriageRoutes(app, { reports, scannerPolicies, integrations: options.integrations });
   registerSidekickRoutes(app, { integrations: options.integrations });
   registerScanImportRoutes(app, { scanImports });
+  issueTrackers.registerIssueTrackerRoutes(app, { scanImports, integrations: options.integrations });
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
   registerSecurityScannerRoutes(app, { securityScanner });

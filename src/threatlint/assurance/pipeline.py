@@ -43,7 +43,7 @@ def sast_stage(args, state: dict) -> dict:
     try:
         findings = sast.scan(state["checkout"], config=getattr(args, "semgrep_config", None) or "auto",
                              runner=state.get("_sast_runner") or sast._semgrep_runner)
-        _record(stage, findings)
+        _record(stage, findings, engine=getattr(findings, "engine", "Engine not recorded"))
         print(f"  {'!' if stage['gate']['tripped'] else '✓'} Semgrep: {stage['gate']['blocking']} CRITICAL/HIGH of {len(findings)} finding(s)")
     except Exception as exc:  # noqa: BLE001 - a scan that cannot run is an ERROR stage, not a crash of the pipeline
         stage.update(status="error", note=str(exc))

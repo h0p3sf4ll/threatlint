@@ -187,7 +187,7 @@
       actions.append(button('Read report ↗', 'button secondary small-button', () => document.dispatchEvent(new CustomEvent('threatlint:open-report', { detail: { sessionId: event.report.sessionId, previewUrl: event.report.previewUrl } }))));
       if (event.report.docxUrl) { const word = el('a', 'button secondary small-button', '↓ Word'); word.href = event.report.docxUrl; word.download = ''; actions.append(word); }
       if (['TRUE POSITIVE', 'FALSE POSITIVE'].includes(event.disposition)) {
-        const post = button(`Post to ${TOOLS[event.tool].label}…`, 'button primary small-button', () => openPost({ kind: 'review', tool: event.tool, reference: event.reference, disposition: event.disposition, unverified: event.unverified, reportId: event.report.id, card: node }));
+        const post = button(`Post to ${TOOLS[event.tool].label}…`, 'button primary small-button', () => openPost({ kind: 'review', tool: event.tool, reference: event.reference, disposition: event.disposition, unverified: event.unverified, reportId: event.report.id, semgrep: event.report.source?.semgrep === true, card: node }));
         post.dataset.post = 'true'; actions.append(post);
       }
     }
@@ -237,7 +237,7 @@
       $('scanner-post-reference').value = '';
     }
     $('scanner-post-url-row').hidden = post.tool !== 'sonar'; $('scanner-post-url').value = '';
-    $('scanner-post-semgrep-row').hidden = !(post.kind === 'review' && post.tool === 'dojo' && post.disposition === 'FALSE POSITIVE'); $('scanner-post-semgrep').checked = true;
+    $('scanner-post-semgrep-row').hidden = !(post.kind === 'review' && post.tool === 'dojo' && post.disposition === 'FALSE POSITIVE' && post.semgrep === true); $('scanner-post-semgrep').checked = post.semgrep === true;
     $('scanner-post-error').textContent = ''; $('scanner-post-result').replaceChildren();
     $('scanner-post-confirm').disabled = false; $('scanner-post-confirm').hidden = false; $('scanner-post-cancel').textContent = 'Cancel';
     $('scanner-post-footer').textContent = `Nothing changes in ${spec.label} until you confirm.`;
@@ -254,7 +254,7 @@
     try {
       let lines;
       if (post.kind === 'review') {
-        const response = await api(`/api/scanners/${post.tool}/resolve`, { method: 'POST', body: JSON.stringify({ reportId: post.reportId, reference: post.reference, confirm: true, ...(reportUrl ? { reportUrl } : {}), ...($('scanner-post-semgrep').checked ? { semgrep: true } : {}) }) });
+        const response = await api(`/api/scanners/${post.tool}/resolve`, { method: 'POST', body: JSON.stringify({ reportId: post.reportId, reference: post.reference, confirm: true, ...(reportUrl ? { reportUrl } : {}), ...(post.semgrep === true && $('scanner-post-semgrep').checked ? { semgrep: true } : {}) }) });
         lines = (response.lines || []).map(line => line.replace(/^[✓!]\s*/, ''));
         post.card?.querySelector('[data-post]')?.remove();
         const outcome = post.card?.querySelector('.avit-outcome'); if (outcome) { outcome.replaceChildren(...lines.map(line => el('li', '', line))); }
@@ -289,8 +289,8 @@
     document.addEventListener('threatlint:context', event => { state.context = event.detail; attach(event.detail?.socket); });
     document.addEventListener('threatlint:view', event => {
       if (event.detail.view === 'settings') for (const tool of Object.keys(TOOLS)) void loadSettings(tool);
-      if (event.detail.view === 'dojoreview') void loadSettings('dojo');
-      if (event.detail.view === 'sonarreview') void loadSettings('sonar');
+      if (event.detail.view === 'fpreview' || event.detail.view === 'dojoreview') void loadSettings('dojo');
+      if (event.detail.view === 'fpreview' || event.detail.view === 'sonarreview') void loadSettings('sonar');
     });
     document.dispatchEvent(new CustomEvent('threatlint:request-context'));
     for (const tool of Object.keys(TOOLS)) void loadSettings(tool);

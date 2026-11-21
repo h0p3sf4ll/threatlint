@@ -82,3 +82,23 @@ def test_scan_failure_never_looks_like_false_positive_removal(monkeypatch, resul
     monkeypatch.setattr(sp, "_semgrep", lambda _: result)
     with pytest.raises(sp.SemgrepError):
         sp._matches("rule.yml", "source.py", 1)
+
+
+@pytest.mark.parametrize("logged_in,scan_ok", [(False, True), (True, False), (True, True)])
+def test_scanner_auto_selection_requires_login_and_successful_pro_execution(monkeypatch, logged_in, scan_ok):
+    monkeypatch.setattr(engine, "engine_status", lambda **_: {"cli_version": "1.2", "pro_ready": True})
+    monkeypatch.setattr(engine.shutil, "which", lambda _: "/synthetic/semgrep")
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append(argv)
+        if "deployment" in argv:
+            return SimpleNamespace(returncode=0 if logged_in else 1, stdout='{"id":1}', stderr="")
+        return SimpleNamespace(returncode=0 if scan_ok else 2, stdout='{"results":[{"check_id":"threatlint-pro-check"}]}', stderr="")
+
+    monkeypatch.setattr(engine.subprocess, "run", execute)
+    status = engine.scanner_status(environment=dict)
+    assert status["engine"] == ("pro" if logged_in and scan_ok else "oss")
+    assert status["pro_enabled"] is (True if logged_in and scan_ok else None)
+    if logged_in:
+        assert "--pro" in calls[-1]

@@ -33,7 +33,7 @@ function cli(args, { input, signal } = {}) {
   git(['-c', 'user.name=Synthetic Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Synthetic browser fixture']);
   const wb = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: {
     securityScannerCli: cli, threatlintCli: async () => ({ code: 0, stdout: JSON.stringify({ organizations: [] }) }),
-    credentialSources: async () => ({}), semgrepVersion: async () => null,
+    semgrepEngineStatus: async () => ({ engine: null, descriptor: 'Synthetic engine status' }), credentialSources: async () => ({}), semgrepVersion: async () => null,
   } });
   await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${wb.server.address().port}`;
@@ -62,7 +62,7 @@ function cli(args, { input, signal } = {}) {
     await page.locator('#choose-repo').click();
     await page.locator('#repo-path').fill(repo); await page.locator('#open-repository').click();
     await page.locator('#repository-dialog').waitFor({ state: 'hidden' });
-    await page.locator('[data-view="security"]').click();
+    await page.locator('#view-workbench').getByRole('button', { name: 'Run scanners', exact: true }).click();
     assert.equal(await page.locator('#security-auto-fix').isVisible(), false);
     await page.locator('#security-semgrep').uncheck(); await page.locator('#security-trivy').uncheck();
     await page.locator('#security-scan-start').click();
@@ -78,7 +78,7 @@ function cli(args, { input, signal } = {}) {
     await page.waitForFunction(() => document.querySelector('#security-status').textContent.startsWith('Change applied'));
     assert.match(fs.readFileSync(path.join(repo, 'settings.py'), 'utf8'), /DEBUG = False/);
     assert.match(await page.locator('#security-status').textContent(), /application tests have not run/i);
-    await page.locator('[data-view="intelligence"]').click();
+    await page.locator('#view-security [data-go-view="intelligence"]').click();
     await page.waitForFunction(() => document.querySelectorAll('#intelligence-findings .platform-finding').length > 0);
     await capture('repository-risk', '#view-intelligence');
     await page.locator('[data-view="metrics"]').click();

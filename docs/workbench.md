@@ -75,6 +75,23 @@ GitHub App, DefectDojo, and SonarQube configuration through their respective set
 Do not assume those saved credentials are session-only. Desktop uses the OS certificate store
 and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands can be found.
 
+## Unified workflows
+
+- **Review code** groups specialist review, **Run scanners**, and source setup: open a local folder or use **Connect source** within the review workflow. There is no separate source-connection navigation tab.
+- **Finding triage** has one source selector for ServiceNow, Azure DevOps Boards, Jira Cloud, GitHub Issues, DefectDojo, SonarQube, and scan-report uploads. DefectDojo and SonarQube reviews use their existing adapters inside this view.
+- **Findings** retains the individual decisions, evidence, proposed fixes, and reports. Its badge counts parsed findings, including every finding in an imported report.
+- **Metrics** combines selected tracker snapshots and reports, groups finding types, and includes a **Repository risk** summary. The detailed repository evidence view is nested under Findings and preserves revision history, review decisions, and evidence-backed attack chains; Metrics provides the aggregate repository summary.
+
+Configure GitHub Issues with a repository and an Issues-read token; Jira Cloud with its site URL, account email, API token, and security-project JQL; ADO Boards with organization, project, and a Work Items-read PAT. These credentials are separate from repository Code-read access and are saved locally with restricted permissions. Ticket triage reads the selected ticket IDs and saves an advisory review; it does not automatically close those tickets.
+
+Scan-report triage accepts Semgrep JSON, Trivy JSON, and SARIF alongside the existing formats. An optional source repository URL and branch can provide a checkout through a connected GitHub or ADO source account. Alternatively, select an existing workspace. Review the revision against the scan before relying on a verdict.
+
+False-positive actions follow scanner origin. SonarQube uses its exact issue/hotspot status; Semgrep retains its existing tuning workflow. Trivy saves and downloads a policy scoped to the finding ID and target path with a 90-day expiry. When the matching source file is available, the approved exception is also saved for future Workbench Trivy scans and bound to the exact reviewed file bytes. Changed files require a new review. For external scans, merge this policy with your scanner configuration and run Trivy with `--ignorefile .trivyignore.yaml`; generating it does not validate or deploy it. Threatlint never disables a shared scanner rule solely because one finding was a false positive.
+
+**Semgrep engine:** Review code shows the runner's engine descriptor. Automatic SAST execution verifies the current login and a synthetic Pro scan and selects `--pro` when usable; otherwise it explicitly selects Community Edition and records the verification limitation. A selected Pro scan that fails is not retried as OSS. Rule-proof workflows continue to require Pro. The selected engine is retained in assurance reports even for zero findings.
+
+For **Scan running app**, choose either an existing authorized URL or **Build supplied source in an ephemeral environment**. Supply a source link/branch or choose the open workspace, connect repository credentials under Review code, and provide sandbox application credentials under Primary authentication. Explicit anonymous-only review is available for public applications. Building requires Docker and runs repository build scripts; dependency downloads occur during the build. The running application uses the existing internal-network provider with resource/request bounds, repository tests, and teardown on success, failure, or cancellation. Use bearer, basic, cookie, API-key header, or custom-header authentication for sandbox scans; external identity-provider workflows remain in live-URL mode. Runtime integration tests use synthetic providers; they do not establish that a particular application builds successfully.
+
 ## Review experience
 
 1. **Open code.** Choose a local source directory, or [connect a source manager](#source-code-managers).

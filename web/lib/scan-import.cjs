@@ -34,9 +34,9 @@ const REQUEST_LIMIT = 3000;
 const RESPONSE_LIMIT = 4000;
 const TEXT_LIMIT = 4000;
 const MAX_JOBS = 200;
-const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'Scanner PDF' };
+const SOURCES = { invicti: 'Invicti', mobsf: 'MobSF', defectdojo: 'DefectDojo', sonarqube: 'SonarQube', generic: 'Scanner PDF', semgrep: 'Semgrep', trivy: 'Trivy', sarif: 'SARIF', tickets: 'Tracker tickets' };
 // Code-level sources: findings carry a file and line, and post back to the tool they came from.
-const CODE_SOURCES = new Set(['defectdojo', 'sonarqube']);
+const CODE_SOURCES = new Set(['defectdojo', 'sonarqube', 'semgrep', 'trivy', 'sarif', 'tickets']);
 const SOURCE_TOOL = { defectdojo: 'dojo', sonarqube: 'sonar' };
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const CONFIDENCES = ['CONFIRMED', 'PLAUSIBLE', 'THEORETICAL'];
@@ -230,7 +230,11 @@ function detect(text, hint = 'auto') {
   } else if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     let value;
     try { value = JSON.parse(text); } catch { fail('The JSON report could not be parsed'); }
-    if (isMobsf(value)) detected = { source: 'mobsf', format: 'json', document: value };
+    if (Array.isArray(value.threatlintFindings)) detected = { source: 'tickets', format: 'json', document: value };
+    else if (Array.isArray(value.runs) && value.version) detected = { source: 'sarif', format: 'json', document: value };
+    else if (Array.isArray(value.Results) && value.SchemaVersion) detected = { source: 'trivy', format: 'json', document: value };
+    else if (Array.isArray(value.results) && value.version && !dojoList(value)) detected = { source: 'semgrep', format: 'json', document: value };
+    else if (isMobsf(value)) detected = { source: 'mobsf', format: 'json', document: value };
     else if (sonarLists(value)) detected = { source: 'sonarqube', format: 'json', document: value };
     else if (dojoList(value)) detected = { source: 'defectdojo', format: 'json', document: value };
     else if (invictiList(value)) detected = { source: 'invicti', format: 'json', document: value };
@@ -418,10 +422,10 @@ const DOJO_SEVERITY = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', lo
 const SONAR_SEVERITY = { blocker: 'CRITICAL', critical: 'HIGH', high: 'HIGH', major: 'MEDIUM', medium: 'MEDIUM', minor: 'LOW', low: 'LOW', info: 'INFO' };
 const lineOf = value => (/^\d{1,9}$/.test(String(value ?? '')) ? String(Number(value)) : '');
 
-function codeFinding({ originalId, rule, title, severity, scannerSeverity, description, remediation, cwe, file, line, classification = {} }) {
+function codeFinding({ originalId, rule, title, severity, scannerSeverity, description, remediation, cwe, file, line, classification = {}, scanner = '', tuning = null }) {
   const filePath = redactText(String(file || '')).replace(/[\n;]/g, ' ').slice(0, 600);
   const lineText = lineOf(line);
-  return { originalId: String(originalId).slice(0, 160), rule: redactText(String(rule || 'finding')).slice(0, 200), title: redactText(stripTags(title || rule || originalId)).slice(0, 200),
+  return { scanner, tuning, originalId: String(originalId).slice(0, 160), rule: redactText(String(rule || 'finding')).slice(0, 200), title: redactText(stripTags(title || rule || originalId)).slice(0, 200),
     severity, scannerSeverity: String(scannerSeverity || 'not stated').slice(0, 40), certainty: '', confirmed: false, url: '', method: '', parameter: '', request: '', response: '', passive: [],
     cwe: cweOf(cwe), owasp: '', masvs: '', classification: Object.fromEntries(Object.entries(classification).filter(([, value]) => value != null && String(value).trim()).slice(0, 20).map(([key, value]) => [key.slice(0, 40), redactText(String(value)).slice(0, 200)])),
     remediation: clip(redactText(stripTags(remediation)), 3000), description: clip(redactText(stripTags(description)), 3000),
@@ -459,7 +463,7 @@ function genericFromPdf({ target, scanDate, findings }) {
 function parseDojo(document) {
   const rows = dojoList(document) || [];
   const findings = rows.filter(item => item && typeof item === 'object' && Number.isInteger(item.id)).map(item => codeFinding({ originalId: `DOJO-${item.id}`,
-    rule: item.vuln_id_from_tool || (Array.isArray(item.vulnerability_ids) && item.vulnerability_ids[0]?.vulnerability_id) || (item.cwe ? `CWE-${item.cwe}` : item.title),
+    scanner: item.scanner || item.test?.test_type_name || 'unknown (DefectDojo import)', rule: item.vuln_id_from_tool || (Array.isArray(item.vulnerability_ids) && item.vulnerability_ids[0]?.vulnerability_id) || (item.cwe ? `CWE-${item.cwe}` : item.title),
     title: item.title, severity: DOJO_SEVERITY[norm(item.severity)] || 'INFO', scannerSeverity: item.severity, description: item.description, remediation: item.mitigation,
     cwe: item.cwe ? String(item.cwe) : '', file: item.file_path || item.sast_source_file_path, line: item.line || item.sast_source_line,
     classification: { component: [item.component_name, item.component_version].filter(Boolean).join(' '), active: item.active, verified: item.verified, false_p: item.false_p, test: item.test } }));
@@ -479,14 +483,14 @@ function parseSonar(document) {
     if (!issue || typeof issue.key !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(issue.key)) continue;
     projects.add(String(issue.project || String(issue.component || '').split(':')[0]));
     const severity = issue.severity || (Array.isArray(issue.impacts) ? issue.impacts[0]?.severity : '');
-    findings.push(codeFinding({ originalId: `SONAR-${issue.key}`, rule: issue.rule, title: issue.message, severity: SONAR_SEVERITY[norm(severity)] || 'INFO', scannerSeverity: [severity, issue.type].filter(Boolean).join(' '),
+    findings.push(codeFinding({ originalId: `SONAR-${issue.key}`, scanner: 'sonarqube', rule: issue.rule, title: issue.message, severity: SONAR_SEVERITY[norm(severity)] || 'INFO', scannerSeverity: [severity, issue.type].filter(Boolean).join(' '),
       description: issue.message, file: pathOf(issue.component), line: issue.line || issue.textRange?.startLine, classification: { type: issue.type, status: issue.status, branch: issue.branch, tags: Array.isArray(issue.tags) ? issue.tags.join(', ') : '' } }));
   }
   for (const hotspot of hotspots) {
     if (!hotspot || typeof hotspot.key !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(hotspot.key)) continue;
     projects.add(String(hotspot.project?.key || hotspot.project || String(hotspot.component?.key || hotspot.component || '').split(':')[0]));
     const rule = typeof hotspot.rule === 'object' && hotspot.rule ? hotspot.rule.key : hotspot.ruleKey || hotspot.rule;
-    findings.push(codeFinding({ originalId: `SONAR-HOTSPOT-${hotspot.key}`, rule: rule || hotspot.securityCategory, title: hotspot.message, severity: SONAR_SEVERITY[norm(hotspot.vulnerabilityProbability)] || 'MEDIUM',
+    findings.push(codeFinding({ originalId: `SONAR-HOTSPOT-${hotspot.key}`, scanner: 'sonarqube', rule: rule || hotspot.securityCategory, title: hotspot.message, severity: SONAR_SEVERITY[norm(hotspot.vulnerabilityProbability)] || 'MEDIUM',
       scannerSeverity: `${hotspot.vulnerabilityProbability || 'not stated'} probability security hotspot`, description: hotspot.message, file: pathOf(hotspot.component), line: hotspot.line || hotspot.textRange?.startLine,
       classification: { securityCategory: hotspot.securityCategory, status: hotspot.status, branch: hotspot.branch } }));
   }
@@ -496,10 +500,52 @@ function parseSonar(document) {
 
 const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((severity, index) => [severity, index]));
 
+function parseTickets(document) {
+  return { target: redactText(document.target || 'Tracker tickets'), host: '', scanDate: '', findings: document.threatlintFindings.map(item => ({
+    ...codeFinding({ originalId: item.id, rule: item.rule, title: item.title, severity: SEVERITIES.includes(item.severity) ? item.severity : 'MEDIUM',
+      scannerSeverity: item.severity, description: item.description, file: item.file, line: item.line }), scanner: item.scanner || 'unknown', tracker: document.tracker,
+  })) };
+}
+function parseSemgrep(document) {
+  return { target: document.paths?.scanned?.[0] || 'Semgrep scan', host: '', scanDate: '', findings: document.results.map((item, index) => ({
+    ...codeFinding({ originalId: item.extra?.fingerprint || `SEMGREP-${index + 1}`, rule: item.check_id, title: item.extra?.message, description: item.extra?.message,
+      severity: ({ ERROR: 'HIGH', WARNING: 'MEDIUM', INFO: 'LOW' })[item.extra?.severity] || 'MEDIUM', scannerSeverity: item.extra?.severity,
+      cwe: item.extra?.metadata?.cwe?.[0], file: item.path, line: item.start?.line }), scanner: 'semgrep',
+    tuning: { scanner: 'semgrep', rule: item.check_id, path: item.path, line: item.start?.line },
+  })) };
+}
+function parseTrivy(document) {
+  const findings = [];
+  for (const result of document.Results) for (const [list, kind] of [['Vulnerabilities', 'vulnerabilities'], ['Misconfigurations', 'misconfigurations'], ['Secrets', 'secrets'], ['Licenses', 'licenses']]) {
+    for (const item of result[list] || []) {
+      const rule = item.VulnerabilityID || item.ID || item.RuleID || item.Name;
+      const file = result.Target;
+      const line = item.StartLine || item.CauseMetadata?.StartLine;
+      findings.push({ ...codeFinding({ originalId: `${rule}; ${file}; ${item.PkgName || line || ''}`, rule, title: item.Title || `${rule}: ${item.PkgName || file}`,
+        severity: SEVERITIES.includes(item.Severity) ? item.Severity : 'MEDIUM', scannerSeverity: item.Severity,
+        description: item.Description || item.Message || item.Title, remediation: item.FixedVersion ? `Upgrade ${item.PkgName} to ${item.FixedVersion}` : item.Resolution,
+        file, line }), scanner: 'trivy', tuning: { scanner: 'trivy', kind, rule, path: file, ...(item.PkgIdentifier?.PURL ? { purl: item.PkgIdentifier.PURL } : {}) } });
+    }
+  }
+  return { target: document.ArtifactName || 'Trivy scan', host: '', scanDate: dateOf(document.CreatedAt), findings };
+}
+function parseSarif(document) {
+  const findings = [];
+  for (const run of document.runs) for (const item of run.results || []) {
+    const loc = item.locations?.[0]?.physicalLocation;
+    const scanner = String(run.tool?.driver?.name || 'unknown').toLowerCase();
+    findings.push({ ...codeFinding({ originalId: `${item.ruleId}-${findings.length + 1}`, rule: item.ruleId, title: item.message?.text,
+      severity: ({ error: 'HIGH', warning: 'MEDIUM', note: 'LOW' })[item.level] || 'MEDIUM', scannerSeverity: item.level,
+      description: item.message?.text, file: loc?.artifactLocation?.uri, line: loc?.region?.startLine }), scanner });
+  }
+  return { target: 'SARIF results', host: '', scanDate: '', findings };
+}
+
 /** Report parser for each supported source:format. */
 const PARSERS = {
   'invicti:xml': parseInvictiXml, 'invicti:json': parseInvictiJson, 'invicti:pdf': invictiFromPdf,
   'mobsf:json': parseMobsf, 'mobsf:pdf': mobsfFromPdf,
+  'tickets:json': parseTickets, 'semgrep:json': parseSemgrep, 'trivy:json': parseTrivy, 'sarif:json': parseSarif,
   'defectdojo:json': parseDojo, 'sonarqube:json': parseSonar, 'generic:pdf': genericFromPdf,
 };
 
@@ -527,7 +573,7 @@ const evidenceFor = finding => ({ id: finding.id, originalId: finding.originalId
   description: clip(finding.description, 1500) || undefined, scannerRemediation: clip(finding.remediation, 800) || undefined,
   request: clip(finding.request, 1500) || undefined, response: clip(finding.response, 2000) || undefined, passiveObservations: finding.passive.length ? finding.passive : undefined });
 
-const SCANNER_DESCRIPTION = { mobsf: 'MobSF mobile static analysis report', invicti: 'Invicti DAST report', defectdojo: 'DefectDojo findings export report', sonarqube: 'SonarQube issues/hotspots export report', generic: 'scanner PDF' };
+const SCANNER_DESCRIPTION = { mobsf: 'MobSF mobile static analysis report', invicti: 'Invicti DAST report', defectdojo: 'DefectDojo findings export report', sonarqube: 'SonarQube issues/hotspots export report', generic: 'scanner PDF', semgrep: 'Semgrep static analysis', trivy: 'Trivy scan', sarif: 'SARIF scanner results', tickets: 'issue tracker tickets' };
 function triagePrompt(parsed, batch, { workspace, filename, supportingEvidence }) {
   const scanner = SCANNER_DESCRIPTION[parsed.source];
   return [`Triage ${batch.length} finding(s) from a ${scanner} the user uploaded manually (${JSON.stringify(filename)}; target ${JSON.stringify(parsed.target || 'not recorded')}).`,
@@ -679,6 +725,7 @@ function findingSection(finding, verdict, scanner) {
   const classification = [finding.cwe, finding.owasp && `OWASP ${finding.owasp.replace(/^owasp\s*/i, '')}`, finding.masvs && `MASVS ${finding.masvs}`].filter(Boolean).join('; ');
   const lines = [`#### [${finding.id}] — ${finding.title.replace(/\n/g, ' ')}`, '',
     `**Original finding**: ${finding.originalId}; ${finding.rule.replace(/[\n;]/g, ' ')}; ${scanner}; ${finding.location.replace(/\n/g, ' ')}`,
+    `**Scanner origin**: ${finding.scanner || scanner}`, `**Scanner rule**: ${finding.rule}`, ...(finding.tuning ? [`**Scanner target**: ${JSON.stringify(finding.tuning)}`] : []),
     `**Disposition**: ${verdict.disposition}`, `**Severity**: ${verdict.severity}`, `**Confidence**: ${verdict.confidence}`,
     `**Scanner severity**: ${scannerLine || 'not stated'}`, ...(classification ? [`**Classification**: ${classification}`] : []),
     ...(verdict.owner ? [`**Owner**: ${prose(verdict.owner)} (suggested)`] : []), ...(verdict.effort ? [`**Effort**: ${prose(verdict.effort)}`] : []), '',
@@ -722,7 +769,7 @@ function reportMarkdown(parsed, verdicts, { filename, workspace, model, warning,
   const lines = [`# Finding Review: ${scanner} ${scope}`, '',
     `**Status**: ${status.replace(/\s+/g, ' ')}`, `**Date**: ${uploadedAt.toISOString().slice(0, 10)}`,
     `**Input**: ${filename.replace(/[\n|]/g, ' ')} (${parsed.source === 'generic' ? scanner : `${scanner} ${parsed.format.toUpperCase()}`} report, uploaded to the Workbench)`,
-    `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)', generic: 'Generic scanner PDF' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
+    `**Scanner**: ${({ mobsf: 'MobSF (mobile static analysis)', invicti: 'Invicti DAST', defectdojo: 'DefectDojo (aggregated scanner findings)', sonarqube: 'SonarQube (static analysis)', generic: 'Generic scanner PDF', semgrep: 'Semgrep', trivy: 'Trivy', sarif: 'SARIF', tickets: 'Tracker tickets (scanner origin per finding)' })[parsed.source]}`, `**Target**: ${target}`, `**Scan date**: ${parsed.scanDate || 'not recorded'}`,
     `**Source context**: ${workspace ? workspace.repoPath : 'no repository selected'}`, `**Findings reviewed**: ${reviewed}`,
     `**Reviewed by**: ${AGENT_ID}`, '', '## TIER 1 — EXECUTIVE SUMMARY', '',
     reviewed ? `Threatlint reviewed ${reviewed} of ${parsed.findings.length} ${scanner} finding(s) for ${target}: ${summary.tp} true positive and ${summary.fp} false positive. ${summary.unverified} true-positive finding(s) remain unverified.${untriaged ? ` ${untriaged} finding(s) could not be reviewed and defaulted to TRUE POSITIVE (unverified).` : ''} A precautionary classification is not a verified vulnerability.`
@@ -964,7 +1011,13 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     if (fields.workspaceId) {
       const session = store.sessions.get(String(fields.workspaceId));
       if (!session || !fs.existsSync(session.repoPath)) fail('Workspace not found; open the repository in the Workbench first', 404);
-      workspace = { id: session.id, repoPath: session.repoPath };
+      workspace = { id: session.id, repoPath: session.repoPath, provenance: session.provenance };
+    }
+    if (fields.sourceUrl) {
+      require('./source-context.cjs').sourceLink(fields.sourceUrl);
+      if (workspace) fail('Choose either a workspace or a source link, so the reviewed revision is unambiguous');
+      if (!integrations.resolveSource) fail('Source checkout is unavailable', 503);
+      workspace = await integrations.resolveSource(fields.sourceUrl, fields.sourceBranch || '');
     }
     const { settings, warning } = resolveSettings(fields);
     const supportingEvidence = settings && evidence ? clip(redactEvidenceText(evidence), MAX_SUPPORTING_EVIDENCE) : '';

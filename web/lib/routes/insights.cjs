@@ -8,12 +8,13 @@ const { AGENTS } = require('../agents.cjs');
 const { collectFacts, aggregate, matrix, overview, DIMENSIONS, METRICS, CHARTS } = require('../metrics.cjs');
 const { SOURCE_META, avitMetricsItems } = require('../tracker-metrics.cjs');
 const servicenow = require('../servicenow.cjs');
+const issueTrackers = require('../issue-trackers.cjs');
 const defectdojo = require('../defectdojo-metrics.cjs');
 const { HELP_TOPICS, TOOLTIPS, VIDEOS } = require('../help.cjs');
 const { handle, HttpError } = require('../http.cjs');
 
 const MEDIA = path.join(__dirname, '../../public/media');
-const CSV_COLUMNS = ['timestamp', 'source', 'workspace', 'agentId', 'category', 'findingId', 'title', 'severity', 'confidence', 'disposition', 'hasEvidence'];
+const CSV_COLUMNS = ['timestamp', 'source', 'workspace', 'agentId', 'category', 'findingType', 'findingId', 'title', 'severity', 'confidence', 'disposition', 'hasEvidence'];
 const TRACKER_SYNC_TIMEOUT_MS = 180_000;
 
 // Leading = + - @ would make a spreadsheet evaluate the cell as a formula.
@@ -26,15 +27,31 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
   const facts = () => collectFacts({ sessions: store.sessions, runtimeScans: history.finished(), agents: AGENTS, trackerFacts: trackerMetrics.facts() });
   const sourceIds = new Set(['all', 'report', 'runtime', ...Object.keys(SOURCE_META)]);
   function source(value) {
-    const selected = typeof value === 'string' && value ? value : 'all';
-    if (!sourceIds.has(selected)) throw new HttpError('Unknown metrics source');
-    return selected;
+    const selected = Array.isArray(value) ? value : typeof value === 'string' && value ? value.split(',') : ['all'];
+    if (!selected.length || selected.some(id => !sourceIds.has(id))) throw new HttpError('Unknown metrics source');
+    return selected.includes('all') ? 'all' : selected;
   }
-  const selectedFacts = selected => selected === 'all' ? facts() : facts().filter(item => item.source === selected);
+  const selectedFacts = selected => selected === 'all' ? facts() : facts().filter(item => selected.includes(item.source));
+  const preferencesFile = store.directory && path.join(store.directory, 'metrics-preferences.json');
+  let preferredSources = 'all';
+  try { if (preferencesFile) preferredSources = source(JSON.parse(fs.readFileSync(preferencesFile, 'utf8')).sources); } catch { /* Default to all sources. */ }
+  app.get('/api/metrics/preferences', handle(() => ({ sources: preferredSources === 'all' ? ['all'] : preferredSources })));
+  app.post('/api/metrics/preferences', handle(req => {
+    const next = source(req.body?.sources);
+    if (preferencesFile) {
+      const temporary = `${preferencesFile}.${require('node:crypto').randomUUID()}.tmp`;
+      fs.mkdirSync(store.directory, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(temporary, JSON.stringify({ sources: next === 'all' ? ['all'] : next }), { mode: 0o600 });
+      fs.renameSync(temporary, preferencesFile);
+    }
+    preferredSources = next;
+    return { sources: next === 'all' ? ['all'] : next };
+  }));
   const connected = async id => {
     if (id === 'servicenow-avit') {
       try { servicenow.validateCredentials({}); return true; } catch { return false; }
     }
+    if (Object.hasOwn(issueTrackers.LABELS, id)) return issueTrackers.publicConfig(id).hasToken;
     return !!(await defectdojo.connectionStatus()).connected;
   };
   const tracker = async id => {
@@ -45,9 +62,7 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
       count: snapshot?.items.length || 0, lastSyncedAt: snapshot?.lastSyncedAt || null,
       createdThrough: snapshot?.createdThrough || null, scope: snapshot?.scope || null };
   };
-  const trackers = async () => ({ trackers: [await tracker('servicenow-avit'), await tracker('defectdojo'),
-    { id: 'jira', label: 'Jira', kind: 'defect-tracker', available: false, connected: false, status: 'not-supported', count: 0, lastSyncedAt: null },
-    { id: 'azure-devops', label: 'Azure DevOps Boards', kind: 'defect-tracker', available: false, connected: false, status: 'not-supported', count: 0, lastSyncedAt: null }] });
+  const trackers = async () => ({ trackers: await Promise.all(Object.keys(SOURCE_META).map(tracker)) });
   const inFlight = new Map();
   let aggregateInFlight = null;
   async function loadAvitAggregate(filters) {
@@ -84,6 +99,8 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
           const result = await servicenow.fetchAvitMetrics(credentials, { scope, fetchImpl: integrations.fetchImpl || fetch, signal });
           items = avitMetricsItems(result.items);
           createdThrough = result.createdThrough;
+        } else if (Object.hasOwn(issueTrackers.LABELS, id)) {
+          items = await issueTrackers.fetchItems(id, { fetchImpl: integrations.fetchImpl || fetch, signal });
         } else {
           if (!(await defectdojo.connectionStatus()).connected) throw new HttpError('Connect DefectDojo in Settings before syncing metrics', 412);
           items = (await defectdojo.fetchMetrics({ fetchImpl: integrations.fetchImpl || fetch, signal })).items;
@@ -128,8 +145,8 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
   app.get('/api/metrics/overview', handle(req => {
     const chosen = source(req.query.source);
     const selected = selectedFacts(chosen);
-    const summary = overview(selected, chosen === 'all' || chosen === 'report' ? store.sessions : new Map());
-    if (chosen !== 'all' && chosen !== 'report') summary.workspaces = new Set(selected.map(item => item.workspace)).size;
+    const summary = overview(selected, chosen === 'all' || chosen.includes('report') ? store.sessions : new Map());
+    if (chosen !== 'all' && !chosen.includes('report')) summary.workspaces = new Set(selected.map(item => item.workspace)).size;
     return summary;
   }));
   app.post('/api/metrics/query', handle(req => {

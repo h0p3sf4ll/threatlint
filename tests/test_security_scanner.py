@@ -253,23 +253,47 @@ def test_engine_cancellation_is_not_swallowed():
         external_scans({}, ['semgrep'], runner=cancelled, which=lambda name: '/synthetic/' + name)
 
 
-def test_semgrep_uses_shared_pro_policy_and_never_falls_back(monkeypatch):
-    from threatlint import semgrep_platform
+def test_semgrep_selects_verified_pro_and_does_not_retry_a_failed_pro_scan(monkeypatch):
+    from threatlint import semgrep_platform, semgrep_engine
     from threatlint.security_scanner import engines
     captured = []
-    monkeypatch.setattr(semgrep_platform, 'engine_flags', lambda engine: ['--pro'] if engine == 'pro' else pytest.fail('Unexpected engine downgrade'))
-    monkeypatch.setattr(semgrep_platform, 'resolve_token', lambda: ('synthetic-token', 'synthetic'))
-    monkeypatch.setattr(engines, '_run', lambda args, root, env: captured.append((args, env)) or SimpleNamespace(returncode=0, stdout='{"results":[]}'))
-    engines.run_engine('semgrep', '/synthetic')
-    assert '--pro' in captured[0][0] and '--oss-only' not in captured[0][0]
-    assert captured[0][1]['SEMGREP_APP_TOKEN'] == 'synthetic-token'
-    def unavailable(engine):
-        raise semgrep_platform.SemgrepError('Synthetic missing Pro')
-    monkeypatch.setattr(semgrep_platform, 'engine_flags', unavailable)
-    findings, statuses = engines.external_scans({}, ['semgrep'], which=lambda name: '/synthetic/' + name)
-    assert not findings and statuses[0]['status'] == 'unavailable'
-    assert statuses[0]['mode'] == 'pro' and 'no Community Edition fallback' in statuses[0]['detail']
-    assert len(captured) == 1
+    selected = {"cli_version": "1.2", "engine": "pro", "descriptor": "Semgrep Pro verified"}
+    monkeypatch.setattr(semgrep_engine, "scanner_status", lambda **_: selected)
+    monkeypatch.setattr(semgrep_platform, "resolve_token", lambda: ("synthetic-token", "synthetic"))
+    monkeypatch.setattr(engines, "_run", lambda args, root, env: captured.append((args, env)) or SimpleNamespace(returncode=0, stdout='{"results":[]}'))
+    result = engines.run_engine("semgrep", "/synthetic")
+    assert "--pro" in captured[0][0] and "--oss-only" not in captured[0][0]
+    assert captured[0][1]["SEMGREP_APP_TOKEN"] == "synthetic-token"
+    assert result.provenance["engineMode"] == "pro"
+    selected.update(engine="oss", descriptor="Semgrep Community Edition — Pro not verified")
+    result = engines.run_engine("semgrep", "/synthetic")
+    assert "--oss-only" in captured[1][0] and result.provenance["engineMode"] == "oss"
+    selected.update(engine="pro", descriptor="Semgrep Pro verified")
+    monkeypatch.setattr(engines, "_run", lambda args, root, env: captured.append((args, env)) or SimpleNamespace(returncode=2, stdout='{}'))
+    findings, statuses = engines.external_scans({}, ["semgrep"], which=lambda name: "/synthetic/" + name)
+    assert not findings and statuses[0]["status"] == "failed"
+    assert len(captured) == 3 and "--pro" in captured[-1][0]
+
+
+def test_reviewed_trivy_exceptions_require_unexpired_exact_snapshot_bytes(tmp_path, monkeypatch):
+    import hashlib
+    from threatlint.security_scanner.engines import reviewed_trivy_policy
+    source = tmp_path / "repo"
+    source.mkdir()
+    lock = source / "package-lock.json"
+    lock.write_text('{"lockfileVersion":3}')
+    manifest = tmp_path / "approved.json"
+    record = {"path": "package-lock.json", "fileHash": hashlib.sha256(lock.read_bytes()).hexdigest(),
+              "kind": "vulnerabilities", "id": "CVE-2026-1111", "expires": "2099-01-01", "reportId": "report", "findingId": "FP-001"}
+    manifest.write_text(json.dumps([record]))
+    monkeypatch.setenv("THREATLINT_REVIEWED_TRIVY_POLICY", str(manifest))
+    assert reviewed_trivy_policy(str(source))["vulnerabilities"][0]["paths"] == ["package-lock.json"]
+    lock.write_text('{"changed":true}')
+    assert reviewed_trivy_policy(str(source)) == {}
+    record["expires"] = "2000-01-01"
+    record["fileHash"] = hashlib.sha256(lock.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps([record]))
+    assert reviewed_trivy_policy(str(source)) == {}
 
 
 @pytest.mark.parametrize(('rule', 'source', 'expected'), [

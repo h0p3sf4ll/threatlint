@@ -18,11 +18,28 @@ _METADATA_SEVERITY = {"CRITICAL": "CRITICAL", "HIGH": "HIGH", "ERROR": "HIGH", "
                       "WARNING": "MEDIUM", "LOW": "LOW", "INFO": "INFO", "WARN": "MEDIUM"}
 
 
+class ScanFindings(list):
+    """Keep engine provenance even when the scan reports zero findings."""
+    engine = "Engine not recorded in imported scan"
+
+
 def _semgrep_runner(checkout: str, config: str):
     from threatlint import semgrep_engine  # noqa: PLC0415
     from threatlint.tls import tool_env  # noqa: PLC0415
-    return semgrep_engine.run(["scan", "--config", config, "--json", "--quiet", "--metrics", "off", checkout],
-                              environment=tool_env, error_type=ResolveError)
+    from threatlint.semgrep_platform import resolve_token, SemgrepError  # noqa: PLC0415
+    token = None
+    try:
+        token = resolve_token()[0]
+    except SemgrepError:
+        pass
+    status = semgrep_engine.scanner_status(environment=tool_env, token=token)
+    completed = semgrep_engine.run(["scan", "--pro" if status["engine"] == "pro" else "--oss-only",
+        "--config", config, "--json", "--quiet", "--metrics", "off", checkout],
+        token=token, environment=tool_env, error_type=ResolveError)
+    completed.threatlint_engine = status["descriptor"]
+    if completed.returncode:
+        raise ResolveError("Semgrep scan failed; no fallback engine was run")
+    return completed
 
 
 def _severity(result: dict) -> str:
@@ -56,4 +73,10 @@ def scan(checkout: str, *, config: str = "auto", runner=_semgrep_runner) -> list
     except ValueError as exc:
         detail = (getattr(completed, "stderr", "") or completed.stdout or "")[-300:]
         raise ResolveError(f"Semgrep did not return readable JSON: {detail}") from exc
-    return normalize(payload)
+    if payload.get("errors"):
+        raise ResolveError("Semgrep returned scan errors; scan coverage is incomplete")
+    findings = ScanFindings(normalize(payload))
+    findings.engine = getattr(completed, "threatlint_engine", "Engine not recorded in imported scan")
+    for finding in findings:
+        finding["engine"] = findings.engine
+    return findings

@@ -33,6 +33,7 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     providers: await credentialSources(), modelPolicy: modelPolicy(),
     semgrep: await (integrations.semgrepVersion || servicenow.semgrepVersion)(), semgrepAgents: [...servicenow.SEMGREP_AGENTS],
     servicenow: { ...servicenow.access(), instance: process.env.THREATLINT_SNOW_INSTANCE || '' } })));
+  app.get('/api/semgrep/engine', handle(() => (integrations.semgrepEngineStatus || require('../semgrep-engine.cjs').status)()));
   // Uses the local user's own AWS CLI session (from SSO); values return only to this loopback UI and are not stored.
   app.post('/api/servicenow/parameter-store', handle(req => (integrations.readParameterStore || servicenow.readParameterStore)({ profile: req.body?.profile || undefined })));
   // Saved ServiceNow connection (shared with the CLI). GET never returns the secret.

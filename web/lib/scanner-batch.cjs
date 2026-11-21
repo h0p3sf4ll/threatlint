@@ -112,7 +112,8 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
 
       sessionId = store.create(repo, true, work);
       let ruleBase = '';
-      const semgrep = /semgrep/i.test(target.finding_source || '');
+      const scannerOrigin = toolId === 'sonar' ? 'sonarqube' : /semgrep|trivy|sonarqube/i.exec(target.finding_source || '')?.[0]?.toLowerCase() || 'unknown';
+      const semgrep = scannerOrigin === 'semgrep';
       if (semgrep && ['sast', 'secrets'].includes(target.kind) && target.rule) {
         const ruleFile = path.join(work, 'rule-base.yaml');
         const based = await cli(['semgrep', 'rule-base', target.rule, '--kind', target.kind, '-o', ruleFile, ...profile], { signal });
@@ -129,7 +130,7 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
         onEvent: event => { if (event.type === 'tool_executing') step('triage', '', { agentTool: event.tool }); } });
       if (signal.aborted) throw new Error('Cancelled');
       const { markdown, count } = redactSecrets(output, repo, target.file_path);
-      const report = await reports.save(AGENT_ID, markdown, reviewSession(toolId), { title: `${spec.label} ${reference} triage`, source: { kind: 'scanner-review', tool: toolId, reference, semgrep, findingKind: target.kind } });
+      const report = await reports.save(AGENT_ID, markdown, reviewSession(toolId), { title: `${spec.label} ${reference} triage`, source: { kind: 'scanner-review', tool: toolId, reference, semgrep, scanner: scannerOrigin, tuning: { scanner: scannerOrigin, kind: { sca: 'vulnerabilities', sast: 'misconfigurations', secrets: 'secrets' }[target.kind], rule: target.rule, path: target.file_path }, findingKind: target.kind } });
       const finding = report.findings.find(item => scanners.mentions(item.body.match(/Original finding\W*:\s*(.+)/i)?.[1] || '', reference)) || null;
       const disposition = finding?.disposition || 'UNSPECIFIED';
       return step('reported', `${count ? `Report saved to Findings (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report saved to Findings'}. Nothing was posted to ${spec.label}.`,
@@ -204,7 +205,7 @@ function createScannerBatch({ store, reports, override, integrations = {} }) {
     let work;
     let result;
     try {
-      if (spec.id === 'dojo' && finding.disposition === 'FALSE POSITIVE' && (report.source?.semgrep || /semgrep/i.test(finding.body) || body.semgrep === true)) {
+      if (spec.id === 'dojo' && finding.disposition === 'FALSE POSITIVE' && report.source?.semgrep) {
         work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-tuning-'));
         const repo = path.join(work, 'repo');
         const checkout = await cli(['dojo', 'checkout', reference, '--dir', repo], {});

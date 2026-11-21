@@ -96,6 +96,10 @@
   }
   function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
   function showView(name) {
+    if (name === 'sonarreview' || name === 'dojoreview') {
+      const tool = name === 'sonarreview' ? 'sonar' : 'dojo'; name = 'fpreview';
+      document.dispatchEvent(new CustomEvent('threatlint:triage-source', { detail: { source: tool } }));
+    }
     const titles = { security: 'Security scanner', intelligence: 'Repository risk', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
@@ -103,6 +107,9 @@
     for (const view of document.querySelectorAll('.view')) { const active = view.id === `view-${name}`; view.hidden = !active; view.classList.toggle('active', active); }
     for (const item of document.querySelectorAll('[data-view]')) { item.classList.toggle('active', item.dataset.view === name); item.setAttribute('aria-current', item.dataset.view === name ? 'page' : 'false'); }
     // Sidekick capabilities live on their own landing page now; keep the Sidekick nav item lit while inside one.
+    if (['sources', 'security'].includes(name)) document.querySelector('[data-view="workbench"]')?.classList.add('active');
+    if (name === 'intelligence') document.querySelector('[data-view="reports"]')?.classList.add('active');
+    if (name === 'scanimport') document.querySelector('[data-view="fpreview"]')?.classList.add('active');
     if (name.startsWith('sk-')) document.querySelector('[data-view="sidekick"]')?.classList.add('active');
     $('breadcrumb-title').textContent = titles[name];
     document.dispatchEvent(new CustomEvent('threatlint:view', { detail: { view: name } }));
@@ -295,7 +302,7 @@
     if (!state.session) { state.reports = []; renderReports(); return; }
     state.reports = await request(`/api/session/${state.session.id}/reports`);
     $('stat-reports').textContent = state.reports.length;
-    $('report-nav-count').textContent = state.reports.length;
+    $('report-nav-count').textContent = state.reports.reduce((sum, report) => sum + (report.findings?.length || 0), 0);
     $('stat-reports-note').textContent = state.reports.length ? 'Saved locally · ready for handoff' : 'Ready when you are';
     renderReports(); publishContext();
   }
@@ -390,7 +397,10 @@
       const body = el('div', 'markdown'); safeMarkdown(body, finding.body);
       const actions = el('div', 'finding-card-actions');
       if (!state.report.example && state.report.id && state.report.agentId === FP_REVIEWER && finding.disposition === 'FALSE POSITIVE') {
-        actions.append(button('Close FP & tune Semgrep…', 'button primary small-button', () => openFalsePositiveActions(finding)));
+        const origin = /\*\*Scanner origin\*\*:\s*(.+)/i.exec(finding.body)?.[1]?.toLowerCase() || (state.report.source?.tool === 'sonar' ? 'sonarqube' : state.report.source?.scanner || '');
+        if (/sonarqube|^trivy$/.test(origin)) actions.append(button('Tune source scanner…', 'button primary small-button', () => tuneSourceScanner(finding, origin)));
+        else if (!origin || /semgrep/.test(origin)) actions.append(button('Close FP & tune Semgrep…', 'button primary small-button', () => openFalsePositiveActions(finding)));
+        else actions.append(el('span', 'small subtle', 'Establish the original scanner and rule before tuning.'));
       }
       if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
       const slideUrl = powerPointUrl(state.report, finding.id);
@@ -404,6 +414,22 @@
       card.append(header, body, actions); list.append(card);
     }
     if (!findings.length) { const empty = el('div', 'empty-state'); empty.append(el('h3', '', 'No findings match this view.'), el('p', '', state.report?.findings?.length ? 'Adjust the severity or disposition filter.' : 'No structured finding blocks were detected. Read the full report for conclusions, scope, and limitations.')); list.append(empty); }
+  }
+
+  async function tuneSourceScanner(finding, origin) {
+    let target;
+    try { target = JSON.parse(/^\*\*Scanner target\*\*:\s*(.+)$/m.exec(finding.body)?.[1] || 'null'); } catch { /* Metadata is shown in the finding. */ }
+    target ||= state.report.source?.tuning;
+    const scope = origin === 'trivy' && target ? `Save a 90-day exception for ${target.rule} in ${target.path}${target.purl ? ` (${target.purl})` : ''}? This affects every match of that ID within this scope. With matching source, future Workbench Trivy scans use it only for the exact reviewed file bytes. Merge the download into external Trivy configuration. No validation scan has run.` : `Mark the exact SonarQube issue referenced by ${finding.id} as a false positive?`;
+    if (!window.confirm(scope)) return;
+    try {
+      const result = await request('/api/triage/scanner-tuning', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: finding.id, confirm: true }) });
+      if (result.content) {
+        const url = URL.createObjectURL(new Blob([result.content], { type: 'application/yaml' }));
+        const link = document.createElement('a'); link.href = url; link.download = result.filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      toast(result.detail || `${result.scanner}: ${result.action}`);
+    } catch (error) { toast(error.message, true); }
   }
 
   // Pre-fills from the finding's Original finding line: "AVIT000000095938462; rule.id; path/file.js:42".
@@ -1028,6 +1054,9 @@
 
   function wireEvents() {
     for (const item of document.querySelectorAll('[data-view]')) item.addEventListener('click', () => showView(item.dataset.view));
+    document.addEventListener('threatlint:scanimport-job', event => {
+      if (event.detail?.status === 'done') { void refreshSessions(); if (event.detail.sessionId === state.session?.id) void refreshReports(); }
+    });
     document.addEventListener('threatlint:toast', event => toast(event.detail.message, !!event.detail.error));
     document.addEventListener('threatlint:design-inputs', updateRunControls);
     $('pipeline-execution-mode').addEventListener('change', updateRunControls);

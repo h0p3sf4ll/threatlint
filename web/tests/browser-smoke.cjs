@@ -111,11 +111,11 @@ async function trackerMetrics(page) {
   await page.locator('#metrics-tracker-cards .metrics-tracker-card').nth(1).getByText('5 saved findings').waitFor();
   const filtered = new Promise(resolve => page.route(/\/api\/metrics\/query$/, route => {
     const body = route.request().postDataJSON();
-    if (body.filters?.source === 'defectdojo') resolve(body);
+    if (body.filters?.source?.includes('defectdojo')) resolve(body);
     route.continue();
   }));
   await page.locator('#metrics-source').selectOption('defectdojo');
-  assert.equal((await filtered).filters.source, 'defectdojo');
+  assert.deepEqual((await filtered).filters.source, ['defectdojo']);
   assert.equal(await page.locator('#metrics-export').getAttribute('href'), '/api/metrics/export?source=defectdojo');
   serviceNowConfigured = false;
   await page.locator('#metrics-refresh-connections').click();
@@ -174,7 +174,9 @@ async function scanImport(page) {
     }
     return json(404, { error: 'Not found' });
   });
-  await page.locator('[data-view="scanimport"]').click();
+  await page.locator('[data-view="fpreview"]').click();
+  await page.locator('#triage-source').selectOption('report');
+  await page.getByRole('button', { name: 'Upload a scan report →', exact: true }).click();
   await page.locator('#view-scanimport:not([hidden])').waitFor();
   assert.equal(await page.locator('#scanimport-start').isDisabled(), true, 'Import needs a file');
   await page.locator('#scanimport-history', { hasText: 'No imports yet' }).waitFor();
@@ -215,7 +217,9 @@ async function scanImport(page) {
   await page.locator('#settings-button').click();
   await page.locator('#cloud-consent').check();
   await page.locator('#settings-form button[type=submit]').click();
-  await page.locator('[data-view="scanimport"]').click();
+  await page.locator('[data-view="fpreview"]').click();
+  await page.locator('#triage-source').selectOption('report');
+  await page.getByRole('button', { name: 'Upload a scan report →', exact: true }).click();
   await page.getByRole('button', { name: 'Triage findings', exact: true }).waitFor();
   const dataTransfer = await page.evaluateHandle(({ name, bytes }) => {
     const transfer = new DataTransfer();
@@ -276,7 +280,9 @@ async function scanImport(page) {
   await page.locator('#scanimport-snow-cancel').click();
   await page.locator('#report-dialog .close-dialog').click();
 
-  await page.locator('[data-view="scanimport"]').click();
+  await page.locator('[data-view="fpreview"]').click();
+  await page.locator('#triage-source').selectOption('report');
+  await page.getByRole('button', { name: 'Upload a scan report →', exact: true }).click();
   await page.locator('#scanimport-post').click();
   await page.locator('#scanimport-snow-dialog[open]').waitFor();
   const steps = await page.locator('#scanimport-snow-steps').innerText();
@@ -331,8 +337,8 @@ async function scannerFlows(page) {
   assert.equal(await page.locator('#sonar-form').isVisible(), true, 'SonarQube has its own settings section');
 
   // The runner socket is stubbed in the page: the review emits a reported finding, then the post is confirmed.
-  await page.locator('[data-view="dojoreview"]').click();
-  await page.locator('#view-dojoreview:not([hidden])').waitFor();
+  await page.locator('[data-view="fpreview"]').click();
+  await page.locator('#triage-source').selectOption('dojo');
   await page.locator('#dojoreview-start').click();
   assert.match(await page.locator('#dojoreview-error').innerText(), /Enter finding ids/);
   await page.locator('#dojoreview-references').fill('1201');
@@ -436,6 +442,7 @@ async function fprCli(args, options) {
       fs.mkdirSync(args[args.indexOf('--dir') + 1], { recursive: true });
       return json({ kind: 'sca', name: 'svc', branch: 'main', file_path: 'package.json', ...(avit === FPR.A3 ? { scm: 'azure-devops', organization: 'contoso', project: 'project' } : {}) });
     }
+    if (command === 'prepare-fix') return json({ status: 'ready', issues: [] });
     if (command === 'fix-pr') return json({ status: 'created', url: 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42' });
     if (command === 'resolve') return { code: 0, stdout: avit === FPR.A1 ? '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' : avit === FPR.A3 ? '  ✓ Attached x.docx\n  INFO: AVIT is already closed in ServiceNow; work note added and report attached.\n' : '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
   }
@@ -576,7 +583,7 @@ async function fpReviewRun(page) {
   const wrapper = path.join(temporary, 'python-wrapper.sh');
   fs.writeFileSync(wrapper, `#!/bin/sh\ncase "$1" in *md_to_docx.py) printf PK-docx > "$3"; exit 0;; esac\nexec "${realPython}" "$@"\n`, { mode: 0o755 });
   if (process.platform !== 'win32') avitBatch.python = () => wrapper;
-  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: { threatlintCli: fprCli }, runProvider: async args => {
+  const workbench = createWorkbench({ storageDir: path.join(temporary, 'history'), integrations: { semgrepEngineStatus: async () => ({ engine: null, descriptor: 'Synthetic engine status' }), threatlintCli: fprCli }, runProvider: async args => {
     const fpr = await fprProvider(args); if (fpr) return fpr;
     if (args.userMessage.includes('WAIT_FOR_CANCELLATION')) await new Promise((resolve, reject) => args.signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }));
     args.onEvent({ type: 'text_chunk', text: 'Synthetic integration fixture, not a scan.' });
@@ -608,6 +615,7 @@ async function fpReviewRun(page) {
     await page.locator('#start-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
     assert.equal(await page.locator('#stat-reports').innerText(), '1');
+    assert.equal(await page.locator('#report-nav-count').innerText(), '2', 'Findings badge counts the two individual findings, not one report');
     await page.locator('[data-view="reports"]').click(); await page.getByRole('button', { name: 'Read report ↗' }).click();
     await page.locator('#report-tab-findings').click(); assert.equal(await page.locator('.finding-card').count(), 2);
     await page.locator('#disposition-filter').selectOption('TRUE POSITIVE'); assert.equal(await page.locator('.finding-card').count(), 1);
@@ -636,13 +644,15 @@ async function fpReviewRun(page) {
     await scannerFlows(page);
     await githubSettings(page);
     await claudeDefaults(page);
+    console.log('Checking AVIT review browser flow…');
     await fpReviewRun(page);
+    console.log('Checking tracker metrics browser flow…');
     await trackerMetrics(page);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.deepEqual(errors, []);
     console.log('PASS: repository/model setup, scanner attachment, streamed review, history, findings/proposed fixes, cancellation, credential privacy, remote consent, scan import (upload, progress, findings, report, ServiceNow), DefectDojo/SonarQube settings, review and confirmed post, GitHub App settings, Claude model defaults, false positive review of several SCTASKs (progress, history, spinners, reload), and mobile layout.');
-  } finally {
+  } catch (error) { console.error(error); throw error; } finally {
     if (browser) await browser.close();
     await workbench.close(); fs.rmSync(temporary, { recursive: true, force: true });
   }

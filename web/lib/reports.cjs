@@ -71,6 +71,7 @@ function findingFromHeading(heading, text, headings, agentId) {
   const title = plain(heading.title.slice(match[0].length).trim().replace(/^[—–:-][ \t]*/, ''));
   const id = match[1];
   return { id, title, severity, confidence, disposition, ...reviewState, evidence, located, body,
+    rule: field(body, 'Scanner rule|Rule ID|Rule'), cwe: field(body, 'CWE|Classification'), scanner: field(body, 'Scanner origin'),
     fingerprint: crypto.createHash('sha256').update(`${agentId}|${id}|${title}|${evidence.join('|')}`).digest('hex').slice(0, 20) };
 }
 

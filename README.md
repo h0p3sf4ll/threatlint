@@ -148,7 +148,7 @@ for a practical introduction using race-engineering metaphors.
 - **Before merge:** Workbench playbooks, branch/diff review, and warn-first CI
   templates. Adopt blocking gates deliberately.
 - **In the PR:** findings and `/threatlint` conversations where configured.
-- **During triage:** ServiceNow AVITs, Semgrep, DefectDojo (findings management), SonarQube (scanning), and [community integrations](docs/integrations/README.md).
+- **During triage:** ServiceNow AVITs, ADO work items, Jira tickets, GitHub issues, Semgrep/Trivy/SARIF reports, DefectDojo (findings management), SonarQube (scanning), and [community integrations](docs/integrations/README.md).
 - **Across the team:** redacted report exports, dashboards, and a Teams bot for
   supplied evidence.
 
@@ -239,7 +239,7 @@ engineering handoff without overstating what was verified.
 | Add your own integration | [Writing an integration](docs/integrations/authoring.md) |
 | Attack a running build in an isolated sandbox | [Runtime red team](docs/runtime-redteam.md) |
 | Gate a repo through SAST then DAST/MAST with fail-fast disqualification | [Assurance gate](docs/assurance.md) |
-| Read trends from reports and synced ServiceNow AVIT or DefectDojo findings | [Dashboards](docs/dashboards.md) |
+| Read trends from reports and synced ServiceNow, DefectDojo, Jira, ADO Boards, or GitHub findings | [Dashboards](docs/dashboards.md) |
 | Export a report or fix missing Word output | [Reports](docs/reports.md) |
 | Discuss supplied evidence in Teams | [Teams](docs/teams.md) |
 | Test, extend, or understand the Python modules | [Development](docs/development.md) |

@@ -14,7 +14,7 @@ const { createWorkbench } = require('../server.js');
 (async () => {
   const repo = path.join(temporary, 'synthetic-evidence-fixture'); fs.mkdirSync(repo);
   fs.writeFileSync(path.join(repo, 'fixture.js'), '// Synthetic review fixture only. No real application or personal data.\n');
-  const wb = createWorkbench({ storageDir: path.join(temporary, 'ledger'), integrations: {
+  const wb = createWorkbench({ storageDir: path.join(temporary, 'ledger'), integrations: { semgrepEngineStatus: async () => ({ engine: null, descriptor: 'Synthetic engine status' }),
     threatlintCli: async () => ({ code: 0, stdout: JSON.stringify({ organizations: [] }) }), credentialSources: async () => ({}), semgrepVersion: async () => null,
   } });
   await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
@@ -40,7 +40,8 @@ const { createWorkbench } = require('../server.js');
       coverage: { status: 'partial', scope: 'Synthetic UI evidence only', limitations: ['Not an assessment of a real application.'] },
       findings: ['Synthetic reachable route', 'Synthetic terminal object read', 'Synthetic FP reevaluation'].map((title, index) => ({ id: `fixture-${index}`, ruleId: `synthetic-${index}`,
         title, severity: 'MEDIUM', path: 'fixture.js', line: index + 1, snippet: '// Synthetic evidence fixture, not a live vulnerability.', confidence: 'PATTERN_MATCH' })) });
-    await page.locator('[data-view="intelligence"]').click();
+    await page.locator('[data-view="reports"]').click();
+    await page.locator('#view-reports [data-go-view="intelligence"]').click();
     await page.waitForFunction(() => document.querySelectorAll('#intelligence-findings article').length === 3);
     assert.equal(await page.locator('#chain-builder').isVisible(), false, 'guided mode keeps chain construction out of the primary path');
     assert.equal(await page.getByText('Review evidence and record a decision', { exact: true }).first().isVisible(), true);

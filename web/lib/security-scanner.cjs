@@ -3,6 +3,8 @@
 /** Session-scoped scans and server-owned fix plans. The client never supplies source edits. */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { HttpError } = require('./http.cjs');
 const { runCli } = require('./avit-batch.cjs');
 
@@ -10,7 +12,7 @@ const LIMIT = 25;
 const FIX_RULES = new Set(['TL-DEBUG-ENABLED', 'TL-PY-YAML', 'TL-TLS-VERIFY-OFF']);
 const copy = value => structuredClone(value);
 
-function createSecurityScanner({ store, integrations = {}, onScanComplete = () => {}, isSessionBusy = () => false }) {
+function createSecurityScanner({ store, scannerPolicies, integrations = {}, onScanComplete = () => {}, isSessionBusy = () => false }) {
   const scans = new Map();
   const plans = new Map();
   const active = new Set();
@@ -25,14 +27,22 @@ function createSecurityScanner({ store, integrations = {}, onScanComplete = () =
     if (active.has(repoFor(session)) || isSessionBusy(session.id)) throw new HttpError('This repository has an active scan, fix, or review; wait for it to finish', 409);
   };
   const scanFor = id => scans.get(id) || (() => { throw new HttpError('Scan not found', 404); })();
-  async function invoke(args, input, signal) {
-    const result = await cli(['security-scanner', ...args], { input: input === undefined ? undefined : JSON.stringify(input), signal });
+  async function invoke(args, input, signal, session) {
+    const policies = scannerPolicies?.forSession(session) || [];
+    let directory, policyFile = '';
+    try {
+    if (policies.length) {
+      directory = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-reviewed-policy-'));
+      policyFile = path.join(directory, 'approved.json'); fs.writeFileSync(policyFile, JSON.stringify(policies), { mode: 0o600 });
+    }
+    const result = await cli(['security-scanner', ...args], { input: input === undefined ? undefined : JSON.stringify(input), signal, env: { THREATLINT_REVIEWED_TRIVY_POLICY: policyFile } });
     if (result.code !== 0) {
       let detail = 'Security scanner failed; no clean result is claimed';
       try { detail = JSON.parse(result.stderr).error || detail; } catch { /* stderr may contain source or credentials */ }
       throw new HttpError(detail);
     }
     try { return JSON.parse(result.stdout); } catch { throw new HttpError('Security scanner returned invalid output'); }
+    } finally { if (directory) fs.rmSync(directory, { recursive: true, force: true }); }
   }
   const engineArgs = engines => engines.flatMap(engine => ['--engine', engine]);
   function track(promise) { pending.add(promise); promise.then(() => pending.delete(promise), () => pending.delete(promise)); return promise; }
@@ -61,7 +71,7 @@ function createSecurityScanner({ store, integrations = {}, onScanComplete = () =
     scans.set(id, scan); controllers.set(id, controller); active.add(repo); trim();
     void track((async () => {
       try {
-        Object.assign(scan, await invoke(['scan', '--repo', repo, ...engineArgs(scan.requestedEngines)], undefined, controller.signal));
+        Object.assign(scan, await invoke(['scan', '--repo', repo, ...engineArgs(scan.requestedEngines)], undefined, controller.signal, session));
         await completed(scan, session);
       } catch (error) { scan.status = controller.signal.aborted ? 'cancelled' : 'failed'; scan.error = error.message; }
       finally { scan.finishedAt = Date.now(); controllers.delete(id); active.delete(repo); }
@@ -107,7 +117,7 @@ function createSecurityScanner({ store, integrations = {}, onScanComplete = () =
     controllers.set(operationId, controller);
     try {
       const previous = scanFor(record.scanId);
-      const result = await invoke(['apply', ...(body.confirm === true ? ['--confirm'] : []), ...engineArgs(previous.requestedEngines || [])], { plan: record.plan, policy: auto ? policy : undefined }, controller.signal);
+      const result = await invoke(['apply', ...(body.confirm === true ? ['--confirm'] : []), ...engineArgs(previous.requestedEngines || [])], { plan: record.plan, policy: auto ? policy : undefined }, controller.signal, session);
       const scanId = crypto.randomUUID();
       const scan = { ...result.scan, id: scanId, sessionId: session.id, startedAt: Date.now(), finishedAt: Date.now(), requestedEngines: previous.requestedEngines || [], parentScanId: previous.id };
       scans.set(scanId, scan); record.applied = true; trim();

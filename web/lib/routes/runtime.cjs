@@ -18,7 +18,7 @@ function createRuntimeHistory(runtime) {
 }
 
 function registerRuntimeRoutes(app, { runtime, history }) {
-  app.post('/api/runtime/scans', handle(req => { const { id } = runtime.start(req.body); history.add(id); return { id }; }, { status: 202, fallback: 'Scan rejected' }));
+  app.post('/api/runtime/scans', handle(async req => { const { id } = await runtime.start(req.body); history.add(id); return { id }; }, { status: 202, fallback: 'Scan rejected' }));
   app.get('/api/runtime/scans', (_req, res) => res.json(history.summaries()));
   app.get('/api/runtime/scans/:id', handle(req => runtime.get(req.params.id)));
   app.post('/api/runtime/scans/:id/cancel', handle(req => { runtime.cancel(req.params.id); return { ok: true }; }));

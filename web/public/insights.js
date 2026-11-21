@@ -6,11 +6,11 @@
   const $ = id => document.getElementById(id);
   const Charts = () => window.ThreatlintCharts;
   const CHART_LABELS = { kpi: 'Stat tile', bar: 'Column chart', hbar: 'Bar chart', line: 'Line over time', donut: 'Donut', table: 'Table', heatmap: 'Heatmap' };
-  const DIMENSION_LABELS = { severity: 'Severity', agent: 'Specialist / tracker', category: 'Discipline', workspace: 'Workspace', day: 'Day', week: 'Week', disposition: 'Disposition', confidence: 'Confidence', source: 'Source', rule: 'Finding type' };
-  const TRACKER_SETTINGS = { 'servicenow-avit': 'servicenow', defectdojo: 'defectdojo' };
+  const DIMENSION_LABELS = { severity: 'Severity', agent: 'Specialist / tracker', category: 'Discipline', workspace: 'Workspace', day: 'Day', week: 'Week', disposition: 'Disposition', confidence: 'Confidence', source: 'Source', rule: 'Scanner rule', findingType: 'Finding type' };
+  const TRACKER_SETTINGS = { 'servicenow-avit': 'servicenow', defectdojo: 'defectdojo', github: 'tracker-github', jira: 'tracker-jira', 'azure-devops': 'tracker-azure-devops' };
   const AGGREGATE_FILTERS = ['scm', 'organization', 'project', 'repository', 'branch', 'findingType',
     'riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo'];
-  const state = { schema: null, dashboards: [], current: 'default', source: 'all', editing: null, help: null, loaded: false,
+  const state = { schema: null, dashboards: [], current: 'default', source: localStorage.getItem('threatlint.metrics.sources.v1') || 'all', editing: null, help: null, loaded: false, preferencesLoaded: false,
     avitScope: { type: 'avits', avits: '', query: '' }, avitScopeTouched: false,
     avitAggregate: null, aggregateDirty: false, avitConfigured: false };
 
@@ -116,7 +116,7 @@
     const days = Number($('metrics-range').value);
     return days ? { since: new Date(Date.now() - days * 86_400_000).toISOString() } : {};
   }
-  function sourceFilter() { return state.source === 'all' ? {} : { source: state.source }; }
+  function sourceFilter() { return state.source === 'all' ? {} : { source: state.source.split(',') }; }
   function syncDate(value) {
     if (!value) return 'Never synced';
     const date = new Date(value);
@@ -270,7 +270,8 @@
   }
   function openTrackerSettings(id) {
     const section = TRACKER_SETTINGS[id];
-    document.querySelector(`.settings-nav a[href="#settings-${section}"]`)?.click();
+    document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view: 'settings' } }));
+    setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ block: 'start' }), 0);
   }
   function updateExportLink() {
     $('metrics-export').href = state.source === 'all' ? '/api/metrics/export' : `/api/metrics/export?source=${encodeURIComponent(state.source)}`;
@@ -282,8 +283,9 @@
       const option = el('option', '', source.label || source.id); option.value = source.id; node.append(option);
     }
     if (!node.options.length) { const option = el('option', '', 'All sources'); option.value = 'all'; node.append(option); }
-    if (![...node.options].some(option => option.value === state.source)) state.source = 'all';
-    node.value = state.source;
+    const selected = state.source.split(',').filter(id => [...node.options].some(option => option.value === id));
+    state.source = selected.length ? selected.join(',') : 'all';
+    for (const option of node.options) option.selected = state.source.split(',').includes(option.value);
     updateExportLink();
   }
   function renderTrackers(trackers) {
@@ -301,7 +303,7 @@
       heading.append(el('h3', '', tracker.label), el('span', `metrics-tracker-badge${tracker.connected ? ' connected' : ''}`, tracker.connected ? 'Configured' : 'Not configured'));
       const details = el('p', 'small subtle', `${Number(tracker.count || 0).toLocaleString()} saved findings · ${syncDate(tracker.lastSyncedAt)}`);
       if (tracker.id === 'servicenow-avit' && !state.avitScopeTouched) state.avitScope = savedAvitScope(tracker.scope) || { type: 'avits', avits: '', query: '' };
-      if (tracker.id === 'servicenow-avit') { state.avitConfigured = !!tracker.connected; updateAggregateNote(); }
+      if (tracker.id === 'servicenow-avit') { state.avitConfigured = !!tracker.connected; document.querySelector('.avit-aggregate').hidden = !tracker.connected; updateAggregateNote(); }
       const reconnect = tracker.connected ? null : el('p', 'small subtle', 'Configure in Settings to refresh this snapshot.');
       const actions = el('div', 'metrics-tracker-actions');
       const configure = button(tracker.connected ? 'Manage settings' : 'Configure in Settings', 'button secondary small-button', () => openTrackerSettings(tracker.id));
@@ -369,7 +371,7 @@
       await loadConnections(); await renderDashboard();
     } catch (error) {
       control.disabled = false; control.textContent = 'Sync now';
-      $('metrics-tracker-error').textContent = `${id === 'servicenow-avit' ? 'ServiceNow AVIT' : 'DefectDojo'} sync failed: ${error.message}`;
+      $('metrics-tracker-error').textContent = `${id} sync failed: ${error.message}`;
     }
   }
   function dashboard() { return state.dashboards.find(item => item.id === state.current) || state.dashboards[0]; }
@@ -405,6 +407,11 @@
   }
   async function loadMetrics() {
     try {
+      if (!state.preferencesLoaded) {
+        const preference = await api('/api/metrics/preferences');
+        if (state.source === 'all' && Array.isArray(preference.sources)) state.source = preference.sources.join(',') || 'all';
+        state.preferencesLoaded = true;
+      }
       [state.schema, state.dashboards] = await Promise.all([state.schema || api('/api/metrics/schema'), api('/api/dashboards')]);
       await Promise.all([loadConnections(), loadAggregate()]);
       if (!state.dashboards.some(item => item.id === state.current)) state.current = 'default';
@@ -460,7 +467,7 @@
   async function initialize() {
     if (!$('view-metrics')) return;
     $('dashboard-select').addEventListener('change', event => { state.current = event.target.value; renderDashboardSelect(); renderDashboard(); });
-    $('metrics-source').addEventListener('change', event => { state.source = event.target.value; updateExportLink(); renderDashboard(); });
+    $('metrics-source').addEventListener('change', event => { state.source = [...event.target.selectedOptions].map(option => option.value).join(',') || 'all'; localStorage.setItem('threatlint.metrics.sources.v1', state.source); void api('/api/metrics/preferences', { method: 'POST', body: JSON.stringify({ sources: state.source.split(',') }), keepalive: true }).catch(error => { $('metrics-tracker-error').textContent = `Source selection could not be saved: ${error.message}`; }); updateExportLink(); renderDashboard(); });
     $('metrics-range').addEventListener('change', renderDashboard);
     $('metrics-refresh-connections').addEventListener('click', loadConnections);
     $('avit-aggregate-form').addEventListener('input', () => { state.aggregateDirty = true; updateAggregateNote(); });

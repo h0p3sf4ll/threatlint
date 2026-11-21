@@ -61,7 +61,7 @@ describe('Scan report parsing', () => {
     assert.throws(() => scan.detect(fixture('mobsf.json').toString(), 'invicti'), /does not match the selected scanner.*Auto-detect/);
   });
   it('rejects files that are not supported scan reports', async () => {
-    for (const content of ['{"version":"2.1.0","runs":[]}', '<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
+    for (const content of ['<html><body>hi</body></html>', 'plain text', '{"results":[],"errors":[]}', '[1,2,3]'])
       await assert.rejects(() => scan.parseScanReport(Buffer.from(content)), /could not recognize this scan report/, content);
     await assert.rejects(() => scan.parseScanReport(Buffer.from('%PDF-1.7 ...')), /The PDF could not be read/);
     await assert.rejects(() => scan.parseScanReport(Buffer.from([0x50, 0x4b, 3, 4, 0])), /app package or archive/);

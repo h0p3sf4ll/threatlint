@@ -39,7 +39,7 @@
     const coverage = $('security-coverage'); coverage.replaceChildren();
     for (const engine of scan.engines || []) {
       const card = node('div', undefined, 'platform-coverage-card');
-      card.append(node('strong', `${engine.id} · ${engine.status}`), node('p', engine.detail, 'small subtle'));
+      card.append(node('strong', `${engine.id}${engine.descriptor ? ` · ${engine.descriptor}` : ""} · ${engine.status}`), node('p', engine.detail, 'small subtle'));
       if (engine.provenance) {
         card.append(node('p', `Engine ${engine.provenance.engineVersion || 'unrecorded'} · rules: ${engine.provenance.rulePack?.source || 'unrecorded'} · immutable rule revision ${engine.provenance.rulePack?.revision || 'unrecorded'}`, 'micro subtle'));
         for (const [database, metadata] of Object.entries(engine.provenance.databases || {})) card.append(node('p', `${database} · updated ${metadata.updatedAt || 'unrecorded'} · downloaded ${metadata.downloadedAt || 'unrecorded'}`, 'micro subtle'));

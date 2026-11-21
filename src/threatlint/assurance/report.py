@@ -40,6 +40,8 @@ def render(state: dict) -> str:
         lines.append(f"### {stage['name']} — {headline}")
         if stage.get("provider"):
             lines.append(f"- Provider: {stage['provider']}")
+        if stage.get("engine"):
+            lines.append(f"- Engine: {stage['engine']}")
         if status == "error":
             lines.append(f"- Did not run: {stage.get('note', 'unknown error')}")
         else:

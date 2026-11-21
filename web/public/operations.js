@@ -75,6 +75,8 @@
     ] },
     'browser-session': { help: 'Sign in manually in the runner’s own browser, then finish. The resulting cookie session is held by the runner; no SSO password is entered here.', fields: [] },
   };
+  let sourceContext = null;
+  document.addEventListener('threatlint:context', event => { sourceContext = event.detail; });
   const scm = {
     connections: [], connectionId: '', repositories: [], repository: null, branches: [],
     repositoryPage: 0, repositoryHasMore: false, branchPage: 0, branchHasMore: false,
@@ -578,10 +580,11 @@
   }
   function authorization() {
     if (!$('runtime-authorized').checked) throw new InputError('Explicitly authorize this target and scope before continuing.', 'runtime-authorized');
-    const target = checkedUrl($('runtime-target').value.trim(), 'runtime-target');
+    const sourceMode = $('runtime-source-mode').value === 'source';
+    const target = sourceMode ? 'http://127.0.0.1' : checkedUrl($('runtime-target').value.trim(), 'runtime-target');
     const reason = $('runtime-authorization-reason').value.trim();
     if (!reason) throw new InputError('Describe the authorization context for this environment.', 'runtime-authorization-reason');
-    return { target, authorization: { confirmed: true, allowPrivate: $('runtime-allow-private').checked, reason } };
+    return { target, authorization: { confirmed: true, allowPrivate: sourceMode || $('runtime-allow-private').checked, reason } };
   }
   function browserScope(config) { return JSON.stringify([config.target, config.authorization.allowPrivate, config.authorization.reason]); }
   function parseJson(raw, field, message) {
@@ -726,7 +729,16 @@
     const compareAnonymous = type !== 'none' && $('runtime-compare-anonymous').checked;
     if (assertions.length && type !== 'none' && !compareAnonymous) throw new InputError('Enable anonymous comparison to evaluate anonymous assertions with a primary authenticated identity.', 'runtime-compare-anonymous');
     const limits = scanLimits();
-    return { ...config, paths, auth: primaryAuth(config), roles: roleProfiles(), checks: { compareAnonymous }, assertions, limits };
+    const sourceMode = $('runtime-source-mode').value === 'source';
+    let source;
+    if (sourceMode) {
+      if (!$('runtime-source-build').checked) throw new InputError('Authorize building this source in the temporary environment.', 'runtime-source-build');
+      if (!$('runtime-source-workspace').checked && !$('runtime-source-url').value.trim()) throw new InputError('Supply the source repository link or choose the open workspace.', 'runtime-source-url');
+      if ($('runtime-source-workspace').checked && !sourceContext?.session?.id) throw new InputError('Open the source workspace under Review code first.', 'runtime-source-workspace');
+      if (type === 'none' && !$('runtime-source-anonymous').checked) throw new InputError('Provide sandbox application credentials, or explicitly choose an anonymous-only scan.', 'runtime-auth-type');
+      source = { ...($('runtime-source-workspace').checked ? { workspaceId: sourceContext.session.id } : { url: $('runtime-source-url').value.trim(), branch: $('runtime-source-branch').value.trim() }), confirmBuild: true, anonymousConfirmed: $('runtime-source-anonymous').checked };
+    }
+    return { ...config, paths, auth: primaryAuth(config), roles: roleProfiles(), checks: { compareAnonymous }, assertions, limits, ...(source ? { source } : {}) };
   }
   // Additional roles use simple token-style workflows so each row stays compact.
   const ROLE_TYPES = [['bearer', 'Bearer token'], ['basic', 'HTTP Basic'], ['cookie', 'Cookie header'], ['api-key', 'API key header']];
@@ -1306,6 +1318,14 @@
     if (event.currentTarget.getAttribute('aria-disabled') === 'true') event.preventDefault();
   }
   function wireRuntime() {
+    $('runtime-source-mode').addEventListener('change', () => {
+      const sourceMode = $('runtime-source-mode').value === 'source';
+      $('runtime-source-fields').hidden = !sourceMode; $('runtime-target').required = !sourceMode; $('runtime-target').disabled = sourceMode;
+      $('runtime-target').closest('.operations-field').hidden = sourceMode;
+      $('runtime-allow-private').closest('label').hidden = sourceMode;
+      if (sourceMode) $('runtime-max-requests').value = Math.min(40, Number($('runtime-max-requests').value));
+      document.dispatchEvent(new CustomEvent('threatlint:request-context'));
+    });
     $('runtime-scan-form').addEventListener('submit', startScan);
     $('runtime-auth-type').addEventListener('change', () => { clearAuthInputs(); renderAuthFields(); });
     $('runtime-clear-auth').addEventListener('click', () => { clearAuthInputs(); syncRuntimeControls(); status('runtime-status', 'Authentication inputs and the form’s browser-session handle were cleared. Runner-held sessions expire separately.'); });

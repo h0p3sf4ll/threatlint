@@ -13,13 +13,14 @@
  *   user-defined dashboards as JSON (no report content is copied into them).
  */
 
+const { findingType } = require('./finding-types.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNSPECIFIED'];
 const SEVERITY_WEIGHT = { CRITICAL: 10, HIGH: 6, MEDIUM: 3, LOW: 1, INFO: 0, UNSPECIFIED: 1 };
-const DIMENSIONS = ['severity', 'agent', 'category', 'workspace', 'day', 'week', 'disposition', 'confidence', 'source', 'rule'];
+const DIMENSIONS = ['severity', 'agent', 'category', 'workspace', 'day', 'week', 'disposition', 'confidence', 'source', 'rule', 'findingType'];
 const METRICS = ['findings', 'reports', 'riskScore', 'uniqueFindings', 'evidenceCoverage'];
 const CHARTS = ['kpi', 'bar', 'hbar', 'line', 'donut', 'table', 'heatmap'];
 
@@ -42,7 +43,7 @@ function collectFacts({ sessions, runtimeScans = [], agents = {}, trackerFacts =
       if (!report.findings?.length) { facts.push({ ...base, empty: true }); continue; }
       for (const finding of report.findings) {
         facts.push({ ...base, severity: finding.severity || 'UNSPECIFIED', confidence: finding.confidence || 'UNSPECIFIED', disposition: finding.disposition || 'OPEN',
-          findingId: finding.id, rule: finding.id.replace(/-\d+$/, ''), title: finding.title, fingerprint: finding.fingerprint || `${report.agentId}|${finding.id}`, hasEvidence: !!finding.evidence?.length });
+          findingType: findingType(finding), findingId: finding.id, rule: finding.rule || finding.id.replace(/-\d+$/, ''), title: finding.title, fingerprint: finding.fingerprint || `${report.agentId}|${finding.id}`, hasEvidence: !!finding.evidence?.length });
       }
     }
   }
@@ -51,7 +52,7 @@ function collectFacts({ sessions, runtimeScans = [], agents = {}, trackerFacts =
       workspace: scan.target, timestamp: scan.startedAt, day: isoDay(scan.startedAt), week: isoWeek(scan.startedAt) };
     if (!scan.findings.length) { facts.push({ ...base, empty: true }); continue; }
     for (const finding of scan.findings) {
-      facts.push({ ...base, severity: finding.severity, confidence: 'OBSERVED', disposition: 'OPEN', findingId: finding.id, rule: finding.rule, title: finding.title,
+      facts.push({ ...base, severity: finding.severity, confidence: 'OBSERVED', disposition: 'OPEN', findingType: findingType(finding), findingId: finding.id, rule: finding.rule, title: finding.title,
         fingerprint: `${scan.target}|${finding.rule}|${finding.path}`, hasEvidence: true });
     }
   }
@@ -145,7 +146,8 @@ const DEFAULT_DASHBOARD = Object.freeze({
     { id: 'w6', title: 'Findings over time', chart: 'line', metric: 'findings', groupBy: 'day', size: 2 },
     { id: 'w7', title: 'Risk by specialist or tracker', chart: 'hbar', metric: 'riskScore', groupBy: 'agent', size: 2 },
     { id: 'w8', title: 'Specialist / tracker × severity', chart: 'heatmap', metric: 'findings', groupBy: 'agent', columns: 'severity', size: 2 },
-    { id: 'w9', title: 'Risk by workspace', chart: 'table', metric: 'riskScore', groupBy: 'workspace', size: 4 },
+    { id: 'w10', title: 'Finding types', chart: 'hbar', metric: 'findings', groupBy: 'findingType', size: 4 },
+    { id: 'w9', title: 'Repository risk', chart: 'table', metric: 'riskScore', groupBy: 'workspace', size: 4 },
   ],
 });
 
@@ -166,7 +168,7 @@ function validateDashboard(input) {
     for (const key of ['severity', 'agent', 'category', 'workspace', 'source', 'disposition', 'since']) {
       const value = widget.filters?.[key];
       if (value === undefined || value === '') continue;
-      if (typeof value !== 'string' || value.length > 300) throw new Error(`Widget ${index + 1}: invalid ${key} filter`);
+      if (!(typeof value === 'string' && value.length <= 300) && !(key === 'source' && Array.isArray(value) && value.length <= 10 && value.every(id => typeof id === 'string' && id.length <= 100))) throw new Error(`Widget ${index + 1}: invalid ${key} filter`);
       filters[key] = value;
     }
     return { id: typeof widget.id === 'string' && /^[\w-]{1,40}$/.test(widget.id) ? widget.id : `w${index + 1}`, title, chart: widget.chart, metric: widget.metric, groupBy,

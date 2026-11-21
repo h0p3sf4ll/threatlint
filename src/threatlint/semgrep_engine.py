@@ -8,9 +8,38 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from pathlib import Path
 
 from threatlint import semgrep_rule_text
+
+
+def _login_verified(executable, env) -> bool:
+    token = env.get("SEMGREP_APP_TOKEN")
+    if token:
+        from threatlint.tls import ssl_context  # noqa: PLC0415
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *_args, **_kwargs):
+                return None
+        opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ssl_context()))
+        request = urllib.request.Request("https://semgrep.dev/api/agent/deployments/current", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        with opener.open(request, timeout=25) as response:
+            payload = json.loads(response.read(100001))
+        deployment = payload.get("deployment") if isinstance(payload, dict) else None
+        return isinstance(deployment, dict) and type(deployment.get("id")) is int
+    login = subprocess.run([executable, "show", "deployment", "--json"], capture_output=True, text=True,
+                           timeout=30, check=False, env=env, shell=False)
+    if login.returncode:
+        return False
+    try:
+        payload = json.loads(login.stdout)
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    deployment = payload.get("deployment")
+    identifier = payload.get("id") if "id" in payload else deployment.get("id") if isinstance(deployment, dict) else None
+    return type(identifier) is int
 
 
 def _pro_candidates(executable: str) -> list[Path]:
@@ -78,6 +107,49 @@ def run(args, cwd=None, token=None, *, environment, error_type):
         [executable, *args], cwd=cwd, capture_output=True, text=True,
         timeout=600, check=False, env=env, shell=False,
     )
+
+
+def scanner_status(*, environment, token=None) -> dict:
+    """Verify the current login and a tiny Pro scan before selecting an engine.
+
+    Binary presence alone does not establish account access. The smoke test uses
+    synthetic source, never the user's repository, and returns no credential data.
+    """
+    status = engine_status(environment=environment)
+    status.update(engine="oss", authenticated=False, pro_enabled=None,
+                  descriptor="Semgrep Community Edition — Pro access not verified")
+    if not status["cli_version"]:
+        status.update(engine=None, descriptor="Semgrep is not installed on this runner")
+        return status
+    env = environment()
+    env.update(SEMGREP_SEND_METRICS="off", SEMGREP_ENABLE_VERSION_CHECK="0")
+    if token:
+        env["SEMGREP_APP_TOKEN"] = token
+    executable = shutil.which("semgrep")
+    try:
+        if not _login_verified(executable, env):
+            return status
+        status["authenticated"] = True
+        if not status["pro_ready"]:
+            status["descriptor"] = "Semgrep Community Edition — logged in; install the matching Pro engine to verify Pro access"
+            return status
+        with tempfile.TemporaryDirectory(prefix="threatlint-pro-check-") as work:
+            root = Path(work)
+            (root / "rule.json").write_text(json.dumps({"rules": [{"id": "threatlint-pro-check", "languages": ["python"],
+                "message": "Synthetic engine check", "severity": "INFO", "pattern": "print(...)"}]}), encoding="utf-8")
+            (root / "check.py").write_text("print('synthetic')\n", encoding="utf-8")
+            check = subprocess.run([executable, "scan", "--pro", "--config", str(root / "rule.json"), "--json",
+                                    "--metrics", "off", "--disable-version-check", str(root / "check.py")],
+                                   capture_output=True, text=True, timeout=45, check=False, env=env, shell=False)
+            payload = json.loads(check.stdout or "{}")
+            if check.returncode == 0 and not payload.get("errors") and payload.get("results"):
+                status.update(engine="pro", pro_enabled=True,
+                              descriptor="Semgrep Pro — current login and Pro engine verified; cross-file analysis enabled")
+            else:
+                status["descriptor"] = "Semgrep Community Edition — Pro verification failed for this login"
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        status["descriptor"] = "Semgrep Community Edition — Pro verification unavailable"
+    return status
 
 
 def matches(config, target, line, exact=False, *, run, pro_flags, error_type):
