@@ -295,7 +295,8 @@ def test_only_optional_get_404_is_treated_as_missing(monkeypatch):
         github_pr._request("https://api.github.com/repos/contoso/api", TOKEN, body={"draft": True}, missing_ok=True)
 
 
-@pytest.mark.parametrize("payload", [b"not-json", b"null", b"x" * (2 * 1024 * 1024 + 1)])
+@pytest.mark.parametrize("payload", [b"not-json", b"null", b"x" * (2 * 1024 * 1024 + 1)],
+                         ids=["invalid-json", "null-json", "oversized"])
 def test_transport_rejects_malformed_or_oversized_responses(monkeypatch, payload):
     class Opener:
         def open(self, request, timeout):
