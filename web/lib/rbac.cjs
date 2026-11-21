@@ -111,6 +111,7 @@ function requiredPermission(method, pathname) {
   if (pathname.startsWith('/api/access/')) return 'manageMembers';
   if (/^\/api\/management\/connections(?:\/[^/]+)?(?:\/test)?\/?$/.test(pathname) ||
       /^\/api\/(?:servicenow|semgrep|github|ado)(?:\/settings(?:\/|$)|\/service-account(?:\/|$)|\/parameter-store(?:\/|$))/.test(pathname) ||
+      /^\/api\/issue-trackers\/[^/]+\/settings(?:\/|$)/.test(pathname) ||
       /^\/api\/scanners\/[^/]+\/settings(?:\/|$)/.test(pathname)) return 'manageSettings';
   // Each analyst owns a separate model profile and in-memory source sessions. These actions
   // never change organization connection settings or another member's runtime.

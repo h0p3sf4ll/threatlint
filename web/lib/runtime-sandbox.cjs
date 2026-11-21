@@ -62,6 +62,7 @@ function createSandboxRuntime({ live, store, resolveSource, spawnImpl = spawn })
     if (scan.status !== 'cancelling') scan.status = 'complete';
   }
   return {
+    get active() { return starting > 0 || children.size > 0 || live.active === true; },
     async start(config) {
       if (!config?.source?.workspaceId && !config?.source?.url) return live.start(config);
       if (config.source.confirmBuild !== true) throw new HttpError('Authorize building the supplied source in an ephemeral environment');

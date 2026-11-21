@@ -105,7 +105,7 @@
       const tool = name === 'sonarreview' ? 'sonar' : 'dojo'; name = 'fpreview';
       document.dispatchEvent(new CustomEvent('threatlint:triage-source', { detail: { source: tool } }));
     }
-    const titles = { security: 'Security scanner', intelligence: 'Repository risk', management: 'Issue management', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
+    const titles = { designreviews: 'Design & threats', specialistreviews: 'Specialist reviews', security: 'Security scanner', intelligence: 'Repository risk', management: 'Issue management', fpreview: 'Finding triage', scanimport: 'Triage a scan report', dojoreview: 'DefectDojo review', sonarreview: 'SonarQube review', settings: 'Settings', workbench: 'Review code', sources: 'Connect source', runtime: 'Scan running app', reports: 'Findings', chat: 'Ask Threatlint', metrics: 'Metrics', agents: 'Agents', skills: 'Skills', learn: 'Learn & videos', sidekick: 'Sidekick', 'sk-vreports': 'Generate vReports', 'sk-loadouts': 'Loadouts', 'sk-find': 'Find projects', 'sk-reports': 'View vReports', 'sk-branch': 'Branch report', 'sk-trends': 'Trends', 'sk-ownership': 'Ownership hub', 'sk-avit': 'AVIT closure', 'sk-triage': 'Bulk triage', 'sk-actions': 'Actions history' };
     if (!Object.hasOwn(titles, name)) return;
     state.view = name;
     if (name === 'settings') loadSettingsForm();
@@ -590,7 +590,7 @@
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube', 'integrations', 'access'].includes(section) ? section : 'model'}`);
+    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube', 'integrations', 'access', 'tracker-github', 'tracker-jira', 'tracker-azure-devops'].includes(section) ? section : 'model'}`);
     document.dispatchEvent(new CustomEvent('threatlint:settings-section', { detail: { section } }));
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
@@ -1162,6 +1162,16 @@
       state.pipeline = ['appsec-runtime-reviewer']; state.statuses = {}; state.preset = 'runtime';
       renderPipeline(); renderPresets(); renderAgents(); showView('workbench');
       if (!state.session) toast('Runtime evidence attached. Open the repository that serves this app so the agent can correlate it with source.');
+    });
+    document.addEventListener('threatlint:configure-review', event => {
+      if (state.running) { toast('Stop the current review before changing specialists.', true); return; }
+      if (profile?.permissions?.review === false) { toast('Your role cannot run reviews.', true); return; }
+      const agents = event.detail?.agents;
+      if (!Array.isArray(agents) || !agents.length || agents.some(id => !agentById(id))) { toast('Choose an available specialist.', true); return; }
+      state.pipeline = [...new Set(agents)]; state.statuses = {}; state.preset = '';
+      renderPipeline(); renderPresets(); renderAgents(); showView('workbench');
+      $('pipeline-title').scrollIntoView({ block: 'start' }); $('target').focus({ preventScroll: true });
+      toast(`${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} selected. Add context and run when ready.`);
     });
     document.addEventListener('threatlint:navigate', event => showView(event.detail.view));
     // Other views (e.g. Triage a scan report) open a saved report in Findings, switching to its workspace when idle.

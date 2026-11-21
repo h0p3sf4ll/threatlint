@@ -91,7 +91,7 @@ it('protects the full workbench and rejects incorrect hosts and cross-origin mut
   assert.equal((await fixture.call('/')).status, 200);
   assert.equal((await fixture.call('/auth/session')).status, 401);
   assert.equal((await fixture.call('/api/sessions')).status, 401);
-  for (const route of ['/app.js', '/styles.css', '/vendor/marked.js']) {
+  for (const route of ['/app.js', '/styles.css', '/controls.css', '/specialist-workflows.js', '/unified-workflows.js', '/vendor/marked.js']) {
     const denied = await fixture.call(route);
     assert.equal(denied.status, 302); assert.equal(denied.headers.get('location'), '/login');
   }
@@ -103,7 +103,9 @@ it('protects the full workbench and rejects incorrect hosts and cross-origin mut
   assert.equal(account.status, 200);
   assert.match(account.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
   assert.equal((await fixture.call('/', { cookie: account.cookie })).status, 200);
-  assert.equal((await fixture.call('/app.js', { cookie: account.cookie })).status, 200);
+  for (const route of ['/app.js', '/controls.css', '/specialist-workflows.js', '/unified-workflows.js']) assert.equal((await fixture.call(route, { cookie: account.cookie })).status, 200, route);
+  const html = (await fixture.call('/', { cookie: account.cookie })).body;
+  assert.match(html, /id="view-designreviews"/); assert.match(html, /id="view-specialistreviews"/);
   const blocked = await fixture.call('/api/model-preferences', { method: 'PUT', cookie: account.cookie, json: PREFERENCES, headers: { Origin: '' } });
   assert.equal(blocked.status, 403);
   const worker = await fixture.web.workers.get(account.body.user);

@@ -17,6 +17,7 @@
   <script src="/activity-log.js" defer></script>
   <script src="/platform-controls.js" defer></script>
   <link rel="stylesheet" href="/platform.css">
+  <link rel="stylesheet" href="/controls.css">
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
   <script src="/management.js" defer></script>
@@ -30,6 +31,7 @@
   <script src="/security-platform.js" defer></script>
   <script src="/finding-intelligence.js" defer></script>
   <script src="/unified-workflows.js" defer></script>
+  <script src="/specialist-workflows.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to workspace</a>
@@ -38,6 +40,8 @@
     <nav aria-label="Main navigation">
       <div class="sidebar-label">1 · TEST</div>
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
+      <button class="nav-item" data-view="designreviews" aria-controls="view-designreviews"><span class="nav-icon" aria-hidden="true">⑂</span>Design &amp; threats</button>
+      <button class="nav-item" data-view="specialistreviews" aria-controls="view-specialistreviews"><span class="nav-icon" aria-hidden="true">⌘</span>Specialist reviews</button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Scan running app<small class="nav-caption">Preview · not yet GA</small></span></button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>Finding triage</button>
       <div class="sidebar-label">2 · FIX</div>
@@ -68,6 +72,18 @@
     </header>
 
     <main id="main" tabindex="-1">
+      <section class="view specialist-workspace" id="view-designreviews" aria-labelledby="designreviews-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>FOCUSED SECURITY EXPERTISE</div><h1 id="designreviews-title">Design &amp; threats</h1><p class="page-description">Map the system, examine attack paths, and prepare realistic adversarial scenarios.</p></div></div>
+        <p class="specialist-handoff">Choose a specialist to prepare your review. In Review code, select the source, add context, and run when ready.</p>
+        <div class="specialist-tabs" role="tablist" aria-label="Design &amp; threats"></div>
+        <div class="specialist-panels"><p role="status">Loading specialists…</p></div>
+      </section>
+      <section class="view specialist-workspace" id="view-specialistreviews" aria-labelledby="specialistreviews-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow"><span class="tiny-line"></span>FOCUSED SECURITY EXPERTISE</div><h1 id="specialistreviews-title">Specialist reviews</h1><p class="page-description">Choose focused expertise for your application, AI and data, delivery pipeline, or verification work.</p></div></div>
+        <p class="specialist-handoff">Choose a specialist to prepare your review. In Review code, select the source, add context, and run when ready.</p>
+        <div class="specialist-tabs" role="tablist" aria-label="Specialist reviews"></div>
+        <div class="specialist-panels"><p role="status">Loading specialists…</p></div>
+      </section>
       <section class="view active" id="view-workbench" aria-labelledby="workbench-title">
         <div class="page-heading"><div><div class="eyebrow"><span class="tiny-line"></span>SECURITY REVIEW FOR DEVELOPERS</div><h1 id="workbench-title">Find it before it ships.<br><span class="muted-heading">Fix it while it’s fresh.</span></h1><p class="page-description">Point Threatlint at your code, pick a playbook, and get findings with the file, the line, the fix, and the test.</p></div><div class="heading-actions"><button class="button secondary" id="preview-example">View sample report <span>↗</span></button><span class="small subtle">No scan or API key required</span></div></div>
 

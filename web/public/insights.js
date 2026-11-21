@@ -10,7 +10,7 @@
   const TRACKER_SETTINGS = { 'servicenow-avit': 'servicenow', defectdojo: 'defectdojo', github: 'tracker-github', jira: 'tracker-jira', 'azure-devops': 'tracker-azure-devops' };
   const AGGREGATE_FILTERS = ['scm', 'organization', 'project', 'repository', 'branch', 'findingType',
     'riskRating', 'state', 'substate', 'assignmentGroup', 'source', 'createdFrom', 'createdTo'];
-  const state = { schema: null, dashboards: [], current: 'default', source: localStorage.getItem('threatlint.metrics.sources.v1') || 'all', editing: null, help: null, loaded: false, preferencesLoaded: false,
+  const state = { schema: null, dashboards: [], current: 'default', source: 'all', editing: null, help: null, loaded: false, preferencesLoaded: false,
     avitScope: { type: 'avits', avits: '', query: '' }, avitScopeTouched: false,
     avitAggregate: null, aggregateDirty: false, avitConfigured: false };
 
@@ -276,6 +276,7 @@
   function openTrackerSettings(id) {
     const section = TRACKER_SETTINGS[id];
     document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view: 'settings' } }));
+    document.dispatchEvent(new CustomEvent('threatlint:settings-section', { detail: { section: section?.startsWith('tracker-') ? 'servicenow' : section === 'snow' ? 'servicenow' : section } }));
     setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ block: 'start' }), 0);
   }
   function updateExportLink() {
@@ -473,7 +474,7 @@
   async function initialize() {
     if (!$('view-metrics')) return;
     $('dashboard-select').addEventListener('change', event => { state.current = event.target.value; renderDashboardSelect(); renderDashboard(); });
-    $('metrics-source').addEventListener('change', event => { state.source = [...event.target.selectedOptions].map(option => option.value).join(',') || 'all'; localStorage.setItem('threatlint.metrics.sources.v1', state.source); void api('/api/metrics/preferences', { method: 'POST', body: JSON.stringify({ sources: state.source.split(',') }), keepalive: true }).catch(error => { $('metrics-tracker-error').textContent = `Source selection could not be saved: ${error.message}`; }); updateExportLink(); renderDashboard(); });
+    $('metrics-source').addEventListener('change', event => { state.source = [...event.target.selectedOptions].map(option => option.value).join(',') || 'all'; (window.ThreatlintProfile?.storage || localStorage).setItem('threatlint.metrics.sources.v1', state.source); void api('/api/metrics/preferences', { method: 'POST', body: JSON.stringify({ sources: state.source.split(',') }), keepalive: true }).catch(error => { $('metrics-tracker-error').textContent = `Source selection could not be saved: ${error.message}`; }); updateExportLink(); renderDashboard(); });
     $('metrics-range').addEventListener('change', renderDashboard);
     $('metrics-refresh-connections').addEventListener('click', loadConnections);
     $('avit-aggregate-form').addEventListener('input', () => { state.aggregateDirty = true; updateAggregateNote(); });
@@ -504,6 +505,7 @@
     });
     try {
       await window.ThreatlintProfile?.ready;
+      state.source = (window.ThreatlintProfile?.storage || localStorage).getItem('threatlint.metrics.sources.v1') || 'all';
       state.help = await api('/api/help');
       // View modules may contribute help for their own pages; server-provided entries win on a shared key or id.
       const extras = window.ThreatlintHelpExtras || {};

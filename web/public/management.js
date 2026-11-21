@@ -317,7 +317,7 @@
     if (event.detail.view === 'settings') { chooseCategory(state.category); void loadAccess(); }
     if (event.detail.view === 'management') { void Promise.all([loadConnections(), loadFindings(), loadAccess()]).then(() => { renderConnections(); renderFindings(); }); }
   });
-  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(section === 'integrations' ? 'integrations' : section === 'access' ? 'access' : ['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube'].includes(section) ? 'scanners' : 'general'); });
+  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(section === 'integrations' ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
   document.addEventListener('threatlint:context', event => { state.contextSession = event.detail.session?.id || null; });
   document.addEventListener('threatlint:ticket-create', async event => {
     await loadConnections();

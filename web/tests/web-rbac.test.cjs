@@ -65,7 +65,7 @@ it('enforces company roles before forwarding API calls and rejects forged header
   for (const route of ['/api/session/local', '/api/runtime/scans', '/api/servicenow/close-false-positive', '/api/management/findings/create', '/API/GITHUB/SETTINGS', ...platformMutations]) {
     assert.equal((await app.call(route, { cookie: viewer.cookie, method: 'POST', json: { role: 'administrator' }, headers: { 'X-Threatlint-Role': 'administrator' } })).status, 403, route);
   }
-  for (const route of ['/api/github/settings', '/api/ado/service-account', '/api/scanners/dojo/settings', '/api/management/connections']) {
+  for (const route of ['/api/github/settings', '/api/ado/service-account', '/api/scanners/dojo/settings', '/api/issue-trackers/github/settings', '/api/issue-trackers/jira/settings', '/api/issue-trackers/azure-devops/settings', '/api/management/connections']) {
     assert.equal((await app.call(route, { cookie: analyst.cookie, method: 'POST', json: {} })).status, 403, route);
   }
   assert.equal((await app.call('/API/MODEL-PREFERENCES/', { cookie: viewer.cookie, method: 'PUT', json: {} })).status, 403);

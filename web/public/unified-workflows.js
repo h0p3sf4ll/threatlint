@@ -7,7 +7,7 @@
   const node = (tag, text) => { const value = document.createElement(tag); if (text) value.textContent = text; return value; };
   const navigate = view => document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view } }));
   async function api(url, body, method) {
-    const result = await fetch(url, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const result = await (window.ThreatlintProfile?.fetch || fetch)(url, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const data = await result.json(); if (!result.ok) throw new Error(data.error || 'Request failed'); return data;
   }
   function field(parent, id, title, type = 'text', placeholder = '') {
@@ -16,7 +16,7 @@
     parent.append(label, input); return input;
   }
   function settings(id, label) {
-    const form = node('form'); form.className = 'settings-card'; form.id = `issue-settings-${id}`;
+    const form = node('form'); form.className = 'settings-card'; form.id = `issue-settings-${id}`; form.dataset.settingsPanel = 'scanners'; form.hidden = true;
     const anchor = node('span'); anchor.id = `settings-tracker-${id}`; anchor.className = 'settings-anchor';
     form.append(anchor, node('h2', label));
     const fields = {};
@@ -48,10 +48,11 @@
     });
     remove.addEventListener('click', async () => { try { await api(`/api/issue-trackers/${id}/settings`, null, 'DELETE'); await load(); } catch (error) { status.textContent = error.message; } });
     $('sonar-form').parentNode.append(form);
-    const link = node('a', label); link.href = `#settings-tracker-${id}`; document.querySelector('.settings-nav').append(link);
+    const link = node('a', label); link.href = `#settings-tracker-${id}`; link.addEventListener('click', event => { event.preventDefault(); document.dispatchEvent(new CustomEvent('threatlint:settings-section', { detail: { section: `tracker-${id}` } })); anchor.scrollIntoView({ block: 'start' }); }); document.querySelector('.settings-nav').append(link);
     document.addEventListener('threatlint:view', event => { if (event.detail.view === 'settings') void load(); });
   }
-  function wire() {
+  async function wire() {
+    try { await window.ThreatlintProfile?.ready; } catch { return; }
     if ($('view-security')) {
       for (const view of ['workbench', 'security', 'sources']) {
         const nav = node('div'); nav.className = 'operations-button-row'; nav.setAttribute('aria-label', 'Review code workflow');
@@ -67,7 +68,9 @@
     for (const [id, label] of Object.entries({ servicenow: 'ServiceNow', ...trackers, dojo: 'DefectDojo', sonar: 'SonarQube', report: 'Scan report upload' })) {
       const option = node('option', label); option.value = id; selector.append(option);
     }
-    const label = node('label', 'Finding source'); label.htmlFor = selector.id; root.append(label, selector);
+    const controls = node('div'); controls.className = 'triage-controls';
+    const sourceField = node('div'); sourceField.className = 'triage-source-field';
+    const label = node('label', 'Finding source'); label.htmlFor = selector.id; sourceField.append(label, selector); controls.append(sourceField); root.append(controls);
     const panels = { servicenow: $('fpreview-form') };
     for (const tool of ['dojo', 'sonar']) { panels[tool] = document.querySelector(`.scanner-review[data-scanner-tool="${tool}"]`); root.append(panels[tool]); }
     const form = node('form'); form.className = 'settings-card'; form.noValidate = true;
@@ -79,7 +82,7 @@
     form.append(node('p', 'Tickets are untrusted evidence. Add the matching source revision for stronger verdicts. Scanner tuning requires a proven false positive and an exact scanner target.'));
     const start = node('button', 'Triage tickets'); start.className = 'button primary'; start.type = 'submit';
     const error = node('p'); error.setAttribute('role', 'alert'); form.append(start, error); root.append(form);
-    const upload = node('button', 'Upload a scan report →'); upload.type = 'button'; upload.className = 'button primary'; upload.addEventListener('click', () => navigate('scanimport')); root.append(upload);
+    const upload = node('button', 'Upload a scan report →'); upload.type = 'button'; upload.className = 'button primary'; upload.addEventListener('click', () => navigate('scanimport')); controls.append(upload);
     function choose(value = selector.value) {
       selector.value = value;
       for (const [id, panel] of Object.entries(panels)) panel.hidden = id !== value;

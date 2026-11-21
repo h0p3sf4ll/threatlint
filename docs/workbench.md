@@ -450,3 +450,9 @@ and optional `hooks:install` for the repository's Git hooks. See [Development](d
 | `web/lib/store.cjs`, `report-writer.cjs`, `chat.cjs` | Persistence, reports, conversations |
 | `web/lib/scm.cjs`, `runtime.cjs`, `metrics.cjs` | Source checkout, observations, dashboard facts |
 | `web/public/` | Views communicating through `threatlint:*` DOM events |
+
+### Focused specialist workspaces
+
+Design & threats groups Threat model, Attack paths, and Adversarial scenarios. Specialist reviews groups Application security, AI & data, Delivery & infrastructure, and Verification & assurance. Together with Finding triage, these entry points cover all 22 canonical agents. Each specialist card describes the review and deliverable. Prepare review loads that specialist (or a group) into Review code without starting a run; source, model, supporting evidence, and scope remain in the shared review builder. Group tabs support arrow keys, Home, and End.
+
+The browser and desktop load the same controls stylesheet and workflow modules, including button spacing, inset select chevrons, and responsive layouts. Hosted access controls remain enforced by the gateway; tracker ingestion settings require administrator access. Metrics source preferences use profile-scoped browser storage and persist on the server.

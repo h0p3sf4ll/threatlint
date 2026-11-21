@@ -327,6 +327,7 @@ async function scannerFlows(page) {
   // The remote fixture model from the earlier step needs consent before any review can start.
   await page.locator('#cloud-consent').check(); await page.locator('#settings-form button[type=submit]').click();
   await page.locator('#settings-button').click();
+  await page.locator('[data-settings-category=scanners]').click();
   await page.locator('#dojo-form').scrollIntoViewIfNeeded();
   await page.locator('#dojo-url').fill('https://dojo.example.test');
   await page.locator('#dojo-token').fill('synthetic-dojo-token-0000');

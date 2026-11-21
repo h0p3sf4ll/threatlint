@@ -36,11 +36,50 @@ const { createWorkbench } = require('../server.js');
       assert.equal(await page.locator(`#${source}review-form`).isVisible(), true);
       assert.equal(await page.locator('#fpreview-form').isVisible(), false);
     }
+    await page.locator('#triage-source').selectOption('report');
+    assert.equal(await page.locator('#fpreview-run').isVisible(), false, 'idle ServiceNow run stays hidden for upload');
+    const spacing = await page.locator('.triage-controls').evaluate(root => {
+      const a = root.querySelector('select').getBoundingClientRect(), b = root.querySelector('button').getBoundingClientRect();
+      return { gap: b.left - a.right, padding: parseFloat(getComputedStyle(root.querySelector('select')).paddingRight), height: b.height };
+    });
+    assert.ok(spacing.gap >= 16); assert.ok(spacing.padding >= 40); assert.ok(spacing.height >= 44);
+    await page.screenshot({ path: '/tmp/threatlint-triage-spacing-desktop.png', fullPage: true });
+    const covered = new Set(['appsec-fp-reviewer']);
+    for (const view of ['designreviews', 'specialistreviews']) {
+      await page.locator(`[data-view="${view}"]`).click();
+      const root = page.locator(`#view-${view}`);
+      await root.locator('[role=tab]').first().waitFor();
+      for (const tab of await root.locator('[role=tab]').all()) {
+        await tab.click(); assert.equal(await tab.getAttribute('aria-selected'), 'true');
+        const panel = page.locator(`#${await tab.getAttribute('aria-controls')}`);
+        assert.equal(await panel.isVisible(), true);
+        for (const card of await panel.locator('[data-agent-id]').all()) covered.add(await card.getAttribute('data-agent-id'));
+        const prepare = panel.locator('[data-review-agents]').first(), ids = (await prepare.getAttribute('data-review-agents')).split(',');
+        await prepare.click();
+        assert.equal(await page.locator('#view-workbench').isVisible(), true);
+        assert.equal(await page.locator('#pipeline-list > *').count(), ids.length);
+        assert.equal(await page.locator('#activity-badge').innerText(), 'Standing by');
+        await page.locator(`[data-view="${view}"]`).click();
+      }
+      const tabs = root.locator('[role=tab]'); await tabs.first().focus(); await page.keyboard.press('End');
+      assert.equal(await tabs.last().getAttribute('aria-selected'), 'true');
+      await page.keyboard.press('Home'); assert.equal(await tabs.first().getAttribute('aria-selected'), 'true');
+    }
+    assert.deepEqual([...covered].sort(), (await (await page.request.get(`${base}/api/agents`)).json()).map(agent => agent.id).sort());
+    await page.screenshot({ path: '/tmp/threatlint-specialist-tabs-desktop.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const view of ['designreviews', 'specialistreviews', 'fpreview']) {
+      await page.locator(`[data-view="${view}"]`).click();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${view} must fit mobile`);
+      await page.screenshot({ path: `/tmp/threatlint-${view}-mobile.png`, fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('#triage-source').selectOption('github');
     await page.locator('#triage-ticket-refs').fill('#42');
     await page.getByRole('button', { name: 'Triage tickets', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'Choose a model' }).waitFor();
     await page.locator('#settings-button').click();
+    await page.locator('.settings-nav a[href="#settings-tracker-github"]').click();
     await page.locator('#issue-settings-github p', { hasText: 'Not configured.' }).waitFor();
     await page.locator('#tracker-github-repository').fill('acme/app');
     await page.locator('#tracker-github-token').fill('synthetic-token');
@@ -73,6 +112,6 @@ const { createWorkbench } = require('../server.js');
     assert.equal(await page.locator('#runtime-source-build').isChecked(), false);
     await page.screenshot({ path: '/tmp/threatlint-unified-runtime.png', fullPage: true });
     assert.deepEqual(errors, []);
-    console.log('PASS: unified scanner triage, GitHub ticket ingestion, private tracker settings, finding counts, persisted multi-source metrics, Pro descriptor, and source-runtime prompts.');
+    console.log('PASS: all 22 agent entry points, accessible grouped tabs, mobile layouts, control spacing, unified scanner triage, GitHub ticket ingestion, private tracker settings, finding counts, persisted multi-source metrics, Pro descriptor, and source-runtime prompts.');
   } catch (error) { console.error(error); throw error; } finally { await browser.close(); await app.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -63,7 +63,7 @@ it('scopes shared state by stable organization identity and keeps personal ident
 
 it('covers existing settings, integration writes and reviews with route-specific permissions', () => {
   for (const route of ['/api/github/settings', '/api/servicenow/settings', '/api/semgrep/settings', '/api/ado/settings/test-org',
-    '/api/ado/service-account', '/api/scanners/dojo/settings',
+    '/api/ado/service-account', '/api/issue-trackers/github/settings', '/api/issue-trackers/jira/settings/', '/API/ISSUE-TRACKERS/AZURE-DEVOPS/SETTINGS', '/api/scanners/dojo/settings',
     '/api/management/connections', '/api/management/connections/one', '/api/management/connections/one/test', '/API/GITHUB/SETTINGS']) {
     assert.equal(requiredPermission('POST', route), 'manageSettings', route);
     assert.equal(requiredPermission('GET', route), 'read', route);
