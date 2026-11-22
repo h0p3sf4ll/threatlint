@@ -22,6 +22,7 @@ const { attachSocket } = require('./lib/socket.cjs');
 const { securityHeaders, localRequest, activeRequestCount } = require('./lib/http.cjs');
 const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerModelPreferenceRoutes } = require('./lib/routes/model-preferences.cjs');
+const { registerUiPreferenceRoutes } = require('./lib/routes/ui-preferences.cjs');
 const { registerSourceRoutes } = require('./lib/routes/sources.cjs');
 const { registerRuntimeRoutes, createRuntimeHistory } = require('./lib/routes/runtime.cjs');
 const { registerInsightRoutes } = require('./lib/routes/insights.cjs');
@@ -112,6 +113,7 @@ function createWorkbench(options = {}) {
 
   registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
   registerModelPreferenceRoutes(app, { store });
+  registerUiPreferenceRoutes(app, { store });
   registerSourceRoutes(app, { store, scm, integrations: options.integrations });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
