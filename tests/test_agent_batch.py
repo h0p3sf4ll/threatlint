@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -21,6 +22,55 @@ def arguments(tmp_path, targets=None, *extra):
     source.write_text(json.dumps(targets if targets is not None else ["src/auth", "src/api"]), encoding="utf-8")
     return build_parser().parse_args(["run", "auth-review", "--targets-file", str(source),
                                      "--output-dir", str(tmp_path / "reports"), *extra])
+
+
+def _synthetic_child_diagnostics(reports):
+    """Bounded failure details from this test's two synthetic children only."""
+    lines = []
+    for batch in sorted(reports.glob("threatlint-*-batch-*"))[:1]:
+        try:
+            with (batch / "batch.json").open("rb") as handle:
+                manifest = json.loads(handle.read(65536))
+            statuses = {"queued", "running", "complete", "error", "cancelled"}
+            batch_status = manifest.get("status")
+            lines.append(f"batch status: {batch_status if batch_status in {'complete', 'error'} else 'unrecorded'}")
+            for scope in manifest.get("scopes", [])[:2]:
+                number, status = scope.get("scope"), scope.get("status")
+                if type(number) is int and status in statuses:
+                    lines.append(f"scope {number}: {status}")
+        except (OSError, ValueError, AttributeError, TypeError):
+            lines.append("batch status: unreadable")
+        for number in (1, 2):
+            try:
+                with (batch / f"scope-{number:03d}" / "execution.log").open("rb") as handle:
+                    handle.seek(0, os.SEEK_END)
+                    handle.seek(max(0, handle.tell() - 8192))
+                    detail = handle.read(8192).decode("utf-8", errors="replace")
+                detail = detail.replace("fixture-private", "[redacted]")
+                detail = re.sub(r"(?im)^.*(?:authorization|api[_-]?key|client[_-]?secret|(?:access|refresh)[_-]?token|password).*$",
+                                "[redacted credential-related line]", detail)
+                detail = re.sub(r"(?i)\bBearer\s+[^\s'\",}]+", "Bearer [redacted]", detail)
+                lines.append(f"scope-{number:03d}/execution.log (last 8192 bytes):\n{detail}")
+            except OSError:
+                lines.append(f"scope-{number:03d}/execution.log: unavailable")
+    return "\n".join(lines) or "No synthetic batch diagnostics were written."
+
+
+def test_synthetic_child_diagnostics_are_bounded_and_redacted(tmp_path):
+    batch = tmp_path / "threatlint-auth-review-batch-fixture"
+    scope = batch / "scope-001"
+    scope.mkdir(parents=True)
+    (batch / "batch.json").write_text(json.dumps({"status": "error", "scopes": [
+        {"scope": 1, "status": "error", "target": "not included"}]}), encoding="utf-8")
+    (scope / "execution.log").write_text("omitted prefix\n" + "x" * 9000 +
+        "\nAuthorization: Bearer header-private\napi_key=key-private\nfixture-private\nBearer bare-private\nModuleNotFoundError: synthetic-module\n",
+        encoding="utf-8")
+    detail = _synthetic_child_diagnostics(tmp_path)
+    assert "batch status: error" in detail and "scope 1: error" in detail
+    assert "ModuleNotFoundError: synthetic-module" in detail
+    assert len(detail) < 9000
+    for omitted in ("omitted prefix", "not included", "header-private", "key-private", "fixture-private", "bare-private"):
+        assert omitted not in detail
 
 
 @pytest.mark.parametrize("extra", [["--workers", "0"], ["--workers", "9"], ["--workers", "-1"],
@@ -143,7 +193,7 @@ def test_packaged_cli_children_use_scoped_targets_and_produce_reports(tmp_path, 
     args = arguments(tmp_path, ["src/auth", "src/api"], "--workers", "2", "--model", "fixture",
                      "--base-url", f"http://127.0.0.1:{server.server_port}/v1", "--api-key", "fixture-private")
     try:
-        assert agent_batch.run_batch(args) == 0
+        assert agent_batch.run_batch(args) == 0, _synthetic_child_diagnostics(tmp_path / "reports")
     finally:
         server.shutdown()
         server.server_close()
