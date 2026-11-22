@@ -157,6 +157,8 @@ location / {
 
 Model selections and other non-secret preferences are saved on the server, so signing into the same account restores them on another browser. ServiceNow, Semgrep, Azure DevOps and GitHub settings use the account's own Threatlint configuration directory. Reports, repository history, conversations and dashboards use the account's Workbench directory. The application does not import the gateway host's desktop credentials or an earlier visitor's browser preferences.
 
+Guided or Advanced Experience is saved separately in each profile's `ui-preferences.json`. Every role can change this personal display preference without changing company settings. Desktop keeps the same preference in its local user store across restarts and does not require sign-in.
+
 Provider API keys entered for a review retain the existing Workbench behavior: they stay in memory for the browser session. They are not saved as ordinary model preferences. Integration credentials explicitly saved by their settings forms remain in the profile's private volume and are not returned by settings reads. Protect gateway state and profile-volume backups as sensitive data.
 
 The same views remain available for reviewing code, running security agents, finding triage, importing scanner results, scanning an application, exporting reports, asking questions, working with dashboards and using Sidekick. Actions execute on the server in the account's container. Repository folders, local model URLs and application URLs refer to that container's environment. A remote web app cannot directly browse a visitor's laptop or reuse its CLI sign-ins.
