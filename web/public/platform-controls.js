@@ -3,6 +3,9 @@
 /** Review-builder controls. Provider secrets stay in live form fields and request memory. */
 (function (root) {
   const counts = new Map();
+  let controlsLocked = false;
+  let experienceReady = false;
+  let experienceSaving = false;
   function integer(value, fallback, maximum) {
     const result = value === undefined || value === '' ? fallback : Number(value);
     if (!Number.isInteger(result) || result < 1 || result > maximum) throw new Error(`Choose a whole number from 1 to ${maximum}.`);
@@ -73,21 +76,60 @@
       maxModelRuns: integer(doc()?.getElementById(`${prefix}-maxModelRuns`)?.value, 64, 64) };
   }
   function setLocked(locked) {
-    for (const input of doc()?.querySelectorAll('#orchestration-options input, #orchestration-options select, #experience-mode') || []) input.disabled = locked;
+    controlsLocked = locked;
+    for (const input of doc()?.querySelectorAll('#orchestration-options input, #orchestration-options select') || []) input.disabled = locked;
+    lockExperience();
+  }
+  function lockExperience() {
+    const mode = doc()?.getElementById('experience-mode');
+    if (mode) mode.disabled = controlsLocked || !experienceReady || experienceSaving;
   }
   async function init() {
     const d = doc(); if (!d) return;
     const mode = d.getElementById('experience-mode'); if (!mode) return;
-    try { await root.ThreatlintProfile?.ready; } catch { return; }
-    const preferences = root.ThreatlintProfile?.storage || root.localStorage;
-    try { if (preferences.getItem('threatlint.experience') === 'advanced') mode.value = 'advanced'; } catch { /* optional preference */ }
-    function experience() {
+    const status = d.getElementById('experience-status');
+    function message(text) { if (status) status.textContent = text; mode.title = text; }
+    function experience(value) {
+      mode.value = value;
       d.body.dataset.experience = mode.value;
       if (!advanced()) d.getElementById('ensemble-enabled').checked = false;
       d.getElementById('ensemble-options').hidden = !d.getElementById('ensemble-enabled').checked;
-      try { preferences.setItem('threatlint.experience', mode.value); } catch { /* optional preference */ }
     }
-    mode.addEventListener('change', experience); experience();
+    experience('guided'); lockExperience();
+    try { await root.ThreatlintProfile?.ready; } catch { message('Experience could not be loaded. Reload to try again.'); return; }
+    const profile = root.ThreatlintProfile;
+    const profileId = profile?.web ? profile.user?.id : null;
+    const current = () => root.ThreatlintProfile === profile && (profile?.web ? profile.user?.id === profileId : profileId === null);
+    const preferences = profile?.storage || root.localStorage;
+    const valid = value => value === 'guided' || value === 'advanced';
+    let saved = 'guided';
+    async function request(method = 'GET', value) {
+      if (!current()) throw new Error('Profile changed.');
+      const response = await (profile?.fetch || root.fetch)('/api/ui-preferences', { method, cache: 'no-store', credentials: 'same-origin',
+        ...(value === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ experience: value }) }) });
+      if (!current() || !response.ok) throw new Error('Experience request failed.');
+      const data = await response.json();
+      if (!current() || !data || !Object.hasOwn(data, 'preferences') || (data.preferences !== null
+          && (typeof data.preferences !== 'object' || Object.keys(data.preferences).length !== 1 || !valid(data.preferences.experience)))
+          || (method !== 'GET' && data.preferences === null)) throw new Error('Invalid Experience response.');
+      return data.preferences;
+    }
+    function cache() { try { preferences?.setItem('threatlint.experience', saved); } catch { /* The durable preference remains available. */ } }
+    mode.addEventListener('change', async () => {
+      if (!current() || !experienceReady || experienceSaving) return;
+      const selected = mode.value;
+      if (!valid(selected)) { experience(saved); return; }
+      experience(selected); experienceSaving = true; lockExperience(); message('');
+      try {
+        const value = await request('PUT', selected);
+        if (!current()) return;
+        saved = value.experience; experience(saved); cache();
+      } catch {
+        if (current()) { experience(saved); message('Experience could not be saved. Try again.'); }
+      } finally {
+        if (current()) { experienceSaving = false; lockExperience(); }
+      }
+    });
     d.getElementById('ensemble-enabled').addEventListener('change', e => { d.getElementById('ensemble-options').hidden = !e.target.checked; });
     d.getElementById('ensemble-third-enabled').addEventListener('change', e => { d.getElementById('ensemble-third').hidden = !e.target.checked; });
     for (const fieldset of d.querySelectorAll('.ensemble-participant')) {
@@ -103,6 +145,21 @@
         if (event.target.dataset.field === 'provider') { fieldset.querySelector('[data-field="key"]').value = ''; providerFields(); }
       });
       providerFields();
+    }
+    try {
+      let value = await request();
+      if (!current()) return;
+      if (value === null) {
+        let legacy;
+        try { legacy = preferences?.getItem('threatlint.experience'); } catch { /* Optional migration only. */ }
+        if (valid(legacy)) value = await request('PUT', legacy);
+      }
+      if (!current()) return;
+      saved = value?.experience || 'guided'; experience(saved);
+      if (value !== null) cache();
+      experienceReady = true; lockExperience();
+    } catch {
+      if (current()) message('Experience could not be loaded. Reload to try again.');
     }
   }
   const api = { integer, participant, buildEnsemble, reviewOptions, workerControl, batchControls, batchOptions, setLocked };

@@ -3,22 +3,31 @@
 Corporate networks inspect TLS with a root installed in the OS store (macOS System keychain, Windows
 certificate store). The AWS CLI v2, Python's urllib on macOS, and Homebrew git do not read that store,
 so their requests fail with "unable to get local issuer certificate". This module exports the OS roots,
-plus Python's default roots, to ~/.threatlint/ca-bundle.pem once per process and hands it to:
+plus Python's default roots, to a private ~/.threatlint/ca-bundle-*.pem once per process and hands it to:
   - AWS CLI subprocesses (AWS_CA_BUNDLE), git (GIT_SSL_CAINFO), and urllib (ssl_context()).
 An explicit AWS_CA_BUNDLE / GIT_SSL_CAINFO / SSL_CERT_FILE set by the user always wins.
 """
 
 from __future__ import annotations
 
+import atexit
 import os
 import ssl
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _MAC_KEYCHAINS = ("/System/Library/Keychains/SystemRootCertificates.keychain", "/Library/Keychains/System.keychain")
 _bundle: str | None = None
 _built = False
+
+
+def _remove_bundle(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass  # Best effort on exit; another tool may still have this process's file open.
 
 
 def _os_roots() -> list[str]:
@@ -61,16 +70,22 @@ def ca_bundle() -> str | None:
             roots.append(Path(default).read_text(encoding="utf-8"))
         except OSError:
             pass
-    path = Path(os.environ.get("THREATLINT_HOME") or Path.home() / ".threatlint") / "ca-bundle.pem"
+    directory = Path(os.environ.get("THREATLINT_HOME") or Path.home() / ".threatlint")
+    path = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Write-then-rename: concurrent threatlint processes must never read a half-written bundle.
-        temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        temp.write_text("\n".join(roots), encoding="utf-8")
-        os.replace(temp, path)
+        directory.mkdir(parents=True, exist_ok=True)
+        # Each process owns an immutable bundle. Replacing one shared file races Windows
+        # OpenSSL readers, even when publication uses an atomic rename.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=f"ca-bundle-{os.getpid()}-",
+                                         suffix=".pem", dir=directory, delete=False) as temporary:
+            path = Path(temporary.name)
+            temporary.write("\n".join(roots))
     except OSError:
+        if path is not None:
+            _remove_bundle(path)
         return None
     _bundle = str(path)
+    atexit.register(_remove_bundle, path)
     return _bundle
 
 

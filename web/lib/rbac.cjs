@@ -108,6 +108,8 @@ function requiredPermission(method, pathname) {
   // Express routes accept mixed case and an optional trailing slash by default.
   pathname = String(pathname || '').toLowerCase().replace(/\/+$/, '');
   if (['GET', 'HEAD', 'OPTIONS'].includes(verb)) return 'read';
+  // Every member can choose their own display mode; this cannot change review or company settings.
+  if (verb === 'PUT' && pathname === '/api/ui-preferences') return 'read';
   if (pathname.startsWith('/api/access/')) return 'manageMembers';
   if (/^\/api\/management\/connections(?:\/[^/]+)?(?:\/test)?\/?$/.test(pathname) ||
       /^\/api\/(?:servicenow|semgrep|github|ado)(?:\/settings(?:\/|$)|\/service-account(?:\/|$)|\/parameter-store(?:\/|$))/.test(pathname) ||

@@ -29,6 +29,38 @@ is inferred. Registry and bundled rule sources are identified, but this adapter
 does not yet pin an immutable rule-pack revision. These fields appear in engine
 cards and JSON evidence; they support diagnosis, not fully reproducible scans.
 
+## Semgrep on Windows desktop
+
+Semgrep Community Edition supports native Windows scanning without a Semgrep
+account. [Semgrep 1.186.0 on PyPI](https://pypi.org/project/semgrep/1.186.0/)
+provides a Windows x64 wheel for Python 3.10–3.14. Install it in a dedicated
+per-user environment, then add its `Scripts` directory to User PATH:
+
+```powershell
+$semgrepTools = Join-Path $env:LOCALAPPDATA 'ThreatlintTools\Semgrep-1.186.0'
+py -3 -m venv $semgrepTools
+& "$semgrepTools\Scripts\python.exe" -m pip install 'semgrep==1.186.0'
+& "$semgrepTools\Scripts\python.exe" -m pip check
+& "$semgrepTools\Scripts\semgrep.exe" --version
+$semgrepScripts = Join-Path $semgrepTools 'Scripts'
+$userToolPath = [string][Environment]::GetEnvironmentVariable('Path', 'User')
+if ($semgrepScripts -notin ($userToolPath -split ';')) {
+    [Environment]::SetEnvironmentVariable('Path', ($userToolPath.TrimEnd(';') + ';' + $semgrepScripts).TrimStart(';'), 'User')
+}
+```
+
+Use a supported 64-bit Python for `py -3`. Close and reopen Threatlint through
+its usual desktop shortcut. On startup it reads the current User PATH, appends
+new entries to its inherited PATH, and keeps existing command precedence. An
+OS sign-out is unnecessary. Check the Semgrep version in Workbench, open
+**Review code → Run scanners**, and select **Semgrep**. Community scanning requires neither
+Auth0 nor a Semgrep login; the public `p/security-audit` rules still need network
+access. See [Semgrep Community Edition](https://semgrep.dev/products/community-edition/).
+
+Confirm that the result's **Semgrep** engine card says `completed` and records
+its version. A baseline result or overall `partial` status alone does not prove
+that Semgrep ran. Model-provider credentials are not used by scanner jobs.
+
 The engine cards distinguish `completed`, `partial`, `not_requested`,
 `unavailable`, and `failed`. Overall coverage remains `partial`: generated and
 binary artifacts, excluded directories, git history, unsupported files, files
