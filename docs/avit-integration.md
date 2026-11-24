@@ -156,8 +156,9 @@ store when available, with owner-only JSON fallbacks. `THREATLINT_HOME` relocate
 this configuration. On Windows, `~` means `%USERPROFILE%`.
 
 Behind a TLS-inspecting proxy, Threatlint can build
-`~/.threatlint/ca-bundle.pem` from macOS/Windows trust stores and pass it to its
-HTTPS clients and external tools. Fix certificate trust rather than disabling TLS.
+private per-process `~/.threatlint/ca-bundle-*.pem` files from macOS/Windows trust
+stores and pass them to its HTTPS clients and external tools. Cleanup is best
+effort on normal process exit. Fix certificate trust rather than disabling TLS.
 
 ## Process flow
 
