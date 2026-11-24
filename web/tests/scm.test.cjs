@@ -604,6 +604,36 @@ describe('Credential-isolated, bounded shallow checkout', () => {
     assert.equal(checkout.provenance.commit, COMMIT);
   });
 
+  it('waits for zero-arity Electron callback wrappers before verifying a checkout', async t => {
+    const f = fixture(t);
+    const cloned = deferred();
+    let cloneFinished = false;
+    const manager = createSourceManagers({
+      fetch: async url => new URL(url).pathname === '/user' ? json({ login: 'octocat' })
+        : new URL(url).pathname.includes('/branches/') ? json({ name: 'main', commit: { sha: COMMIT } }) : json([githubRepository()]),
+      lookup(...args) { setImmediate(() => args.at(-1)(null, [{ address: PUBLIC_ADDRESS, family: 4 }])); },
+      execFile(...values) {
+        const [, args, , callback] = values;
+        if (args.includes('clone')) {
+          f.directories.add(path.dirname(args.at(-1)));
+          cloned.promise.then(() => { cloneFinished = true; callback(null, '', ''); });
+        } else {
+          assert.equal(cloneFinished, true, 'Git verification must wait for clone completion');
+          setImmediate(() => callback(null, args.includes('rev-parse') ? `${COMMIT}\n` : 'main\n', ''));
+        }
+        return { pid: 123 }; // Electron returns a child immediately, before invoking the callback.
+      },
+    });
+    const connection = await manager.connect({ provider: 'github', token: TOKEN });
+    t.after(() => manager.disconnect(connection.id));
+    await manager.repositories(connection.id);
+    const pending = manager.checkout(connection.id, { repositoryId: '1' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(cloneFinished, false);
+    cloned.resolve();
+    assert.equal((await pending).provenance.commit, COMMIT);
+  });
+
   it('aborts an in-flight clone on disconnect, forgets credentials, and cleans only that failed checkout', async t => {
     const started = deferred();
     const f = fixture(t, { execute: (file, args, options) => new Promise((resolve, reject) => {

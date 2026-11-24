@@ -201,8 +201,11 @@ function invoke(fn, args) {
       else resolve(values.length > 1 ? values : values[0]);
     };
     try {
-      if (fn.length > args.length) fn(...args, done);
-      else Promise.resolve(fn(...args)).then(resolve, reject);
+      // Electron wraps execFile for ASAR support with a zero-arity function.
+      // Its return value is a ChildProcess, not completion of the Git command.
+      // Always supply the callback; promise-based injected transports ignore it.
+      const result = fn(...args, done);
+      if (result && typeof result.then === 'function') result.then(resolve, reject);
     } catch (error) { reject(error); }
   });
 }
