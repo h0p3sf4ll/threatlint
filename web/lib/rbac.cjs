@@ -119,7 +119,7 @@ function requiredPermission(method, pathname) {
   // never change organization connection settings or another member's runtime.
   if (pathname === '/api/model-preferences' || /^\/api\/scm\/connections(?:\/|$)/.test(pathname)) return 'review';
   // POST is also used for these read-only queries. They never configure credentials or write findings.
-  if (verb === 'POST' && (pathname === '/api/metrics/query' || pathname === '/api/semgrep/false-positive/matches')) return 'read';
+  if (verb === 'POST' && (pathname === '/api/metrics/query' || pathname === '/api/semgrep/false-positive/matches' || pathname === '/api/trackers/servicenow-avit/items')) return 'read';
   if (pathname.startsWith('/api/management/findings')) return 'manageFindings';
   return 'review';
 }

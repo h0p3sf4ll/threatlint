@@ -70,7 +70,7 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
     const run = (async () => {
       const selected = servicenow.validateAggregateFilters(filters);
       const credentials = servicenow.validateCredentials({});
-      const signal = AbortSignal.timeout(TRACKER_SYNC_TIMEOUT_MS);
+      const signal = AbortSignal.timeout(300_000);
       try {
         const summary = await servicenow.fetchAvitAggregate(credentials, { filters: selected,
           fetchImpl: integrations.fetchImpl || fetch, signal });
@@ -131,6 +131,10 @@ function registerInsightRoutes(app, { store, history, dashboards, conversations,
   app.get('/api/metrics/trackers', handle(trackers));
   app.get('/api/trackers/servicenow-avit/aggregate', handle(() => ({ summary: avitAggregate.get() })));
   app.post('/api/trackers/servicenow-avit/aggregate', handle(req => loadAvitAggregate(req.body?.filters || {})));
+  app.post('/api/trackers/servicenow-avit/items', handle(req => servicenow.fetchAvitPage(servicenow.validateCredentials({}), {
+    filters: req.body?.filters || {}, offset: req.body?.offset ?? 0, fetchImpl: integrations.fetchImpl || fetch,
+    signal: AbortSignal.timeout(300_000),
+  })));
   // Type-ahead suggestions for the organization / repository / branch / project filters (server-side group-by).
   app.get('/api/trackers/servicenow-avit/context-values', handle(req => {
     const credentials = servicenow.validateCredentials({});

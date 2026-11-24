@@ -1,0 +1,16 @@
+{
+  "name": "threatlint-docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "docusaurus start",
+    "build": "docusaurus build --out-dir ../marketing/docs && node scripts/headers.cjs"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "engines": { "node": ">=22.12.0" }
+}

@@ -195,14 +195,15 @@ async function readParameterStore({ profile } = {}) {
   return { clientId: values[idName], clientSecret: values[secretName] };
 }
 
-async function requestJson(fetchImpl, url, options, signal, withHeaders = false, maxBytes = Infinity) {
+async function requestJson(fetchImpl, url, options, signal, withHeaders = false, maxBytes = Infinity, timeoutMs = HTTP_TIMEOUT_MS) {
   let response;
   try {
     // redirect: 'error' keeps the bearer token and client secret on the validated instance.
     response = await fetchImpl(url, { ...options, headers: { Accept: 'application/json', ...options.headers }, redirect: 'error',
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(HTTP_TIMEOUT_MS)]) : AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
   } catch (error) {
     if (signal?.aborted) throw error;
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new HttpError('ServiceNow request timed out. Narrow the AVIT filters or retry.', 504);
     throw new HttpError(`ServiceNow request failed: ${error.cause?.message || error.message}`, 502);
   }
   if (!response.ok) {
@@ -486,6 +487,40 @@ function statsGroups(result, field) {
   });
 }
 
+/** One bounded page for Issue Management, using exactly the summary's validated filters and column mapping. */
+async function fetchAvitPage(credentials, { filters = {}, offset = 0, fetchImpl = fetch, signal } = {}) {
+  const selected = validateAggregateFilters(filters);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError('Invalid AVIT page offset');
+  const token = await accessToken(credentials, fetchImpl, signal);
+  const columns = await aggregateColumns(credentials, fetchImpl, signal, token);
+  for (const [key, column] of Object.entries(CONTEXT_FILTER_COLUMN)) {
+    if (key === 'findingType' && selected.findingType === 'dast') continue;
+    if (selected[key] && !columns[column]) throw new HttpError(`This ServiceNow instance did not expose a column for "${CONTEXT_LABELS[column].label}"; that filter is unavailable here`, 422);
+  }
+  const fields = [...new Set(['sys_id', 'number', 'short_description', 'risk_rating', 'severity', 'state', 'substate', 'source', 'sys_updated_on',
+    ...Object.values(columns)])];
+  const query = new URLSearchParams({ sysparm_query: [aggregateQuery(selected, columns), 'ORDERBYsys_id'].filter(Boolean).join('^'),
+    sysparm_fields: fields.join(','), sysparm_display_value: 'all', sysparm_exclude_reference_link: 'true',
+    sysparm_suppress_pagination_header: 'false', sysparm_limit: String(METRICS_PAGE_SIZE), sysparm_offset: String(offset) });
+  const { data, headers } = await requestJson(fetchImpl, `${credentials.instance}/api/now/table/${AVIT_TABLE}?${query}`,
+    { headers: { Authorization: `Bearer ${token}` } }, signal, true, METRICS_PAGE_MAX_BYTES, 180_000);
+  if (!Array.isArray(data?.result) || data.result.length > METRICS_PAGE_SIZE) throw new HttpError('ServiceNow returned an invalid AVIT page', 502);
+  const items = data.result.map(row => {
+    const number = fieldValue(row?.number).toUpperCase(), sysId = String(row?.sys_id?.value ?? row?.sys_id ?? '');
+    if (!AVIT_PATTERN.test(number) || !SYS_ID_PATTERN.test(sysId)) throw new HttpError('ServiceNow did not return readable AVIT identifiers', 502);
+    return { id: sysId, number, title: fieldValue(row.short_description) || number,
+      url: `${credentials.instance}/nav_to.do?uri=${AVIT_TABLE}.do%3Fsys_id%3D${sysId}`,
+      riskRating: fieldValue(row.risk_rating), state: fieldValue(row.state), substate: fieldValue(row.substate), source: fieldValue(row.source),
+      updatedAt: fieldValue(row.sys_updated_on),
+      ...Object.fromEntries(['organization', 'project', 'repository', 'branch'].map(key => [key, fieldValue(row[columns[key]])])) };
+  });
+  const totalHeader = headers?.get?.('x-total-count') || '', link = headers?.get?.('link') || '';
+  const total = /^\d+$/.test(totalHeader) ? Number(totalHeader) : null;
+  if (total === null && !link) throw new HttpError('ServiceNow did not return AVIT pagination headers; retry after checking table access.', 502);
+  const hasMore = /<[^>]+>\s*;\s*rel="?next"?/i.test(link) || (total !== null && offset + METRICS_PAGE_SIZE < total);
+  return { items, filters: selected, nextOffset: hasMore ? offset + METRICS_PAGE_SIZE : null, asOf: new Date().toISOString() };
+}
+
 async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch, signal } = {}) {
   const selected = validateAggregateFilters(filters);
   const { instance } = credentials;
@@ -504,7 +539,7 @@ async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch
     const encoded = [baseQuery, extra].filter(Boolean).join('^');
     if (encoded) query.set('sysparm_query', encoded);
     if (groupBy) query.set('sysparm_group_by', groupBy);
-    const data = await requestJson(fetchImpl, `${instance}/api/now/stats/${AVIT_TABLE}?${query}`, { headers }, signal, false, METRICS_PAGE_MAX_BYTES);
+    const data = await requestJson(fetchImpl, `${instance}/api/now/stats/${AVIT_TABLE}?${query}`, { headers }, signal, false, METRICS_PAGE_MAX_BYTES, 180_000);
     return data?.result;
   }
   const total = statsCount(await stats());
@@ -512,25 +547,28 @@ async function fetchAvitAggregate(credentials, { filters = {}, fetchImpl = fetch
   async function groups(field, label) {
     try { return statsGroups(await stats(field), field); }
     catch (error) {
-      if (error.upstreamStatus === 403) { unavailable.push(label); return null; }
+      if (!signal?.aborted && (error.upstreamStatus === 403 || error.status === 504)) { unavailable.push(label); return null; }
       throw error;
     }
   }
-  const riskRating = await groups('risk_rating', 'Risk rating');
-  const state = await groups('state', 'State');
-  const substate = await groups('substate', 'Substate');
-  let falsePositive = null;
-  try {
-    falsePositive = statsCount(await stats('', `state=${process.env.THREATLINT_SNOW_FP_STATE || '3'}^substate=${process.env.THREATLINT_SNOW_FP_SUBSTATE || '3'}`));
-  } catch (error) {
-    if (error.upstreamStatus === 403) unavailable.push('False positive');
-    else throw error;
+  async function falsePositiveCount() {
+    const fpState = process.env.THREATLINT_SNOW_FP_STATE || '3', fpSubstate = process.env.THREATLINT_SNOW_FP_SUBSTATE || '3';
+    if ((selected.state && selected.state !== fpState) || (selected.substate && selected.substate !== fpSubstate)) return 0;
+    try { return statsCount(await stats('', `state=${fpState}^substate=${fpSubstate}`)); }
+    catch (error) {
+      if (!signal?.aborted && (error.upstreamStatus === 403 || error.status === 504)) { unavailable.push('False positive'); return null; }
+      throw error;
+    }
   }
+  // Independent breakdowns share the overall deadline instead of adding four sequential full-table waits.
+  const [riskRating, state, substate, falsePositive] = total === 0 ? [[], [], [], 0] : await Promise.all([
+    groups('risk_rating', 'Risk rating'), groups('state', 'State'), groups('substate', 'Substate'), falsePositiveCount(),
+  ]);
   return {
     source: 'servicenow-avit', mode: 'aggregate', scope: 'all-readable-avits', filters: selected,
     asOf: new Date().toISOString(), total, falsePositive, riskRating, state, substate,
     limitations: [
-      unavailable.length ? `${unavailable.join(', ')} unavailable with this ServiceNow account's field permissions.` : '',
+      unavailable.length ? `${unavailable.join(', ')} unavailable because of field permissions or a request timeout.` : '',
       selected.findingType === 'dast' ? 'Dynamic (DAST) counts only the Invicti AVITs this ServiceNow account can read; Invicti records are often hidden from OAuth clients.' : '',
       'The stored false-positive count uses the configured Closed / False Positive state and substate codes; ServiceNow business rules may clear the substate.',
     ].filter(Boolean).join(' '),
@@ -864,6 +902,6 @@ async function semgrepVersion() {
 
 module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, parseReviewTicket, validateInstanceUrl, validateCredentials, attachReview,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
-  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, fetchAvitContextValues, validateAggregateFilters, aggregateQuery, aggregateColumns,
+  fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, fetchAvitPage, fetchAvitContextValues, validateAggregateFilters, aggregateQuery, aggregateColumns,
   METRICS_PAGE_SIZE, AVIT_QUERY_CHUNK,
   METRICS_CREATION_LAG_MS, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, AMBIGUOUS_COMMENT, UNREADABLE };

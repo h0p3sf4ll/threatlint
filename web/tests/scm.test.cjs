@@ -74,6 +74,7 @@ function fixture(t, settings = {}) {
       if (parsed.pathname.includes('/branches/')) return json({ name: decodeURIComponent(parsed.pathname.split('/branches/')[1]), commit: { sha: COMMIT } });
     }
     if (parsed.hostname === 'dev.azure.com') {
+      if (parsed.pathname.endsWith('/_apis/projects')) return json({ value: [...new Set(azure.map(item => item.project.id))].map(id => ({ id })) });
       if (parsed.pathname.endsWith('/_apis/git/repositories')) return json({ value: azure, count: azure.length });
       if (parsed.pathname.endsWith('/refs')) return json({ value: [{ name: `refs/heads/${branch}`, objectId: COMMIT }, { name: 'refs/tags/main', objectId: OTHER_COMMIT }] });
     }
@@ -123,7 +124,7 @@ function fixture(t, settings = {}) {
 
 describe('Source manager public contract and session-only credentials', () => {
   it('documents fixed cloud origins, permissions, bounds, and lifecycle without dependencies', () => {
-    assert.deepEqual(Object.keys(createSourceManagers()).sort(), ['branches', 'checkout', 'connect', 'disconnect', 'list', 'repositories']);
+    assert.deepEqual(Object.keys(createSourceManagers()).sort(), ['branches', 'checkout', 'connect', 'disconnect', 'list', 'refreshCredential', 'repositories']);
     assert.equal(CAPABILITIES.pageSize, 100);
     assert.equal(CAPABILITIES.maxPage, 100);
     assert.equal(CAPABILITIES.providers.github.apiOrigin, 'https://api.github.com');
@@ -287,6 +288,33 @@ describe('Provider discovery, search, and bounded pagination', () => {
     assert.equal(new URL(f.requests[0].url).pathname, '/contoso/_apis/git/repositories');
     assert.equal(new URL(f.requests[0].url).searchParams.get('api-version'), '7.1');
     noSecret(second);
+  });
+
+  it('rotates installation credentials without losing a selected repository from a later page', async t => {
+    const rotated = 'rotated-installation-fixture';
+    const f = fixture(t, { installation: true, github: Array.from({ length: 201 }, (_, index) => githubRepository(index + 1)),
+      handle: (_url, input) => input.headers.Authorization === 'Bearer rejected-fixture-token' ? json({}, {}, 403) : undefined });
+    const { connection } = await f.discovered();
+    const found = await f.managers.repositories(connection.id, { search: 'repo-201' });
+    assert.equal(found.repositories[0].id, '201');
+    await rejectsCode(() => f.managers.refreshCredential(connection.id, { token: 'rejected-fixture-token' }), 'SCM_AUTHORIZATION_FAILED');
+    assert.equal((await f.managers.refreshCredential(connection.id, { token: rotated })).id, connection.id);
+    const checkout = await f.managers.checkout(connection.id, { repositoryId: '201', branch: 'main' });
+    assert.equal(checkout.provenance.repository, 'octocat/repo-201');
+    assert.equal(f.requests.at(-1).init.headers.Authorization, `Bearer ${rotated}`);
+    assert.equal(JSON.stringify(f.managers.list()).includes(rotated), false);
+  });
+
+  it('supports bounded organization inventories larger than one ordinary API page and contains search', async t => {
+    const azure = [azureRepository('one', { name: 'constellation-STARS-service', description: 'x'.repeat(5 * 1024 * 1024) }),
+      azureRepository('two', { name: 'starlight-service' })];
+    const f = fixture(t, { azure });
+    const connection = await f.connect('azure-devops');
+    const result = await f.managers.repositories(connection.id, { search: 'stars' });
+    assert.deepEqual(result.repositories.map(item => item.name), ['constellation-STARS-service']);
+    const partial = await f.managers.repositories(connection.id, { search: 'ELLATION-st' });
+    assert.equal(partial.repositories.length, 1);
+    noSecret(result);
   });
 
   it('rejects malformed metadata rather than cloning a forged path', async t => {

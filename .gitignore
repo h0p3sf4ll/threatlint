@@ -23,6 +23,9 @@ web/npm-debug.log*
 web/*.log
 web/release/
 web/build-assets/
+docs-site/node_modules/
+docs-site/.docusaurus/
+marketing/docs/
 .venv/
 coverage/
 

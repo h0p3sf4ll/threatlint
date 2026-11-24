@@ -222,6 +222,18 @@ function createFindingIntelligenceStore({ directory } = {}) {
       next.findings[next.findings.indexOf(finding)] = reviewed; save(next);
       return clone(reviewed);
     },
+    resolveMany(ids, input) {
+      if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new Error('Select between 1 and 100 unique findings');
+      const { reviewFinding } = require('./finding-intelligence-graph.cjs');
+      const next = clone(state), resolved = [];
+      for (const id of ids) {
+        const index = next.findings.findIndex(item => item.id === id);
+        if (index < 0) throw new Error('Finding not found');
+        const reviewed = reviewFinding(next.findings[index], { ...input, disposition: 'REMEDIATED' });
+        next.findings[index] = reviewed; resolved.push(reviewed);
+      }
+      save(next); return clone(resolved);
+    },
     correlate(input) {
       const { buildComposite } = require('./finding-intelligence-graph.cjs');
       const composite = buildComposite(state.findings, input);

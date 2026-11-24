@@ -1,5 +1,10 @@
 # Make the next change easier to understand
 
+Every push to `main` runs **Main release notes**, publishing a GitHub prerelease named
+`main-<commit>` with commit links and the push comparison. Rerunning the workflow updates
+that release's notes. These notes describe source changes; desktop builds and website
+deployments report their own completion separately.
+
 A readable module is a smaller decision: you can see what it owns, test that
 behavior, and change it without learning an unrelated workflow.
 This guide is the map for contributors, not a second product manual.

@@ -4,6 +4,38 @@
   const $ = id => document.getElementById(id);
   if (!$('view-intelligence')) return;
   const state = { session: null, data: null, scopedData: null, scopeReady: false, selected: [], chainRows: [], linkRows: [], coachingRows: [], generation: 0, scopeGeneration: 0, coachingGeneration: 0 };
+  let resolutionSelected = [], resolving = false;
+  const resolvable = finding => !['FALSE POSITIVE', 'REMEDIATED'].includes(finding.disposition);
+  function resolutionControls() {
+    $('intelligence-selection-count').textContent = `${resolutionSelected.length} selected`;
+    $('intelligence-resolve-selected').disabled = !resolutionSelected.length || resolving;
+  }
+  function bulkReview() {
+    if (!resolutionSelected.length || resolving) return;
+    const ids = [...resolutionSelected], sessionId = state.session?.id;
+    const container = $('intelligence-bulk-review'); container.replaceChildren();
+    const form = node('form', undefined, 'intelligence-form panel');
+    form.append(node('h3', `Resolve ${ids.length} selected findings`), node('p', 'Record the fix and verification that apply to every selected finding. The batch is saved only if every decision passes the evidence checks.', 'small subtle'));
+    const reference = field(form, 'Fix or test reference', 'input', { required: true, maxLength: 2000 });
+    const quote = field(form, 'Verification result for the selected findings', 'textarea', { required: true, rows: 3, maxLength: 12000 });
+    const method = field(form, 'How you verified the fixes', 'textarea', { required: true, rows: 2, maxLength: 2000 });
+    const reason = field(form, 'Resolution rationale', 'textarea', { required: true, rows: 2, maxLength: 4000 });
+    const attest = field(form, ' I verified that this fix and result apply to every selected finding.', 'input', { type: 'checkbox', required: true });
+    const submit = node('button', 'Confirm resolution', 'button primary small-button'); submit.type = 'submit';
+    const output = node('output'); output.setAttribute('aria-live', 'polite');
+    form.append(submit, button('Cancel', () => container.replaceChildren()), output); container.append(form);
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (!attest.checked || resolving || sessionId !== state.session?.id) return;
+      resolving = true; submit.disabled = true; resolutionControls();
+      try {
+        await request('/findings/resolve', { findingIds: ids, confirm: true, review: { reason: reason.value,
+          newEvidence: [{ reference: reference.value, quote: quote.value, kind: 'remediation', verification: 'verified', verificationMethod: method.value }],
+          basis: [{ claim: reason.value, evidenceIds: [0] }] } }, sessionId);
+        if (state.session?.id === sessionId) { resolutionSelected = []; container.replaceChildren(); await refresh(); }
+      } catch (error) { output.textContent = error.message; }
+      finally { resolving = false; submit.disabled = false; resolutionControls(); }
+    });
+  }
   function node(tag, content, className) {
     const result = document.createElement(tag);
     if (content !== undefined) result.textContent = content;
@@ -36,6 +68,7 @@
     const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Evidence request failed'); return result;
   }
   function clear() {
+    resolutionSelected = []; $('intelligence-bulk-review').replaceChildren(); resolutionControls();
     state.data = null; state.scopedData = null; state.scopeReady = false; state.scopeGeneration++; state.coachingGeneration++;
     state.selected = []; state.chainRows = []; state.linkRows = []; state.coachingRows = [];
     for (const id of ['intelligence-summary', 'intelligence-findings', 'intelligence-composites', 'intelligence-trends', 'coaching-findings', 'coaching-result']) $(id).replaceChildren();
@@ -131,10 +164,19 @@
   function renderFindings() {
     const findings = ($('intelligence-revision').value ? viewData().revisionFindings : viewData().findings).filter(item =>
       (!$('intelligence-disposition').value || item.disposition === $('intelligence-disposition').value));
+    resolutionSelected = resolutionSelected.filter(id => findings.some(item => item.id === id && resolvable(item)));
+    resolutionControls();
+    $('intelligence-select-all').checked = findings.some(resolvable) && findings.filter(resolvable).every(item => resolutionSelected.includes(item.id));
     const container = $('intelligence-findings'); container.replaceChildren();
     if (!findings.length) container.append(node('p', 'No findings match this view. Refresh evidence to import saved reports, or run a security scan.', 'subtle'));
     for (const finding of findings) {
       const card = node('article', undefined, 'platform-finding panel');
+      card.setAttribute('data-finding-id', finding.id);
+      const resolution = node('label', ' Select for resolution', 'check-row'), checkbox = node('input');
+      checkbox.type = 'checkbox'; checkbox.checked = resolutionSelected.includes(finding.id); checkbox.disabled = !resolvable(finding) || resolving;
+      checkbox.setAttribute('aria-label', `Select ${finding.title} for resolution`);
+      checkbox.addEventListener('change', () => { resolutionSelected = checkbox.checked ? [...new Set([...resolutionSelected, finding.id])] : resolutionSelected.filter(id => id !== finding.id); resolutionControls(); });
+      resolution.prepend(checkbox); card.append(resolution);
       card.append(node('h3', finding.title), node('p', `${finding.severity} · ${finding.disposition} · ${shortRevision(finding)}`, 'small subtle'),
         node('p', `Reported confidence: ${finding.confidence || 'UNSPECIFIED'} · Source: ${finding.source || 'not recorded'} · Rule: ${finding.ruleId || 'not recorded'}`, 'small subtle'));
       if (finding.recommendation) card.append(node('p', `Suggested improvement: ${finding.recommendation}`));
@@ -154,7 +196,8 @@
         if (event.safeBehavior) evidence.append(node('p', `Verified safe behavior: ${event.safeBehavior}`, 'small'));
       }
       if (!finding.evidence.length) evidence.append(node('p', 'No evidence location was recorded.', 'subtle'));
-      card.append(evidence, reviewForm(finding)); container.append(card);
+      const review = reviewForm(finding);
+      card.append(button('Triage finding', () => { review.open = true; review.scrollIntoView?.({ block: 'nearest' }); }), evidence, review); container.append(card);
     }
   }
   function renderChain() {
@@ -278,6 +321,26 @@
   }
   function render() { renderSummary(); renderFindings(); renderChain(); renderComposites(); renderTrends(); renderCoaching(); }
   function wire() {
+    document.addEventListener('threatlint:resolve-selection', async event => {
+      const { session, overview, findings } = event.detail || {};
+      if (!session?.id || !overview || !Array.isArray(findings) || !findings.length) return;
+      const generation = ++state.generation;
+      state.scopeGeneration++; state.scopedData = null;
+      state.session = session; state.data = overview; renderFilters();
+      $('intelligence-branch').value = findings[0].provenance.branch;
+      renderFilters();
+      $('intelligence-revision').value = JSON.stringify([findings[0].provenance.commit, findings[0].provenance.contentDigest]);
+      $('intelligence-disposition').value = '';
+      await loadScope();
+      if (generation !== state.generation || state.session?.id !== session.id) return;
+      resolutionSelected = findings.filter(resolvable).map(item => item.id); renderFindings(); bulkReview();
+    });
+    $('intelligence-resolve-selected').addEventListener('click', bulkReview);
+    $('intelligence-select-all').addEventListener('change', () => {
+      resolutionSelected = $('intelligence-select-all').checked ? ($('intelligence-revision').value ? viewData().revisionFindings : viewData().findings)
+        .filter(item => resolvable(item) && (!$('intelligence-disposition').value || item.disposition === $('intelligence-disposition').value)).map(item => item.id).slice(0, 100) : [];
+      renderFindings();
+    });
     $('intelligence-refresh').addEventListener('click', () => { void refresh(true); });
     $('repository-progress-refresh').addEventListener('click', () => { void refresh(true); });
     for (const id of ['intelligence-branch', 'intelligence-revision']) $(id).addEventListener('change', () => { if (state.data) { renderFilters(); void loadScope(); } });

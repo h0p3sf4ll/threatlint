@@ -19,6 +19,7 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
   // the source manager, replaced before they expire, and never returned to the browser.
   const githubApp = integrations.githubApp || githubAppModule.createGitHubApp(integrations.fetchImpl ? { fetch: integrations.fetchImpl } : {});
   let appConnection = null, appFailedAt = 0;
+  let appConnecting = null;
   function dropAppConnection() {
     if (appConnection) scm.disconnect(appConnection.id);
     appConnection = null;
@@ -34,8 +35,9 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     if (Date.now() - appFailedAt < SAVED_RETRY_MS) return;
     try {
       const { token, expiresAt } = await githubApp.installationToken(config);
-      const connected = await scm.connect({ provider: 'github', token });
-      if (appConnection) scm.disconnect(appConnection.id);
+      const preserving = live && typeof scm.refreshCredential === 'function';
+      const connected = preserving ? await scm.refreshCredential(appConnection.id, { token }) : await scm.connect({ provider: 'github', token });
+      if (appConnection && !preserving) scm.disconnect(appConnection.id);
       appConnection = { id: connected.id, expiresAt };
       appFailedAt = 0; appFailure = '';
     } catch (error) { appFailedAt = Date.now(); appFailure = failureReason(error, 'installation token could not be minted'); }
@@ -120,6 +122,13 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
   app.get('/api/scm/providers', (_req, res) => res.json(SOURCE_MANAGER_CAPABILITIES));
   async function currentConnection(id) {
     const previous = scm.list().find(item => item.id === id);
+    if (previous?.provider === 'github' && appConnection?.id === id) {
+      appConnecting ||= connectApp().finally(() => { appConnecting = null; });
+      await appConnecting;
+      if (!appConnection || appConnection.expiresAt <= Date.now()) throw Object.assign(new HttpError('The saved GitHub App credential could not be refreshed. Retry or check its settings.', 503), { code: 'SCM_SAVED_CREDENTIAL_UNAVAILABLE' });
+      if (appConnection.id !== id) throw Object.assign(new HttpError('GitHub App credentials were refreshed. Refresh Connected accounts and select the repository again.', 409), { code: 'SCM_CREDENTIALS_REFRESHED' });
+      return id;
+    }
     if (previous?.provider !== 'azure-devops') return id;
     connecting ||= connectSaved().finally(() => { connecting = null; });
     await connecting;
@@ -133,6 +142,16 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     await connecting;
     return connectionsView();
   }, { fallback: 'Connections unavailable' }));
+  app.post('/api/scm/reconnect', handle(async req => {
+    if (req.body?.provider !== 'github') throw new HttpError('Choose the saved GitHub App to reconnect.');
+    if (connecting) await connecting;
+    appFailedAt = 0;
+    if (appConnection) appConnection.expiresAt = 0;
+    githubApp.clearTokens?.();
+    connecting = connectSaved().finally(() => { connecting = null; });
+    await connecting;
+    return connectionsView();
+  }, { fallback: 'The saved GitHub App could not reconnect' }));
   // Settings → GitHub. GET and POST return only which values are set, never the key or a token.
   app.get('/api/github/settings', handle(() => githubApp.publicStatus()));
   app.post('/api/github/settings', handle(async req => {
@@ -165,7 +184,16 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     req.query.page !== undefined ? { page: Number(req.query.page) } : {}), { fallback: 'Branches unavailable' }));
   app.post('/api/scm/checkout', handle(async req => {
     const { connectionId, repositoryId, branch } = req.body || {};
-    const result = await scm.checkout(await currentConnection(connectionId), { repositoryId, ...(branch ? { branch } : {}) });
+    const input = { repositoryId, ...(branch ? { branch } : {}) };
+    let result;
+    try { result = await scm.checkout(await currentConnection(connectionId), input); }
+    catch (error) {
+      // An installation token can be revoked before its advertised expiry. Rotate once and
+      // retry the same pinned checkout; access checks still run with the newly issued token.
+      if (error.code !== 'SCM_AUTHORIZATION_FAILED' || appConnection?.id !== connectionId || typeof scm.refreshCredential !== 'function') throw error;
+      appFailedAt = 0; appConnection.expiresAt = 0; githubApp.clearTokens?.();
+      result = await scm.checkout(await currentConnection(connectionId), input);
+    }
     const sessionId = store.create(result.repoPath, true, result.tempDir);
     store.sessions.get(sessionId).provenance = result.provenance;
     store.save();

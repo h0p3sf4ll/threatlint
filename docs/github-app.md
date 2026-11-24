@@ -62,7 +62,7 @@ token and calls `GET /installation/repositories?per_page=1` **before** saving se
 `--api-url` supports a configured GitHub Enterprise Cloud data-residency API; this does not add
 custom-host support to Workbench Sources.
 
-Alternatively, open **Workbench → Settings → GitHub**, enable **Use GitHub App**, enter IDs and
+Alternatively, open **Workbench → Settings → Integrations → GitHub App**, enable **Use GitHub App**, enter IDs and
 the absolute PEM path, then save. The server validates/signs; the browser receives status, not
 the key or token. Sources connects as **GitHub App · owner** and refreshes tokens.
 `threatlint setup` also offers App setup.

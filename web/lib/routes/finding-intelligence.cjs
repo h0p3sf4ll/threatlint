@@ -42,6 +42,16 @@ function registerFindingIntelligenceRoutes(app, { intelligence, store }) {
     return intelligence.ingest({ ...req.body, repo: { id: selected.repoPath, name: path.basename(selected.repoPath) }, sessionId: selected.id, origin: 'imported' });
   }, { status: 201 }));
   app.post('/api/intelligence/findings/:id/reviews', handle(req => intelligence.review(finding(req).id, req.body)));
+  app.post('/api/intelligence/findings/resolve', handle(req => {
+    const selected = session(req);
+    if (req.body?.confirm !== true) throw new HttpError('Confirm resolution of the selected findings');
+    const ids = req.body?.findingIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100) throw new HttpError('Select between 1 and 100 findings');
+    for (const id of ids) {
+      if (intelligence.getFinding(id)?.provenance.repo.id !== selected.repoPath) throw new HttpError('Finding not found in this workspace', 404);
+    }
+    return { resolved: intelligence.resolveMany(ids, req.body?.review) };
+  }));
   app.post('/api/intelligence/composites', handle(req => {
     const selected = session(req);
     for (const node of req.body?.contributors || []) {

@@ -79,6 +79,9 @@ it('covers existing settings, integration writes and reviews with route-specific
   assert.equal(requiredPermission('POST', '/api/runtime/scans'), 'review');
   assert.equal(requiredPermission('DELETE', '/api/session/one/reports/two'), 'review');
   assert.equal(requiredPermission('POST', '/api/metrics/query'), 'read');
+  assert.equal(requiredPermission('POST', '/api/trackers/servicenow-avit/items'), 'read');
+  assert.equal(requiredPermission('POST', '/api/mcp'), 'review');
+  assert.equal(requiredPermission('POST', '/api/intelligence/findings/resolve'), 'review');
 });
 
 it('fails closed if persisted access data is invalid and preserves the original file', t => {

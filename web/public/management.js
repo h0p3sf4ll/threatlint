@@ -26,6 +26,78 @@
     return result;
   }
   function can(permission) { return state.access?.permissions?.[permission] === true; }
+  const avits = { items: [], filters: {}, nextOffset: null, busy: false, dirty: true };
+  function initializeAvits() {
+    // Share the Metrics filter form so field names, choice values, and available filters stay aligned.
+    const form = $('avit-aggregate-form').cloneNode(true);
+    form.reset();
+    for (const element of [form, ...form.querySelectorAll('[id]')]) if (element.id) element.id = `management-${element.id}`;
+    form.id = 'management-avit-form';
+    for (const input of form.querySelectorAll('[list]')) input.setAttribute('list', `management-${input.getAttribute('list')}`);
+    form.querySelectorAll('datalist').forEach(list => list.replaceChildren());
+    const submit = form.querySelector('[type="submit"]'); submit.disabled = false; submit.textContent = 'Load AVITs';
+    const note = form.querySelector('#management-avit-aggregate-dirty'); note.textContent = 'Filters apply to AVIT records in ServiceNow.';
+    const project = form.elements.namedItem('project');
+    const syncScm = () => { const ado = form.elements.namedItem('scm').value === 'ado'; project.closest('label').hidden = !ado; if (!ado) project.value = ''; };
+    syncScm(); form.elements.namedItem('scm').addEventListener('change', syncScm);
+    form.addEventListener('input', () => { avits.dirty = true; $('management-avits-more').disabled = true; note.textContent = 'Filters changed. Load AVITs to update the records.'; });
+    form.addEventListener('submit', event => { event.preventDefault(); void loadAvits(false); });
+    form.querySelector('#management-avit-aggregate-configure').addEventListener('click', () => document.dispatchEvent(new CustomEvent('threatlint:settings-open', { detail: { section: 'servicenow' } })));
+    $('management-avit-filters').append(form);
+    $('management-avits-more').addEventListener('click', () => { void loadAvits(true); });
+    for (const field of ['organization', 'project', 'repository', 'branch']) {
+      const input = form.elements.namedItem(field); let timer, controller, version = 0;
+      const suggest = async () => {
+        const current = ++version; controller?.abort(); controller = new AbortController();
+        const params = new URLSearchParams({ field, q: input.value.trim() });
+        for (const name of ['scm', 'organization', 'project', 'repository', 'branch']) {
+          const value = form.elements.namedItem(name).value.trim(); if (name !== field && value) params.set(name, value);
+        }
+        try {
+          const result = await api(`/api/trackers/servicenow-avit/context-values?${params}`, { signal: controller.signal });
+          if (current === version) $(input.getAttribute('list')).replaceChildren(...(result.values || []).map(value => option(value, value)));
+        } catch { if (current === version) $(input.getAttribute('list')).replaceChildren(); }
+      };
+      input.addEventListener('focus', () => { void suggest(); });
+      input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(suggest, 250); });
+    }
+  }
+  async function loadAvits(append) {
+    if (avits.busy || (append && (avits.dirty || avits.nextOffset === null))) return;
+    const filters = append ? avits.filters : Object.fromEntries([...new FormData($('management-avit-form'))].filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
+    if (filters.scm !== 'ado') delete filters.project;
+    avits.busy = true; $('management-avit-error').textContent = '';
+    $('management-avit-form').querySelector('[type="submit"]').disabled = true;
+    $('management-avits-more').disabled = true;
+    $('management-avit-status').textContent = 'Loading AVITs from ServiceNow…';
+    // Keep the filter set fixed while a page is in flight.
+    for (const input of $('management-avit-form').querySelectorAll('input, select')) input.disabled = true;
+    try {
+      const result = await api('/api/trackers/servicenow-avit/items', { method: 'POST', body: { filters, offset: append ? avits.nextOffset : 0 } });
+      if (!Array.isArray(result.items)) throw new Error('Invalid AVIT response');
+      avits.items = [...new Map((append ? [...avits.items, ...result.items] : result.items).map(item => [item.id, item])).values()];
+      avits.filters = result.filters; avits.nextOffset = result.nextOffset; avits.dirty = false;
+      const list = $('management-avits'); list.replaceChildren();
+      for (const item of avits.items) {
+        const row = node('article', 'management-finding'); const info = node('div', 'management-finding-info');
+        const title = node('h3'); title.append(safeLink(item.url, `${item.number} · ${item.title}`));
+        info.append(title, node('p', 'small subtle', [item.organization, item.project, item.repository, item.branch].filter(Boolean).join(' / ')),
+          node('p', 'small subtle', [item.riskRating, item.state, item.substate, item.source].filter(Boolean).join(' · ')));
+        row.append(info); list.append(row);
+      }
+      $('management-avit-status').textContent = avits.items.length ? `${avits.items.length} AVITs loaded${avits.nextOffset !== null ? ' · more records available' : ''}.` : avits.nextOffset !== null ? 'No readable AVITs on this page. More pages are available.' : 'No matching readable AVITs.';
+      $('management-avit-aggregate-dirty').textContent = 'Showing AVITs for the last loaded filters.';
+      $('management-avits-more').hidden = avits.nextOffset === null;
+    } catch (error) {
+      $('management-avit-error').textContent = `${error.message}. Previously loaded AVITs remain visible.`;
+      $('management-avit-status').textContent = 'AVIT refresh failed.';
+    } finally {
+      avits.busy = false;
+      for (const input of $('management-avit-form').querySelectorAll('input, select')) input.disabled = false;
+      $('management-avit-form').querySelector('[type="submit"]').disabled = false;
+      $('management-avits-more').disabled = avits.dirty;
+    }
+  }
   function providerFor(id) { return state.providers.find(p => p.id === id) || fallbackProviders.find(p => p.id === id); }
   function trackerConnections() { return state.connections.filter(c => c.kind === 'tracker' && c.enabled !== false); }
   function selectedConnectionLabel(c) { return `${c.name} · ${providerFor(c.provider)?.label || c.provider}${c.isDefault ? ' · default' : ''}`; }
@@ -116,7 +188,12 @@
       if (connection.kind === 'scm') {
         const activate = button('Use in Connect source', async b => {
           b.disabled = true;
-          try { await api(`/api/management/connections/${encodeURIComponent(connection.id)}/activate`, { method: 'POST', body: {} }); navigate('sources'); $('scm-refresh-connections')?.click(); toast(`${connection.name} is ready in Connect source.`); }
+          try {
+            const activated = await api(`/api/management/connections/${encodeURIComponent(connection.id)}/activate`, { method: 'POST', body: {} });
+            navigate('sources');
+            document.dispatchEvent(new CustomEvent('threatlint:source-activated', { detail: { connectionId: activated.connection.id } }));
+            toast(`${connection.name} is ready in Connect source.`);
+          }
           catch (error) { toast(error.message, true); } finally { b.disabled = !can('review') || connection.enabled === false; }
         }); activate.disabled = !can('review') || connection.enabled === false; actions.append(activate);
       }
@@ -139,7 +216,8 @@
     const select = $('management-connection-provider'); select.replaceChildren();
     for (const kind of ['tracker', 'scm']) {
       const group = node('optgroup'); group.label = kind === 'tracker' ? 'Issue trackers' : 'Source control';
-      for (const p of state.providers.filter(item => item.kind === kind)) group.append(option(p.id, p.label));
+      if (kind === 'scm' && !connection) group.append(option('github-app', 'GitHub App · use saved installation'));
+      for (const p of state.providers.filter(item => item.kind === kind)) group.append(option(p.id, p.id === 'github' ? 'GitHub · access token' : p.label));
       select.append(group);
     }
     select.value = connection?.provider || state.providers[0]?.id || 'jira'; select.disabled = !!connection;
@@ -152,7 +230,20 @@
   }
   function renderConnectionFields(connection = {}) {
     connection = connection || {};
+    const appMode = $('management-connection-provider').value === 'github-app';
+    $('management-connection-name-row').hidden = appMode;
+    $('management-connection-name').required = !appMode;
+    $('management-connection-token-row').hidden = appMode;
+    $('management-connection-token').required = !appMode && !connection.hasToken && !$('management-connection-id').value;
+    $('management-connection-token').value = '';
+    $('management-connection-enabled').closest('.management-connection-options').hidden = appMode;
+    $('management-save-connection').textContent = appMode ? 'Use or configure GitHub App' : 'Save connection';
+    $('management-connection-auth-note').textContent = appMode ? 'Uses the saved App installation. No personal token is needed.' : 'Use a token scoped to this project or repository.';
     const provider = providerFor($('management-connection-provider').value); const container = $('management-connection-fields'); container.replaceChildren();
+    if (appMode) {
+      container.append(node('p', 'field-note small subtle', 'Use the GitHub App already saved for this workspace. Installation tokens are created by the runner; no personal access token is required. If setup needs attention, the App settings will open.'));
+      return;
+    }
     for (const field of provider?.fields || []) {
       if (!/^[A-Za-z][A-Za-z0-9]{0,50}$/.test(field.name) || field.name === 'token') continue;
       const id = `management-field-${field.name}`; const label = node('label', '', field.label || field.name); label.htmlFor = id;
@@ -165,6 +256,21 @@
     event.preventDefault(); if (!can('manageSettings')) return;
     const submit = $('management-save-connection'); submit.disabled = true; $('management-connection-error').textContent = '';
     try {
+      if ($('management-connection-provider').value === 'github-app') {
+        const saved = await api('/api/github/settings');
+        if (saved.configured) {
+          const connections = await api('/api/scm/reconnect', { method: 'POST', body: { provider: 'github' } });
+          const app = connections.find(item => item.source === 'GitHub App' && item.connected !== false);
+          if (app) {
+            $('management-connection-dialog').close(); navigate('sources');
+            document.dispatchEvent(new CustomEvent('threatlint:source-activated', { detail: { connectionId: app.id } }));
+            toast('Connected using the saved GitHub App.'); return;
+          }
+        }
+        $('management-connection-dialog').close();
+        document.dispatchEvent(new CustomEvent('threatlint:settings-open', { detail: { section: 'github' } }));
+        return;
+      }
       const provider = providerFor($('management-connection-provider').value);
       const payload = { name: $('management-connection-name').value.trim(), provider: provider.id, kind: provider.kind, enabled: $('management-connection-enabled').checked, isDefault: $('management-connection-default').checked };
       const id = $('management-connection-id').value; if (id) payload.id = id;
@@ -317,12 +423,13 @@
     if (event.detail.view === 'settings') { chooseCategory(state.category); void loadAccess(); }
     if (event.detail.view === 'management') { void Promise.all([loadConnections(), loadFindings(), loadAccess()]).then(() => { renderConnections(); renderFindings(); }); }
   });
-  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(section === 'integrations' ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
+  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(['integrations', 'github'].includes(section) ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
   document.addEventListener('threatlint:context', event => { state.contextSession = event.detail.session?.id || null; });
   document.addEventListener('threatlint:ticket-create', async event => {
     await loadConnections();
     await openTicket('create', event.detail);
   });
+  initializeAvits();
   await loadAccess();
   if (!state.providers.length) state.providers = fallbackProviders; applyAccess(); chooseCategory(state.category);
   if (!$('view-management').hidden) { await loadConnections(); await loadFindings(); }

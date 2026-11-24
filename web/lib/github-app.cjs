@@ -150,7 +150,7 @@ function createGitHubApp({ fetch: fetchImpl = globalThis.fetch, now = Date.now }
     try { fs.unlinkSync(configPath()); return true; } catch { return false; }
   }
 
-  return { installationToken, check, publicStatus, save, clear, configured: () => !!readConfig() };
+  return { installationToken, check, publicStatus, save, clear, clearTokens: () => cache.clear(), configured: () => !!readConfig() };
 }
 
 module.exports = { createGitHubApp, appJwt, readConfig, configPath, validateApiUrl, GitHubAppError, DEFAULT_API_URL };

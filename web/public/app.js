@@ -26,7 +26,8 @@
     for (const provider of Object.keys(models)) if (typeof source.models?.[provider] === 'string') models[provider] = source.models[provider];
     return { provider: Object.hasOwn(models, source.provider) ? source.provider : DEFAULTS.provider, models,
       codexDaybreak: source.codexDaybreak === true, bedrockRegion: typeof source.bedrockRegion === 'string' ? source.bedrockRegion : '',
-      lmstudioUrl: typeof source.lmstudioUrl === 'string' ? source.lmstudioUrl : DEFAULTS.lmstudioUrl };
+      lmstudioUrl: typeof source.lmstudioUrl === 'string' ? source.lmstudioUrl : DEFAULTS.lmstudioUrl,
+      ...(Array.isArray(source.remoteAuthorizations) ? { remoteAuthorizations: source.remoteAuthorizations.filter(value => typeof value === 'string') } : {}) };
   }
   let saved = {};
   try { saved = JSON.parse(preferencesStorage.getItem('threatlint.preferences.v2') || '{}'); } catch { /* preferences are optional */ }
@@ -99,7 +100,10 @@
     if (state.preferences.provider !== 'lmstudio') return true;
     try { return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(state.preferences.lmstudioUrl).hostname); } catch { return true; }
   }
-  function consentKey() { return state.preferences.provider === 'lmstudio' ? state.preferences.lmstudioUrl : state.preferences.provider; }
+  function consentKey(preferences = state.preferences) {
+    return preferences.provider === 'lmstudio' ? preferences.lmstudioUrl
+      : preferences.provider === 'bedrock' ? `bedrock:${preferences.bedrockRegion || 'default'}` : preferences.provider;
+  }
   function showView(name) {
     if (name === 'sonarreview' || name === 'dojoreview') {
       const tool = name === 'sonarreview' ? 'sonar' : 'dojo'; name = 'fpreview';
@@ -356,6 +360,7 @@
   }
   function openReport(report) {
     state.report = report;
+    state.reportSelections = [];
     $('report-reader-title').textContent = report.example ? 'Findings & remediation · Example' : report.title || report.label || 'Security findings report';
     $('report-reader-eyebrow').textContent = report.example ? 'SYNTHETIC EXAMPLE · NOT A SCAN' : 'SOURCE-GROUNDED / HUMAN REVIEW REQUIRED';
     const quality = $('report-quality'); quality.replaceChildren(); quality.className = 'report-quality';
@@ -379,6 +384,15 @@
     safeMarkdown($('report-markdown'), report.markdown);
     selectReportTab('full'); renderFindings();
     if (!$('report-dialog').open) $('report-dialog').showModal();
+    const sessionId = report.sessionId || state.session?.id;
+    if (!report.example && report.id && sessionId) void request(`/api/intelligence/overview?sessionId=${encodeURIComponent(sessionId)}`).then(overview => {
+      if (state.report !== report) return;
+      for (const finding of report.findings || []) {
+        const reviewed = overview.revisionFindings?.find(item => item.provenance.sourceId === report.id && item.sourceFindingId === finding.id && item.reviewHistory?.length);
+        if (reviewed) finding.reviewedDisposition = reviewed.reviewHistory.at(-1).disposition;
+      }
+      renderFindings();
+    }).catch(() => {});
   }
   // Hands a report or finding to the Ask Threatlint view; chat.js owns the conversation.
   function askAbout(context, question) {
@@ -394,14 +408,40 @@
   }
   function renderFindings() {
     const severity = $('severity-filter').value, disposition = $('disposition-filter').value;
-    const findings = (state.report?.findings || []).filter(finding => (!severity || finding.severity === severity) && (!disposition || finding.disposition === disposition));
+    const findings = (state.report?.findings || []).filter(finding => (!severity || finding.severity === severity) && (!disposition || (finding.reviewedDisposition || finding.disposition) === disposition));
     const list = $('report-findings'); list.replaceChildren();
+    const canReview = !state.report?.example && state.report?.id && (state.report.sessionId || state.session?.id) && profile?.permissions?.review !== false;
+    $('report-resolve-selected').hidden = !canReview;
+    $('report-resolve-selected').disabled = !state.reportSelections?.length;
+    $('report-resolve-selected').textContent = `Resolve selected (${state.reportSelections?.length || 0})`;
     for (const finding of findings) {
       const card = el('article', 'finding-card'); const header = el('div', 'finding-card-header');
+      if (canReview) {
+        const label = el('label', 'check-row', ' Select for resolution'), select = el('input'); select.type = 'checkbox';
+        select.setAttribute('aria-label', `Select ${finding.id} for resolution`); select.checked = state.reportSelections.includes(finding.id);
+        select.disabled = finding.reviewedDisposition === 'REMEDIATED';
+        select.addEventListener('change', () => {
+          state.reportSelections = select.checked ? [...new Set([...state.reportSelections, finding.id])] : state.reportSelections.filter(id => id !== finding.id);
+          $('report-resolve-selected').disabled = !state.reportSelections.length || state.reportSelections.length > 100;
+          $('report-resolve-selected').textContent = `Resolve selected (${state.reportSelections.length})`;
+        }); label.prepend(select); card.append(label);
+      }
       header.append(el('span', 'finding-id', finding.id), el('h3', '', finding.title), el('span', `severity-badge severity-${finding.severity}`, finding.severity));
       if (finding.disposition) header.append(el('span', 'disposition-badge', finding.disposition));
+      if (finding.reviewedDisposition) header.append(el('span', 'disposition-badge', `Reviewed: ${finding.reviewedDisposition}`));
       const body = el('div', 'markdown'); safeMarkdown(body, finding.body);
       const actions = el('div', 'finding-card-actions');
+      if (canReview) actions.append(button('Triage finding', 'button primary small-button', () => {
+        if (state.running) { toast('Wait for the current review to finish before preparing triage.', true); return; }
+        const report = state.report;
+        const prepare = async () => {
+          if (report.sessionId && report.sessionId !== state.session?.id) await openSession({ id: report.sessionId });
+          setAttachment({ name: `${finding.id}-finding.md`, content: `# Finding to review\n\nSource report: ${report.id}\n\n## [${finding.id}] ${finding.title}\n${finding.body}` });
+          state.pipeline = [FP_REVIEWER]; state.statuses = {}; state.preset = '';
+          renderPipeline(); renderPresets(); renderAgents(); $('report-dialog').close(); showView('workbench');
+          toast('Finding attached for triage. Review the context and start when ready.');
+        }; void prepare().catch(error => toast(error.message, true));
+      }));
       if (!state.report.example && state.report.id && state.report.agentId === FP_REVIEWER && finding.disposition === 'FALSE POSITIVE') {
         const origin = /\*\*Scanner origin\*\*:\s*(.+)/i.exec(finding.body)?.[1]?.toLowerCase() || (state.report.source?.tool === 'sonar' ? 'sonarqube' : state.report.source?.scanner || '');
         if (/sonarqube|^trivy$/.test(origin)) actions.append(button('Tune source scanner…', 'button primary small-button', () => tuneSourceScanner(finding, origin)));
@@ -808,6 +848,9 @@
     preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
     if (provider === 'bedrock') preferences.bedrockRegion = bedrockRegion;
     const key = $('api-key').value.trim(), consent = $('cloud-consent').checked;
+    const authorizations = new Set(state.consent);
+    if (consent) authorizations.add(consentKey(preferences)); else authorizations.delete(consentKey(preferences));
+    preferences.remoteAuthorizations = [...authorizations];
     const submit = $('settings-form').querySelector('button[type=submit]');
     if (submit.disabled) return;
     submit.disabled = true;
@@ -815,15 +858,15 @@
       const result = await request('/api/model-preferences', { method: 'PUT', body: JSON.stringify(preferences) });
       state.preferences = { ...state.preferences, ...modelPreferences(result.preferences), model };
       if (provider !== 'lmstudio' && provider !== 'codex' && provider !== 'claude-code') state.credentials[provider] = key;
-      if (consent) state.consent.add(consentKey()); else state.consent.delete(consentKey());
+      state.consent = new Set(state.preferences.remoteAuthorizations || []);
       cachePreferences();
       updateProviderDisplay(); toast('Model settings saved for the next launch. Credentials remain in memory only.');
     } catch (error) { $('settings-error').textContent = `Model settings could not be saved: ${error.message}`; }
     finally { submit.disabled = false; }
   }
   function cachePreferences() {
-    const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
-    try { preferencesStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+    const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance, remoteAuthorizations } = state.preferences;
+    try { preferencesStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance, remoteAuthorizations })); } catch { /* in-memory operation remains available */ }
   }
   async function restoreModelPreferences() {
     try {
@@ -834,6 +877,7 @@
       }
       if (preferences !== null) {
         state.preferences = { ...state.preferences, ...modelPreferences(preferences) };
+        state.consent = new Set(preferences.remoteAuthorizations || []);
         cachePreferences();
       }
     } catch (error) { toast(`Saved model preferences could not be restored: ${error.message}`, true); }
@@ -1109,8 +1153,9 @@
     for (const radio of document.querySelectorAll('input[name=provider]')) radio.addEventListener('change', () => {
       if (settingsProvider !== 'lmstudio') state.credentials[settingsProvider] = $('api-key').value.trim();
       settingsProvider = radio.value; $('model-id').value = DAYBREAK_MODELS[settingsProvider] || state.preferences.models[settingsProvider] || '';
-      $('api-key').value = state.credentials[settingsProvider] || ''; $('cloud-consent').checked = false;
+      $('api-key').value = state.credentials[settingsProvider] || '';
       updateSettingsFields(settingsProvider);
+      $('cloud-consent').checked = state.consent.has(consentKey({ ...state.preferences, provider: settingsProvider, bedrockRegion: $('bedrock-region').value.trim(), lmstudioUrl: $('model-url').value.trim() }));
     });
     $('snow-read-parameters').addEventListener('click', readSnowParameters);
     $('fp-close-avit').addEventListener('click', closeAvitFalsePositive); $('fp-semgrep-find').addEventListener('click', findSemgrepMatches);
@@ -1174,6 +1219,21 @@
       toast(`${state.pipeline.length} specialist${state.pipeline.length > 1 ? 's' : ''} selected. Add context and run when ready.`);
     });
     document.addEventListener('threatlint:navigate', event => showView(event.detail.view));
+    document.addEventListener('threatlint:settings-open', event => showSettingsSection(event.detail?.section));
+    $('report-resolve-selected').addEventListener('click', async () => {
+      if (state.running || !state.reportSelections?.length) return;
+      const report = state.report, findingIds = [...state.reportSelections], sessionId = report.sessionId || state.session?.id;
+      const control = $('report-resolve-selected'); control.disabled = true;
+      try {
+        if (sessionId !== state.session?.id) await openSession({ id: sessionId });
+        const result = await request('/api/intelligence/sync', { method: 'POST', body: JSON.stringify({ sessionId }) });
+        const selected = result.overview.revisionFindings.filter(item => item.provenance.sourceId === report.id && findingIds.includes(item.sourceFindingId));
+        if (selected.length !== findingIds.length) throw new Error('Some selected findings could not be imported into the evidence ledger. Refresh the report and retry.');
+        $('report-dialog').close(); showView('intelligence');
+        document.dispatchEvent(new CustomEvent('threatlint:resolve-selection', { detail: { session: state.session, overview: result.overview, findings: selected } }));
+      } catch (error) { toast(error.message, true); }
+      finally { control.disabled = false; }
+    });
     // Other views (e.g. Triage a scan report) open a saved report in Findings, switching to its workspace when idle.
     document.addEventListener('threatlint:open-report', event => {
       const { sessionId, previewUrl } = event.detail || {};

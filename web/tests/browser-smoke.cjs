@@ -387,7 +387,7 @@ async function githubSettings(page) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(status(posted.length > 0)) });
   });
   await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
-  await page.locator('.settings-nav [data-settings-category=scanners]').click();
+  await page.locator('.settings-nav [data-settings-category=integrations]').click();
   await page.locator('#github-form').scrollIntoViewIfNeeded();
   assert.equal(await page.locator('#github-app-fields').isVisible(), false, 'App fields stay hidden until "Use GitHub App" is checked');
   await page.locator('#github-use-app').check();

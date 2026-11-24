@@ -71,6 +71,8 @@ describe('GitHub App JWT and tokens', () => {
 });
 
 describe('Workbench GitHub App settings and Sources', () => {
+  let checkoutAttempts = 0, rejectedCheckouts = 0;
+  const checkoutDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-checkout-fixture-'));
   let wb, base;
   const github = fakeGitHub();
   const connected = [];
@@ -82,6 +84,8 @@ describe('Workbench GitHub App settings and Sources', () => {
     const scm = {
       list: () => connected.filter(item => !item.closed).map(({ id }) => ({ id, provider: 'github', account: 'example-org', label: 'GitHub · example-org', host: 'github.com' })),
       connect: async input => { const item = { ...input, id: `00000000-0000-4000-8000-00000000000${connected.length}` }; connected.push(item); return { id: item.id }; },
+      refreshCredential: async (id, { token }) => { const item = connected.find(entry => entry.id === id && !entry.closed); assert.ok(item); item.token = token; return { id }; },
+      checkout: async () => { checkoutAttempts++; if (rejectedCheckouts-- > 0) throw Object.assign(new Error('Synthetic revoked installation token'), { code: 'SCM_AUTHORIZATION_FAILED' }); return { repoPath: checkoutDirectory }; },
       disconnect: id => { const item = connected.find(entry => entry.id === id); if (item) item.closed = true; return !!item; },
     };
     wb = createWorkbench({ storageDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tl-')), integrations: { threatlintCli, fetchImpl: github.fetch }, sourceManagers: scm });
@@ -134,6 +138,42 @@ describe('Workbench GitHub App settings and Sources', () => {
     const [item] = JSON.parse(second.text);
     assert.equal(item.label, 'GitHub App · example-org');
     assertNoSecrets(first.text + second.text);
+  });
+
+  it('blocks an issuer that returns expired App credentials before checkout without losing the selected session', async t => {
+    const previous = connected.find(item => !item.closed).id;
+    t.mock.method(Date, 'now', () => Date.parse('2099-01-01T00:00:01Z'));
+    const result = await call('POST', '/api/scm/checkout', { connectionId: previous, repositoryId: 'not-fetched', branch: 'main' });
+    // The synthetic token issuer still returns an expired token: it must never reach checkout.
+    assert.equal(result.status, 503, result.text);
+    assert.equal(JSON.parse(result.text).code, 'SCM_SAVED_CREDENTIAL_UNAVAILABLE');
+    assertNoSecrets(result.text);
+  });
+
+  it('automatically refreshes a revoked token and retries the same checkout only once without reselection', async () => {
+    const previous = connected.find(item => !item.closed).id;
+    rejectedCheckouts = 1;
+    const result = await call('POST', '/api/scm/checkout', { connectionId: previous, repositoryId: 'selected-repository', branch: 'main' });
+    assert.equal(result.status, 201, result.text); assert.equal(checkoutAttempts, 2);
+    assert.equal(connected.find(item => !item.closed).id, previous);
+    assertNoSecrets(result.text);
+    rejectedCheckouts = 2;
+    const denied = await call('POST', '/api/scm/checkout', { connectionId: previous, repositoryId: 'selected-repository', branch: 'main' });
+    assert.equal(denied.status, 400, denied.text); assert.equal(checkoutAttempts, 4, 'a denied retry must not loop');
+  });
+
+  it('explicit reconnect mints a new token while retaining the session and saved App configuration', async () => {
+    const before = github.calls.filter(item => item.url.endsWith('/access_tokens')).length;
+    const previous = connected.find(item => !item.closed).id;
+    const result = await call('POST', '/api/scm/reconnect', { provider: 'github' });
+    assert.equal(result.status, 200, result.text);
+    const app = JSON.parse(result.text).find(item => item.source === 'GitHub App');
+    assert.equal(app.connected, true);
+    assert.equal(app.id, previous);
+    assert.equal(github.calls.filter(item => item.url.endsWith('/access_tokens')).length, before + 1);
+    assert.equal(JSON.parse((await call('GET', '/api/github/settings')).text).configured, true);
+    assertNoSecrets(result.text);
+    assert.equal((await call('POST', '/api/scm/reconnect', { provider: 'azure-devops' })).status, 400);
   });
 
   it('removes the settings and the App connection', async () => {

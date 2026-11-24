@@ -123,6 +123,22 @@ describe('Finding intelligence provenance and deduplication', () => {
 });
 
 describe('Evidence-gated reviews and attack chains', () => {
+  it('resolves a selected batch atomically with verified remediation evidence', () => {
+    const store = createFindingIntelligenceStore(), raw = ingestion().findings[0];
+    store.ingest(ingestion({ findings: [raw, { ...raw, id: 'b', fingerprint: 'second' }] }));
+    const ids = store.snapshot().findings.map(item => item.id);
+    const decision = { reason: 'Verified the fix and regression coverage for both dataflows.',
+      newEvidence: [verified('The regression suite verifies both corrected paths.', { kind: 'remediation' })],
+      basis: [{ claim: 'Both paths now reject unauthorized reads.', evidenceIds: [0] }], at: 3000 };
+    assert.throws(() => store.resolveMany([ids[0], 'missing'], decision), /not found/);
+    assert.equal(store.snapshot().findings[0].reviewHistory.length, 0, 'a later invalid ID does not partially resolve the batch');
+    assert.throws(() => store.resolveMany(ids, { ...decision, newEvidence: [] }), /evidence/);
+    assert.equal(store.snapshot().findings[0].reviewHistory.length, 0);
+    const resolved = store.resolveMany(ids, decision);
+    assert.equal(resolved.length, 2);
+    assert.ok(resolved.every(item => item.reviewHistory.at(-1).disposition === 'REMEDIATED'));
+    assert.throws(() => store.resolveMany([ids[0], ids[0]], decision), /unique/);
+  });
   it('calculates all impact/complexity priority combinations without lowering impact or boosting uncertainty', () => {
     const matrix = { CRITICAL: [['CRITICAL', 10], ['HIGH', 7.5], ['HIGH', 5]], HIGH: [['HIGH', 6], ['HIGH', 4.5], ['MEDIUM', 3]],
       MEDIUM: [['MEDIUM', 3], ['MEDIUM', 2.25], ['LOW', 1.5]], LOW: [['LOW', 1], ['LOW', 0.75], ['LOW', 0.5]] };
@@ -304,6 +320,8 @@ describe('Intelligence routes bind repository scope to workspace sessions', () =
       assert.equal(finding.provenance.repo.id, '/repos/shop'); assert.equal(finding.provenance.origin, 'imported');
       assert.equal((await fetch(`${base}/api/intelligence/findings/${finding.id}?sessionId=other`)).status, 404);
       assert.equal((await post(`/api/intelligence/findings/${finding.id}/reviews`, { sessionId: 'other' })).status, 404);
+      assert.equal((await post('/api/intelligence/findings/resolve', { sessionId: 'other', confirm: true, findingIds: [finding.id] })).status, 404);
+      assert.equal((await post('/api/intelligence/findings/resolve', { sessionId: 'shop', findingIds: [finding.id] })).status, 400);
       assert.equal((await fetch(`${base}/api/intelligence/overview?sessionId=missing`)).status, 404);
       assert.equal((await post('/api/intelligence/sync', { sessionId: 'shop' })).status, 200);
       intelligence.ingest(ingestion({ sourceId: 'release-import', branch: 'release', findings: [] }));

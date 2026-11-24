@@ -3,6 +3,19 @@
 // Independent of app.js state. The parent owns view navigation and both handoffs.
 (() => {
   const $ = id => document.getElementById(id);
+  const SOURCE_ERRORS = {
+    SCM_BRANCH_MOVED: 'The branch changed during checkout. Select it again to pin its latest commit; no workspace was opened.',
+    SCM_GIT_NOT_FOUND: 'Git could not be found. Install Git and restart Threatlint.',
+    SCM_GIT_TLS_FAILED: 'Git could not verify the source server certificate. Configure the trusted certificate chain for Git and retry.',
+    SCM_GIT_NETWORK_FAILED: 'Git could not reach the source server. Check network or proxy access and retry.',
+    SCM_AUTHORIZATION_FAILED: 'The source rejected access. Check this account’s repository-read permissions and saved credential.',
+    SCM_TIMEOUT: 'The source operation timed out. Check connectivity and retry; large repositories may need more time.',
+    SCM_CONNECTION_NOT_FOUND: 'The source session expired or was disconnected. Refresh Connected accounts and select the repository again.',
+    SCM_CREDENTIALS_REFRESHED: 'The saved source credentials were refreshed. Refresh Connected accounts and select the repository and branch again.',
+    SCM_SAVED_CREDENTIAL_UNAVAILABLE: 'The saved GitHub App credential could not be refreshed. Retry or check GitHub App settings.',
+    SCM_BRANCH_NOT_FOUND: 'The selected branch is no longer available. Reload its branch list and select it again.',
+    SCM_CHECKOUT_FAILED: 'Git could not complete the checkout. Check repository access, Git configuration, and local disk space.',
+  };
   const LIVE_STATES = new Set(['pending', 'queued', 'starting', 'running', 'scanning', 'in-progress', 'cancelling', 'canceling']);
   const TERMINAL_STATES = new Set(['complete', 'completed', 'finished', 'done', 'success', 'succeeded', 'cancelled', 'canceled', 'stopped', 'aborted', 'failed', 'error', 'timeout', 'timed-out']);
   const FAILED_STATES = new Set(['failed', 'error', 'timeout', 'timed-out']);
@@ -128,7 +141,7 @@
       const error = new Error('The local runner could not complete this operation.');
       error.status = response.status;
       const failure = await response.json().catch(() => null);
-      if (failure?.code === 'SCM_BRANCH_MOVED') error.code = failure.code;
+      if (Object.hasOwn(SOURCE_ERRORS, failure?.code)) { error.code = failure.code; error.message = SOURCE_ERRORS[failure.code]; }
       throw error;
     }
     if (response.status === 204) return null;
@@ -199,6 +212,7 @@
       // A saved source (Azure DevOps PAT or GitHub App) that is configured but not currently live is surfaced
       // as connected:false so the user sees it rather than it silently disappearing.
       connected: value.connected !== false, source: redactText(value.source), reason: redactText(value.reason),
+      savedConnectionId: idOf(value.savedConnectionId), isDefault: value.isDefault === true,
     };
   }
   // Only live connections can be browsed; a saved-but-unconnected row has a synthetic id the runner rejects.
@@ -257,8 +271,22 @@
     row.append(info, button('Reconnect', 'text-button scm-reconnect', () => reconnectSaved(item), `Reconnect ${item.label || item.account || 'saved source'}`));
     return row;
   }
-  function reconnectSaved(item) {
+  async function reconnectSaved(item) {
     if (sourceLocked()) return;
+    if (item.savedConnectionId) { void refreshConnections(); return; }
+    if (item.source === 'GitHub App') {
+      scm.connectionBusy = true; syncSourceControls();
+      try {
+        await api('/api/scm/reconnect', { method: 'POST', body: { provider: 'github' } });
+        scm.connectionBusy = false;
+        await refreshConnections();
+        if (scm.connections.some(value => value.source === 'GitHub App' && value.connected === false)) {
+          status('scm-status', 'The saved GitHub App could not connect. Open GitHub App settings below to check its installation and private key.', 'error');
+        }
+      } catch { status('scm-status', 'The saved GitHub App could not reconnect. Open GitHub App settings below to check its configuration.', 'error'); }
+      finally { scm.connectionBusy = false; syncSourceControls(); }
+      return;
+    }
     const azure = item.provider !== 'github';
     $('scm-provider').value = azure ? 'azure-devops' : 'github';
     providerChanged();
@@ -279,25 +307,55 @@
     if (liveCount) state.textContent = `${liveCount} CONNECTED`;
     syncSourceControls();
   }
-  async function refreshConnections() {
+  async function namedSourceConnections() {
+    const saved = await api('/api/management/connections');
+    if (!Array.isArray(saved.connections)) throw new Error('Invalid saved connections.');
+    const sources = saved.connections.filter(item => item.kind === 'scm' && item.enabled !== false);
+    sources.sort((a, b) => Number(b.isDefault === true) - Number(a.isDefault === true));
+    const results = [];
+    for (const item of sources) {
+      const metadata = { savedConnectionId: item.id, isDefault: item.isDefault === true, source: 'Saved in Settings' };
+      try {
+        // The server resolves the encrypted token; browser code only supplies the saved record ID.
+        const activated = await api(`/api/management/connections/${encodeURIComponent(item.id)}/activate`, { method: 'POST', body: {} });
+        const live = connection(activated.connection);
+        if (!live) throw new Error('Invalid saved source.');
+        results.push({ ...live, ...metadata, label: item.name || live.label });
+      } catch {
+        results.push({ ...metadata, id: `settings:${item.id}`, provider: item.provider,
+          account: item.organization || '', label: item.name, connected: false,
+          reason: 'Could not connect. Check this connection’s token and permissions in Settings, then retry.' });
+      }
+    }
+    return results;
+  }
+  async function refreshConnections(preferredId) {
+    if (typeof preferredId === 'string') scm.preferredConnectionId = preferredId;
     if (scm.refreshing || sourceLocked()) return;
     scm.refreshing = true;
     syncSourceControls();
     status('scm-status', 'Loading session connections…', 'busy');
     try {
+      const named = await namedSourceConnections();
       const payload = await api('/api/scm/connections');
       if (!Array.isArray(payload)) throw new Error('Invalid connections.');
-      scm.connections = payload.map(connection).filter(Boolean);
+      const runtime = payload.map(connection).filter(Boolean);
+      // Prefer Settings' named records over legacy degraded placeholders for the same organization.
+      scm.connections = [...named, ...runtime.filter(item => !named.some(saved => saved.id === item.id
+        || (item.connected === false && saved.provider === item.provider
+          && saved.account.toLowerCase() === item.account.toLowerCase())))];
       scm.initialized = true;
       const selected = scm.connections.some(item => item.id === scm.connectionId);
       renderConnections();
-      const liveId = firstLiveId();
+      const preferred = scm.connections.find(item => item.id === scm.preferredConnectionId && item.connected !== false);
+      const liveId = preferred?.id || scm.connections.find(item => item.isDefault && item.connected !== false)?.id || firstLiveId();
+      scm.preferredConnectionId = '';
       const unconnected = scm.connections.filter(item => item.connected === false).length;
-      if (!selected) selectConnection(liveId);
+      if (!selected || preferred) selectConnection(liveId);
       else status('scm-status', 'Session connections refreshed. Select a repository to continue.');
       if (!scm.connections.length) status('scm-status', 'No source connections yet. Connect an account above, or save an Azure DevOps PAT in Settings to connect it automatically.');
       // Without a live connection nothing else replaces the busy "Loading…" status, so always settle it here.
-      else if (!liveId) status('scm-status', `${unconnected} saved source${unconnected === 1 ? '' : 's'} could not connect. Use Reconnect under Connected accounts, or add a token above.`, 'error');
+      else if (!liveId) status('scm-status', `${unconnected} saved source${unconnected === 1 ? '' : 's'} could not connect. Check the saved token and permissions in Settings, then use Reconnect under Connected accounts.`, 'error');
     } catch {
       status('scm-status', 'Source connections could not be loaded. The local runner may not support source connections yet; use Refresh to retry.', 'error');
     } finally { scm.refreshing = false; syncSourceControls(); }
@@ -504,8 +562,7 @@
       document.dispatchEvent(new CustomEvent('threatlint:workspace', { bubbles: true, detail: { sessionId: payload.sessionId, repoPath: payload.repoPath } }));
       status('scm-status', 'Checkout ready. A shared-workspace handoff was requested; specialist reviews still require an explicit run.');
     } catch (error) {
-      status('scm-status', error.code === 'SCM_BRANCH_MOVED' ? 'The branch changed during checkout. Select it again to pin its latest commit; no workspace was opened.'
-        : 'The checkout was not acknowledged. Check repository access and the local runner before retrying.', 'error');
+      status('scm-status', SOURCE_ERRORS[error.code] || 'The checkout was not acknowledged. Check repository access and the local runner before retrying.', 'error');
     } finally { scm.checkout = false; syncSourceControls(); }
   }
 
@@ -1311,6 +1368,10 @@
   }
 
   function wireSources() {
+    document.addEventListener('threatlint:source-activated', event => { void refreshConnections(event.detail?.connectionId); });
+    $('scm-github-app-settings').addEventListener('click', () => {
+      document.dispatchEvent(new CustomEvent('threatlint:settings-open', { detail: { section: 'github' } }));
+    });
     $('scm-provider').addEventListener('change', providerChanged);
     $('scm-connection-form').addEventListener('submit', connectSource);
     $('scm-refresh-connections').addEventListener('click', refreshConnections);

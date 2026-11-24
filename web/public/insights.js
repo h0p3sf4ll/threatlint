@@ -202,6 +202,7 @@
     const note = $('avit-aggregate-dirty');
     $('avit-aggregate-submit').disabled = !state.avitConfigured;
     note.textContent = !state.avitConfigured ? 'Configure ServiceNow in Settings to load or refresh this summary.'
+      : state.aggregateFailed ? 'Refresh failed. Counts below are from the last completed summary, not the failed request.'
       : state.aggregateDirty ? 'Filters changed. Load the summary to see updated counts.'
         : state.avitAggregate ? 'Showing the last completed ServiceNow summary.' : 'Leave fields blank to count all readable AVITs.';
   }
@@ -228,6 +229,7 @@
   const filterLabel = key => FILTER_LABELS[key] || key;
   const filterValueLabel = (key, value) => FILTER_VALUE_LABELS[key]?.[value] || value;
   function renderAggregate(summary) {
+    state.aggregateFailed = false;
     state.avitAggregate = summary;
     const result = $('avit-aggregate-result'); result.replaceChildren();
     if (!summary) { result.append(el('p', 'small subtle', 'No AVIT summary loaded yet.')); updateAggregateNote(); return; }
@@ -270,7 +272,10 @@
     try {
       const summary = await api('/api/trackers/servicenow-avit/aggregate', { method: 'POST', body: JSON.stringify({ filters }) });
       state.aggregateDirty = false; renderAggregate(summary);
-    } catch (error) { $('avit-aggregate-error').textContent = `AVIT summary failed: ${error.message}. The previous summary remains visible.`; }
+    } catch (error) {
+      state.aggregateFailed = true; updateAggregateNote();
+      $('avit-aggregate-error').textContent = `AVIT summary failed: ${error.message}. The previous summary remains visible.`;
+    }
     finally { control.textContent = 'Load AVIT summary'; updateAggregateNote(); }
   }
   function openTrackerSettings(id) {

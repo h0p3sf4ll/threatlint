@@ -1,0 +1,6 @@
+:root { --ifm-color-primary: #26796d; --ifm-font-size-base: 17px; --ifm-font-family-base: system-ui, sans-serif; --ifm-heading-font-weight: 650; --ifm-code-font-size: 90%; }
+[data-theme='dark'] { --ifm-color-primary: #8ae0c7; --ifm-background-color: #101b20; --ifm-background-surface-color: #14262c; --ifm-navbar-background-color: #102027; --ifm-footer-background-color: #102027; }
+.markdown { max-width: 76ch; line-height: 1.75; }
+.markdown h1 { letter-spacing: -.035em; }
+.navbar__title { font-weight: 700; letter-spacing: -.02em; }
+:focus-visible { outline: 3px solid var(--ifm-color-primary); outline-offset: 3px; }

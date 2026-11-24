@@ -46,6 +46,81 @@ test('AVIT aggregate validates server-side filters and rejects encoded-query inj
   assert.throws(() => servicenow.validateAggregateFilters({ scanner: 'any' }), /Unsupported AVIT filter/);
 });
 
+test('summary stats get a longer request deadline and independent breakdowns run concurrently', async t => {
+  const deadlines = [];
+  t.mock.method(AbortSignal, 'timeout', ms => { deadlines.push(ms); return new AbortController().signal; });
+  let started = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const transport = fakeStats([]);
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has('sysparm_group_by') || (parsed.searchParams.get('sysparm_query') || '').includes('substate=3')) {
+      started++; await gate;
+    }
+    return transport(url, options);
+  };
+  const pending = servicenow.fetchAvitAggregate({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' }, { fetchImpl });
+  await new Promise(resolve => setImmediate(resolve));
+  const concurrent = started;
+  release();
+  assert.equal((await pending).total, 67512944);
+  assert.equal(concurrent, 4, 'breakdowns must overlap instead of accumulating sequential waits');
+  assert.equal(deadlines.filter(ms => ms === 180_000).length, 5);
+});
+
+test('a timed out breakdown remains unavailable while the completed total stays usable', async () => {
+  const transport = fakeStats([]);
+  const result = await servicenow.fetchAvitAggregate({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' }, {
+    fetchImpl: async (url, options) => {
+      if (new URL(url).searchParams.get('sysparm_group_by') === 'risk_rating') throw new DOMException('Synthetic slow stats query', 'TimeoutError');
+      return transport(url, options);
+    },
+  });
+  assert.equal(result.total, 67512944); assert.equal(result.riskRating, null);
+  assert.match(result.limitations, /Risk rating.*timeout/);
+});
+
+test('an empty summary avoids unnecessary breakdown queries', async () => {
+  const calls = [];
+  const result = await servicenow.fetchAvitAggregate({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' }, {
+    fetchImpl: async url => { calls.push(url); return url.endsWith('/oauth_token.do') ? reply({ access_token: 'synthetic-token' }) : reply({ result: { stats: { count: '0' } } }); },
+  });
+  assert.equal(result.total, 0); assert.deepEqual(result.riskRating, []);
+  assert.equal(calls.length, 2);
+});
+
+test('Issue Management AVIT pages share Metrics filters, bound records, and continue past short ACL-filtered pages', async () => {
+  const calls = [];
+  const credentials = { instance: INSTANCE, clientId: 'id', clientSecret: 'secret' };
+  const fetchImpl = async (url, options) => {
+    calls.push(url);
+    if (url.endsWith('/oauth_token.do')) return reply({ access_token: 'synthetic-token' });
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith('/sys_documentation')) return reply({ result: [
+      { name: 'sn_vul_app_vulnerable_item', element: 'u_org', label: 'Organization Name' },
+      { name: 'sn_vul_app_vulnerable_item', element: 'u_project', label: 'Project Name' },
+    ] });
+    assert.equal(options.redirect, 'error'); assert.equal(options.headers.Authorization, 'Bearer synthetic-token');
+    assert.equal(parsed.searchParams.get('sysparm_limit'), '100');
+    return { ...reply({ result: [{ sys_id: 'a'.repeat(32), number: 'AVIT0000001', short_description: 'Synthetic finding',
+      u_org: 'acme', risk_rating: { value: '1', display_value: 'Critical' }, state: { value: '1', display_value: 'Open' } }] }),
+      headers: { get: key => key === 'x-total-count' ? '220' : null } };
+  };
+  const filters = { scm: 'ado', organization: 'acme', project: 'app', findingType: 'secrets', riskRating: '1', state: '1' };
+  const first = await servicenow.fetchAvitPage(credentials, { filters, fetchImpl });
+  assert.equal(first.items.length, 1); assert.equal(first.nextOffset, 100);
+  assert.equal(first.items[0].organization, 'acme'); assert.equal(first.items[0].riskRating, 'Critical');
+  assert.doesNotMatch(JSON.stringify(first), /synthetic-token|clientSecret|Authorization/);
+  const query = new URL(calls.at(-1)).searchParams.get('sysparm_query');
+  for (const clause of ['u_scm_toolLIKEazure', 'u_org=acme', 'u_project=app', 'u_security_finding_sourceLIKEsecret', 'risk_rating=1', 'state=1', 'ORDERBYsys_id']) assert.ok(query.includes(clause), clause);
+  const last = await servicenow.fetchAvitPage(credentials, { filters, offset: 200, fetchImpl });
+  assert.equal(last.nextOffset, null);
+  const count = calls.length;
+  await assert.rejects(servicenow.fetchAvitPage(credentials, { filters: { organization: 'acme^ORstate=3' }, fetchImpl }));
+  await assert.rejects(servicenow.fetchAvitPage(credentials, { offset: -1, fetchImpl }));
+  assert.equal(calls.length, count, 'invalid filters and pages are rejected before provider access');
+});
+
 test('AVIT aggregate requests only server-side counts and allowed group dimensions', async () => {
   const calls = [];
   const result = await servicenow.fetchAvitAggregate({ instance: INSTANCE, clientId: 'id', clientSecret: 'secret' },

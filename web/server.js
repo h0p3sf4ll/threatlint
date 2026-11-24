@@ -125,6 +125,8 @@ function createWorkbench(options = {}) {
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
   registerSecurityScannerRoutes(app, { securityScanner });
   registerFindingIntelligenceRoutes(app, { intelligence, store });
+  const mcpDependencies = { store, intelligence, reports, scm, securityScanner };
+  require('./lib/mcp.cjs').registerMcpRoutes(app, mcpDependencies);
 
   // Native desktop remains an individually owned application. Company authorization and shared
   // connections are handled by the authenticated gateway before requests reach a profile worker.
@@ -175,7 +177,8 @@ function createWorkbench(options = {}) {
     await new Promise(resolve => wss.close(resolve));
     if (server.listening) await new Promise(resolve => server.close(resolve));
   }
-  return { app, server, wss, store, close, scanImports, securityScanner, intelligence, generateReport: reports.save };
+  return { app, server, wss, store, close, scanImports, securityScanner, intelligence, generateReport: reports.save,
+    createMcpServer: () => require('./lib/mcp.cjs').createMcpServer(mcpDependencies) };
 }
 
 const workbench = createWorkbench();

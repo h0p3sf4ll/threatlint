@@ -68,7 +68,10 @@ UI consent. Prompts, attached findings, and inspected source/tool results go to 
 **Save model settings** stores the selected provider, each provider's model, Codex Daybreak option,
 Bedrock region, and local model-server URL in the Workbench's local settings. These choices restore
 after exiting and reopening the desktop app, including when its local port changes. Session model
-keys are not saved to browser storage, settings, reports, or history; consent does not survive a restart.
+keys are not saved to browser storage, settings, reports, or history. The authorization checkbox
+is saved separately for the selected provider (and region or remote model-server URL) and survives
+restarts and updates. Uncheck it and save to revoke that authorization. A different provider or
+endpoint needs its own authorization.
 
 Integration credentials are different: **Settings** saves ServiceNow, Semgrep, Azure DevOps,
 GitHub App, DefectDojo, and SonarQube configuration through their respective setup flows.
@@ -76,6 +79,14 @@ Do not assume those saved credentials are session-only. Desktop uses the OS cert
 and adds the login-shell PATH so installed `gh`, `git`, `az`, and `aws` commands can be found.
 
 ## Unified workflows
+
+Each saved report finding has **Triage finding** to prepare a Finding Review with that exact
+finding attached; model execution begins only when you start it. Select finding checkboxes and
+choose **Resolve selected** to record one evidence-backed remediation decision for the batch.
+The confirmation form requires a fix/test reference, observed result, verification method,
+rationale, and an explicit attestation covering every selected finding. A batch saves atomically.
+Original reports remain unchanged; reviewed decisions are shown separately and retained in
+the repository evidence ledger. Repository risk also supports individual triage and bulk resolution.
 
 - **Review code** groups specialist review, **Run scanners**, and source setup: open a local folder or use **Connect source** within the review workflow. There is no separate source-connection navigation tab.
 - **Finding triage** has one source selector for ServiceNow, Azure DevOps Boards, Jira Cloud, GitHub Issues, DefectDojo, SonarQube, and scan-report uploads. DefectDojo and SonarQube reviews use their existing adapters inside this view.
@@ -267,7 +278,21 @@ responses. Connection tokens stay in memory and clear on disconnect/restart; a s
 can remain on disk and contains source.
 
 A saved [GitHub App](github-app.md) connects automatically and refreshes installation tokens.
+Named source-control connections saved under **Settings → Integrations** also connect when
+you open Connect source or refresh its account list. The saved default is selected first;
+**Use in Connect source** selects that specific account. A failed named connection retries its
+saved credential through **Reconnect**, without requiring a token in the browser.
+GitHub App configuration is under **Settings → Integrations → GitHub App**, alongside named
+connections. **Add connection → GitHub App** uses the saved installation or opens its setup;
+**GitHub · access token** remains available for token-based accounts. GitHub App **Reconnect**
+mints a fresh installation token and retries immediately while retaining the App settings.
 Source browsing does not support GitHub Enterprise Server or Azure DevOps Server.
+Repository searches use case-insensitive substring matches on names and full paths, including
+repositories discovered on later pages. Large Azure DevOps inventories fall back to paged
+project discovery rather than requiring one unbounded organization response. GitHub App tokens
+are refreshed automatically before repository operations, preserving the active source session,
+repository selection, and branch so checkout continues without searching again. Checkout failures distinguish missing Git, trust,
+network, access, and expired-session problems without returning Git's credential-bearing output.
 
 Once at least one source is connected, the Connect panel shows a **n CONNECTED** badge and the button
 becomes **Add another connection**; the loading indicator while a source or its repositories load is a
@@ -365,6 +390,22 @@ uses ServiceNow's Aggregate API to count every readable AVIT and apply filters s
 it does not download individual records. Choose a detailed source when tracker and local reports
 may contain the same issue. Tracker refreshes are read-only and start only when you request one.
 Scores describe reported evidence, not certified security posture.
+
+Large AVIT summaries allow up to three minutes per stats request and five minutes overall.
+After the total completes, independent breakdowns load concurrently. A breakdown that times
+out or is denied stays unavailable; it is never shown as zero. A failed total refresh retains
+the last completed summary and explicitly labels those counts as belonging to the older result.
+
+## Issue Management AVITs
+
+The **ServiceNow AVITs** section pulls readable records into Issue Management using the same
+filter choices and context suggestions as Metrics: source manager, organization, Azure DevOps
+project, repository, branch, finding type, risk rating, state, substate, assignment group,
+finding source, and creation dates. **Load AVITs** applies the filters on ServiceNow; **Load more
+AVITs** retrieves the next bounded page. Changing filters starts a new result set. A failed
+refresh preserves previously loaded records. Record links open ServiceNow; loading the list
+does not change AVITs or mark them as reviewed. This list is separate from tracker tickets
+created or imported into the findings registry.
 
 ## In-app help
 

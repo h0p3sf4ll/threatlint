@@ -114,7 +114,7 @@ async function save(page) {
     assert.equal(await page.locator('input[name=provider][value=codex]').isChecked(), true);
     assert.equal(await page.locator('#model-id').inputValue(), CODEX_MODEL);
     assert.equal(await page.locator('#codex-daybreak').isChecked(), true);
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false, 'Sharing consent remains session-only');
+    assert.equal(await page.locator('#cloud-consent').isChecked(), true, 'Saved sharing authorization survives restart');
     await page.locator('input[name=provider][value=bedrock]').check();
     assert.equal(await page.locator('#model-id').inputValue(), BEDROCK_MODEL);
     assert.equal(await page.locator('#bedrock-region').inputValue(), 'us-west-2');

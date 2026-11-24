@@ -45,6 +45,9 @@ const MAX_REPOSITORIES = PAGE_SIZE * MAX_PAGE;
 const API_TIMEOUT_MS = 15_000;
 const LIST_TIMEOUT_MS = 30_000;
 const API_MAX_BYTES = 4 * 1024 * 1024;
+// Azure's repository-list endpoint returns the entire organization and has no server-side paging.
+const AZURE_INVENTORY_MAX_BYTES = 32 * 1024 * 1024;
+const AZURE_INVENTORY_TIMEOUT_MS = 120_000;
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 1024 * 1024;
 const MAX_CONNECTIONS = 16;
@@ -58,6 +61,8 @@ const SOURCE_MANAGER_CAPABILITIES = Object.freeze({
   }),
   pageSize: PAGE_SIZE, maxPage: MAX_PAGE, maxRepositories: MAX_REPOSITORIES,
   apiTimeoutMs: API_TIMEOUT_MS, listTimeoutMs: LIST_TIMEOUT_MS, apiMaxBytes: API_MAX_BYTES,
+  azureInventoryMaxBytes: AZURE_INVENTORY_MAX_BYTES,
+  azureInventoryTimeoutMs: AZURE_INVENTORY_TIMEOUT_MS,
   gitTimeoutMs: GIT_TIMEOUT_MS, gitMaxBuffer: GIT_MAX_BUFFER,
   customHosts: false, readOnly: true, credentials: 'session-memory-only',
   successfulCheckoutCleanup: 'caller',
@@ -81,6 +86,9 @@ const ERRORS = Object.freeze({
   SCM_LIMIT: [429, 'Source manager resource or inventory limit reached.'],
   SCM_TIMEOUT: [504, 'Source manager operation timed out.'],
   SCM_CHECKOUT_FAILED: [400, 'Repository checkout failed. Check the selected branch, read permissions, and Git availability.'],
+  SCM_GIT_NOT_FOUND: [503, 'Git could not be found. Install Git and restart Threatlint.'],
+  SCM_GIT_TLS_FAILED: [502, 'Git could not verify the source server certificate. Configure the trusted certificate chain for Git and retry.'],
+  SCM_GIT_NETWORK_FAILED: [502, 'Git could not reach the source server. Check network or proxy access and retry.'],
 });
 
 class SourceManagerError extends Error {
@@ -354,7 +362,7 @@ function publicAsync(work, code = 'SCM_PROVIDER_FAILED') {
   };
 }
 function serialized(connection, work) {
-  const job = connection.queue.then(() => deadline(connection, LIST_TIMEOUT_MS, work));
+  const job = connection.queue.then(() => deadline(connection, connection.azurePaged ? AZURE_INVENTORY_TIMEOUT_MS : LIST_TIMEOUT_MS, work));
   connection.queue = job.catch(() => {});
   return job;
 }
@@ -370,12 +378,12 @@ function apiHeaders(connection) {
   if (github) headers['X-GitHub-Api-Version'] = '2022-11-28';
   return headers;
 }
-function validateApiResponse(response, url) {
+function validateApiResponse(response, url, maxBytes = API_MAX_BYTES) {
   if (response?.redirected || (response?.url && response.url !== url) || !Number.isInteger(response?.status)) throw failure('SCM_INVALID_RESPONSE');
   if (response.status === 401 || response.status === 403) throw failure('SCM_AUTHORIZATION_FAILED', response.status);
   if (response.status !== 200) throw failure('SCM_PROVIDER_FAILED');
   const length = header(response, 'content-length');
-  if (length && (!/^\d+$/.test(length) || Number(length) > API_MAX_BYTES)) throw failure('SCM_RESPONSE_TOO_LARGE');
+  if (length && (!/^\d+$/.test(length) || Number(length) > maxBytes)) throw failure('SCM_RESPONSE_TOO_LARGE');
   const encoding = header(response, 'content-encoding');
   if (encoding && encoding !== 'identity') throw failure('SCM_INVALID_RESPONSE');
   const type = header(response, 'content-type');
@@ -389,7 +397,7 @@ async function* readerChunks(reader) {
   yield* readerChunks(reader);
 }
 // A stalled body must be cancelled through its reader; a locked stream ignores body.cancel().
-async function readBoundedBody(body, signal) {
+async function readBoundedBody(body, signal, maxBytes = API_MAX_BYTES) {
   const reader = typeof body.getReader === 'function' ? body.getReader() : null;
   const cancelRead = () => reader?.cancel().catch(() => {});
   signal.addEventListener('abort', cancelRead, { once: true });
@@ -401,7 +409,7 @@ async function readBoundedBody(body, signal) {
       signal.throwIfAborted();
       const buffer = Buffer.from(chunk);
       bytes += buffer.length;
-      if (bytes > API_MAX_BYTES) throw failure('SCM_RESPONSE_TOO_LARGE');
+      if (bytes > maxBytes) throw failure('SCM_RESPONSE_TOO_LARGE');
       chunks.push(buffer);
     }
   } finally { signal.removeEventListener('abort', cancelRead); }
@@ -429,14 +437,14 @@ options = {}) {
     assertActive(connection);
     return connection;
   }
-  async function requestJson(connection, pathname, query, parentSignal) {
-    return deadline(connection, API_TIMEOUT_MS, async signal => {
+  async function requestJson(connection, pathname, query, parentSignal, maxBytes = API_MAX_BYTES, timeoutMs = API_TIMEOUT_MS) {
+    return deadline(connection, timeoutMs, async signal => {
       const url = apiUrl(connection, pathname, query);
       let response;
       try {
         response = await fetch(url, { method: 'GET', redirect: 'manual', signal, credentials: 'omit', cache: 'no-store', headers: apiHeaders(connection) });
-        validateApiResponse(response, url);
-        const body = await readBoundedBody(response.body, signal);
+        validateApiResponse(response, url, maxBytes);
+        const body = await readBoundedBody(response.body, signal, maxBytes);
         const data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
         assertActive(connection);
         return { data, response };
@@ -458,6 +466,32 @@ options = {}) {
     connection.nextPage = page + 1;
     connection.complete = !hasMore;
     return repositories;
+  }
+  async function azurePage(connection, signal) {
+    if (!connection.projects.length && !connection.projectsDone) {
+      const { data, response } = await requestJson(connection, `/${encode(connection.organization)}/_apis/projects`, {
+        'api-version': '7.1', '$top': PAGE_SIZE, ...(connection.projectCursor ? { continuationToken: connection.projectCursor } : {}),
+      }, signal);
+      const projects = arrayBody(data, 'value').map(item => segment(item.id));
+      if (connection.projectIds.size + projects.length > MAX_REPOSITORIES || projects.some(id => connection.projectIds.has(id))) throw failure('SCM_LIMIT');
+      for (const id of projects) connection.projectIds.add(id);
+      connection.projects.push(...projects);
+      const cursor = header(response, 'x-ms-continuationtoken');
+      if (cursor && (!/^\d{1,20}$/.test(cursor) || connection.projectCursors.has(cursor))) throw failure('SCM_INVALID_RESPONSE');
+      if (cursor) connection.projectCursors.add(cursor);
+      connection.projectCursor = cursor || '';
+      connection.projectsDone = !cursor;
+    }
+    const batch = connection.projects.splice(0, 4);
+    try {
+      const pages = await Promise.all(batch.map(async project => {
+        const { data } = await requestJson(connection, `/${encode(connection.organization)}/${encode(project)}/_apis/git/repositories`,
+          { 'api-version': '7.1', includeLinks: 'false', includeAllUrls: 'false' }, signal, AZURE_INVENTORY_MAX_BYTES, AZURE_INVENTORY_TIMEOUT_MS);
+        return arrayBody(data, 'value', MAX_REPOSITORIES).map(item => normalizeRepository(connection, item));
+      }));
+      remember(connection, pages.flat());
+    } catch (error) { connection.projects.unshift(...batch); throw error; }
+    connection.complete = connection.projectsDone && connection.projects.length === 0;
   }
   const connect = publicAsync(async (input = {}) => {
     objectInput(input, ['provider', 'token', 'organization']);
@@ -488,9 +522,18 @@ options = {}) {
       } else {
         // ADO Repositories - List has no $top/$skip pagination. Bound the entire
         // snapshot by both bytes and count, then serve stable local 100-item pages.
-        const { data } = await requestJson(connection, `/${encode(connection.organization)}/_apis/git/repositories`, { 'api-version': '7.1' });
-        remember(connection, arrayBody(data, 'value', MAX_REPOSITORIES).map(item => normalizeRepository(connection, item)));
-        connection.complete = true;
+        try {
+          const { data } = await requestJson(connection, `/${encode(connection.organization)}/_apis/git/repositories`,
+            { 'api-version': '7.1', includeLinks: 'false', includeAllUrls: 'false' });
+          remember(connection, arrayBody(data, 'value', MAX_REPOSITORIES).map(item => normalizeRepository(connection, item)));
+          connection.complete = true;
+        } catch (error) {
+          if (!['SCM_RESPONSE_TOO_LARGE', 'SCM_TIMEOUT'].includes(error.code)) throw error;
+          // Large organizations stream an unpaged response. Traverse bounded project pages instead.
+          connection.azurePaged = true; connection.projects = []; connection.projectsDone = false;
+          connection.projectIds = new Set(); connection.projectCursors = new Set();
+          await azurePage(connection);
+        }
         connection.account = connection.organization;
         connection.label = `Azure DevOps · ${connection.organization}`;
       }
@@ -519,13 +562,30 @@ options = {}) {
         const current = matches();
         if (connection.complete || current.length > end) return current;
         if (connection.nextPage > MAX_PAGE) throw failure('SCM_LIMIT');
-        await githubPage(connection, connection.nextPage, signal);
+        if (connection.azurePaged) await azurePage(connection, signal);
+        else await githubPage(connection, connection.nextPage, signal);
         return fill();
       };
       const filtered = await fill();
       assertActive(connection);
       return { repositories: filtered.slice(end - PAGE_SIZE, end).map(publicRepository), page, hasMore: filtered.length > end };
     });
+  });
+
+  const refreshCredential = publicAsync(async (id, input = {}) => {
+    objectInput(input, ['token']);
+    const connection = connectionFor(id), token = input.token;
+    if (connection.provider !== 'github' || connection.kind !== 'installation') throw failure('SCM_INVALID_INPUT');
+    if (typeof token !== 'string' || token.length < 8 || token.length > 4096 || /[^\x21-\x7e]/.test(token)) throw failure('SCM_INVALID_TOKEN');
+    // Validate the new installation token before touching the active session. Repositories and the
+    // selected branch stay bound to this ID; checkout still verifies current access and commit via API.
+    const probe = { ...connection, token, controller: new AbortController() };
+    const { data } = await requestJson(probe, '/installation/repositories', { per_page: 1, page: 1 });
+    arrayBody(data, 'repositories');
+    assertActive(connection);
+    connection.token = token;
+    connection.branchPages.clear();
+    return summary(connection);
   });
 
   async function githubBranchPage(connection, repo, current, signal) {
@@ -611,7 +671,14 @@ options = {}) {
         return typeof stdout === 'string' ? stdout : '';
       });
     } catch (error) {
-      throw error instanceof SourceManagerError && ['SCM_CONNECTION_NOT_FOUND', 'SCM_TIMEOUT'].includes(error.code) ? error : failure('SCM_CHECKOUT_FAILED');
+      if (error instanceof SourceManagerError && ['SCM_CONNECTION_NOT_FOUND', 'SCM_TIMEOUT'].includes(error.code)) throw error;
+      // Classify locally, but never return Git stderr: it may contain an authorization header or URL credential.
+      if (error.code === 'ENOENT') throw failure('SCM_GIT_NOT_FOUND');
+      const detail = String(error.stderr || '');
+      if (/certificate|SSL peer|SSL connect|unable to get.*issuer/i.test(detail)) throw failure('SCM_GIT_TLS_FAILED');
+      if (/authentication failed|could not read.*username|HTTP.*(?:401|403)|access denied/i.test(detail)) throw failure('SCM_AUTHORIZATION_FAILED');
+      if (/could not resolve|failed to connect|couldn't connect|connection.*(?:reset|refused)|network is unreachable/i.test(detail)) throw failure('SCM_GIT_NETWORK_FAILED');
+      throw failure('SCM_CHECKOUT_FAILED');
     } finally {
       // Clear secret command-scope values even when an injected executor retains
       // the options object. Never attach executor errors, stderr, or env to errors.
@@ -672,7 +739,7 @@ options = {}) {
     return true;
   }
 
-  return Object.freeze({ connect, list, disconnect, repositories, branches, checkout });
+  return Object.freeze({ connect, list, disconnect, repositories, branches, checkout, refreshCredential });
 }
 
 module.exports = { createSourceManagers, SOURCE_MANAGER_CAPABILITIES };
