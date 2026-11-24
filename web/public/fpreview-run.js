@@ -206,7 +206,7 @@
       if (run.startedAt) { started.textContent = `Started ${clock(run.startedAt)}`; started.dateTime = run.startedAt; }
       const notes = [];
       if (run.truncated) notes.push(`Limited to ${run.truncated.reviewed} of ${run.truncated.total} AVITs (the maximum per run): ${run.truncated.skipped.length} not reviewed and listed as skipped. Run them again in another batch.`);
-      if (run.status === 'interrupted') notes.push('The page reloaded or lost its connection before the run finished. The Workbench stops a run when its connection closes (no run state is kept on the server), so items still in progress were not finished; a ServiceNow update already under way still completes. The history up to that point is kept for this browser session.');
+      if (run.status === 'interrupted') notes.push('The runner reported an error or its saved run could not be recovered. Page reloads and brief connection losses do not stop a run while the Workbench stays open; reconnecting replays its history. Check the item errors below before retrying unfinished AVITs. A ServiceNow update already under way still completes.');
       if (run.error) notes.push(run.error);
       note.textContent = notes.join(' ');
       note.className = `fp-run-note small ${notes.length ? 'fp-status-warn' : ''}`.trim();
@@ -255,6 +255,11 @@
           if (event.target) item.target = event.target;
           if (event.url) linkAvit(item, event.avit, event.url);
           if (event.pullRequest || event.outcome?.pullRequest) renderPullRequest(item, event.pullRequest || event.outcome.pullRequest);
+          if (event.action === 'cleanup-warning') {
+            addHistory(item, at, 'Cleanup pending', event.detail || '', 'warning');
+            runLog(at, event.avit, 'Cleanup pending', event.detail || '', 'warning');
+            break; // Preserve the completed review's verdict and terminal stage.
+          }
           const list = item.node.querySelector('.fp-history-list');
           if (event.tool) {
             activate(item);

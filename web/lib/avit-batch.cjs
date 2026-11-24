@@ -208,6 +208,7 @@ async function setupStatus(cli = runCli, env = {}) {
 
 function createAvitBatch({ store, reports, override, integrations = {} }) {
   const cli = integrations.threatlintCli || runCli;
+  const cleanup = require('./temp-cleanup.cjs').createTempCleanup({ directory: store.directory, remove: integrations.removeAvitTemporaryDirectory });
   // ServiceNow values typed on the page this session count as configured.
   const missingSetup = async env => (await setupStatus(cli, env)).filter(item => !item.configured && !(item.name.startsWith('ServiceNow') && env.THREATLINT_SNOW_CLIENT_ID));
   const semgrepVersion = integrations.semgrepVersion || servicenow.semgrepVersion;
@@ -232,10 +233,9 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   async function reviewOne(avit, { settings, message, semgrep, env, instance, profile, signal, send }) {
     let url = avitRecordUrl(instance, avit);
     const step = (stage, detail = '', extra = {}) => send({ type: 'avit_item', avit, stage, detail, ...(url ? { url } : {}), ...extra, ...(extra.done ? { result: terminalResult(stage, extra) } : {}) });
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-avit-'));
-    let created = null, sessionId = null;
-    const repo = path.join(work, 'repo');
+    let work, repo, created = null, sessionId = null;
     try {
+      work = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-avit-')); repo = path.join(work, 'repo');
       step('fetching', 'Reading the AVIT from ServiceNow');
       const fetched = await cli(['avit', 'fetch', avit, ...profile, '-o', path.join(work, 'avit.md')], { env, signal });
       if (fetched.code !== 0) {
@@ -355,13 +355,23 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       return step(signal.aborted ? 'cancelled' : 'error', signal.aborted ? 'Cancelled' : error.message, { done: true });
     } finally {
       // The checkout is a copy of another team's source and may hold live secrets. The report is kept only in ServiceNow.
-      if (created) reports.remove(created);
-      if (sessionId) { store.sessions.delete(sessionId); store.save(); }
-      fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+      try { if (created) reports.remove(created); }
+      catch { step('info', 'Local report cleanup needs attention. The batch will continue.', { action: 'cleanup-warning' }); }
+      if (sessionId) {
+        store.sessions.delete(sessionId);
+        try { store.save(); } catch { step('info', 'Workspace history cleanup could not be saved. The batch will continue.', { action: 'cleanup-warning' }); }
+      }
+      if (work) {
+        const result = await cleanup.cleanup(work);
+        if (!result.removed) step('info', result.scheduled
+          ? 'The temporary checkout is locked or cannot be removed. Cleanup is queued for retry on the next run or app launch; the batch will continue.'
+          : `The temporary checkout could not be removed or queued for cleanup. Remove it when it is no longer locked: ${work}. The batch will continue.`, { action: 'cleanup-warning' });
+      }
     }
   }
 
   async function run(message, rawSend, controller) {
+    void cleanup.retry();
     // Every event carries the time it happened, so the page can keep a timestamped history per card and per run.
     const send = event => rawSend({ at: new Date().toISOString(), ...event });
     const { numbers, sctasks, issts, order, settings } = validate(message);
@@ -455,7 +465,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     send({ type: 'avit_batch_complete', cancelled: controller.signal.aborted });
   }
 
-  return { run };
+  return { run, retryCleanup: cleanup.retry };
 }
 
 module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, avitRecordUrl, runCli, setupStatus, pythonPath, python };

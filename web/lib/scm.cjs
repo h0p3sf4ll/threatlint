@@ -345,6 +345,7 @@ function gitEnvironment(tempDir, resolve, cloneUrl, authorization) {
     ['fetch.uriprotocols', ''], ['promisor.acceptFromServer', 'none'], ['init.templateDir', ''],
   ];
   if (resolve) config.push(['http.curloptResolve', resolve]);
+  if (process.platform === 'win32') config.push(['core.longpaths', 'true']);
   // Command-scope environment config is never written to .git/config. The scope
   // matches only this HTTPS repository path (and its smart-HTTP subpaths).
   if (authorization) config.push([`http.${cloneUrl}.extraHeader`, `Authorization: ${authorization}`]);

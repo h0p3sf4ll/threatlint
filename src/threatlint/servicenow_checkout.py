@@ -7,7 +7,9 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +21,53 @@ _ADO_NAME = re.compile(r"[^/\\:*?\"<>|#%&\x00-\x1f]{1,64}")
 _GH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
 # git check-ref-format restrictions; commands run without a shell.
 _BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)(?!.*\.lock$)[^\x00-\x20\x7f~^:?*\[\\]{1,250}(?<![./])")
+
+
+def git_prefix(git):
+    return [git, "-c", "core.longpaths=true"] if sys.platform == "win32" else [git]
+
+
+def remove_checkout(directory):
+    """Delete app-owned partial checkouts, including read-only .git objects on Windows."""
+    def writable(function, value, _error):
+        if os.path.islink(value):
+            os.unlink(value)
+            return
+        os.chmod(value, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
+        function(value)
+    try:
+        shutil.rmtree(directory, onerror=writable)
+    except FileNotFoundError:
+        pass
+
+
+def source_destination(directory, source_path):
+    """An Items API path must stay inside the copy and must not address Windows devices."""
+    parts = source_path.lstrip('/').split('/')
+    if not parts or any(part in ('', '.', '..') or '\x00' in part for part in parts):
+        raise ValueError('The source provider returned an invalid file path')
+    if sys.platform == 'win32' and any(re.search(r'[\\:*?"<>|]', part) or part.endswith((' ', '.'))
+        or re.fullmatch(r'(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part) for part in parts):
+        raise ValueError('The source folder contains a Windows-incompatible file name; use Linux/WSL to inspect it')
+    result = os.path.abspath(os.path.join(directory, *parts))
+    if os.path.commonpath([os.path.abspath(directory), result]) != os.path.abspath(directory):
+        raise ValueError('The source provider returned a path outside the checkout')
+    return result
+
+
+def checkout_failure(stderr, target):
+    """Classify Git's whole diagnostic; its final line often just says 'git restore'."""
+    text = stderr or ""
+    if re.search(r"authentication failed|could not read.*username|HTTP.*(?:401|403)|access denied|TF401019", text, re.I):
+        return ("Repository authentication or read access was rejected. Check the configured Azure DevOps PAT and Code: Read permission."
+                if target["scm"] == "azure-devops" else "Repository authentication or read access was rejected. Check the GitHub App installation and Contents: Read permission.")
+    if re.search(r"filename too long|invalid path|unable to (?:create|checkout)|cannot create|checkout failed|working tree", text, re.I):
+        return "Git downloaded the repository but could not materialize its working tree. Check long paths, reserved file names, case collisions, file permissions, and antivirus locks. Use a shorter checkout location or Linux/WSL for file names incompatible with Windows."
+    if re.search(r"certificate|SSL peer|unable to get.*issuer", text, re.I):
+        return "Git could not verify the source server certificate. Configure the trusted Git certificate chain and retry."
+    if re.search(r"could not resolve|failed to connect|connection.*(?:reset|refused)|HTTP/2.*(?:stream|closed)|RPC failed", text, re.I):
+        return "Git could not complete the repository transfer. Check network/proxy access and retry."
+    return "Git could not clone the selected repository and branch. Check branch availability, local disk space, Git configuration, and filesystem permissions."
 
 
 def run_tool(name: str, args: list[str], timeout: int = 60) -> str:
@@ -78,9 +127,10 @@ def repository_target(context: dict[str, str], *, error_type) -> dict[str, str]:
 def sparse_clone(git, target, directory, file_path, env, *, error_type):
     """Blobless depth-1 clone of only the flagged file's directory."""
     branch = ["--branch", target["branch"]] if target["branch"] else []
-    steps = [[git, "clone", "--filter=blob:none", "--depth", "1", "--single-branch", "--no-tags", "--no-checkout", *branch, "--", target["clone_url"], directory],
-             [git, "-C", directory, "sparse-checkout", "set", "--no-cone", f"/{os.path.dirname(file_path.lstrip('/'))}/" if os.path.dirname(file_path) else f"/{file_path.lstrip('/')}"],
-             [git, "-C", directory, "read-tree", "-mu", "HEAD"]]
+    prefix = git_prefix(git)
+    steps = [[*prefix, "clone", "--filter=blob:none", "--depth", "1", "--single-branch", "--no-tags", "--no-checkout", *branch, "--", target["clone_url"], directory],
+             [*prefix, "-C", directory, "sparse-checkout", "set", "--no-cone", f"/{os.path.dirname(file_path.lstrip('/'))}/" if os.path.dirname(file_path) else f"/{file_path.lstrip('/')}"],
+             [*prefix, "-C", directory, "read-tree", "-mu", "HEAD"]]
     for step in steps:
         try:
             result = subprocess.run(step, capture_output=True, text=True, timeout=1800, check=False, env=env)
@@ -117,7 +167,7 @@ def ado_folder_download(target, directory, file_path, *, git_credential, error_t
         if len(files) > 400:
             files = [path for path in files if path.lstrip("/") == file_path.lstrip("/")] + files[:399]
         for path in dict.fromkeys(files):
-            destination = os.path.join(directory, path.lstrip("/"))
+            destination = source_destination(directory, path)
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             with open(destination, "wb") as handle:
                 handle.write(get({"path": path, "download": "true"}, "application/octet-stream"))
@@ -137,23 +187,33 @@ def checkout_repository(target, directory, file_path="", *, auth_env, sparse_clo
     git = shutil.which("git")
     if not git:
         raise error_type("git is required to check out the AVIT repository")
-    command = [git, "clone", "--depth", "50", "--single-branch", "--no-tags", *(["--branch", target["branch"]] if target["branch"] else []),
+    command = [*git_prefix(git), "clone", "--depth", "50", "--single-branch", "--no-tags", *(["--branch", target["branch"]] if target["branch"] else []),
                "--", target["clone_url"], directory]
     env = {**tls.tool_env(), "GIT_LFS_SKIP_SMUDGE": "1", **auth_env(target["scm"], target.get("organization", ""))}
+    def narrow_fallback(reason):
+        try:
+            remove_checkout(directory)
+        except OSError:
+            raise error_type("The partial checkout is locked or cannot be removed. Close applications using it, then retry; changing the PAT will not fix a local file lock.") from None
+        if not file_path:
+            raise error_type(reason + " The AVIT names no source file for a narrow checkout.") from None
+        if target["scm"] == "azure-devops":
+            print("  ! Full checkout unavailable; downloading the flagged source folder through the Azure DevOps API")
+            folder_download(target, directory, file_path)
+            return None
+        print("  ! Full checkout unavailable; retrying a sparse checkout of the flagged source folder")
+        return sparse_clone(git, target, directory, file_path, env)
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired:
-        shutil.rmtree(directory, ignore_errors=True)
-        if not file_path:
-            raise error_type(f"Cloning {target['web_url']} exceeded {timeout} s and the AVIT names no file for a sparse checkout") from None
-        if target["scm"] == "azure-devops":
-            print(f"  ! Full clone exceeded {timeout} s; downloading only {os.path.dirname(file_path) or file_path} through the Azure DevOps API")
-            folder_download(target, directory, file_path)
+        result = narrow_fallback(f"Cloning the repository exceeded {timeout} s.")
+        if result is None:
             return directory
-        print(f"  ! Full clone exceeded {timeout} s; retrying as a sparse checkout of {os.path.dirname(file_path) or file_path}")
-        result = sparse_clone(git, target, directory, file_path, env)
+    else:
+        if result.returncode != 0 and sys.platform == "win32" and file_path and re.search(r"filename too long|invalid path|unable to (?:create|checkout)|cannot create|checkout failed|working tree", result.stderr or "", re.I):
+            result = narrow_fallback(checkout_failure(result.stderr, target))
+            if result is None:
+                return directory
     if result.returncode != 0:
-        reason = (result.stderr.strip().splitlines() or ["git clone failed"])[-1][:300]
-        hint = (" Run `threatlint ado login` to save a PAT with Code: Read (or set THREATLINT_ADO_PAT / run `az login`)." if target["scm"] == "azure-devops" else " Run `threatlint github login` (GitHub App), `gh auth login`, or set GH_TOKEN.")
-        raise error_type(f"Could not clone {target['web_url']}{' branch ' + target['branch'] if target['branch'] else ''}: {reason}.{hint}")
+        raise error_type(checkout_failure(result.stderr, target))
     return directory
