@@ -167,8 +167,8 @@ function validateCredentials(value) {
 }
 
 /** Decrypted Parameter Store values by name, via the local AWS CLI and the user's own SSO-derived credentials. */
-async function readParameters(names, { profile } = {}) {
-  const region = awsRegion();
+async function readParameters(names, { profile = orgValue('awsProfile') || undefined, region = awsRegion() } = {}) {
+  if (typeof region !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\d+$/.test(region)) throw new HttpError('Invalid AWS region');
   if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== 'string' || name.length > 2048 || name !== name.trim() || !PARAMETER_NAME.test(name))) {
     throw new HttpError('Invalid Parameter Store name. Supply a parameter name, path, or SSM parameter ARN.');
   }
@@ -180,10 +180,12 @@ async function readParameters(names, { profile } = {}) {
     ({ stdout } = await execFileAsync('aws', args, { timeout: AWS_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true }));
   } catch (error) {
     if (error.code === 'ENOENT') throw new HttpError('The AWS CLI is not installed. Sign in through SSO and copy the values from the Parameter Store console instead.', 503);
-    const reason = String(error.stderr || error.message).trim().split('\n').pop().slice(0, 300);
-    throw new HttpError(`Parameter Store access failed: ${reason}. Sign in through SSO (and request access if needed), then refresh your AWS CLI credentials.`, 403);
+    throw new HttpError('Parameter Store access failed. Sign in through AWS SSO, check the profile and region, and request SSM/KMS read access if needed.', 403);
   }
-  try { return Object.fromEntries((JSON.parse(stdout).Parameters || []).map(item => [item.Name, item.Value])); } catch { throw new HttpError('Unexpected AWS CLI response from Parameter Store', 502); }
+  try {
+    const items = JSON.parse(stdout).Parameters || [];
+    return Object.fromEntries(names.flatMap(name => { const item = items.find(value => value.Name === name || value.ARN === name); return item ? [[name, item.Value]] : []; }));
+  } catch { throw new HttpError('Unexpected AWS CLI response from Parameter Store', 502); }
 }
 
 /** Client ID and secret via the local AWS CLI and the user's own SSO-derived credentials. */

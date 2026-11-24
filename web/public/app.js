@@ -630,7 +630,7 @@
   // Callers that need a specific section (e.g. ServiceNow before an AVIT run) scroll to it.
   function showSettingsSection(section) {
     showSettings();
-    const target = $(`settings-${['servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube', 'integrations', 'access', 'tracker-github', 'tracker-jira', 'tracker-azure-devops'].includes(section) ? section : 'model'}`);
+    const target = $(`settings-${['aws', 'servicenow', 'semgrep', 'ado', 'github', 'defectdojo', 'sonarqube', 'integrations', 'access', 'tracker-github', 'tracker-jira', 'tracker-azure-devops'].includes(section) ? section : 'model'}`);
     document.dispatchEvent(new CustomEvent('threatlint:settings-section', { detail: { section } }));
     target?.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
@@ -647,7 +647,7 @@
     try { state.semgrepSaved = await request('/api/semgrep/settings'); } catch { state.semgrepSaved = null; }
     const saved = state.semgrepSaved || {};
     $('semgrep-token').value = saved.hasToken ? MASK : '';
-    $('semgrep-status').textContent = saved.inKeyring ? 'Saved by `threatlint semgrep login` in the OS credential store (CLI only). Enter it here to use it in the Workbench too.'
+    $('semgrep-status').textContent = saved.fromEnvironment ? 'Available from AWS Parameter Store or the app environment for this session. The token is never shown.' : saved.inKeyring ? 'Saved by `threatlint semgrep login` in the OS credential store (CLI only). Enter it here to use it in the Workbench too.'
       : saved.hasToken ? `Saved in ${saved.path}${saved.deployment ? ` · deployment ${saved.deployment}` : ''}. The token is never shown.` : 'Not configured.';
   }
   async function saveSemgrep(event) {
@@ -750,7 +750,7 @@
     return !!((state.preferences.snowInstance || saved.instance) && (state.credentials.snowClientId || saved.clientId) && (state.credentials.snowClientSecret || saved.hasSecret));
   }
   function updateSnowStatus(message) {
-    $('snow-status').textContent = message || (state.snowSaved?.hasSecret
+    $('snow-status').textContent = message || (state.snowSaved?.fromEnvironment ? 'Available from AWS Parameter Store or the app environment for this session. The secret is never shown.' : state.snowSaved?.hasSecret
       ? `Saved in ${state.snowSaved.path}. The secret is never shown and is sent only to your ServiceNow instance.`
       : servicenowReady() ? 'Configured for this session only. Save to keep it in the Threatlint config.'
         : 'Not configured. Enter the instance URL, client ID, and secret once; they are saved in the Threatlint config.');
@@ -1220,6 +1220,13 @@
     });
     document.addEventListener('threatlint:navigate', event => showView(event.detail.view));
     document.addEventListener('threatlint:settings-open', event => showSettingsSection(event.detail?.section));
+    document.addEventListener('threatlint:credentials-loaded', async event => {
+      const credentials = { OPENAI_API_KEY: ['openai', 'daybreak'], ANTHROPIC_API_KEY: ['claude'], AWS_BEARER_TOKEN_BEDROCK: ['bedrock', 'daybreak-bedrock'], COPILOT_GITHUB_TOKEN: ['copilot'], THREATLINT_SNOW_CLIENT_ID: ['snowClientId'], THREATLINT_SNOW_CLIENT_SECRET: ['snowClientSecret'] };
+      for (const key of event.detail?.keys || []) for (const name of credentials[key] || []) delete state.credentials[name];
+      if (event.detail?.keys?.includes('THREATLINT_SNOW_INSTANCE')) state.preferences.snowInstance = '';
+      try { state.config = await request('/api/config'); state.snowSaved = await request('/api/servicenow/settings'); loadSettingsForm(); }
+      catch { toast('Credentials loaded; reopen Settings to refresh connection status.', true); }
+    });
     $('report-resolve-selected').addEventListener('click', async () => {
       if (state.running || !state.reportSelections?.length) return;
       const report = state.report, findingIds = [...state.reportSelections], sessionId = report.sessionId || state.session?.id;

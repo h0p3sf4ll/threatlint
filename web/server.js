@@ -112,6 +112,8 @@ function createWorkbench(options = {}) {
   app.use(express.static(path.join(__dirname, 'public')));
 
   registerWorkspaceRoutes(app, { store, reports, build: buildInfo(), integrations: options.integrations });
+  const awsParameters = require('./lib/aws-parameters.cjs').registerAwsParameterRoutes(app, options.integrations?.awsParameters || {});
+  server.once('listening', () => { if (awsParameters.autoLoad()) void awsParameters.pull().catch(() => {}); });
   registerModelPreferenceRoutes(app, { store });
   registerUiPreferenceRoutes(app, { store });
   registerSourceRoutes(app, { store, scm, integrations: options.integrations });
@@ -168,6 +170,7 @@ function createWorkbench(options = {}) {
   const unsubscribe = scanImports.subscribe(event => { for (const socket of wss.clients) if (socket.readyState === 1) socket.send(JSON.stringify(event)); });
 
   async function close() {
+    awsParameters.close();
     pipeline.abortAll();
     avitRuns.close();
     unsubscribe();

@@ -102,7 +102,7 @@
   function trackerConnections() { return state.connections.filter(c => c.kind === 'tracker' && c.enabled !== false); }
   function selectedConnectionLabel(c) { return `${c.name} · ${providerFor(c.provider)?.label || c.provider}${c.isDefault ? ' · default' : ''}`; }
   function chooseCategory(category) {
-    if (!['general', 'integrations', 'scanners', 'access'].includes(category)) category = 'general';
+    if (!['general', 'integrations', 'scanners', 'access', 'aws'].includes(category)) category = 'general';
     state.category = category;
     for (const panel of document.querySelectorAll('[data-settings-panel]')) panel.hidden = panel.dataset.settingsPanel !== category;
     for (const item of document.querySelectorAll('.settings-nav [data-settings-category]')) {
@@ -423,7 +423,7 @@
     if (event.detail.view === 'settings') { chooseCategory(state.category); void loadAccess(); }
     if (event.detail.view === 'management') { void Promise.all([loadConnections(), loadFindings(), loadAccess()]).then(() => { renderConnections(); renderFindings(); }); }
   });
-  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(['integrations', 'github'].includes(section) ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
+  document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(section === 'aws' ? 'aws' : ['integrations', 'github'].includes(section) ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
   document.addEventListener('threatlint:context', event => { state.contextSession = event.detail.session?.id || null; });
   document.addEventListener('threatlint:ticket-create', async event => {
     await loadConnections();

@@ -21,6 +21,7 @@
   <script src="/app.js" defer></script>
   <script src="/operations.js" defer></script>
   <script src="/management.js" defer></script>
+  <script src="/aws-parameters.js" defer></script>
   <script src="/scan-import.js" defer></script>
   <script src="/charts.js" defer></script>
   <script src="/insights.js" defer></script>
@@ -535,6 +536,7 @@
           <nav class="settings-nav" aria-label="Settings sections">
             <button type="button" data-settings-category="general" class="active" aria-pressed="true">General<span>Models and preferences</span></button>
             <button type="button" data-settings-category="integrations" aria-pressed="false">Integrations<span>Issue trackers and source control</span></button>
+            <button type="button" data-settings-category="aws" aria-pressed="false">AWS Parameter Store<span>Private sign-in and credentials</span></button>
             <button type="button" data-settings-category="scanners" aria-pressed="false">Scanning &amp; triage<span>ServiceNow and scanner tools</span></button>
             <button type="button" data-settings-category="access" aria-pressed="false">Access<span>Roles and organization members</span></button>
           </nav>
@@ -579,6 +581,25 @@
     <label><input type="radio" name="provider" value="copilot"><span><strong>Copilot</strong><small>GitHub Copilot models</small></span></label>
   </div>
 </fieldset><div id="local-settings"><label for="model-url">Model server URL</label><input id="model-url" type="url" placeholder="http://localhost:1234/v1"><div class="field-note small subtle" id="model-server-note">HTTP is accepted only for loopback. Remote model servers require HTTPS.</div></div><div id="bedrock-settings" class="hidden"><label for="bedrock-region">AWS region</label><input id="bedrock-region" maxlength="40" placeholder="Configured AWS region, or us-east-1" autocomplete="off"><p id="bedrock-region-note" class="field-note small subtle">Use the region where your Bedrock key was created. Leave empty to use your configured AWS region, or us-east-1 when none is configured.</p></div><div id="model-picker"><label for="model-select">Model</label><div class="input-row"><select id="model-select" aria-describedby="model-source"><option value="">Load models to choose</option></select><button class="button secondary" id="discover-models" type="button">Load models</button></div></div><p id="model-source" class="field-note small subtle" aria-live="polite"></p><p id="model-policy-note" class="field-note small subtle"></p><details class="model-manual"><summary class="small subtle">Enter a model ID manually</summary><input id="model-id" placeholder="Exact provider model ID" autocomplete="off" aria-label="Model ID"></details><label class="checkbox-label hidden" id="codex-daybreak-label"><input type="checkbox" id="codex-daybreak"><span>Use Daybreak Blue for this Codex run (approved access required).</span></label><div id="cloud-settings" class="hidden"><label for="api-key" id="api-key-label">API key <span class="subtle">session only</span></label><input id="api-key" type="password" autocomplete="off" placeholder="Leave empty to use the configured key"><p id="environment-key-note" class="field-note small subtle"></p></div><div class="privacy-notice"><span>◇</span><p id="settings-model-privacy">Credentials stay in memory and are never saved. Non-secret preferences and report history are stored locally. A remote provider receives prompts and the source inspected by its agents.</p></div><label class="checkbox-label" id="cloud-consent-label"><input type="checkbox" id="cloud-consent"><span>I authorize sending review context to the selected remote model provider.</span></label><p class="form-error" id="settings-error" role="alert"></p><div class="settings-actions"><span class="small subtle">No model requests are made until you start.</span><button class="button primary" type="submit">Save model settings</button></div></form>
+            <form id="aws-parameters-form" data-settings-panel="aws" hidden class="settings-card" aria-labelledby="settings-aws-title">
+              <span id="settings-aws" class="settings-anchor"></span><h2 id="settings-aws-title">AWS Parameter Store</h2>
+              <p class="field-note subtle">Sign in privately with your AWS account to load your configured integration values and API keys. Complete SSO and MFA in the browser. References are saved locally; decrypted values stay in this app session.</p>
+              <label for="aws-profile">AWS CLI profile</label><input id="aws-profile" list="aws-profiles" autocomplete="off" value="appsec" required><datalist id="aws-profiles"></datalist>
+              <label for="aws-region">Parameter Store region</label><input id="aws-region" autocomplete="off" value="us-west-2" required>
+              <label for="aws-browser">Private sign-in browser</label><select id="aws-browser"><option value="auto">Choose an installed browser automatically</option></select>
+              <p class="field-note small subtle">Chrome opens Incognito; Edge opens InPrivate. Safari opens a Private Window and may need macOS Automation and Accessibility permission. A normal browser window is never used as a fallback.</p>
+              <details><summary>Set up a new SSO profile</summary><p class="field-note small subtle">Leave these blank to use your existing profile.</p>
+                <label for="aws-start-url">AWS access portal URL</label><input id="aws-start-url" type="url" placeholder="https://your-team.awsapps.com/start" autocomplete="off">
+                <label for="aws-sso-region">IAM Identity Center region</label><input id="aws-sso-region" placeholder="Detect automatically" autocomplete="off">
+                <label for="aws-account-id">AWS account ID</label><input id="aws-account-id" inputmode="numeric" maxlength="12" autocomplete="off">
+                <label for="aws-role">Permission set / role</label><input id="aws-role" autocomplete="off">
+              </details>
+              <details><summary id="aws-references-summary">Parameter references</summary><p class="field-note small subtle">Enter parameter names or SSM ARNs for the values you use. Existing organization references are filled in automatically. Leave other fields blank.</p><div id="aws-parameter-bindings"></div></details>
+              <label class="checkbox-label"><input id="aws-auto-load" type="checkbox"><span>Reload configured values when the app starts, using my existing AWS session.</span></label>
+              <p id="aws-status" class="field-note small subtle" aria-live="polite"></p><p id="aws-error" class="form-error" role="alert"></p>
+              <p id="aws-manual-sign-in" hidden><a id="aws-verification-url" target="_blank" rel="noopener noreferrer">Copy AWS sign-in link</a> into a private browser window. Safari: press Shift–Command–N first.</p>
+              <div class="settings-actions"><button class="button secondary" id="aws-save" type="submit">Save references</button><button class="button secondary" id="aws-load" type="button">Load with current AWS session</button><button class="button primary" id="aws-sign-in" type="button">Sign in privately &amp; load</button><button class="button secondary" id="aws-cancel" type="button" hidden>Cancel sign-in</button></div>
+            </form>
             <form id="servicenow-form" data-settings-panel="scanners" hidden class="settings-card" aria-labelledby="settings-servicenow-title"><span id="settings-servicenow" class="settings-anchor"></span><h2 id="settings-servicenow-title">ServiceNow AVIT triage <span class="subtle small">saved in the Threatlint config</span></h2>
 
 <p id="snow-access-note" class="field-note small subtle">To triage ServiceNow application vulnerable items (AVITs), enter your instance URL and OAuth client ID and secret.</p>

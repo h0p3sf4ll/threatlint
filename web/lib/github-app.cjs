@@ -49,7 +49,8 @@ function readConfig() {
   const saved = readSaved();
   const config = Object.fromEntries(Object.entries(ENV).map(([key, name]) => [key, (process.env[name] || '').trim() || saved[key]]));
   config.apiUrl ||= DEFAULT_API_URL;
-  return config.appId && config.installationId && config.privateKeyFile ? config : null;
+  config.privateKeyEnvironment = !!process.env.THREATLINT_GITHUB_APP_PRIVATE_KEY;
+  return config.appId && config.installationId && (config.privateKeyFile || config.privateKeyEnvironment) ? config : null;
 }
 
 function validateApiUrl(value) {
@@ -62,7 +63,7 @@ function validateApiUrl(value) {
 function validate(config) {
   if (!APP_ID.test(config.appId || '')) throw new GitHubAppError('The GitHub App ID is not valid (digits, or the App\'s client ID)');
   if (!INSTALLATION_ID.test(config.installationId || '')) throw new GitHubAppError('The installation ID must be digits');
-  if (!path.isAbsolute(config.privateKeyFile || '')) throw new GitHubAppError('Enter the absolute path to the App\'s private key (.pem)');
+  if (!config.privateKeyEnvironment && !path.isAbsolute(config.privateKeyFile || '')) throw new GitHubAppError('Enter the absolute path to the App\'s private key (.pem)');
   return { ...config, apiUrl: validateApiUrl(config.apiUrl || DEFAULT_API_URL) };
 }
 
@@ -71,7 +72,7 @@ function base64url(value) { return Buffer.from(value).toString('base64url'); }
 /** RS256 App JWT: iat = now - 60 s, exp = now + 9 min, iss = App ID. */
 function appJwt(config, nowMs = Date.now()) {
   let key;
-  try { key = fs.readFileSync(config.privateKeyFile, 'utf8'); } catch { throw new GitHubAppError('The GitHub App private key file is set but cannot be read'); }
+  try { key = config.privateKeyEnvironment ? process.env.THREATLINT_GITHUB_APP_PRIVATE_KEY : fs.readFileSync(config.privateKeyFile, 'utf8'); } catch { throw new GitHubAppError('The GitHub App private key file is set but cannot be read'); }
   const issued = Math.floor(nowMs / 1000);
   const input = `${base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))}.${base64url(JSON.stringify({ iat: issued - JWT_BACKDATE_S, exp: issued + JWT_LIFETIME_S, iss: config.appId }))}`;
   try {
@@ -99,7 +100,7 @@ function createGitHubApp({ fetch: fetchImpl = globalThis.fetch, now = Date.now }
   async function installationToken(input = readConfig()) {
     if (!input) throw new GitHubAppError('No GitHub App is configured', 404);
     const config = validate(input);
-    const key = `${config.apiUrl}\n${config.appId}\n${config.installationId}\n${config.privateKeyFile}`;
+    const key = `${config.apiUrl}\n${config.appId}\n${config.installationId}\n${config.privateKeyFile}\n${config.privateKeyEnvironment ? crypto.createHash('sha256').update(process.env.THREATLINT_GITHUB_APP_PRIVATE_KEY || '').digest('hex') : ''}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt - REFRESH_MARGIN_MS > now()) return cached;
     const data = await request('POST', `${config.apiUrl}/app/installations/${config.installationId}/access_tokens`, `Bearer ${appJwt(config, now())}`);
@@ -123,8 +124,8 @@ function createGitHubApp({ fetch: fetchImpl = globalThis.fetch, now = Date.now }
   function publicStatus() {
     const config = readConfig();
     const saved = readSaved();
-    return { configured: !!config, appIdSet: !!config?.appId, installationIdSet: !!config?.installationId, privateKeyFileSet: !!config?.privateKeyFile,
-      apiUrl: config?.apiUrl || saved.apiUrl || DEFAULT_API_URL, fromEnvironment: Object.values(ENV).some(name => !!process.env[name]),
+    return { configured: !!config, appIdSet: !!config?.appId, installationIdSet: !!config?.installationId, privateKeyFileSet: !!config?.privateKeyFile || !!config?.privateKeyEnvironment,
+      apiUrl: config?.apiUrl || saved.apiUrl || DEFAULT_API_URL, fromEnvironment: !!config?.privateKeyEnvironment || Object.values(ENV).some(name => !!process.env[name]),
       path: configPath(), permissions: PERMISSIONS };
   }
 

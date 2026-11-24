@@ -40,7 +40,7 @@ def test_sso_login_opens_the_printed_url_privately(monkeypatch):
 
     class Fake:
         def __init__(self, command, **_):
-            assert command[1:] == ["sso", "login", "--no-browser", "--profile", "appsec"]
+            assert command[1:] == ["sso", "login", "--no-browser", "--use-device-code", "--profile", "appsec"]
             self.stdout = io.StringIO(printed)
 
         def wait(self):
@@ -113,3 +113,50 @@ def test_available_aws_cli_reuses_existing_sso_profile(monkeypatch, capsys):
     assert aws_login.cmd_aws(args) == 0
     assert signed_in == ["appsec"]
     assert "Signed in as test-identity" in capsys.readouterr().out
+
+
+def test_browser_inventory_only_reports_installed_supported_browsers(monkeypatch, tmp_path):
+    monkeypatch.setattr(aws_login.sys, "platform", "darwin")
+    monkeypatch.setattr(aws_login, "_mac_app", lambda name: tmp_path if name in ("Google Chrome", "Safari") else None)
+    assert aws_login.available_browsers() == [{"id": "chrome", "label": "Google Chrome"}, {"id": "safari", "label": "Safari"}]
+
+
+def test_desktop_auto_browser_does_not_use_other_browsers(monkeypatch):
+    monkeypatch.setattr(aws_login, "_default_browser_id", lambda: "org.mozilla.firefox")
+    launched = []
+    monkeypatch.setattr(aws_login, "_launch", lambda entry, url: launched.append(entry[0]) or entry[0] == "Safari")
+    assert aws_login.open_private("https://example.awsapps.com/start/#/device", supported_only=True)[0] == "Safari"
+    assert launched == ["Google Chrome", "Microsoft Edge", "Safari"]
+
+
+def test_safari_uses_explicit_private_menu_and_never_falls_back_to_normal_window(monkeypatch, tmp_path):
+    monkeypatch.setattr(aws_login.sys, "platform", "darwin")
+    monkeypatch.setattr(aws_login, "_mac_app", lambda name: tmp_path)
+    calls = []
+    def denied(command, **kwargs):
+        calls.append(command)
+        raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(subprocess, "run", denied)
+    url = "https://example.awsapps.com/start/#/device?user_code=ABCD-EFGH"
+    assert aws_login.open_private(url, "safari") == (None, False)
+    assert len(calls) == 1 and calls[0][0] == "/usr/bin/osascript"
+    assert 'menu item "New Private Window"' in calls[0][2]
+    assert url not in calls[0][2] and calls[0][-1] == url
+
+
+def test_device_flow_opens_before_cli_completes_even_without_prefilled_url(monkeypatch):
+    opened, events = [], []
+    class Fake:
+        stdout = iter(["https://device.sso.us-east-2.amazonaws.com/\n", "Then enter the code:\n", "ABCD-EFGH\n"])
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def wait(self):
+            assert opened, "AWS login cannot finish until the user has opened its device page"
+            return 0
+    monkeypatch.setattr(aws_login, "_aws", lambda: "aws")
+    monkeypatch.setattr(subprocess, "Popen", Fake)
+    output = io.StringIO()
+    aws_login.sso_login("appsec", opener=lambda url: opened.append(url) or ("Google Chrome", True), out=output, on_event=events.append)
+    assert opened == ["https://device.sso.us-east-2.amazonaws.com/?user_code=ABCD-EFGH"]
+    assert events == [{"state": "awaiting_sign_in", "browser": "Google Chrome"}]
+    assert "ABCD-EFGH" not in output.getvalue()

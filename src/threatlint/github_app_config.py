@@ -55,9 +55,10 @@ def load_config() -> dict[str, str] | None:
     config = {key: env[key] or saved.get(key, "") for key in env}
     config["apiUrl"] = config["apiUrl"] or DEFAULT_API_URL
     config["privateKeyParameter"] = "" if config["privateKeyFile"] else _key_parameter()
-    if not (config["appId"] and config["installationId"] and (config["privateKeyFile"] or config["privateKeyParameter"])):
+    config["privateKeyEnvironment"] = bool(os.environ.get("THREATLINT_GITHUB_APP_PRIVATE_KEY"))
+    if not (config["appId"] and config["installationId"] and (config["privateKeyFile"] or config["privateKeyParameter"] or config["privateKeyEnvironment"])):
         return None
-    from_env = any(env[key] for key in ("appId", "installationId", "privateKeyFile"))
+    from_env = config["privateKeyEnvironment"] or any(env[key] for key in ("appId", "installationId", "privateKeyFile"))
     config["source"] = "environment" if from_env and not any(saved.values()) else ("environment + " + str(config_path()) if from_env else str(config_path()))
     return config
 

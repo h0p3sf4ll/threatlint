@@ -22,6 +22,9 @@ const ENV = {
   semgrepDeployment: 'THREATLINT_SEMGREP_DEPLOYMENT',
   adoPatParameter: 'THREATLINT_ADO_PAT_PARAMETER',
   adoOrganizations: 'THREATLINT_ADO_ORGANIZATIONS',
+  githubAppPrivateKeyParameter: 'THREATLINT_GITHUB_APP_PRIVATE_KEY_PARAMETER',
+  dojoTokenParameter: 'THREATLINT_DOJO_TOKEN_PARAMETER',
+  sonarTokenParameter: 'THREATLINT_SONAR_TOKEN_PARAMETER',
   // Claude model policy (model-policy.cjs): scanning runs and chat/assistance defaults.
   scanModel: 'THREATLINT_SCAN_MODEL',
   generalModel: 'THREATLINT_GENERAL_MODEL',

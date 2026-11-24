@@ -11,6 +11,8 @@ own cache, so `threatlint avit fetch`, `run fp-review --avit`, and the Workbench
 from __future__ import annotations
 
 import json
+import configparser
+import io
 import os
 import plistlib
 import re
@@ -39,6 +41,7 @@ _VERIFY_URL = re.compile(r"https://(?:[a-z0-9-]+\.(?:awsapps\.com|app\.aws)/star
 _PRIVATE = (
     ("Google Chrome", "com.google.chrome", "Google Chrome", "ChromeHTML", "chrome", "--incognito"),
     ("Microsoft Edge", "com.microsoft.edge", "Microsoft Edge", "MSEdgeHTM", "msedge", "--inprivate"),
+    ("Safari", "com.apple.safari", "Safari", "", "safari", ""),
     ("Brave", "com.brave.browser", "Brave Browser", "BraveHTML", "brave", "--incognito"),
     ("Chromium", "org.chromium.chromium", "Chromium", "ChromiumHTM", "chromium", "--incognito"),
     ("Vivaldi", "com.vivaldi.vivaldi", "Vivaldi", "VivaldiHTM", "vivaldi", "--incognito"),
@@ -72,7 +75,18 @@ def _default_browser_id() -> str:
 
 
 def _mac_app(app: str) -> Path | None:
-    return next((path for path in (Path("/Applications") / f"{app}.app", Path.home() / "Applications" / f"{app}.app") if path.exists()), None)
+    return next((path for path in (Path("/Applications") / f"{app}.app", Path.home() / "Applications" / f"{app}.app", Path("/System/Applications") / f"{app}.app") if path.exists()), None)
+
+
+def available_browsers() -> list[dict]:
+    result = []
+    for browser_id, entry in zip(("chrome", "edge", "safari"), _PRIVATE[:3]):
+        installed = bool(_mac_app(entry[2])) if sys.platform == "darwin" else (
+            bool(_windows_exe(entry[4])) if sys.platform == "win32" and browser_id != "safari"
+            else bool(_linux_exe(entry[4])) if browser_id != "safari" else False)
+        if installed:
+            result.append({"id": browser_id, "label": entry[0]})
+    return result
 
 
 def _candidates(default_id: str):
@@ -83,7 +97,7 @@ def _candidates(default_id: str):
         if sys.platform == "darwin":
             return lowered.startswith(bundle)
         if sys.platform == "win32":
-            return lowered.startswith(progid.lower())
+            return bool(progid) and lowered.startswith(progid.lower())
         return exe in lowered or name.split()[-1].lower() in lowered
     preferred = [entry for entry in _PRIVATE if matches(entry)]
     return preferred + [entry for entry in _PRIVATE if entry not in preferred], bool(preferred)
@@ -109,14 +123,40 @@ def _windows_exe(exe: str) -> str | None:
     return None
 
 
+def _linux_exe(exe: str) -> str | None:
+    names = {"chrome": ("google-chrome", "google-chrome-stable", "chrome"), "msedge": ("microsoft-edge", "microsoft-edge-stable", "msedge")}.get(exe, (exe,))
+    return next((found for name in names if (found := shutil.which(name))), None)
+
+
 def _launch(entry, url: str) -> bool:
     _name, _bundle, app, _progid, exe, flag = entry
+    if _name == "Safari" and sys.platform != "darwin":
+        return False
     try:
         if sys.platform == "darwin":
             path = _mac_app(app)
             if not path:
                 return False
-            subprocess.run(["/usr/bin/open", "-na", str(path), "--args", flag, url], check=True, timeout=15)
+            if _name == "Safari":
+                # Safari has no incognito command-line flag. Request its Private Window shortcut;
+                # macOS requires Automation/Accessibility permission. Never fall back to a normal tab.
+                script = '''on run argv
+tell application "Safari" to activate
+tell application "System Events"
+  tell process "Safari"
+    set privateItem to menu item "New Private Window" of menu "File" of menu bar 1
+    if not enabled of privateItem then error "Private Browsing is unavailable"
+    click privateItem
+    delay 0.5
+    keystroke "l" using command down
+    keystroke (item 1 of argv)
+    key code 36
+  end tell
+end tell
+end run'''
+                subprocess.run(["/usr/bin/osascript", "-e", script, url], check=True, timeout=15, capture_output=True)
+            else:
+                subprocess.run(["/usr/bin/open", "-na", str(path), "--args", flag, url], check=True, timeout=15)
         elif sys.platform == "win32":
             path = _windows_exe(exe)
             if not path:
@@ -124,17 +164,23 @@ def _launch(entry, url: str) -> bool:
             subprocess.Popen([path, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
         else:
-            if not shutil.which(exe):
+            executable = _linux_exe(exe)
+            if not executable:
                 return False
-            subprocess.Popen([exe, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen([executable, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-def open_private(url: str) -> tuple[str | None, bool]:
+def open_private(url: str, browser: str = "auto", *, supported_only: bool = False) -> tuple[str | None, bool]:
     """Open url in a private window. Returns (browser name or None, whether it was the default browser)."""
     entries, default_supported = _candidates(_default_browser_id())
+    if supported_only:
+        entries = [entry for entry in entries if entry in _PRIVATE[:3]]
+    if browser != "auto":
+        wanted = {"chrome": "Google Chrome", "edge": "Microsoft Edge", "safari": "Safari"}.get(browser)
+        entries = [entry for entry in entries if entry[0] == wanted]
     for index, entry in enumerate(entries):
         if _launch(entry, url):
             return entry[0], default_supported and index == 0
@@ -189,13 +235,15 @@ def detect_region(start_url: str, preferred: str = "") -> str:
     raise AwsLoginError(f"No IAM Identity Center region accepted {start_url}. Check the access portal URL.")
 
 
-def sso_login(profile: str, opener=open_private, out=sys.stdout) -> None:
+def sso_login(profile: str, opener=open_private, out=sys.stdout, on_event=None) -> None:
     """Run `aws sso login --no-browser` and open the URL it prints in a private window."""
-    process = subprocess.Popen([_aws(), "sso", "login", "--no-browser", "--profile", profile],
+    process = subprocess.Popen([_aws(), "sso", "login", "--no-browser", "--use-device-code", "--profile", profile],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=tool_env())
     opened, plain = False, None
     def open_url(url):
         browser, used_default = opener(url)
+        if on_event:
+            on_event({"state": "awaiting_sign_in", "browser": browser or "", **({"verificationUrl": url} if not browser else {})})
         if browser and used_default:
             print(f"→ Opened in a private {browser} window. Approve the request there.", file=out)
         elif browser:
@@ -204,9 +252,14 @@ def sso_login(profile: str, opener=open_private, out=sys.stdout) -> None:
             print("→ No browser with a private window was found. Paste the URL above into a private/incognito window.", file=out)
     # The CLI prints the plain device URL, then one with the code pre-filled; open the latter when it appears.
     for line in process.stdout:
-        out.write(line)
-        out.flush()
+        if not on_event:
+            out.write(line)
+            out.flush()
         match = _VERIFY_URL.search(line)
+        code = re.fullmatch(r"\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*", line)
+        if plain and code and not opened:
+            opened = True
+            open_url(plain + ("&" if "?" in plain else "?") + "user_code=" + code[1])
         if not match or opened:
             continue
         if "user_code=" in match.group(0):
@@ -235,6 +288,8 @@ def caller_identity(profile: str) -> dict:
 def add_aws_parser(sub) -> None:
     p = sub.add_parser("aws", help="Sign in to AWS IAM Identity Center for Parameter Store access")
     actions = p.add_subparsers(dest="aws_command", required=True)
+    status = actions.add_parser("status", help="List local SSO profiles and installed private browsers (no secrets)")
+    status.add_argument("--json", action="store_true")
     login = actions.add_parser("login", help="Sign in through a private browser window and save a reusable profile")
     login.add_argument("--profile", default=DEFAULT_PROFILE, help=f"Profile name to create or use (default: {DEFAULT_PROFILE})")
     login.add_argument("--start-url", default=os.environ.get(START_URL_ENV, ""),
@@ -242,6 +297,8 @@ def add_aws_parser(sub) -> None:
     login.add_argument("--sso-region", default=os.environ.get(SSO_REGION_ENV, ""), help=f"IAM Identity Center region (or {SSO_REGION_ENV}); detected from the portal when omitted or wrong")
     login.add_argument("--account-id", help="AWS account ID holding the AppSec parameters")
     login.add_argument("--role", help="Permission set (role) name to assume")
+    login.add_argument("--browser", choices=("auto", "chrome", "edge", "safari"), default="auto")
+    login.add_argument("--events", action="store_true", help="Emit bounded JSON progress for the local desktop")
 
 
 def _ask(label: str, current: str, pattern: re.Pattern | None = None) -> str:
@@ -256,7 +313,17 @@ def _ask(label: str, current: str, pattern: re.Pattern | None = None) -> str:
 
 
 def cmd_aws(args) -> int:
+    events = getattr(args, "events", False)
+    def emit(value):
+        print(json.dumps(value), flush=True)
     try:
+        if getattr(args, "aws_command", "login") == "status":
+            parser = configparser.RawConfigParser()
+            parser.read(aws_config_path(), encoding="utf-8")
+            profiles = [section[8:] if section.startswith("profile ") else "default" for section in parser.sections()
+                        if section.startswith("profile ") or section == "default"]
+            emit({"cliAvailable": bool(shutil.which("aws")), "profiles": profiles, "browsers": available_browsers()})
+            return 0
         profile = args.profile
         if not _NAME.fullmatch(profile):
             raise AwsLoginError("Invalid profile name")
@@ -267,23 +334,35 @@ def cmd_aws(args) -> int:
             if not _START_URL.fullmatch(start_url):
                 raise AwsLoginError("The access portal URL must look like https://<name>.awsapps.com/start")
             region = detect_region(start_url.split("#")[0].rstrip("/"), args.sso_region if _REGION.fullmatch(args.sso_region or "") else "")
-            print(f"  Identity Center region: {region}")
+            if not events:
+                print(f"  Identity Center region: {region}")
             account = _ask("AWS account ID", args.account_id or "", re.compile(r"\d{12}"))
             role = _ask("Role (permission set) name", args.role or "", _NAME)
-            ensure_profile(profile, start_url.split("#")[0].rstrip("/"), region, account, role)
-            print(f"✓ Saved AWS profile '{profile}' in {aws_config_path()}")
+            ensure_profile(profile, start_url.split("#")[0].rstrip("/"), region, account, role, session=f"{DEFAULT_SESSION}-{profile}")
+            if not events:
+                print(f"✓ Saved AWS profile '{profile}' in {aws_config_path()}")
         # Repair a saved profile whose region does not host the portal (AWS answers InvalidRequestException).
         session = existing_session(current.get("sso_session", ""))
         if session.get("sso_start_url") and session.get("sso_region") and not portal_accepts(session["sso_start_url"], session["sso_region"]):
             region = detect_region(session["sso_start_url"])
             ensure_profile(profile, session["sso_start_url"], region, current.get("sso_account_id", ""), current.get("sso_role_name", ""), session=current["sso_session"])
-            print(f"✓ Corrected Identity Center region {session['sso_region']} → {region} for {session['sso_start_url']}")
-        sso_login(profile)
+            if not events:
+                print(f"✓ Corrected Identity Center region {session['sso_region']} → {region} for {session['sso_start_url']}")
+        if events:
+            sso_login(profile, opener=lambda url: open_private(url, args.browser, supported_only=True), out=io.StringIO(), on_event=emit)
+        else:
+            sso_login(profile)
         identity = caller_identity(profile)
+        if events:
+            emit({"state": "authenticated"})
+            return 0
         print(f"✓ Signed in as {identity.get('Arn', 'unknown')}")
         print(f"  Use it with: threatlint avit fetch <AVIT> --aws-profile {profile} -o avits.md")
         print(f"  Workbench:   Model & settings → ServiceNow → AWS CLI profile '{profile}' → Read with AWS CLI")
         return 0
-    except (AwsLoginError, OSError, subprocess.SubprocessError) as exc:
+    except (AwsLoginError, OSError, subprocess.SubprocessError, configparser.Error) as exc:
+        if events:
+            emit({"state": "failed", "message": "AWS sign-in did not complete. Check the profile and SSO settings, then retry. Safari may require macOS Automation and Accessibility permission."})
+            return 1
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

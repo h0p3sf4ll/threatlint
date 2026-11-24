@@ -19,6 +19,42 @@ threatlint --help
 Use the same Python environment for installation and execution. If `threatlint`
 is not on your path, try `python3 -m threatlint --help`.
 
+### Desktop: private AWS sign-in and parameter loading
+
+Open **Settings → AWS Parameter Store** in Threatlint Desktop. Select an existing
+AWS CLI v2 profile and the region containing your parameters. To create an SSO
+profile, expand **Set up a new SSO profile** and enter the AWS access portal URL,
+Identity Center region, account ID, and permission set. An omitted Identity
+Center region is detected from the portal.
+
+Enter the parameter names or SSM ARNs under **Parameter references**. Configured
+organization references are filled in automatically. Supported values include
+ServiceNow connection details, Semgrep token and deployment, Azure DevOps PAT,
+GitHub App IDs and PEM key, OpenAI/Anthropic/Bedrock/Copilot keys, and
+DefectDojo/SonarQube tokens. Each reference is read explicitly with decryption;
+Threatlint does not enumerate all secrets in an AWS account. The AWS identity
+needs `ssm:GetParameters` and the relevant `kms:Decrypt` permission.
+
+Choose **Sign in privately & load**. Threatlint detects installed Chrome, Edge,
+and Safari browsers and opens a private window. Complete SSO and MFA yourself;
+after AWS confirms authentication, the configured values load automatically.
+The flow uses the AWS CLI's [device-code authorization](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
+Chrome uses Incognito and Edge uses InPrivate. Safari uses its **New Private
+Window** menu and may require macOS Automation and Accessibility permission.
+If Safari cannot be automated, choose Chrome/Edge or copy the sign-in link into
+a [Safari Private Window](https://support.apple.com/guide/mac-help/browse-the-web-mchlgtd_web01/mac).
+The app never opens a normal browser window as a fallback.
+
+**Load with current AWS session** reuses an existing sign-in. **Reload configured
+values when the app starts** is optional and requires an unexpired AWS session.
+AWS CLI manages its own SSO cache. Threatlint saves only parameter references,
+profile, and region in `~/.threatlint/aws-parameters.json`; decrypted values remain
+in the local runner's environment until it exits and are not returned to the UI,
+saved to browser storage, or included in reports. Loading keys does not authorize
+model requests or change the model-sharing checkbox. Missing or inaccessible
+parameters fail the load before applying any new values. Browser sign-in and
+parameter loading are unavailable in hosted organization workers.
+
 ### Load shared setup settings from AWS
 
 For a team that keeps integration credentials in AWS Systems Manager Parameter

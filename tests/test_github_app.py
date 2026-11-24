@@ -378,3 +378,18 @@ def test_chat_uses_app_token_when_env_has_none(monkeypatch, tmp_path, rsa_key):
     _save(tmp_path, key)
     monkeypatch.setattr(github_app, "installation_token", lambda *a, **k: TOKEN)
     assert chat.github_token({}) == TOKEN
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='in-memory openssl key pipe requires POSIX')
+def test_parameter_store_session_key_signs_without_a_key_file(rsa_key, monkeypatch):
+    key, public = rsa_key
+    monkeypatch.setenv('THREATLINT_GITHUB_APP_PRIVATE_KEY', key.read_text())
+    config = {**_config(key), 'privateKeyFile': '', 'privateKeyEnvironment': True}
+    token = github_app.app_jwt(config)
+    header, payload, signature = token.split('.')
+    # Verify against the signing input using a fixture-owned temporary signature file.
+    signature_file = key.parent / 'session-key-signature.bin'
+    signature_file.write_bytes(_b64decode(signature))
+    result = subprocess.run(['openssl', 'dgst', '-sha256', '-verify', str(public), '-signature', str(signature_file)],
+                            input=f'{header}.{payload}'.encode(), capture_output=True)
+    assert result.returncode == 0

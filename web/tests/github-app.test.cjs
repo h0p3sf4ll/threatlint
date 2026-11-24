@@ -34,6 +34,16 @@ function fakeGitHub({ expiresAt = '2099-01-01T00:00:00Z', tokens = [TOKEN] } = {
 }
 
 describe('GitHub App JWT and tokens', () => {
+  it('signs using a session-only Parameter Store PEM without persisting or returning it', async () => {
+    process.env.THREATLINT_GITHUB_APP_PRIVATE_KEY = PEM;
+    try {
+      const [header, payload, signature] = appJwt({ ...CONFIG, privateKeyFile: '', privateKeyEnvironment: true }).split('.');
+      assert.ok(crypto.verify('RSA-SHA256', Buffer.from(`${header}.${payload}`), publicKey, Buffer.from(signature, 'base64url')));
+      const app = createGitHubApp({ fetch: fakeGitHub().fetch });
+      assert.equal((await app.installationToken({ ...CONFIG, privateKeyFile: '', privateKeyEnvironment: true })).token, TOKEN);
+      assert.equal(JSON.stringify(app.publicStatus()).includes(PEM), false);
+    } finally { delete process.env.THREATLINT_GITHUB_APP_PRIVATE_KEY; }
+  });
   it('signs an RS256 JWT with iat backdated 60 s, exp within 10 minutes, and iss = App ID', () => {
     const now = 1_700_000_000_000;
     const [header, payload, signature] = appJwt(CONFIG, now).split('.');

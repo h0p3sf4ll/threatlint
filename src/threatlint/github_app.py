@@ -23,6 +23,7 @@ Credential order for GitHub everywhere: GitHub App (when configured) -> GH_TOKEN
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import shutil
@@ -57,7 +58,7 @@ JWT_BACKDATE_S = 60
 JWT_LIFETIME_S = 540  # GitHub rejects an exp more than 10 minutes ahead
 _HTTP_TIMEOUT_S = 30
 
-_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
+_cache: dict[tuple[str, ...], tuple[str, float]] = {}
 _lock = threading.Lock()
 
 
@@ -86,14 +87,14 @@ def _sign(signing_input: bytes, config: dict[str, str]) -> bytes:
     key_file = os.path.expanduser(config.get("privateKeyFile", ""))
     read_fd = None
     try:
-        if key_file:
+        if key_file and not config.get("privateKeyEnvironment"):
             if not os.path.isfile(key_file) or not os.access(key_file, os.R_OK):
                 raise GitHubAppError("The GitHub App private key file is set but cannot be read")
             command, pass_fds = [openssl, "dgst", "-sha256", "-sign", key_file], ()
         else:
             if os.name == "nt":
                 raise GitHubAppError("A Parameter Store private key needs a POSIX system; set a private key file instead")
-            pem = _read_parameter(config["privateKeyParameter"]).encode()
+            pem = (os.environ.get("THREATLINT_GITHUB_APP_PRIVATE_KEY", "") if config.get("privateKeyEnvironment") else _read_parameter(config["privateKeyParameter"])).encode()
             read_fd, write_fd = os.pipe()
             try:
                 os.write(write_fd, pem)  # a PEM is far below the pipe buffer, so this never blocks
@@ -165,7 +166,7 @@ def installation_token(config: dict[str, str] | None = None, *, opener=None, now
         raise GitHubAppError("No GitHub App is configured. Run `threatlint github login`.")
     api = validate_api_url(config.get("apiUrl") or DEFAULT_API_URL)
     _validate_ids(config["appId"], config["installationId"])
-    key = (api, config["appId"], config["installationId"])
+    key = (api, config["appId"], config["installationId"], hashlib.sha256(os.environ.get("THREATLINT_GITHUB_APP_PRIVATE_KEY", "").encode()).hexdigest() if config.get("privateKeyEnvironment") else "")
     with _lock:
         cached = _cache.get(key)
         if cached and cached[1] - REFRESH_MARGIN_S > now():

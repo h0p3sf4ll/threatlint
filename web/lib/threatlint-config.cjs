@@ -17,10 +17,12 @@ function configPath() {
 }
 
 function readServiceNow() {
+  const environment = { instance: process.env.THREATLINT_SNOW_INSTANCE, clientId: process.env.THREATLINT_SNOW_CLIENT_ID, clientSecret: process.env.THREATLINT_SNOW_CLIENT_SECRET };
+  let saved = {};
   try {
-    const value = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
-    return { instance: String(value.instance || ''), clientId: String(value.clientId || ''), clientSecret: String(value.clientSecret || '') };
-  } catch { return { instance: '', clientId: '', clientSecret: '' }; }
+    saved = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+  } catch { /* Environment-backed session can run without a saved file. */ }
+  return Object.fromEntries(Object.keys(environment).map(key => [key, String(environment[key] || saved[key] || '')]));
 }
 
 function writeServiceNow(values) {
@@ -35,7 +37,7 @@ function writeServiceNow(values) {
 /** What the settings page may see: never the secret itself. */
 function publicServiceNow() {
   const saved = readServiceNow();
-  return { instance: saved.instance, clientId: saved.clientId, hasSecret: !!saved.clientSecret, path: configPath() };
+  return { instance: saved.instance, clientId: saved.clientId, hasSecret: !!saved.clientSecret, path: configPath(), ...(process.env.THREATLINT_SNOW_CLIENT_SECRET ? { fromEnvironment: true } : {}) };
 }
 
 function clearServiceNow() {
@@ -59,7 +61,7 @@ function writeSemgrep(values) {
 }
 function publicSemgrep() {
   const saved = readSemgrep();
-  return { hasToken: !!saved.token || saved.storage === 'keyring', inKeyring: saved.storage === 'keyring' && !saved.token, deployment: saved.deployment, path: semgrepPath() };
+  return { hasToken: !!process.env.SEMGREP_APP_TOKEN || !!saved.token || saved.storage === 'keyring', inKeyring: saved.storage === 'keyring' && !saved.token, deployment: process.env.THREATLINT_SEMGREP_DEPLOYMENT || saved.deployment, path: semgrepPath(), ...(process.env.SEMGREP_APP_TOKEN ? { fromEnvironment: true } : {}) };
 }
 
 module.exports = { configPath, readServiceNow, writeServiceNow, publicServiceNow, clearServiceNow, readSemgrep, writeSemgrep, publicSemgrep };
