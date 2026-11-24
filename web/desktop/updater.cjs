@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Launch-time updater for packaged builds. The stamp written by scripts/desktop-sync.cjs records the
- * checkout the app was built from; when that checkout's fingerprint no longer matches the stamp, the
+ * Launch-time updater for packaged builds. Fetch upstream into an app-owned checkout;
+ * when its fingerprint no longer matches the stamp written by scripts/desktop-sync.cjs, the
  * splash window stays up while a fresh unpacked app is built beside this one, swapped in, and relaunched.
  */
 
@@ -11,6 +11,7 @@ const { spawn } = require('node:child_process');
 const { userPath } = require('./user-path.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
+const { prepareSource } = require('./update-source.cjs');
 
 const RELAUNCHED = '--threatlint-updated';
 
@@ -46,7 +47,7 @@ function runScript(runtime, source, args, onLine) {
     };
     child.stdout.on('data', collect); child.stderr.on('data', collect);
     child.on('error', reject);
-    child.on('close', code => (code === 0 ? resolve(output) : reject(new Error(`desktop-sync ${args[0]} exited with ${code}`))));
+    child.on('close', code => (code === 0 ? resolve(output) : reject(new Error(`desktop-sync ${args[0]} exited with ${code}: ${output.slice(-2000)}`))));
   });
 }
 
@@ -85,21 +86,20 @@ async function updateOnLaunch(info, splash, log) {
   for (const leftover of [`${bundle}.previous`, stageDir]) {
     try { fs.rmSync(leftover, { recursive: true, force: true, maxRetries: 3 }); } catch (error) { log(`Could not remove ${leftover}: ${error.message}`); }
   }
-  if (process.env.THREATLINT_SKIP_UPDATE === '1') return true;
-  const source = info.source;
-  if (!source || !fs.existsSync(path.join(source, 'scripts/desktop-sync.cjs')) || !fs.existsSync(path.join(source, 'node_modules/electron-builder'))) {
-    log(`No source checkout recorded for this build (${source || 'none'}); skipping update check.`);
-    return true;
-  }
-  splash.status('Checking for updates…', `Build ${info.commit} · ${info.fingerprint}`);
-  const runtime = userEnvironment();
-  const current = JSON.parse((await runScript(runtime, source, ['current'])).trim().split('\n').pop());
-  log(`Installed ${info.fingerprint} (${info.commit}); source ${current.fingerprint} (${current.commit}).`);
-  if (current.fingerprint === info.fingerprint) return true;
+  if (process.env.THREATLINT_SKIP_UPDATE === '1') { log('Update check explicitly disabled by THREATLINT_SKIP_UPDATE.'); return true; }
   if (process.argv.includes(RELAUNCHED)) {
-    log('Source changed again right after an update; continuing with the build just installed.');
+    log('Continuing with the build just installed; next normal launch will fetch upstream again.');
     return true;
   }
+  const runtime = userEnvironment();
+  splash.status('Fetching latest Threatlint…', 'h0p3sf4ll/threatlint · default branch');
+  const source = await prepareSource(path.join(app.getPath('userData'), 'update-source'), {
+    env: runtime.env,
+    onLine: line => { log(line); splash.status('Checking for updates…', line.slice(0, 120)); },
+  });
+  const current = JSON.parse((await runScript(runtime, source, ['current'])).trim().split('\n').pop());
+  log(`Fetched h0p3sf4ll/threatlint: installed ${info.fingerprint} (${info.commit}); upstream ${current.fingerprint} (${current.commit}).`);
+  if (current.fingerprint === info.fingerprint) return true;
   splash.status('Updating Threatlint…', `${info.commit} → ${current.commit}`);
   const output = await runScript(runtime, source, ['stage', stageDir], line => { log(line); splash.status('Updating Threatlint…', line.slice(0, 120)); });
   const staged = /^STAGED (.+)$/m.exec(output)?.[1];

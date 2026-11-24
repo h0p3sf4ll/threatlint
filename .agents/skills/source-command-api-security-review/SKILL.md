@@ -1,0 +1,43 @@
+---
+name: "source-command-api-security-review"
+description: "OWASP API Security Top 10 (2023) review of REST, GraphQL, or gRPC APIs. Finds broken object-level auth, excessive data exposure, missing rate limits, function-level auth gaps, and more. Saves a Word document."
+---
+
+# source-command-api-security-review
+
+Use this skill when the user asks to run the migrated source command `api-security-review`.
+
+## Command Template
+
+Delegate to the `appsec-api-security-reviewer` agent. Pass any path or service name as the review scope.
+
+The agent will:
+1. Map all API endpoints from router and controller files
+2. Review each endpoint against all 10 OWASP API Security categories
+3. Produce an API Endpoint Inventory and OWASP API Top 10 Coverage Matrix
+4. Report findings with endpoint, handler file location, exploit path, and framework-specific remediation
+
+After the agent completes, save the report as a Word document.
+
+## Output
+
+Determine the repository root and set a timestamp:
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+BRANCH=${BRANCH:-no-branch}
+TIMESTAMP=$(date +%s)
+```
+
+Filename:
+- No argument: `<repo-name>-<branch>-api-security-review-YYYY-MM-DD.docx`
+- With path: `<repo-name>-<branch>-api-security-review-<sanitized>-YYYY-MM-DD.docx`
+
+Write the full report text to `/tmp/api_${TIMESTAMP}.md`. Then convert to Word and remove the temp file:
+```bash
+python3 ~/.Codex/scripts/md_to_docx.py /tmp/api_${TIMESTAMP}.md "${REPO_ROOT}/<filename>.docx"
+rm /tmp/api_${TIMESTAMP}.md
+```
+
+Report the saved path. Do not modify any repository source files.

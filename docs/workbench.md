@@ -441,6 +441,22 @@ provider interoperability and model report quality need separate validation.
 Use `desktop:dev` for live reload, `desktop:verify` / `desktop:sync` for build-stamp checks,
 and optional `hooks:install` for the repository's Git hooks. See [Development](development.md).
 
+Packaged builds fetch the default branch of `h0p3sf4ll/threatlint` on every normal
+launch into `update-source/` under Electron's user data directory. This works without
+the original build checkout and does not pull into or overwrite a developer's working
+tree. Git and Node/npm must be available on the user's PATH. Locked build dependencies
+are installed on the first launch and when the package manifest or lockfile changes.
+If the upstream fingerprint differs, the splash stays open while the app is rebuilt,
+swapped in, and restarted. The immediate restart skips another fetch to prevent loops.
+If fetching or rebuilding fails, an error dialog explains that the installed build is
+starting instead; `updater.log` in the user data directory contains the details.
+`THREATLINT_SKIP_UPDATE=1` explicitly disables the launch update check.
+
+Before opening the workbench, every launch clears HTTP and JavaScript caches,
+service workers, CacheStorage, and shader caches. Saved reviews, settings, cookies,
+and local storage are retained. Existing installations need a build containing this
+updater before they can fetch GitHub automatically; older builds only check local files.
+
 ## Code layout
 
 | Area | Responsibility |

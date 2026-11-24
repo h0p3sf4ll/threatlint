@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const { watch, readFileSync, appendFileSync } = require('node:fs');
 const { createSplash, updateOnLaunch } = require('./updater.cjs');
 const { adoptUserPath } = require('./user-path.cjs');
+const { clearAssetCaches } = require('./update-source.cjs');
 
 let mainWindow;
 let workbench;
@@ -81,7 +82,8 @@ else {
     }
     splash.status('Starting workbench…', buildInfo().commit);
     // A fresh build must never render assets the previous build left in the HTTP cache.
-    await session.defaultSession.clearCache();
+    await clearAssetCaches(session.defaultSession);
+    log('Cleared HTTP, JavaScript, service worker, CacheStorage, and shader caches.');
     if (app.isPackaged) process.env.THREATLINT_DATA_DIR = path.join(process.resourcesPath, 'data');
     // The factory below owns the desktop store; the default exported server stays unbound.
     process.env.THREATLINT_STATE_DIR = path.join(app.getPath('userData'), 'workbench');
