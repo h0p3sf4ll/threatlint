@@ -19,7 +19,7 @@ const { createReportWriter } = require('./lib/report-writer.cjs');
 const { createPipeline, buildUserMessage, validateAttachment } = require('./lib/pipeline.cjs');
 const { createConversations } = require('./lib/chat.cjs');
 const { attachSocket } = require('./lib/socket.cjs');
-const { securityHeaders, localRequest, activeRequestCount } = require('./lib/http.cjs');
+const { securityHeaders, localRequest, activeRequestCount, handle } = require('./lib/http.cjs');
 const { registerWorkspaceRoutes } = require('./lib/routes/workspace.cjs');
 const { registerModelPreferenceRoutes } = require('./lib/routes/model-preferences.cjs');
 const { registerUiPreferenceRoutes } = require('./lib/routes/ui-preferences.cjs');
@@ -152,6 +152,20 @@ function createWorkbench(options = {}) {
       res.json(await activateSavedSource({ provider: req.body?.provider, token: req.body?.token, organization: req.body?.organization }));
     } catch { res.status(502).json({ error: 'Source connection could not be activated. Check its credentials and permissions.' }); }
   });
+  app.get('/internal/management/servicenow/source', (_req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    try { const credentials = require('./lib/servicenow.cjs').validateCredentials({}); res.json({ instance: credentials.instance, available: true }); }
+    catch { res.json({ available: false }); }
+  });
+  app.post('/internal/management/servicenow/page', handle(async (req, res) => {
+    if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
+    try {
+      const serviceNow = require('./lib/servicenow.cjs'), credentials = serviceNow.validateCredentials({});
+      if (credentials.instance !== req.body?.instance) return res.status(409).json({ error: 'ServiceNow instance changed' });
+      res.json(await serviceNow.fetchAvitPage(credentials, { filters: req.body?.filters || {}, offset: req.body?.offset ?? 0,
+        fetchImpl: options.integrations?.fetchImpl || fetch, signal: AbortSignal.timeout(25_000) }));
+    } catch { res.status(502).json({ error: 'ServiceNow issues could not be read. Check this profile’s ServiceNow Settings and filters.' }); }
+  }));
 
   // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
   app.get('/internal/activity', (_req, res) => {

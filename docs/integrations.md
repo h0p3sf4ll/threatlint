@@ -1,6 +1,6 @@
 ---
 title: Manage connections and tickets
-description: Connect source providers and issue trackers, create tickets from findings, and close reviewed false positives.
+description: Pull issues from ServiceNow, Azure DevOps, Jira, and GitHub, then track their status alongside reviewed findings.
 ---
 
 # Manage connections and tickets
@@ -18,9 +18,9 @@ On the web, company connections and tracked ticket records are shared within the
 
 | Provider | Required settings and access |
 | --- | --- |
-| Jira Cloud | `https://company.atlassian.net`, account email, project key, and API token with browse/create/edit/comment/transition access. Issue type defaults to `Task`. |
-| Azure Boards | Organization slug, project, and PAT with Work Items read/write. Work item type defaults to `Bug`; closed state defaults to `Closed`. |
-| GitHub Issues | `owner/repository` and token with repository metadata and Issues read/write. |
+| Jira Cloud | `https://company.atlassian.net`, account email, project key, and API token. Browse access is needed to pull issues; creating or closing tickets needs the corresponding create, edit, comment, and transition permissions. Issue type defaults to `Task`. |
+| Azure Boards | Organization slug, project, and PAT with Work Items read to pull issues. Ticket creation or closure needs Work Items write. Work item type defaults to `Bug`; closed state defaults to `Closed`. |
+| GitHub Issues | `owner/repository` and token with repository metadata and Issues read to pull issues. Ticket creation or closure needs Issues write. |
 | GitHub source | Token with Metadata and Contents read; optional organization filter. |
 | Azure DevOps source | Organization slug and PAT with Code read. |
 
@@ -32,7 +32,23 @@ When editing a connection, a blank token preserves the saved credential. Enter a
 
 ## Work with tickets
 
-Use **Issue management** to create a ticket from a saved report finding, or create it directly from that finding. To track existing work, import specific provider ticket IDs. Imported records retain their provider scope and native ticket link.
+### Pull existing issues
+
+1. Open **Issue management → Pull issues**.
+2. Select one or more sources. Saved, enabled Jira, Azure Boards, and GitHub Issues connections appear here. ServiceNow AVITs uses your existing [ServiceNow settings](avit-integration.md).
+3. For Jira or Azure Boards, enter the issue or work item type used by that project. Custom types are supported; the saved connection provides the initial value.
+4. Choose the status to pull, then select **Pull issues**. For ServiceNow, use the AVIT filters to narrow the results.
+5. Use **Load more** for a source with additional results.
+
+You can pull from several providers or several projects at once. Each source reports its own result, so a failed connection does not prevent successful sources from being imported. GitHub pull requests are excluded.
+
+Pulled issues appear in the issue inbox with their source, status, and native link. Pulling the same issue again updates its existing record. It does not create a duplicate, change the external issue, or remove previously tracked issues that are outside the current filters.
+
+Company administrators and analysts can pull issues into their company's inbox. Viewers can read the inbox. Personal web profiles and the desktop app use their own connection and ticket scope; desktop use does not require a Threatlint login.
+
+### Create or import a specific ticket
+
+Use **Issue management** to create a ticket from a saved report finding, or create it directly from that finding. You can also import specific Jira, Azure Boards, or GitHub ticket IDs. Imported records retain their provider scope and native ticket link.
 
 Use status sync to refresh tracked records. Check individual errors when an update is partial; a failed provider request does not erase existing records. Imports accept up to 100 IDs per request. Large status lists are paged.
 

@@ -57,6 +57,70 @@ function registerManagementRoutes(app, options = {}) {
     if (!row) throw new HttpError('Tracked finding not found', 404);
     return row;
   }
+  function requireTicketActions(connection) {
+    if (trackers.PROVIDERS.find(provider => provider.id === connection.provider)?.pullOnly) throw new HttpError('Use the dedicated AVIT workflow for ServiceNow ticket actions', 409);
+  }
+  async function serviceNowSource(req) {
+    if (options.serviceNowSource) return options.serviceNowSource(req);
+    try { const credentials = require('../servicenow.cjs').validateCredentials({}); return { instance: credentials.instance, available: true }; }
+    catch { return { available: false }; }
+  }
+  async function serviceNowPage(req, connection, input) {
+    if (options.serviceNowPage) {
+      try { return await options.serviceNowPage(req, connection, input); }
+      catch { throw new HttpError('ServiceNow issues could not be read. Check this profile’s Settings and filters.', 502); }
+    }
+    const serviceNow = require('../servicenow.cjs'), credentials = serviceNow.validateCredentials({});
+    if (credentials.instance !== connection.instance) throw new HttpError('The current profile’s ServiceNow instance changed. Reload issue sources.', 409);
+    try { return await serviceNow.fetchAvitPage(credentials, { ...input, fetchImpl: integrations.fetchImpl || fetch, signal: AbortSignal.timeout(25_000) }); }
+    catch { throw new HttpError('ServiceNow issues could not be read. Check this profile’s Settings and filters.', 502); }
+  }
+
+  app.get('/api/management/issue-sources', route(async (req, store) => {
+    const sources = store.listConnections().filter(item => item.kind === 'tracker' && item.provider !== 'servicenow-avit' && item.enabled)
+      .map(item => ({ ...item, available: true }));
+    let snow;
+    try { snow = await serviceNowSource(req); } catch { snow = { available: false }; }
+    sources.push({ id: 'servicenow-avit', provider: 'servicenow-avit', name: 'ServiceNow AVIT (current profile)', kind: 'tracker',
+      credentialSource: 'servicenow-settings', pullOnly: true, available: snow.available === true,
+      ...(snow.instance ? { instance: snow.instance } : {}), ...(snow.available ? {} : { error: 'Configure ServiceNow in this profile’s Settings to pull AVITs.' }) });
+    return { sources, providers: trackers.PROVIDERS };
+  }));
+  app.post('/api/management/findings/pull', route((req, store) => store.mutate(async () => {
+    const sources = req.body?.sources;
+    if (!req.body || Object.keys(req.body).some(key => key !== 'sources') || !Array.isArray(sources) || !sources.length || sources.length > 10 ||
+        sources.some(source => !source || typeof source !== 'object' || Array.isArray(source) || typeof source.connectionId !== 'string' || Object.keys(source).some(key => !['connectionId', 'cursor', 'filters'].includes(key))) ||
+        new Set(sources.map(source => source.connectionId)).size !== sources.length) throw new HttpError('Choose between 1 and 10 unique issue sources');
+    const pulled = [], results = [], signal = AbortSignal.timeout(60_000);
+    for (const source of sources) {
+      let connection;
+      try {
+        if (signal.aborted) throw new HttpError('Issue pull timed out; retry the remaining sources', 504);
+        if (source.connectionId === 'servicenow-avit') {
+          const saved = await serviceNowSource(req);
+          if (!saved?.available || !saved.instance) throw new HttpError('Configure ServiceNow in this profile’s Settings before pulling AVITs', 409);
+          connection = store.serviceNowConnection(saved.instance, { create: false });
+        } else connection = store.connection(source.connectionId, { kind: 'tracker' });
+        const filters = connection.provider === 'servicenow-avit' ? require('../servicenow.cjs').validateAggregateFilters(source.filters || {}) : trackers.pullFilters(connection, source.filters);
+        const position = store.readPullCursor(connection, filters, source.cursor);
+        const page = await trackers.pullIssues(connection, { filters, position, ...adapter, signal,
+          serviceNowPage: async (selected, input) => serviceNowPage(req, selected, input) });
+        if (new Set(page.issues.map(issue => issue.externalId)).size !== page.issues.length) throw new HttpError('Provider returned duplicate issues in this page', 502);
+        const imported = store.transaction(() => {
+          if (connection.provider === 'servicenow-avit') connection = store.serviceNowConnection(connection.instance);
+          const findings = page.issues.map(issue => publicFinding(store.putFinding(connection, issue)));
+          store.audit(actor(req), 'findings.pulled', `${connection.id}:${findings.length}`); return findings;
+        });
+        pulled.push(...imported);
+        results.push({ connectionId: source.connectionId, provider: connection.provider, imported: imported.length,
+          nextCursor: store.pullCursor(connection, filters, page.nextPosition) });
+      } catch (error) {
+        results.push({ connectionId: source.connectionId, ...(connection ? { provider: connection.provider } : {}), imported: 0, nextCursor: null,
+          error: error instanceof HttpError ? error.message : 'Issue source could not be pulled. Previous issues were preserved.' });
+      }
+    }
+    return { findings: pulled, sources: results };
+  })));
 
   app.get('/api/management/connections', route(async (_req, store) => ({ connections: store.listConnections(), providers: trackers.PROVIDERS })));
   app.post('/api/management/connections', route((req, store) => store.mutate(async () => {
@@ -85,6 +149,7 @@ function registerManagementRoutes(app, options = {}) {
   app.get('/api/management/audit', route(async (_req, store) => ({ audit: store.state.audit.slice().reverse() })));
   app.post('/api/management/findings/import', route((req, store) => store.mutate(async () => {
     const connection = store.connection(req.body?.connectionId, { kind: 'tracker' });
+    requireTicketActions(connection);
     const ids = issueIds(connection, req.body?.ids);
     const errors = [], imported = [];
     for (const id of ids) {
@@ -103,6 +168,7 @@ function registerManagementRoutes(app, options = {}) {
   })));
   app.post('/api/management/findings/create', route((req, store) => store.mutate(async () => {
     const connection = store.connection(req.body?.connectionId, { kind: 'tracker' });
+    requireTicketActions(connection);
     const { report, finding } = await reviewedFinding(req, req.body?.reportId, req.body?.findingId);
     const previous = store.state.operations.find(item => item.connectionId === connection.id && item.reportId === report.id && item.findingId === finding.id);
     if (previous?.status === 'completed') return { finding: publicFinding(findRow(store, previous.entryId)), existing: true };
@@ -130,8 +196,13 @@ function registerManagementRoutes(app, options = {}) {
   })));
   app.post('/api/management/findings/sync', route((req, store) => store.mutate(async () => {
     const connectionId = req.body?.connectionId;
-    if (connectionId !== undefined) store.connection(connectionId, { kind: 'tracker' });
-    const scoped = store.state.findings.filter(row => !connectionId || row.connectionId === connectionId);
+    if (connectionId !== undefined) {
+      const selected = store.connection(connectionId, { kind: 'tracker' });
+      if (trackers.PROVIDERS.find(provider => provider.id === selected.provider)?.pullOnly) throw new HttpError('ServiceNow AVIT records are refreshed with Pull issues.', 409);
+    }
+    const candidates = store.state.findings.filter(row => !connectionId || row.connectionId === connectionId);
+    const scoped = candidates.filter(row => !trackers.PROVIDERS.find(provider => provider.id === row.provider)?.pullOnly);
+    const skippedReadOnly = candidates.length - scoped.length;
     const cursor = req.body?.cursor;
     if (cursor !== undefined && (typeof cursor !== 'string' || !scoped.some(row => row.id === cursor))) throw new HttpError('The sync cursor is invalid; start the sync again');
     const start = cursor ? scoped.findIndex(row => row.id === cursor) + 1 : 0;
@@ -144,11 +215,13 @@ function registerManagementRoutes(app, options = {}) {
       } catch (error) { errors.push({ id: row.id, error: error instanceof HttpError ? error.message : 'Ticket sync failed' }); }
     }
     store.audit(actor(req), 'findings.synced', connectionId || 'all', errors.length ? 'partial' : 'success'); store.save();
-    return { findings: synced, errors, nextCursor: start + rows.length < scoped.length ? rows.at(-1).id : null, total: scoped.length };
+    return { findings: synced, errors, nextCursor: start + rows.length < scoped.length ? rows.at(-1).id : null, total: scoped.length,
+      skippedReadOnly, ...(skippedReadOnly ? { message: 'ServiceNow AVIT records are refreshed with Pull issues.' } : {}) };
   })));
   app.post('/api/management/findings/:id/close', route((req, store) => store.mutate(async () => {
     if (req.body?.confirm !== true) throw new HttpError('Confirm false-positive ticket closure before posting');
     const row = findRow(store, req.params.id), connection = store.connection(row.connectionId, { kind: 'tracker' });
+    requireTicketActions(connection);
     const { report, finding } = await reviewedFinding(req, req.body?.reportId, req.body?.findingId, true);
     const original = originalReference(finding.body);
     // Native references include provider scope. Short repeated finding IDs and unscoped issue numbers never authorize closure.
