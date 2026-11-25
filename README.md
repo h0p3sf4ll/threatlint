@@ -90,6 +90,23 @@ not a security approval.
 
 **Next:** [IDE setup and guard behavior](docs/ide.md).
 
+### Use MCP or automate from a script
+
+Threatlint's MCP server works without opening the Workbench UI. Connect an MCP client,
+open a local workspace or check out a connected repository, run scans and background
+specialist reviews, review findings, and export reports. Use the client's own model with
+Threatlint's specialist prompts and repository tools, or select a configured provider.
+
+```bash
+python -m pip install -e .
+npm --prefix web ci
+node web/examples/mcp-client.cjs /absolute/path/to/repository /absolute/path/to/mcp-profile
+```
+
+The example runs the model-free baseline scanner in the requested profile. Read the
+[MCP and headless workflow guide](docs/mcp.md) for stdio/HTTP client configuration,
+tools, resources, prompts, polling, and artifact exports.
+
 ### Prefer a visual review?
 
 For a hosted Workbench using Auth0 sign-in at `https://app.threatlint.dev`, see the

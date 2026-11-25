@@ -48,3 +48,39 @@ it('Streamable HTTP initializes without a protocol session and is protected by t
   assert.ok((await tools.json()).result.tools.some(tool => tool.name === 'list_findings'));
   assert.equal((await fetch(url)).status, 405);
 });
+
+it('active tool admission is shared across transports and releases capacity after failures', async t => {
+  const deps = dependencies(); deps.mcpActivity = { active: 0 };
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  deps.scm.repositories = async () => { await blocked; throw new Error('Synthetic source failure'); };
+  async function connect() {
+    const server = createMcpServer(deps), client = new Client({ name: 'capacity-test', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    t.after(async () => { await client.close(); await server.close(); });
+    await server.connect(serverTransport); await client.connect(clientTransport);
+    return client;
+  }
+  const first = await connect(), second = await connect();
+  const calls = Array.from({ length: 8 }, () => first.callTool({ name: 'list_repositories', arguments: { connectionId: 'source' } }));
+  t.after(release);
+  while (deps.mcpActivity.active < 8) await new Promise(resolve => setImmediate(resolve));
+  const rejected = await second.callTool({ name: 'list_agents', arguments: {} });
+  assert.equal(rejected.isError, true); assert.match(rejected.content[0].text, /Too many active/);
+  release(); assert.ok((await Promise.all(calls)).every(result => result.isError));
+  assert.equal(deps.mcpActivity.active, 0);
+  assert.equal((await second.callTool({ name: 'list_agents', arguments: {} })).structuredContent.result.length, 22);
+});
+
+it('tool errors redact complete long credentials before truncating diagnostics', async t => {
+  const deps = dependencies();
+  const secret = 'synthetic-secret-'.repeat(100);
+  deps.sources = { connect: async () => { throw new Error(`Rejected credential ${secret}`); } };
+  const server = createMcpServer(deps), client = new Client({ name: 'redaction-test', version: '1' });
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const result = await client.callTool({ name: 'connect_source', arguments: { provider: 'github', token: secret, confirm: true } });
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /\[REDACTED\]/);
+  assert.doesNotMatch(result.content[0].text, /synthetic-secret/);
+});
