@@ -1,3 +1,8 @@
+---
+title: "DefectDojo"
+description: "Connect DefectDojo, review findings against source, and post an approved disposition."
+---
+
 # DefectDojo integration
 
 **Integration type: findings management.** DefectDojo is a centralized system of record: it aggregates

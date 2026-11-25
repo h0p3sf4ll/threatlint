@@ -1,3 +1,8 @@
+---
+title: "Microsoft Teams"
+description: "Configure the Threatlint Teams bot and ask questions about connected security reports."
+---
+
 # Bring the security conversation to Teams
 
 Use Teams when the team already has a finding and needs to discuss its evidence

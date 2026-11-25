@@ -1,3 +1,8 @@
+---
+title: "SonarQube and SonarCloud"
+description: "Connect a SonarQube or SonarCloud project, review issues, and post comments or status changes."
+---
+
 # SonarQube integration
 
 **Integration type: scanning tool.** SonarQube and SonarCloud analyze code themselves and own the issues
@@ -118,18 +123,11 @@ Reads: `/api/issues/search`, `/api/hotspots/search`, `/api/hotspots/show`,
 Writes: `/api/issues/add_comment`, `/api/issues/do_transition`,
 `/api/hotspots/change_status`, `/api/hotspots/add_comment`.
 
-## Adding another scanner
-
-Implement `threatlint.scanners.base.Adapter` connection, reference parsing, fetch/search,
-resolve/note, and token-validation methods; register it in `threatlint.scanners.registry()`.
-Add a matching `TOOLS` entry in `web/lib/scanners.cjs` for Workbench integration.
-See [Development](../development.md) and [Writing an integration](authoring.md) before changing this integration.
-
 ## Limits
 
-[Python](../../tests/test_integrations.py) and [Workbench](../../web/tests/scanners.test.cjs) tests use mocked
-Web API responses, not live certification. Transitions vary by version/state; newer servers may
-omit Confirm. Verdicts do not establish suppression safety or runtime exploitability.
+Available transitions depend on the server version and current issue state; newer servers
+may omit Confirm. Check the reported transition result after posting. A successful comment
+does not establish that the issue status changed.
 
 ## Troubleshooting
 

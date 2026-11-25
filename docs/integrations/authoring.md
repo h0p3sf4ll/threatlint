@@ -1,3 +1,8 @@
+---
+title: "Build an integration"
+description: "Implement and register a Threatlint integration with its connection, review, and write behavior."
+---
+
 # Writing an integration
 
 New integrations are welcome. You can ship one as **your own Python package** without forking

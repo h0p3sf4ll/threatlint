@@ -1,3 +1,8 @@
+---
+title: "Portfolio reviews"
+description: "Compare repository reports, track review coverage, and manage authorized bulk actions."
+---
+
 # Make portfolio reviews comparable
 
 A falling finding count can mean improvement—or that this week's report covers

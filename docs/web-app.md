@@ -1,10 +1,15 @@
-# Threatlint web app
+---
+title: Self-host the web app
+description: Configure Auth0, organization access, isolated workers, and persistent profiles for your own deployment.
+---
+
+# Self-host the web app
 
 The web app adds Auth0 sign-in to the same Workbench used by the desktop app. Users sign in through the configured Google, Apple, GitHub or approved enterprise SSO connections. The login page advertises only providers explicitly enabled in the deployment configuration. Threatlint does not provide a local username/password login or password registration. Each verified identity has its own settings, repository sessions, reports, conversations, dashboards and running jobs. Visitors cannot select another identity's workspace by supplying a profile ID.
 
 The default deployment runs each user's Workbench in a separate Docker container with a separate named home volume. The gateway authenticates HTTP and WebSocket requests before forwarding them to that user's container. Desktop startup remains available through `npm run desktop` and the original local Workbench through `npm start`. Those local entry points keep the operating-system user's existing storage and credentials; they require neither Auth0 nor a company registry.
 
-For the Spaceship VPS deployment, service files and HTTPS configuration, see [deploy the web app on a VPS](web-vps-deployment.md). The existing Spaceship shared hosting serves the marketing site separately.
+This reference is for administrators running their own deployment. To use the hosted service, see [Profiles and saved settings](profiles.md). The production-specific [VPS operations runbook](https://github.com/h0p3sf4ll/threatlint/blob/main/docs/web-vps-deployment.md) is maintained in the repository.
 
 ## Configure Auth0
 
@@ -169,7 +174,7 @@ The image also includes pinned [Codex CLI 0.171.0](https://github.com/openai/cod
 
 AWS Parameter Store setup and CLI-backed model providers still require credentials provisioned separately inside each profile. The visitor's laptop sign-ins are not available to the server. Do not bake personal tokens into the image or pass host cloud credentials to all users. Semgrep platform access and licensed engines likewise require the account's own configured token and entitlement; including the Community Edition CLI does not grant them. An image build or version check does not verify a particular account's login, service permissions or model entitlement.
 
-Most runtime authentication modes use ordinary HTTP requests and remain available, including tokens, Basic auth, OAuth, cookies and imported browser-state cookies. **Manual browser sign-in for SSO/MFA is not available in this server image**: the desktop implementation opens a headed Playwright browser, while the production install omits Playwright and provides no remote display to the visitor. Installing Chromium alone does not supply that interaction. A future server implementation needs an isolated per-profile browser session presented through an authenticated remote browser view, explicit completion/cancellation, short expiry and cleanup; a user must complete their own SSO/MFA before only the necessary session state is passed to the scan. CLI DAST workflows that start target containers also need a separate isolated execution service; profile workers deliberately have no Docker socket access. These workflows must not be described as verified desktop parity in the current deployment.
+Most runtime authentication modes use ordinary HTTP requests and remain available, including tokens, Basic auth, OAuth, cookies and imported browser-state cookies. **Manual browser sign-in for SSO/MFA is not available in this server image**: the desktop implementation opens a headed Playwright browser, while the production install omits Playwright and provides no remote display to the visitor. Installing Chromium alone does not supply that interaction. CLI DAST workflows that start target containers require a separate isolated execution service; profile workers deliberately have no Docker socket access. These workflows are not available with the same capabilities as the desktop in the current deployment.
 
 ## Isolation and persistence
 
@@ -182,20 +187,3 @@ Keep the gateway state directory and every named profile volume across restarts 
 Back up the profile identity/session directory and profile volumes together, stop the gateway before restoration or migration, and recreate workers from the matching image. An exclusive state lock prevents two gateways from writing the same state directory. Preserve `THREATLINT_PROFILE_NAMESPACE` when moving hosts or changing the absolute state-directory path: the namespace determines named profile-volume identities. If this setting is omitted, its default is the first 12 hexadecimal characters of SHA-256 of the resolved absolute state-directory path. Record that default before a move and explicitly configure the same value on the destination; changing it selects different, initially empty profile volumes. The example above sets a stable explicit namespace to simplify migration. Namespace values use lowercase letters, digits and hyphens, start with a letter or digit, and contain at most 40 characters.
 
 Each namespace must belong exclusively to one gateway on a Docker host, including when gateways use different state directories. Before admitting its first profile, a gateway removes orphaned containers and networks with its exact namespace and profile-ID naming pattern; volumes and unrelated resources remain intact. Failed inventory or uncertain cleanup blocks new admission until recovery can be confirmed.
-
-## Local development and verification
-
-Local development still requires a real Auth0 sign-in. Add the exact local root callback, root logout URL and origin to the SPA's Auth0 allowlists before changing `THREATLINT_WEB_ORIGIN`. For example, use callback/logout `http://127.0.0.1:3000/` and web origin `http://127.0.0.1:3000`. Keep the same API audience unless you have configured a separate development API.
-
-For local development without Docker, explicitly select process mode and a loopback origin:
-
-```sh
-export THREATLINT_PROFILE_MODE=process
-export THREATLINT_WEB_ORIGIN=http://127.0.0.1:3000
-export THREATLINT_WEB_STATE_DIR=./.web-state
-npm run start:web
-```
-
-Use the PowerShell `$env:NAME = 'value'` syntax on Windows. Process mode accepts only loopback origins and is for development with trusted accounts. It creates separate profile directories and processes, but does not sandbox operating-system file access. Use the default container mode for shared or public hosting.
-
-Authentication tests use a mocked issuer and tokens to verify the integration. They do not prove the production tenant's API, social connections, SSO configuration or a live end-to-end sign-in. No production authentication bypass is provided for those tests. Docker image execution also requires a running Docker Engine.

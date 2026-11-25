@@ -1,3 +1,8 @@
+---
+title: "Advanced review workflows"
+description: "Configure specialist workers, provider challenges, and bounded review batches."
+---
+
 # Review more source without losing the evidence trail
 
 Use additional workers when a source review has enough independent files to divide. Use
@@ -337,41 +342,5 @@ instance. The coaching preview requires explicit opt-in and verified introductio
 it is not an employee ranking or a performance measure. Existing, separately authorized
 ServiceNow workflows retain their own behavior.
 
-## Check the implementation
-
-The focused tests use temporary repositories and synthetic providers. They cover bounded
-concurrency, partition coverage, malformed responses, conflicts, conservative evidence,
-queued/active cancellation, failure propagation, and legacy calls without spending provider
-quotas:
-
-```bash
-node --test web/tests/review-orchestration.test.cjs \
-  web/tests/workflow-plan.test.cjs web/tests/concurrency.test.cjs \
-  web/tests/workbench.test.cjs web/tests/design-inputs.test.cjs \
-  web/tests/api.test.cjs web/tests/model-policy.test.cjs \
-  web/tests/platform-controls.test.cjs web/tests/scan-import.test.cjs web/tests/scanners.test.cjs
-PYTHONPATH=src python -m pytest -q tests/test_agent_batch.py tests/test_inspection_batch.py tests/test_cli.py
-```
-
-The explicit live harness below generates its own synthetic repository and calls only
-the user's signed-in Codex client. It writes exact stage timings, requested model, contract
-validation outcome, and local report provenance. It is not part of the default test suite:
-
-```bash
-node web/scripts/live-review-smoke.cjs --confirm-live --model gpt-6-astra \
-  --workers 1 --output-dir ./live-acceptance
-```
-
-One worker makes two real calls (assessment and challenge); two workers make three. A
-five-minute timeout cancels the run. The recorded reasoning effort is the native provider
-default, and the model is labeled requested rather than asserting an unreported server
-identity. This single-provider acceptance cannot validate distinct-provider consensus.
-Comparing one- and two-worker fixture runs is an observation of those runs, not a general
-speedup or detection-quality benchmark.
-
-See [execution controls](architecture.md#execution-controls) for the existing admission
-layers and [development](development.md) for the broader check commands. Implementation
-lives in [workflow-plan.cjs](../web/lib/workflow-plan.cjs),
-[pipeline.cjs](../web/lib/pipeline.cjs), [review-scopes.cjs](../web/lib/review-scopes.cjs),
-[review-orchestration.cjs](../web/lib/review-orchestration.cjs), and
-[review-evidence.cjs](../web/lib/review-evidence.cjs).
+Next: inspect the completed assessment in [Reports and exports](reports.md), or
+use the [Workbench guide](workbench.md) for a simpler single-specialist review.

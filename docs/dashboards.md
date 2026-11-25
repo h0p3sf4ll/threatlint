@@ -1,4 +1,9 @@
-# <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Metrics and dashboards
+---
+title: "Metrics and dashboards"
+description: "Filter saved findings and tracker data, build dashboards, and export results."
+---
+
+# Metrics and dashboards
 
 Find the next investigation without rereading every report. **Metrics** groups saved findings,
 current-session runtime observations, and synced defect-tracker findings by severity, workspace,
