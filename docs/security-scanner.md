@@ -1,10 +1,22 @@
-# Scan source and review a bounded fix
+---
+title: Run a security scan
+description: Scan source without a model, check engine coverage, and review supported fixes.
+---
 
-Open a repository in Workbench, choose **Test → Security scanner**, and run the
-baseline. It combines the existing Guard source and secret rules with selected
-infrastructure checks and dependency lockfile hygiene. It works without installing
-another scanner. A result with zero findings means those checks found no matches;
-it does not certify the repository as secure.
+Use the security scanner to find source, secret, infrastructure, and dependency-hygiene patterns. The built-in baseline needs no model provider or additional scanner installation.
+
+## Before you start
+
+Open an authorized repository in the [Workbench](workbench.md). Install Semgrep or Trivy only if you want their additional checks. A hosted web scan uses tools and files inside your web profile, rather than tools installed on your laptop.
+
+## Run the scan
+
+1. Open **Review code → Run scanners**.
+2. Leave optional engines unchecked for a baseline scan, or select the installed **Semgrep** and/or **Trivy** engines you want.
+3. Choose **Scan my code** and wait for the terminal result.
+4. Read each engine card before reviewing the findings.
+
+Optional engines can download public rules or vulnerability databases. Scanner jobs do not use model credentials, install project packages, run build hooks, validate discovered credentials, or execute the scanned application. They inspect a bounded text snapshot.
 
 For CLI use:
 
@@ -13,194 +25,91 @@ threatlint security-scanner scan --repo /path/to/repository
 threatlint security-scanner scan --repo /path/to/repository --engine semgrep --engine trivy
 ```
 
-Optional engines must already be installed. Semgrep adds its `p/security-audit`
-rules using **Semgrep Pro** when the current login and installed Pro engine pass verification, otherwise explicit Community Edition, with the selected engine recorded alongside the configured
-authentication. If Pro cannot be verified, the descriptor explains the explicit
-Community Edition selection. A selected Pro scan that fails is never retried as OSS. Approved Trivy exceptions from Finding triage are stored outside the repository, expire after 90 days, and apply only to the exact reviewed file bytes. Trivy adds vulnerability-database,
-infrastructure, and secret checks.
-Opting in can download rules or vulnerability databases. Threatlint does not
-install packages, run project build hooks, validate discovered credentials, or
-execute scanned application code. It runs engines on a bounded text snapshot.
-Engine output is limited to 20 MB and each engine to five minutes.
-Successful engine results record the reported engine version. Trivy also records
-available vulnerability/Java database schema, update and download timestamps from
-its version metadata. Missing fields remain `unrecorded`; no timestamp or version
-is inferred. Registry and bundled rule sources are identified, but this adapter
-does not yet pin an immutable rule-pack revision. These fields appear in engine
-cards and JSON evidence; they support diagnosis, not fully reproducible scans.
+The CLI prints JSON evidence. Optional engines must already be installed.
+
+## Read the engine cards
+
+| Status | Meaning |
+| --- | --- |
+| `completed` | That engine returned results for the captured scope |
+| `partial` | The engine reported incomplete coverage |
+| `not_requested` | An available engine was not selected |
+| `unavailable` | The engine could not run, for example because it is not installed |
+| `failed` | No successful result from that engine is claimed |
+
+A completed **baseline** card does not establish that Semgrep or Trivy ran. Check the selected engine's own status and reported version. Missing provenance fields remain `unrecorded`.
+
+Semgrep uses `p/security-audit`. Threatlint selects Pro only when the current authentication and installed Pro engine pass verification; otherwise it explicitly selects Community Edition and explains that choice. A selected Pro scan that fails is not retried as Community Edition. Community scanning needs no Semgrep login.
+
+Trivy adds vulnerability-database, infrastructure, and secret checks. Its card records available database schema and update/download timestamps. The baseline's npm lockfile checks do not identify known CVEs; that requires a successful Trivy run and its database.
+
+Overall coverage remains **partial**, even when the selected engines complete. Scans exclude git history, generated/binary content, excluded directories, unsupported files, and files over 1 MB. The snapshot is limited to 10,000 files and 30 MB; at most 2,000 findings are retained. Engines have a five-minute/20 MB output budget. The result records skipped content and reached limits. Rule sources are recorded, but an immutable registry rule revision is not pinned.
+
+Zero findings means no matches in the checks that ran. It is not a security certification.
 
 ## Semgrep on Windows desktop
 
-Semgrep Community Edition supports native Windows scanning without a Semgrep
-account. [Semgrep 1.186.0 on PyPI](https://pypi.org/project/semgrep/1.186.0/)
-provides a Windows x64 wheel for Python 3.10–3.14. Install it in a dedicated
-per-user environment, then add its `Scripts` directory to User PATH:
+[Semgrep Community Edition](https://semgrep.dev/products/community-edition/) supports native Windows scanning without an account. The pinned [Semgrep 1.186.0 package](https://pypi.org/project/semgrep/1.186.0/) provides Windows x64 wheels for Python 3.10–3.14.
 
-```powershell
-$semgrepTools = Join-Path $env:LOCALAPPDATA 'ThreatlintTools\Semgrep-1.186.0'
-py -3 -m venv $semgrepTools
-& "$semgrepTools\Scripts\python.exe" -m pip install 'semgrep==1.186.0'
-& "$semgrepTools\Scripts\python.exe" -m pip check
-& "$semgrepTools\Scripts\semgrep.exe" --version
-$semgrepScripts = Join-Path $semgrepTools 'Scripts'
-$userToolPath = [string][Environment]::GetEnvironmentVariable('Path', 'User')
-if ($semgrepScripts -notin ($userToolPath -split ';')) {
-    [Environment]::SetEnvironmentVariable('Path', ($userToolPath.TrimEnd(';') + ';' + $semgrepScripts).TrimStart(';'), 'User')
-}
-```
+1. Use a supported 64-bit Python to create a dedicated environment:
 
-Use a supported 64-bit Python for `py -3`. Close and reopen Threatlint through
-its usual desktop shortcut. On startup it reads the current User PATH, appends
-new entries to its inherited PATH, and keeps existing command precedence. An
-OS sign-out is unnecessary. Check the Semgrep version in Workbench, open
-**Review code → Run scanners**, and select **Semgrep**. Community scanning requires neither
-Auth0 nor a Semgrep login; the public `p/security-audit` rules still need network
-access. See [Semgrep Community Edition](https://semgrep.dev/products/community-edition/).
+   ```powershell
+   $semgrepTools = Join-Path $env:LOCALAPPDATA 'ThreatlintTools\Semgrep-1.186.0'
+   py -3 -m venv $semgrepTools
+   & "$semgrepTools\Scripts\python.exe" -m pip install 'semgrep==1.186.0'
+   & "$semgrepTools\Scripts\python.exe" -m pip check
+   & "$semgrepTools\Scripts\semgrep.exe" --version
+   ```
 
-Confirm that the result's **Semgrep** engine card says `completed` and records
-its version. A baseline result or overall `partial` status alone does not prove
-that Semgrep ran. Model-provider credentials are not used by scanner jobs.
+2. Add its `Scripts` directory to User PATH:
 
-The engine cards distinguish `completed`, `partial`, `not_requested`,
-`unavailable`, and `failed`. Overall coverage remains `partial`: generated and
-binary artifacts, excluded directories, git history, unsupported files, files
-over 1 MB, and content beyond the 10,000-file/30 MB budget are outside this scan.
-At most 2,000 findings are retained; reaching that limit is reported explicitly.
-Skipped counts and limits are included in the result. Built-in dependency checks
-identify floating npm versions without a captured lockfile; they do **not** claim
-to identify known CVEs. That requires a successful Trivy run and its database.
+   ```powershell
+   $semgrepScripts = Join-Path $semgrepTools 'Scripts'
+   $userToolPath = [string][Environment]::GetEnvironmentVariable('Path', 'User')
+   if ($semgrepScripts -notin ($userToolPath -split ';')) {
+       [Environment]::SetEnvironmentVariable('Path', ($userToolPath.TrimEnd(';') + ';' + $semgrepScripts).TrimStart(';'), 'User')
+   }
+   ```
 
-**Cancel scan** requests cancellation while a scan is running. Workbench waits
-for a terminal scanner result before releasing the controls; cancellation never
-turns an incomplete run into a clean result. This control does not cancel an edit
-that has already been applied.
+3. Close and reopen Threatlint through its usual shortcut, then run a scan with **Semgrep** selected.
 
-Findings have stable IDs, engine attribution, category, severity, reported
-confidence, path/line evidence, impact, remediation, and optional package/fixed
-version metadata. They remain reported observations until independently reviewed.
-Secret matches are redacted in findings and exports. Findings history can retain
-each repository/branch/commit/content snapshot through the completion callback.
+Threatlint refreshes User PATH on startup while retaining inherited command precedence; OS sign-out is unnecessary. Expect the Semgrep card to show **completed**, Community Edition, and its version. Neither Auth0 nor Semgrep login is required for this local scan. Public rules still require network access.
 
 ## Review and apply
 
-**Review suggested change** prepares an exact before/after edit. The source
-allowlist contains these supported Python transformations:
+1. Open a finding and inspect its issue, impact, file/line, and suggested correction. Scanner matches remain unverified observations until reviewed.
+2. If **Review suggested change** is available, inspect the exact before/after diff and its compatibility effects.
+3. Confirm **Apply** only when the host supports it and you intend the edit. Otherwise make the reviewed change in your editor.
+4. Read the rescan result, then run the application's relevant tests yourself.
 
-| Rule | Eligible source | Proposed change |
-| --- | --- | --- |
-| `TL-DEBUG-ENABLED` | Plain module-level `DEBUG = True` | `DEBUG = False` |
-| `TL-PY-YAML` | Imported `yaml.load`, `unsafe_load` or `load_all`, one positional data argument and no options | `safe_load` or `safe_load_all` |
-| `TL-PY-YAML` | Imported `yaml.load` or `load_all` with one data argument and explicit `Loader=yaml.Loader`, `UnsafeLoader`, `CLoader` or `CUnsafeLoader` | Corresponding `SafeLoader` or `CSafeLoader` |
-| `TL-TLS-VERIFY-OFF` | Imported `requests.request/get/post/put/patch/delete/head/options` with literal `verify=False` | `verify=True` |
+Supported automatic source changes are limited to these Python rule families:
 
-Calls must occupy one source line with only one eligible correction, use a direct
-module import, and have no detected binding or module-member mutation. Local
-modules/packages named `yaml` or `requests` disable those library fixes. Custom
-loaders, positional loader arguments, `**kwargs`, multiline calls, aliases and
-other ambiguous shapes remain advisory. Syntax analysis excludes docstrings and
-comments. It establishes static API provenance; it cannot prove runtime behavior
-or absence of dynamic monkey-patching.
+| Rule | Proposed correction |
+| --- | --- |
+| `TL-DEBUG-ENABLED` | Plain module-level `DEBUG = True` → `False` |
+| `TL-PY-YAML` | Eligible direct PyYAML calls → safe loading, or a supported standard unsafe loader → its safe counterpart |
+| `TL-TLS-VERIFY-OFF` | Eligible direct `requests` calls with literal `verify=False` → `True` |
 
-Safe loading rejects custom Python object tags. TLS verification may require a
-configured private CA. Debug changes affect diagnostics. These are intentional
-security changes with compatibility consequences, so review is the default.
-Dependency upgrades, secret rotation and infrastructure corrections retain
-advisory guidance; this adapter does not regenerate lockfiles or rotate credentials.
+Ambiguous calls, custom loaders, aliases, multiline shapes, local modules shadowing these libraries, and changed source remain manual. Safe YAML loading rejects custom Python object tags; TLS verification may require your private CA; disabling debug changes diagnostics. Dependency upgrades, secret rotation, and infrastructure changes remain advisory.
 
-Each proposal is bound to the canonical repository path, branch, commit, captured
-content digest, and current file hash. Application regenerates the allowed edit;
-the browser cannot supply replacement code. Stale plans, symlinks, traversal,
-workflow/agent directories, credential/secret files, and secret-bearing proposal
-lines are rejected. Directory-relative replacement is required; hosts without
-that filesystem support retain manual review instead of an unsafe write fallback.
-This includes current Windows Python hosts. Reports distinguish a reviewable
-`fixAvailable` diff from `localApplyAvailable`; scan policy records
-`localApplySupported` and its reason. A proposal with `canApply: false` still
-shows the exact diff and manual instructions, but Workbench offers no Apply
-button and does not attempt automatic edits. Both the host and Python writer
-reject application explicitly without claiming a rescan or rollback happened.
-Native GitHub suggestions remain available through the trusted workflow.
+Proposals belong to the scanned repository revision and file content. Stale or unsafe paths are rejected. Current Windows Python hosts do not support this adapter's safe local replacement method: they show the diff and manual instructions instead of an Apply button.
 
-Application parses Python syntax without importing it, writes only the eligible
-file, and rescans. A failed, absent or finding-budget-truncated baseline validation restores the original content
-unless another process has changed it. Application tests are explicitly
-`not_run`. Interrupted operations require inspection and a fresh scan; the UI
-does not assume that cancellation proves rollback. Closing Workbench aborts and
-drains native scanner/fix operations.
+Applying a supported edit rescans; it does not run application tests. Failed validation restores the original content unless another process changed it. After an interruption, inspect the file and scan again rather than assuming rollback. **Cancel scan** waits for a terminal result and does not undo an already applied edit.
 
-Automation requires an explicit policy such as
-`{"autoApply":true,"rules":["TL-DEBUG-ENABLED"]}` for the requested operation.
-The other recognized policy IDs are `TL-PY-YAML` and `TL-TLS-VERIFY-OFF`; select
-only the rules you intend to authorize. Workbench's advanced checkbox explicitly
-opts into all three named source-rule families for that one scan, up to 12 edits.
-An empty, unknown, or unrelated rule policy grants no write permission. Policy does not waive
-revision/path checks, syntax validation, rescanning, or review before merge.
+Advanced automatic application is optional: its checkbox authorizes the three named source-rule families for that scan, up to 12 edits. It does not waive source checks or validation. Approved Trivy exceptions expire after 90 days and apply only to the exact reviewed file bytes.
 
 ## GitHub review and rescan
 
-The [Security scanner workflow](../.github/workflows/security-scanner.yml) checks
-out the trusted scanner implementation separately from the exact target revision.
-It scans target files as data and uploads JSON evidence. Same-repository PRs also
-receive a compact comment sorted by severity: issue, impact, vulnerable code, and
-proposed fix. Fork scans do not publish comments with elevated credentials.
+1. Read the [Security scanner workflow](https://github.com/h0p3sf4ll/threatlint/actions/workflows/security-scanner.yml) result and JSON evidence for the exact target revision.
+2. Review a native suggestion before using GitHub's **Commit suggestion** action. A new PR head triggers another scan. Same-repository PRs can receive comments; fork scans do not publish elevated comments. At most ten native suggestions are published per run.
+3. For a separate fix proposal, open [Apply security fix and rescan](https://github.com/h0p3sf4ll/threatlint/actions/workflows/appsec-auto-fix.yml). Supply the base branch, full expected SHA, and eligible finding ID from the artifact.
+4. Leave application options unchecked for a proposal only. The reviewed-edit checkbox authorizes that edit; the debug checkbox and `auto_apply_rule` selector provide separate narrow authorizations. The workflow's `security_scanner_fix.py` script accepts repeatable `--auto-apply-rule`; `--auto-apply-debug` remains compatible.
+5. Review the validation evidence and resulting **draft PR**. The workflow does not merge it. Required reviews and application CI still apply; a `GITHUB_TOKEN` PR may need CI started through your approved process.
 
-For an eligible newly added diff line, the publisher creates a **native GitHub
-suggestion** bound to that PR's current head commit. GitHub's **Commit suggestion**
-action changes the PR branch; its `pull_request: synchronize` event runs the scan
-again. The publisher checks the live head before publishing, rejects stale heads,
-and limits native suggestions to ten per run. This is GitHub's supported
-[suggestion workflow](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/incorporating-feedback-in-your-pull-request),
-using the [review-comment API](https://docs.github.com/en/rest/pulls/comments).
-There is no HTML action button or issue-comment-to-shell command.
+See GitHub's [suggestion workflow](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/incorporating-feedback-in-your-pull-request) and [review-comment API](https://docs.github.com/en/rest/pulls/comments).
 
-The comment also links to
-[Apply security fix and rescan](../.github/workflows/appsec-auto-fix.yml).
-The maintainer supplies a base branch, full expected SHA, and exact eligible
-finding ID from the scan artifact. Without either application checkbox the
-workflow only prepares a proposal. The reviewed-edit checkbox authorizes that
-edit; the separate false-by-default debug checkbox explicitly permits only the
-`DEBUG` transformation without per-edit approval. The optional **auto_apply_rule**
-selector starts at `none` and authorizes one of the three supported source rules.
-The trusted script exposes this as repeatable `--auto-apply-rule`; the older
-`--auto-apply-debug` option remains compatible. Applying validates and rescans,
-checks the remote base head again before publication, and opens a **draft PR**.
-It never merges. Configure required reviewers on the `security-fixes` GitHub
-environment and normal branch protection for your organization.
+## Check the result
 
-The introduction PR is a bootstrap exception: its trusted base/default revision
-does not yet contain this scanner. Readiness checks fail explicitly with **not
-evaluated**, rather than importing code from that PR or calling the scan clean.
-Validate the introduction locally with synthetic tests, review and deploy the
-implementation to the trusted branch, then enable/rerun PR scans and remediation.
+A useful result identifies which engines ran, their limits, and each finding's source and location. Secret matches are redacted in findings and exports. Saved finding history retains the observed scope; absence on a later scan alone does not prove remediation.
 
-These repository workflows use the trusted Python package in the separate
-`scanner-tool` checkout; the mirrored scripts are entry points, not standalone
-scanner distributions. When adapting the workflows to an application repository,
-point the tool checkout at a reviewed, pinned Threatlint revision containing this
-feature. Keep the application checkout separate. No repository installation or
-target test script belongs in the credential-bearing publishing step. A PR
-opened with `GITHUB_TOKEN` may not trigger other workflows automatically; the
-explicit rescan evidence is preserved, and application CI must be run through
-your approved workflow/token configuration before merging.
-
-## Integration contract
-
-`createSecurityScanner({store, integrations, onScanComplete, isSessionBusy})`
-resolves repositories from existing sessions. Mount its route module behind the
-Workbench same-origin loopback middleware. The optional busy callback prevents
-scanner/fix work while another review owns that repository; expose scanner
-`isBusy(sessionId)` back to review admission for the reverse direction.
-
-| Route | Request/result |
-| --- | --- |
-| `POST /api/security-scanner/scans` | `{sessionId, engines?:[]}` → `{id}` |
-| `GET /api/security-scanner/scans?sessionId=…` | Current process's bounded scan history |
-| `GET /api/security-scanner/scans/:id` | Status, binding, findings, engines, coverage, summary |
-| `POST /api/security-scanner/scans/:id/cancel` | Cancel and drain the active scan |
-| `POST /api/security-scanner/scans/:id/fixes` | `{findingId}` → server-owned proposal and ID |
-| `POST /api/security-scanner/fixes/:id/apply` | `{confirm:true}` or explicit narrow policy → validation and new scan |
-
-The store keeps at most 25 scan snapshots and 100 proposals in memory. Persistent
-findings history is an explicit consumer of `onScanComplete(scan, session)`, not
-an implicit write to a remote tracker. No PR comments or external changes occur
-from the local scan API.
+**Next:** review [Finding intelligence](finding-intelligence.md), share [Reports](reports.md), or follow the [Quickstart](learning.md).

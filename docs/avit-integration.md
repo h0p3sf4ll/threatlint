@@ -1,3 +1,8 @@
+---
+title: "ServiceNow AVIT workflows"
+description: "Fetch, review, and resolve ServiceNow AVIT findings with recorded evidence and explicit write actions."
+---
+
 # AVIT triage integration: from finding to recorded decision
 
 A scanner alert is not yet a decision. Threatlint connects a ServiceNow

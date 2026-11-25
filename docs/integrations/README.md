@@ -1,3 +1,8 @@
+---
+title: "Integration commands"
+description: "Use the common fetch, checkout, resolve, and note commands for supported integration types."
+---
+
 # Integrations
 
 Threatlint connects to the tools where findings live, so a reviewed verdict and its evidence end up

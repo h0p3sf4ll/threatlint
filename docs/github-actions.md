@@ -1,3 +1,8 @@
+---
+title: "GitHub Actions"
+description: "Run security reviews in GitHub Actions and configure the permissions and publication options."
+---
+
 # GitHub Actions
 
 Put evidence beside a change, then decide what should block a merge. Start with

@@ -1,4 +1,9 @@
-# <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Reusable CI templates
+---
+title: "Reusable CI templates"
+description: "Add reusable Threatlint checks to GitHub Actions or Azure Pipelines."
+---
+
+# Reusable CI templates
 
 Review evidence before blocking merges. Start with one agent in **warn** mode,
 then opt into comments, Code Scanning, or blocking. These generic analysis

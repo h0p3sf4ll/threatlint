@@ -1,3 +1,8 @@
+---
+title: "GitHub App setup"
+description: "Connect GitHub repositories with an installation token and manage the App configuration."
+---
+
 # GitHub App authentication
 
 Give Threatlint access to selected repositories without tying reviews to a personal token.
@@ -126,6 +131,3 @@ or file deletion alone.
 | PR/issue writes denied | Add only the required write permission; approve updated installation permissions |
 | App warning but operation succeeds | Check fallback environment/CLI credentials and their permissions |
 | Sources rejects custom host | Sources supports GitHub cloud, not GitHub Enterprise Server |
-
-Validation coverage lives in mocked [CLI](../tests/test_github_app.py) and
-[Workbench](../web/tests/github-app.test.cjs) tests; this guide does not certify a live installation.

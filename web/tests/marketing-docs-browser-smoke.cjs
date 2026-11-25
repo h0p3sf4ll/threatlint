@@ -17,7 +17,7 @@ const { createPreviewServer } = require('../../docs-site/scripts/preview.cjs');
     assert.match(await page.locator('h1').innerText(), /Find the risk.*Explain the path.*Ship the fix/s);
     await page.locator('.nav-links').getByRole('link', { name: 'Docs', exact: true }).click();
     await page.getByRole('heading', { level: 1, name: 'Threatlint documentation' }).waitFor();
-    await page.getByRole('link', { name: 'Connect tools through MCP' }).click();
+    await page.locator('main').getByRole('link', { name: 'Threatlint MCP', exact: true }).click();
     await page.getByRole('heading', { level: 1, name: 'Threatlint MCP' }).waitFor();
     assert.match(await page.locator('main').innerText(), /list_findings/);
     await page.screenshot({ path: '/tmp/threatlint-docs-preview.png', fullPage: false });

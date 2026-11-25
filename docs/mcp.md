@@ -1,3 +1,8 @@
+---
+title: "MCP clients"
+description: "Connect an MCP client to scoped Threatlint tools over local stdio or Streamable HTTP."
+---
+
 # Threatlint MCP
 
 Threatlint exposes the current Workbench profile through the Model Context Protocol.
