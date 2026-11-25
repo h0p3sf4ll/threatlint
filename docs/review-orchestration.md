@@ -250,7 +250,7 @@ coordination control, not a filesystem lock against another editor or another ap
 | Workbench specialist review pipeline | Dependency graph; now one pipeline-wide model limiter at `execution.maxConcurrency` | Yes, through `run_pipeline` |
 | Workbench conversation/chat | Existing single conversational provider; shared process model admission | No |
 | Workbench scan-import / scanner-review batches | Per-run `execution.maxConcurrency`, default `THREATLINT_BATCH_CONCURRENCY` (3), range 1–8; per-run model budget 64; import queue up to 32 waiting jobs | Independent findings or groups of 20 imported findings; no ensemble |
-| Workbench Python AVIT review/resolve sequence | Existing serialized sequence around write-capable operations | No; write authorization and idempotency unchanged |
+| Workbench AVIT review batches | **Parallel reviews** 1–8, default 3; isolated per-finding checkouts and reports; external updates run one at a time | No ensemble; write authorization and idempotency unchanged |
 | Python CLI specialist runs | `--targets-file`, `--workers` (1–8), `--max-model-runs` (1–64, default 24); shared Python bounded scheduler | Same-role independent explicit source scopes; separate reports, no automatic partition/ensemble |
 | Python AVIT queue/orchestrator | Existing queue lifecycle and runner behavior | No; not migrated |
 | Sidekick report generation | Existing `--workers`, default 10, clamped 1–32 | No |
@@ -266,6 +266,16 @@ same-turn inspection calls in Threatlint-owned Node/Python API loops (default 4,
 1–16; at most 64 calls per turn). Multiple processes do not share these admission limits.
 
 ## Control independent findings batches
+
+Finding triage exposes **Parallel reviews** in both Guided and Advanced mode.
+It defaults to **3** and accepts **1–8**. Fetches, checkouts, and model reviews can
+overlap; each finding keeps its own progress and result. Selecting **1** retains
+sequential reviews. ServiceNow, Semgrep, draft fix PR, and SCTASK/ISST updates
+run one at a time, after the relevant reviews finish. **Stop** cancels queued work
+and active reviews while allowing an external update already in progress to finish.
+The same setting is available as `execution.maxConcurrency` on `run_avit_batch`.
+AVIT lists retain no total finding limit. These limits apply to one Workbench batch;
+separate users and Workbench processes do not share a write queue.
 
 Advanced mode exposes **Parallel reviewers** and **Maximum model runs** in the scan-import,
 DefectDojo review, and SonarQube review forms. These use the same bounded mapper and process

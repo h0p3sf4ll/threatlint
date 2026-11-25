@@ -187,9 +187,9 @@ function createWorkbench(options = {}) {
   async function close() {
     awsParameters.close();
     pipeline.abortAll();
-    avitRuns.close();
+    const avitClosing = avitRuns.close();
     unsubscribe();
-    await Promise.all([pipeline.close(), scanImports.close(), securityScanner.close()]);
+    await Promise.all([avitClosing, pipeline.close(), scanImports.close(), securityScanner.close()]);
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));

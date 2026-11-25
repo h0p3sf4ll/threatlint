@@ -123,7 +123,7 @@ invalid limits, and cycles are rejected before provider or integration work star
 | `execution.maxConcurrency` | 3 | 1–8; forced to 1 in sequential mode | Specialists in one Workbench pipeline |
 | `THREATLINT_MODEL_CONCURRENCY` | 4 | 1–16 | Whole model runs admitted across Workbench review/chat/import/batch callers in one Node process |
 | `THREATLINT_TOOL_CONCURRENCY` | 4 | 1–16 | Independent same-turn inspection calls in Threatlint-owned Node/Python API loops |
-| `THREATLINT_BATCH_CONCURRENCY` | 3 | 1–8 | Read-only Workbench scan-import and scanner-review batch work |
+| `THREATLINT_BATCH_CONCURRENCY` | 3 | 1–8 | Workbench scan-import, scanner-review, and AVIT review batch work; external AVIT updates stay serialized |
 
 Advanced batch requests can select a per-run concurrency and model-run budget. The CLI's
 `run --targets-file targets.json --workers N --max-model-runs N` reviews explicitly supplied
@@ -134,7 +134,8 @@ or operational write sequences into parallel jobs.
 Environment limits are operator settings, not a provider quota negotiation. Configure them
 before starting the relevant process. Multiple Node processes do not share a distributed
 limiter. Native coding clients schedule their own tools; Python AVIT/Sidekick pools retain
-their existing controls. Write-enabled AVIT review/resolve sequences remain serialized.
+their existing controls. AVIT fetch, checkout, and model reviews can overlap within
+one batch; ServiceNow, Semgrep, draft PR, and group updates share one serialized lane.
 
 **Ordering and failures:** each task receives successful ancestor context in selected-agent
 order, not completion order. Parallel siblings do not read each other's partial reports.
