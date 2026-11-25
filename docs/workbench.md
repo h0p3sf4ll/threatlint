@@ -143,7 +143,7 @@ Pulling, importing ticket IDs, or refreshing this inbox does not call a model, g
 
 In **Findings**, open a saved report to inspect locations, evidence, proposed corrections, and verification steps. Download **Markdown** or available **Word**. **PowerPoint** exports one structured finding as an editable one-slide summary, either the report's top finding or the selected finding. **Triage finding** prepares a review of that finding; it does not start the model automatically.
 
-Source-scanner engine results and scan history are separate from saved Findings reports. Runtime scans have their own **JSON, Markdown, and HTML** exports; their **Review evidence with specialists** action can start a report-producing specialist review. Metrics exports detailed synced findings as **CSV**. See [Reports and exports](reports.md) for the complete destination and format table.
+Source-scanner engine results and scan history are separate from saved Findings reports. Runtime scans have their own **JSON, Markdown, and HTML** exports; their **Review evidence with specialists** action can start a report-producing specialist review. Metrics exports retained findings from selected report, runtime, and synced tracker sources as **CSV**. See [Reports and exports](reports.md) for the complete destination and format table.
 
 **Resolve selected** records a decision with the evidence and attestation requested by the confirmation form. Tracker updates, scanner exceptions, and source changes have their own actions. See [Reports and exports](reports.md) and [Review findings](finding-intelligence.md).
 

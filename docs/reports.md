@@ -88,7 +88,7 @@ A proposed test is **NOT RUN** unless execution and its result are recorded. Rea
 | Issue management Pull / Import ticket IDs | Saved issue inbox rows with source links and status; no review report is generated |
 | Built-in source scanner | Engine findings, coverage, scan history, and Repository risk evidence; it does not automatically generate a Markdown/Word Findings report |
 | Runtime scan | Separate observation exports in **JSON, Markdown, or HTML**; **Review evidence with specialists** can subsequently produce normal Findings reports |
-| Metrics | A separate **CSV** export of detailed synced findings; the aggregate ServiceNow AVIT count panel is not that CSV's record set |
+| Metrics | A separate **CSV** export of retained findings from selected report, runtime, and synced tracker sources; the aggregate ServiceNow AVIT count panel is excluded |
 | Sidekick vReports / trends | vReport workbooks are **XLSX**; the trends executive summary uses the browser print dialog for PDF. These are separate from Finding Review downloads; see [Sidekick](sidekick.md) |
 | `threatlint run MODE` | Word when conversion succeeds, otherwise Markdown |
 | Claude Code slash command | The command coordinates export after analysis |
