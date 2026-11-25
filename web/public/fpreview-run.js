@@ -66,7 +66,7 @@
     userToggled(logBox);
 
     function reset() {
-      run = { status: 'idle', total: 0, avits: new Map(), tasks: new Map(), avitTasks: new Map(), events: 0, startedAt: null, truncated: null, error: '' };
+      run = { status: 'idle', total: 0, maxConcurrency: 1, avits: new Map(), tasks: new Map(), avitTasks: new Map(), events: 0, startedAt: null, truncated: null, error: '' };
       tasks.replaceChildren(); avits.replaceChildren(); log.replaceChildren(); note.textContent = ''; logBox.open = true; delete logBox.dataset.userToggled;
       section.classList.add('hidden');
     }
@@ -160,7 +160,7 @@
 
     function queueAvit(avit, at) {
       const item = card('avit', avit);
-      if (!item.node.querySelector('.fp-history-list').children.length) addHistory(item, at, 'Queued', 'Waiting for its turn in the batch');
+      if (!item.node.querySelector('.fp-history-list').children.length) addHistory(item, at, 'Queued', 'Waiting for an available reviewer');
       return item;
     }
     function refreshTaskChips(task) {
@@ -184,27 +184,30 @@
       for (const item of run.avits.values()) if (item.result) tally[item.result]++;
       const total = Math.max(run.total, run.avits.size);
       const done = RESULTS.reduce((sum, result) => sum + tally[result], 0);
+      const active = [...run.avits.values()].filter(item => item.active && !item.result).length;
+      const queued = Math.max(0, total - done - active);
       const running = run.status === 'running' || run.status === 'expanding';
       const indeterminate = running && (run.status === 'expanding' || !total);
       bar.classList.toggle('indeterminate', indeterminate);
       bar.setAttribute('aria-valuemax', String(total));
       if (indeterminate) { bar.removeAttribute('aria-valuenow'); bar.setAttribute('aria-valuetext', 'Expanding the submitted SCTASKs and ISSTs'); }
-      else { bar.setAttribute('aria-valuenow', String(done)); bar.setAttribute('aria-valuetext', `${done} of ${plural(total, 'AVIT')} done`); }
+      else { bar.setAttribute('aria-valuenow', String(done)); bar.setAttribute('aria-valuetext', `${done} of ${plural(total, 'AVIT')} done${running ? `, ${active} active, ${queued} queued` : ''}`); }
       for (const result of RESULTS) segments[result].style.width = total ? `${(tally[result] / total) * 100}%` : '0%';
       counts.replaceChildren(el('strong', 'fp-count-done', `${done} / ${total}`),
-        document.createTextNode(` · ${tally.closed} closed · ${tally.noted} noted · ${plural(tally.error, 'error')}${tally.skipped ? ` · ${tally.skipped} skipped` : ''}`));
+        document.createTextNode(`${running ? ` · ${active} active · ${queued} queued` : ''} · ${tally.closed} closed · ${tally.noted} noted · ${plural(tally.error, 'error')}${tally.skipped ? ` · ${tally.skipped} skipped` : ''}`));
       const taskTally = Object.fromEntries(RESULTS.map(result => [result, 0]));
       for (const item of run.tasks.values()) if (item.result) taskTally[item.result]++;
       const taskKeys = [...run.tasks.keys()];
       const groupLabel = [plural(taskKeys.filter(key => key.startsWith('SCTASK')).length, 'SCTASK'), plural(taskKeys.filter(key => key.startsWith('ISST')).length, 'ISST')]
         .filter(label => !label.startsWith('0 ')).join(' · ');
       tasksLine.textContent = run.tasks.size ? `${groupLabel} · ${taskTally.closed} closed · ${taskTally.noted} left open · ${plural(taskTally.error, 'error')}${taskTally.skipped ? ` · ${taskTally.skipped} not updated` : ''}` : '';
-      status.textContent = run.status === 'running' && total ? `${RUN_STATUS.running} ${Math.min(done + 1, total)} of ${total}` : RUN_STATUS[run.status] || '';
+      status.textContent = run.status === 'running' && total ? `${done} of ${total} reviewed · ${active} active` : RUN_STATUS[run.status] || '';
       status.className = `avit-stage stage-${{ running: 'triage', expanding: 'triage', complete: 'done', cancelled: 'cancelled', error: 'error', interrupted: 'cancelled' }[run.status] || 'queued'}`;
       section.classList.toggle('active', running);
       section.setAttribute('aria-busy', String(running));
       if (run.startedAt) { started.textContent = `Started ${clock(run.startedAt)}`; started.dateTime = run.startedAt; }
       const notes = [];
+      if (running) notes.push(`Up to ${plural(run.maxConcurrency, 'review')} at once. Finished findings keep their results while other reviews continue.`);
       if (run.truncated) notes.push(`Limited to ${run.truncated.reviewed} of ${run.truncated.total} AVITs (the maximum per run): ${run.truncated.skipped.length} not reviewed and listed as skipped. Run them again in another batch.`);
       if (run.status === 'interrupted') notes.push('The runner reported an error or its saved run could not be recovered. Page reloads and brief connection losses do not stop a run while the Workbench stays open; reconnecting replays its history. Check the item errors below before retrying unfinished AVITs. A ServiceNow update already under way still completes.');
       if (run.error) notes.push(run.error);
@@ -220,6 +223,7 @@
         case 'fp_run_start': {
           const groups = (event.sctasks?.length || 0) + (event.issts?.length || 0);
           reset(); run.status = groups ? 'expanding' : 'running'; run.startedAt = at; run.total = event.avits.length;
+          run.maxConcurrency = concurrency(event.execution, run.maxConcurrency);
           for (const avit of event.avits) queueAvit(avit, at);
           const groupText = [plural(event.sctasks?.length || 0, 'SCTASK'), plural(event.issts?.length || 0, 'ISST')].filter(label => !label.startsWith('0 ')).join(' and ');
           runLog(at, '', 'Started', `${plural(event.avits.length, 'AVIT')}${groupText ? ` and ${groupText}` : ''} submitted${event.model ? ` · ${event.model}` : ''}`);
@@ -242,6 +246,7 @@
         }
         case 'avit_batch_start': {
           run.status = 'running'; run.total = event.avits.length; run.truncated = event.truncated || null;
+          run.maxConcurrency = concurrency(event.execution, run.maxConcurrency);
           for (const avit of event.avits) { const item = queueAvit(avit, at); avits.append(item.node); }
           for (const [avit, owners] of run.avitTasks) { const item = run.avits.get(avit); if (item) item.node.querySelector('.avit-tasks').textContent = `From ${owners.join(', ')}`; }
           { const owners = [plural(event.sctasks?.length || 0, 'SCTASK'), plural(event.issts?.length || 0, 'ISST')].filter(label => !label.startsWith('0 ')).join(' and ');
@@ -277,7 +282,7 @@
           addHistory(item, at, label, detail, kind);
           runLog(at, event.avit, label, detail, kind);
           if (event.outcome) renderOutcome(item, event);
-          if (event.done) finish(item, resultOf(event)); else activate(item);
+          if (event.done) finish(item, resultOf(event)); else if (event.stage !== 'queued') activate(item);
           for (const task of run.avitTasks.get(event.avit) || []) refreshTaskChips(task);
           break;
         }
@@ -380,7 +385,7 @@
 
     reset();
     return {
-      start(plan) { handle({ type: 'fp_run_start', avits: plan.avits, sctasks: plan.sctasks, issts: plan.issts, model: plan.model }); },
+      start(plan) { handle({ type: 'fp_run_start', avits: plan.avits, sctasks: plan.sctasks, issts: plan.issts, model: plan.model, execution: plan.execution }); },
       handle,
       restore,
       replay,
@@ -388,6 +393,10 @@
       interrupt(detail) { handle({ type: 'fp_interrupted', detail }); },
       get running() { return run.status === 'running' || run.status === 'expanding'; },
     };
+  }
+
+  function concurrency(execution, fallback) {
+    return Number.isInteger(execution?.maxConcurrency) && execution.maxConcurrency >= 1 && execution.maxConcurrency <= 8 ? execution.maxConcurrency : fallback;
   }
 
   /** Mirrors the server's parseBatchInput: AVIT, SCTASK, and ISST numbers in any mix, in input order, deduplicated. */

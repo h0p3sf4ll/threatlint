@@ -408,8 +408,11 @@ describe('False positive review batch', () => {
     Object.assign(taskAvits, { [A]: [FP], [B]: [FP, TP], [BAD]: null });
     const events = await runBatch(`${A}, ${BAD}; ${B}\n${TP}`);
     const order = calls.filter(args => args[0] === 'sctask' || args[1] === 'resolve').map(args => `${args[1]} ${args[2]}`);
-    assert.deepEqual(order, [`avits ${A}`, `avits ${BAD}`, `avits ${B}`, `resolve ${FP}`, `close ${A}`, `resolve ${TP}`, `close ${B}`],
-      'every task is read, each AVIT is reviewed once, and each task is closed right after its own AVITs');
+    assert.deepEqual(order.slice(0, 3), [`avits ${A}`, `avits ${BAD}`, `avits ${B}`]);
+    for (const avit of [FP, TP]) assert.equal(order.filter(item => item === `resolve ${avit}`).length, 1, 'shared AVITs are reviewed once');
+    assert.ok(order.indexOf(`close ${A}`) > order.indexOf(`resolve ${FP}`), 'the first task waits for its AVIT');
+    assert.ok(order.indexOf(`close ${B}`) > Math.max(order.indexOf(`resolve ${FP}`), order.indexOf(`resolve ${TP}`)), 'the shared task waits for both AVITs');
+    for (const task of [A, B]) assert.equal(order.filter(item => item === `close ${task}`).length, 1);
     const start = events.find(event => event.type === 'avit_batch_start');
     assert.deepEqual(start.avits, [FP, TP]); assert.deepEqual(start.sctasks, [A, B]); assert.equal(start.truncated, null);
     const final = Object.fromEntries(events.filter(event => event.type === 'sctask_item' && event.done).map(event => [event.sctask, event]));
@@ -480,7 +483,7 @@ describe('False positive review batch', () => {
     gate.release();
     const complete = await waitFor(second, event => event.type === 'avit_batch_complete');
     assert.equal(complete.cancelled, false, 'closing the page did not cancel the run');
-    assert.ok(second.seen.some(event => event.avit === FP && event.done), 'live events continue on the returning page');
+    assert.ok([...replay.events, ...second.seen].some(event => event.avit === FP && event.done), 'parallel outcomes appear either in replay or as live events');
 
     second.send(JSON.stringify({ action: 'avit_batch_attach' }));
     const later = await waitFor(second, event => event.type === 'avit_batch_replay' && !event.active);
@@ -491,7 +494,7 @@ describe('False positive review batch', () => {
   it('allows one active run, and any page can stop it', async () => {
     holdSlowFetch();
     const a = await open(), b = await open();
-    a.send(JSON.stringify({ action: 'run_avit_batch', avits: `${SLOW} ${FP}`, provider: 'lmstudio', model: 'fixture' }));
+    a.send(JSON.stringify({ action: 'run_avit_batch', avits: `${SLOW} ${FP}`, provider: 'lmstudio', model: 'fixture', execution: { maxConcurrency: 1 } }));
     await waitFor(a, event => event.avit === SLOW && event.stage === 'fetching');
     b.send(JSON.stringify({ action: 'run_avit_batch', avits: TP, provider: 'lmstudio', model: 'fixture' }));
     const busy = await waitFor(b, event => event.type === 'avit_batch_error');

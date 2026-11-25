@@ -345,8 +345,12 @@ include that table and its attachments.
 
 ## Workbench: Finding triage
 
-The Workbench reviews any number of AVITs, one at a time, including AVITs expanded
-from SCTASKs and ISSTs (an ISST may name any number). The run belongs to the Workbench,
+The Workbench reviews AVITs concurrently, including AVITs expanded from SCTASKs
+and ISSTs (an ISST may name any number). **Parallel reviews** defaults to **3** and
+accepts **1–8**; select **1** to review one finding at a time. There is no total AVIT
+limit. Each review uses its own checkout and report, so a slow finding does not block
+the next available review slot. Within a batch, updates to ServiceNow, Semgrep, and
+draft fix PRs run one at a time. The run belongs to the Workbench,
 not the page: leaving Finding triage, reloading, closing the tab, or a dropped connection
 does not stop it. Returning, from any tab, replays the run's history and continues with
 live progress. One run is active at a time; **Stop** works from any tab, and quitting the
@@ -357,9 +361,10 @@ trigger an ADO removal check before a no-report closure is attempted. A SCTASK i
 closed once its AVITs are decided; an ISST gets its true-positive reports attached
 and a comment and is left open (Threatlint never closes an ISST).
 
-**Stop is not rollback.** Review/fetch stages can be cancelled; the resolver is
-started without the cancellation signal. Network or API failures can still leave
-partial external updates.
+**Stop is not rollback.** Stop prevents queued reviews and updates from starting
+and cancels active review/fetch stages. An external update that has already started
+finishes before the run stops. Network or API failures can still leave partial
+external updates.
 
 The batch cleanup removes local reports, history entries, and working files even
 on failure. Verify attachment before relying on ServiceNow as the retained copy.
