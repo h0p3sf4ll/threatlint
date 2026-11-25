@@ -9,7 +9,7 @@ import pytest
 
 from threatlint import avit_github_pr as github_pr, avit_pr as pr, github_repository
 from threatlint.avit_report import ResolveError
-from test_avit_pr import AVIT, PATCH, SOURCE, git, report
+from test_avit_pr import AVIT, PATCH, SOURCE, confirmed_report, git
 
 
 TOKEN = "synthetic-github-installation-token"
@@ -113,7 +113,7 @@ def test_cloud_and_enterprise_create_draft_without_touching_checkout(checkout, a
     git(checkout, "remote", "set-url", "origin", web_url + "/contoso/api.git")
     index = (checkout / ".git" / "index").read_bytes()
     objects = sorted(str(p.relative_to(checkout)) for p in (checkout / ".git" / "objects").rglob("*"))
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET, instance="https://test.service-now.com")
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET, instance="https://test.service-now.com")
     assert result["status"] == "created" and result["draft"] is True
     assert result["url"] == web_url + "/contoso/api/pull/42"
     assert (checkout / "app.py").read_text() == SOURCE
@@ -124,28 +124,28 @@ def test_cloud_and_enterprise_create_draft_without_touching_checkout(checkout, a
 
 
 def test_retry_reuses_same_pr_without_republishing(checkout, api):
-    first = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
-    second = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    first = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    second = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert second["status"] == "existing" and second["url"] == first["url"]
     for endpoint in ("/git/trees", "/git/commits", "/git/refs", "/pulls"):
         assert sum(path == endpoint and body is not None for path, _, body in api.calls) == 1
 
 
 def test_retry_after_branch_creation_creates_missing_pr(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls = []
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert result["status"] == "created"
     assert sum(path == "/git/refs" for path, _, _ in api.calls) == 1
 
 
 def test_existing_branch_with_different_tree_is_not_overwritten(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls = []
     api.tree = "b" * 40
     api.calls.clear()
     with pytest.raises(ResolveError, match="not overwritten|differs"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert all(body is None for _, _, body in api.calls)
 
 
@@ -155,18 +155,18 @@ def test_existing_branch_with_different_tree_is_not_overwritten(checkout, api):
     ("head", "sha", "b" * 40),
 ])
 def test_existing_pr_identity_must_match(checkout, api, side, field, value):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls[0][side][field] = value
     api.calls.clear()
     with pytest.raises(ResolveError, match="match"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert all(body is None for _, _, body in api.calls)
 
 
 def test_moved_target_prevents_remote_writes(checkout, api):
     api.remote_head = "b" * 40
     with pytest.raises(ResolveError, match="changed since review"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert all(body is None for _, _, body in api.calls)
 
 
@@ -174,7 +174,15 @@ def test_origin_host_mismatch_precedes_credential_lookup(checkout, monkeypatch):
     git(checkout, "remote", "set-url", "origin", "https://other.example.test/contoso/api.git")
     monkeypatch.setattr(github_repository, "token", lambda: pytest.fail("No credential lookup for a mismatched origin"))
     with pytest.raises(ResolveError, match="origin"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+
+
+def test_unverified_review_skips_before_github_authentication(checkout, monkeypatch):
+    monkeypatch.setattr(github_repository, "token", lambda: pytest.fail("No credential lookup for unverified evidence"))
+    monkeypatch.setattr(github_pr, "_request", lambda *_args, **_kwargs: pytest.fail("No network for unverified evidence"))
+    content = confirmed_report() + "\n**Validation status**: UNVERIFIED\n"
+    result = pr.create_fix_pr(AVIT, content, str(checkout), TARGET)
+    assert result["status"] == "skipped" and "still unverified" in result["reason"]
 
 
 @pytest.mark.parametrize("draft", [False, None, "true"])
@@ -186,13 +194,13 @@ def test_new_pr_requires_draft_acknowledgement(checkout, api, monkeypatch, draft
         return result
     monkeypatch.setattr(github_pr, "_request", request)
     with pytest.raises(ResolveError, match="confirm a draft"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
 
 
 def test_existing_pr_can_be_promoted_to_ready(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls[0]["draft"] = False
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert result["status"] == "existing" and result["draft"] is False
 
 
@@ -217,7 +225,7 @@ deleted file mode 100644
 """
     fake = FakeGitHub(checkout, patch)
     monkeypatch.setattr(github_pr, "_request", fake)
-    result = pr.create_fix_pr(AVIT, report(patch), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(patch), str(checkout), TARGET)
     assert result["status"] == "created"
     tree_body = next(body for path, _, body in fake.calls if path == "/git/trees")
     entries = {item["path"]: item for item in tree_body["tree"]}
@@ -240,7 +248,7 @@ def test_wrong_created_objects_never_get_a_branch(checkout, api, monkeypatch, en
         return result
     monkeypatch.setattr(github_pr, "_request", request)
     with pytest.raises(ResolveError, match="confirm"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert not api.source
     assert all(path != "/git/refs" for path, _, _ in api.calls)
 
@@ -253,7 +261,7 @@ def test_target_moving_during_object_upload_does_not_get_a_proposal_branch(check
         return result
     monkeypatch.setattr(github_pr, "_request", request)
     with pytest.raises(ResolveError, match="changed since review"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert not api.source
     assert all(path != "/git/refs" for path, _, _ in api.calls)
 

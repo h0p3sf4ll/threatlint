@@ -20,8 +20,8 @@ import urllib.parse
 
 from threatlint import servicenow as sn
 from threatlint import sctask_cli, sctask_text
-from threatlint.finding_review import is_conservative, normalize_verdict
-from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, ResolveError, _confirm, _false_positive_choices, _session
+from threatlint.finding_review import CONSERVATIVE_BASIS, is_conservative, normalize_verdict
+from threatlint.avit_resolve import AMBIGUOUS_COMMENT, CLOSING_COMMENT, TRUE_POSITIVE_COMMENT, UNVERIFIED_COMMENT, ResolveError, _confirm, _false_positive_choices, _session
 from threatlint.sctask_text import _SCTASK, closing_comment, parse_sctask_numbers
 from threatlint.sctask_cli import add_sctask_parser
 
@@ -69,8 +69,7 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
         (TRUE_POSITIVE_COMMENT, "TRUE POSITIVE"),
         (AMBIGUOUS_COMMENT.split(".")[0], "AMBIGUOUS"),
     ))
-    # A repeated headless review retains each report with a timestamped name.
-    # Read the newest matching attachment, including the original fixed name.
+    # Read the newest matching report, including the original fixed name and legacy duplicates.
     query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={row['sys_id']}^ORDERBYDESCsys_created_on",
                                     "sysparm_fields": "sys_id,file_name,sys_created_on", "sysparm_limit": "200"})
     attachments = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result")
@@ -86,8 +85,12 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
                                 "report_name": latest["file_name"] if latest else None})
     if not result["disposition"]:  # Workflow states are not finding decisions.
         result["disposition"] = disposition
-    if "CONSERVATIVE DEFAULT" in notes or "False positive was not proven beyond reasonable doubt" in notes:
-        result["unverified"] = True
+    if disposition == "TRUE POSITIVE":
+        latest_note = notes[notes.index(TRUE_POSITIVE_COMMENT):].splitlines()[0]
+        if CONSERVATIVE_BASIS in latest_note or "False positive was not proven beyond reasonable doubt" in latest_note:
+            result.update(unverified=True, decision_basis=CONSERVATIVE_BASIS)
+        elif UNVERIFIED_COMMENT in latest_note:
+            result["unverified"] = True
     return result
 
 

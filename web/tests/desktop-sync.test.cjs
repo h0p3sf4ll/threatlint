@@ -12,7 +12,7 @@ const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-desktop-syn
 const bundle = (dir, marker) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'marker'), marker); return dir; };
 const marker = dir => fs.readFileSync(path.join(dir, 'marker'), 'utf8');
 
-function buildFixture(t, { installFails = false } = {}) {
+function buildFixture(t, { installFails = false, localBuild = '' } = {}) {
   const root = temp();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const write = (relative, source) => {
@@ -39,7 +39,9 @@ function buildFixture(t, { installFails = false } = {}) {
     const output = process.argv.find(arg => arg.startsWith('--config.directories.output=')).split('=').slice(1).join('=');
     fs.mkdirSync(path.join(output, 'win-unpacked'), { recursive: true });
   `);
-  const run = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts/desktop-sync.cjs'), ...args], { cwd: root, encoding: 'utf8' });
+  const run = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts/desktop-sync.cjs'), ...args], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, THREATLINT_LOCAL_DESKTOP_BUILD: localBuild },
+  });
   return { root, run };
 }
 
@@ -58,6 +60,18 @@ describe('desktop sync', () => {
     const current = run('current');
     assert.equal(current.status, 0, current.stderr);
     assert.equal(stamped.fingerprint, JSON.parse(current.stdout).fingerprint);
+    assert.equal(Object.hasOwn(stamped, 'localBuild'), false);
+  });
+
+  it('marks only explicitly opted-in bundles as local builds', t => {
+    for (const optIn of ['1', 'true']) {
+      const { root, run } = buildFixture(t, { localBuild: optIn });
+      const stamped = run('stamp');
+      assert.equal(stamped.status, 0, stamped.stderr);
+      const info = JSON.parse(fs.readFileSync(path.join(root, 'build-assets/build-info.json'), 'utf8'));
+      assert.equal(Object.hasOwn(info, 'localBuild'), optIn === '1');
+      if (optIn === '1') assert.equal(info.localBuild, true);
+    }
   });
 
   it('does not package or replace the working app when Electron installation fails', t => {

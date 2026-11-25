@@ -30,6 +30,7 @@ function createSplash() {
 // The rebuild needs the user's node/npm; user-path.cjs supplies the PATH a terminal would have.
 function userEnvironment() {
   const env = { ...process.env, PATH: userPath() };
+  delete env.THREATLINT_LOCAL_DESKTOP_BUILD;
   const node = env.PATH.split(path.delimiter).map(dir => path.join(dir, process.platform === 'win32' ? 'node.exe' : 'node')).find(file => fs.existsSync(file));
   if (node) { delete env.ELECTRON_RUN_AS_NODE; return { env, node }; }
   // No system Node: Electron's bundled Node runs the build scripts instead.
@@ -80,6 +81,7 @@ function swapAndRelaunch(staged, bundle) {
  * never resolves when an update was installed, because the process exits to relaunch.
  */
 async function updateOnLaunch(info, splash, log) {
+  if (info.localBuild === true) { log('Keeping the explicitly packaged local build. Upstream updates are disabled for this bundle.'); return true; }
   const bundle = installedBundle();
   const stageDir = path.join(path.dirname(bundle), '.threatlint-update');
   // Leftovers from the previous update; the old process has exited by the time this one runs.

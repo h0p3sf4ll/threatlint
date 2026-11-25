@@ -1,11 +1,13 @@
 """Draft fix PRs use local Git fixtures and a mocked ADO API; no live writes."""
 
+import json
 import os
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
-from threatlint import ado_login, avit_pr as pr
+from threatlint import ado_login, avit_cli, avit_pr as pr
 from threatlint.avit_report import ResolveError
 
 AVIT = "AVIT000000000000001"
@@ -33,6 +35,16 @@ def report(patch=PATCH, disposition="TRUE POSITIVE", basis=""):
             "**Evidence**: app.py:2 evaluates caller-controlled text.\n"
             "**Verified Safe Behavior**: Synthetic proof for the false-positive test only.\n"
             + (f"**Proposed fix patch**:\n```diff\n{patch}```\n" if patch else ""))
+
+
+def confirmed_report(patch=PATCH, disposition="TRUE POSITIVE", basis=""):
+    return report(patch, disposition, basis).replace(
+        "**Evidence**: app.py:2 evaluates caller-controlled text.",
+        "**Evidence**: `app.py:1-2` passes the caller's value to `eval(value)` without validation.\n"
+        "**Exploit path**: The caller controls value, which reaches eval at app.py:2 without a guard.\n"
+        "**Fix rationale**: Literal parsing accepts existing literals without evaluating expressions.\n"
+        "**Regression assertions**: Accept a list literal and reject a function call. Tests NOT RUN.",
+    )
 
 
 def git(repo, *args):
@@ -112,7 +124,7 @@ def test_creates_draft_pr_without_modifying_checkout(checkout, api, monkeypatch)
     original_objects = sorted(str(path.relative_to(checkout)) for path in (checkout / ".git" / "objects").rglob("*"))
     credentials = []
     monkeypatch.setattr(ado_login, "service_account_pat", lambda organization, profile=None: credentials.append((organization, profile)) or (PAT, "service account"))
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET, profile="appsec", instance="https://test.service-now.com")
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET, profile="appsec", instance="https://test.service-now.com")
     assert result["status"] == "created" and result["draft"] is True
     assert result["url"] == ORIGIN + "/pullrequest/42"
     assert credentials == [("contoso", "appsec")]
@@ -127,8 +139,8 @@ def test_creates_draft_pr_without_modifying_checkout(checkout, api, monkeypatch)
 
 
 def test_retry_reuses_the_exact_existing_pr(checkout, api):
-    first = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
-    second = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    first = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    second = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert first["url"] == second["url"]
     assert second["status"] == "existing"
     assert sum(path == "/pushes" for path, _, _ in api.calls) == 1
@@ -136,37 +148,37 @@ def test_retry_reuses_the_exact_existing_pr(checkout, api):
 
 
 def test_retry_after_push_can_create_missing_pr(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls = []
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert result["status"] == "created"
     assert sum(path == "/pushes" for path, _, _ in api.calls) == 1
 
 
 def test_existing_branch_is_never_overwritten(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls = []
     api.tree = "b" * 40
     with pytest.raises(ResolveError, match="not overwritten"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert sum(path == "/pushes" for path, _, _ in api.calls) == 1
 
 
 @pytest.mark.parametrize("change", ["sourceRefName", "targetRefName", "repository"])
 def test_existing_pr_must_match_identity(checkout, api, change):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls[0][change] = {"id": "other"} if change == "repository" else "refs/heads/other"
     with pytest.raises(ResolveError, match="does not match"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
 
 
 @pytest.mark.parametrize("content,target", [
-    (report(disposition="FALSE POSITIVE"), TARGET),
-    (report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), TARGET),
-    (report(patch=""), TARGET),
-    (report(), {**TARGET, "scm": "unsupported"}),
-    (report(), {**TARGET, "branch": ""}),
-    (report(), {**TARGET, "branch_deleted": "release"}),
+    (confirmed_report(disposition="FALSE POSITIVE"), TARGET),
+    (confirmed_report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), TARGET),
+    (confirmed_report(patch=""), TARGET),
+    (confirmed_report(), {**TARGET, "scm": "unsupported"}),
+    (confirmed_report(), {**TARGET, "branch": ""}),
+    (confirmed_report(), {**TARGET, "branch_deleted": "release"}),
 ])
 def test_ineligible_reviews_skip_without_credentials_or_network(checkout, monkeypatch, content, target):
     monkeypatch.setattr(ado_login, "service_account_pat", lambda *_: pytest.fail("No credential lookup for a skipped proposal"))
@@ -174,18 +186,47 @@ def test_ineligible_reviews_skip_without_credentials_or_network(checkout, monkey
     assert pr.create_fix_pr(AVIT, content, str(checkout), target)["status"] == "skipped"
 
 
+@pytest.mark.parametrize("content,reason", [
+    (report(), "Exploit path"),
+    (confirmed_report().replace("Confidence**: CONFIRMED", "Confidence**: PLAUSIBLE"), "Confirm the actual rule claim"),
+    (confirmed_report() + "\n- **Validation status:** UNVERIFIED\n", "still unverified"),
+    (confirmed_report().replace("app.py:1-2", "app.py:999"), "invalid source citation"),
+    (confirmed_report().replace("**Fix rationale**", "**Other details**"), "Fix rationale"),
+    (confirmed_report().replace("**Regression assertions**", "**Test notes**"), "Regression assertions"),
+])
+def test_publisher_requires_confirmation_and_local_evidence_before_preparing_patch(checkout, monkeypatch, content, reason):
+    monkeypatch.setattr(pr, "_prepare", lambda *_: pytest.fail("No patch preparation before evidence is ready"))
+    monkeypatch.setattr(ado_login, "service_account_pat", lambda *_: pytest.fail("No credential lookup before evidence is ready"))
+    monkeypatch.setattr(pr, "_request", lambda *_args, **_kwargs: pytest.fail("No network before evidence is ready"))
+    result = pr.create_fix_pr(AVIT, content, str(checkout), TARGET)
+    assert result["status"] == "skipped" and reason in result["reason"]
+
+
+def test_direct_fix_pr_command_checks_source_evidence(checkout, tmp_path, monkeypatch, capsys):
+    markdown = tmp_path / "review.md"
+    markdown.write_text(confirmed_report().replace("app.py:1-2", "missing.py:1"), encoding="utf-8")
+    target = tmp_path / "target.json"
+    target.write_text(json.dumps({**TARGET, "avit": AVIT, "file_path": "app.py"}), encoding="utf-8")
+    monkeypatch.setattr(ado_login, "service_account_pat", lambda *_: pytest.fail("No credential lookup for invalid evidence"))
+    args = SimpleNamespace(number=AVIT, report=str(markdown), checkout=str(checkout), target=str(target),
+                           yes=True, aws_profile=None, snow_instance="")
+    assert avit_cli.cmd_fix_pr(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "skipped" and "invalid source citation" in result["reason"]
+
+
 def test_folder_download_cannot_publish_a_pr(tmp_path):
-    assert pr.create_fix_pr(AVIT, report(), str(tmp_path), TARGET)["status"] == "skipped"
+    assert pr.create_fix_pr(AVIT, confirmed_report(), str(tmp_path), TARGET)["status"] == "skipped"
 
 
 def test_conservative_true_positive_explains_why_no_pr_was_opened(checkout, api):
-    result = pr.create_fix_pr(AVIT, report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(basis="**Decision basis**: CONSERVATIVE DEFAULT\n"), str(checkout), TARGET)
     assert result == {"status": "skipped", "reason": "The report marks this TRUE POSITIVE as unverified (conservative default); no automatic fix PR was opened"}
     assert api.calls == []
 
 
 def test_patch_from_a_different_finding_is_not_published(checkout, api):
-    content = report(patch="") + report().replace(AVIT, "AVIT000000000000002").replace("FP-001", "FP-002")
+    content = confirmed_report(patch="") + confirmed_report().replace(AVIT, "AVIT000000000000002").replace("FP-001", "FP-002")
     result = pr.create_fix_pr(AVIT, content, str(checkout), TARGET)
     assert result["status"] == "skipped" and "alone" in result["reason"]
     assert api.calls == []
@@ -193,7 +234,7 @@ def test_patch_from_a_different_finding_is_not_published(checkout, api):
 
 @pytest.mark.parametrize("marker", ["**Proposed fix patch:**", "- **Proposed fix patch**:", "### Proposed fix patch"])
 def test_formatted_patch_label_creates_the_same_validated_draft(checkout, api, marker):
-    content = report().replace("**Proposed fix patch**:", marker).replace("**Original finding**:", "- **Original finding:**")
+    content = confirmed_report().replace("**Proposed fix patch**:", marker).replace("**Original finding**:", "- **Original finding:**")
     assert pr.create_fix_pr(AVIT, content, str(checkout), TARGET)["status"] == "created"
     assert any(body and body.get("isDraft") is True for _, _, body in api.calls)
 
@@ -214,7 +255,7 @@ def test_duplicate_or_incomplete_formatted_patch_is_rejected():
 @pytest.mark.parametrize("path", ["../outside.py", ".git/config", "folder/.git/config", ".gitattributes", "folder/../../out.py"])
 def test_patch_paths_cannot_escape_or_change_git_controls(checkout, api, path):
     with pytest.raises(ResolveError, match="path"):
-        pr.create_fix_pr(AVIT, report(PATCH.replace("app.py", path)), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(PATCH.replace("app.py", path)), str(checkout), TARGET)
     assert api.calls == []
 
 
@@ -223,7 +264,7 @@ def test_symlink_patch_is_rejected(checkout, api):
     git(checkout, "add", "linked.py")
     git(checkout, "commit", "-m", "link fixture")
     with pytest.raises(ResolveError, match="symlink"):
-        pr.create_fix_pr(AVIT, report(PATCH.replace("app.py", "linked.py")), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(PATCH.replace("app.py", "linked.py")), str(checkout), TARGET)
     assert api.calls == []
 
 
@@ -235,14 +276,14 @@ def test_symlink_patch_is_rejected(checkout, api):
 ])
 def test_unsafe_or_inapplicable_proposal_never_publishes(checkout, api, patch):
     with pytest.raises(ResolveError):
-        pr.create_fix_pr(AVIT, report(patch), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(patch), str(checkout), TARGET)
     assert api.calls == []
 
 
 def test_dirty_checkout_is_not_published(checkout, api):
     (checkout / "app.py").write_bytes(b"user edit\n")
     with pytest.raises(ResolveError, match="clean"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert api.calls == []
 
 
@@ -250,14 +291,14 @@ def test_filters_are_rejected_without_executing_them(checkout, api, tmp_path):
     marker = tmp_path / "filter-executed"
     git(checkout, "config", "filter.evil.clean", f"touch {marker}")
     with pytest.raises(ResolveError, match="content filters"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert not marker.exists() and api.calls == []
 
 
 def test_moved_target_is_not_published(checkout, api):
     api.remote_head = "b" * 40
     with pytest.raises(ResolveError, match="changed since review"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert all(body is None for _, _, body in api.calls)
 
 
@@ -265,7 +306,7 @@ def test_service_account_failure_never_uses_personal_credentials(checkout, api, 
     monkeypatch.setattr(ado_login, "service_account_pat", lambda *_: (_ for _ in ()).throw(ado_login.AdoLoginError("AWS access failed")))
     monkeypatch.setattr(ado_login, "load", lambda *_: pytest.fail("No local PAT fallback"))
     with pytest.raises(ResolveError, match="AWS access failed"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert api.calls == []
 
 
@@ -278,13 +319,13 @@ def test_creation_requires_an_explicit_draft_acknowledgement(checkout, api, monk
         return result
     monkeypatch.setattr(pr, "_request", request)
     with pytest.raises(ResolveError, match="confirm a draft"):
-        pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+        pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
 
 
 def test_existing_pr_can_have_been_promoted_from_draft(checkout, api):
-    pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     api.pulls[0]["isDraft"] = False
-    result = pr.create_fix_pr(AVIT, report(), str(checkout), TARGET)
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
     assert result["status"] == "existing" and result["draft"] is False
 
 

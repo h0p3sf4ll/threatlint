@@ -63,6 +63,15 @@ def test_task_stays_open_while_an_avit_is_undecided(monkeypatch):
     assert not result["closed"] and "state" not in patch and "conservative true positive" in patch["comments"]
 
 
+def test_only_the_latest_true_positive_note_controls_whether_an_avit_is_unverified(monkeypatch):
+    avit = "AVIT000000097930184"
+    unverified = f"{ar.TRUE_POSITIVE_COMMENT} {ar.UNVERIFIED_COMMENT}"
+    for first, second, closed in ((unverified, ar.TRUE_POSITIVE_COMMENT, False), (ar.TRUE_POSITIVE_COMMENT, unverified, True)):
+        result, patch, _uploads = _run(monkeypatch, {"AVIT000000095891574": ar.CLOSING_COMMENT, avit: f"{first}\n\n{second}"})
+        assert result["closed"] is closed
+        assert ("unverified true positive" in patch["comments"]) is not closed
+
+
 def test_leave_open_comments_that_the_task_can_be_closed(monkeypatch):
     result, patch, uploads = _run(monkeypatch, {"AVIT000000095891574": ar.CLOSING_COMMENT, "AVIT000000097930184": ar.CLOSING_COMMENT}, leave_open=True)
     assert not result["closed"] and "state" not in patch and len(uploads) == 2

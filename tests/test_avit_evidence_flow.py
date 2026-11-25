@@ -50,15 +50,16 @@ def workflow(monkeypatch):
     return state
 
 
-def run_workflow(monkeypatch, state, drafts):
-    def review(_provider, _system, prompt, repo, *_args):
+def run_workflow(monkeypatch, state, drafts, *, provider="codex"):
+    def review(review_provider, _system, prompt, repo, model, *_args):
+        assert review_provider == provider and model == "fixture"
         assert (repo / "app.py").read_text() == SOURCE
         assert "Original scanner rule" in prompt
         state["reviews"].append(prompt)
         return drafts[min(len(state["reviews"]) - 1, len(drafts) - 1)]
     monkeypatch.setattr(avit_headless, "_run_review_model", review)
     item = {"fields": {"number": AVIT}, "context": {"file_path": "app.py", "line": "2", "rule": "unsafe-eval"}}
-    return avit_headless._review_one(_args(AVIT), item, "https://test.service-now.com", "reviewer", "fixture", "1.99")
+    return avit_headless._review_one(_args(AVIT), item, "https://test.service-now.com", "reviewer", "fixture", "1.99", provider=provider)
 
 
 def test_investigates_conservative_tp_then_repairs_missing_patch_and_publishes(monkeypatch, workflow):
@@ -69,7 +70,8 @@ def test_investigates_conservative_tp_then_repairs_missing_patch_and_publishes(m
     assert outcome["unverified"] is False
     assert len(workflow["reviews"]) == 3
     assert "app.py" in workflow["reviews"][1] and "caller" in workflow["reviews"][1].lower()
-    assert "patch" in workflow["reviews"][2].lower()
+    assert all("**Proposed fix patch**" not in prompt for prompt in workflow["reviews"][:2])
+    assert "**Proposed fix patch**" in workflow["reviews"][2]
     assert workflow["resolved"] == [normalize_report(final)], "only the confirmed final review is attached"
     assert sum(path == "/pushes" for path, _, _ in workflow["api"].calls) == 1
     assert not workflow["repo"].exists()
@@ -79,6 +81,15 @@ def test_confirmed_complete_review_publishes_without_followup(monkeypatch, workf
     outcome = run_workflow(monkeypatch, workflow, [confirmed_report()])
     assert outcome["completed"] and outcome["pull_request"]["draft"] is True
     assert len(workflow["reviews"]) == 1
+
+
+def test_a_confirmation_on_the_last_evidence_followup_still_gets_a_patch_request(monkeypatch, workflow):
+    uncertain = report(patch="", basis="**Decision basis**: CONSERVATIVE DEFAULT\n")
+    outcome = run_workflow(monkeypatch, workflow, [uncertain, uncertain, confirmed_report(patch=False), confirmed_report()], provider="claude")
+    assert outcome["completed"] and outcome["pull_request"]["status"] == "created"
+    assert len(workflow["reviews"]) == 4
+    assert all("**Proposed fix patch**" not in prompt for prompt in workflow["reviews"][:3])
+    assert "**Proposed fix patch**" in workflow["reviews"][3]
 
 
 @pytest.mark.parametrize("declaration", ["", "**Disposition**: TRUE POSITIVE and FALSE POSITIVE\n", "**Disposition**: NEEDS REVIEW\n"])
@@ -96,10 +107,19 @@ def test_unresolved_evidence_exhausts_investigation_without_claiming_confirmatio
     outcome = run_workflow(monkeypatch, workflow, [uncertain])
     assert len(workflow["reviews"]) == 3
     assert workflow["resolved"] == [normalize_report(uncertain)]
-    assert outcome["completed"] is False and outcome["unverified"] is True
+    assert outcome["completed"] is True and outcome["unverified"] is True
     assert outcome["pull_request"]["status"] == "blocked"
+    assert all("**Proposed fix patch**" not in prompt for prompt in workflow["reviews"])
     assert workflow["api"].calls == []
     assert not workflow["repo"].exists()
+
+
+def test_confirmed_finding_with_no_applicable_patch_remains_a_fix_error(monkeypatch, workflow):
+    outcome = run_workflow(monkeypatch, workflow, [confirmed_report(patch=False)])
+    assert len(workflow["reviews"]) == 3
+    assert outcome["completed"] is False and outcome["unverified"] is False
+    assert outcome["pull_request"]["status"] == "blocked"
+    assert workflow["api"].calls == []
 
 
 def test_investigation_can_disprove_finding_and_use_fp_path(monkeypatch, workflow):

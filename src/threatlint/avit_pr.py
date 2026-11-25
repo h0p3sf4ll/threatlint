@@ -23,24 +23,6 @@ from . import servicenow as sn, tls
 from .avit_report import ResolveError, verdict_for
 from .finding_review import _structure, is_conservative, report_fields
 
-FIX_PATCH_GUIDANCE = (
-    "Use repository read/search tools to resolve evidence gaps before preparing a fix: inspect the "
-    "full flagged function, actual callers, input/exposure path, relevant guards and configuration, "
-    "and existing test patterns. For a supported TRUE POSITIVE, include **Evidence** with quoted "
-    "file:line references, **Exploit path** explaining the concrete unsafe behavior and failed controls, "
-    "**Fix rationale**, and **Regression assertions**. Set Confidence CONFIRMED only when the "
-    "inspected evidence establishes the vulnerability; static proof does not require running an exploit. "
-    "Provide the smallest concrete source fix under a line exactly "
-    "**Proposed fix patch**:, followed immediately by one fenced diff block containing a complete "
-    "git-style unified diff (diff --git, --- a/path, +++ b/path, and accurate context hunks) against "
-    "the inspected checkout. Include relevant regression-test source when supported. Use only "
-    "regular UTF-8 source/test files; do not change Git control files, symlinks, binary files, or "
-    "file modes. Never include credential values, even in removed/context lines. Do not apply the "
-    "patch or run tests. This proposal may be published by the authorized host as a draft PR; "
-    "label test execution NOT RUN. Omit the patch when the decision is CONSERVATIVE DEFAULT, "
-    "evidence is insufficient, or no safe concrete code change can be derived."
-)
-
 _MAX_PATCH = 256 * 1024
 _MAX_FILE = 1024 * 1024
 _MAX_FILES = 20
@@ -225,9 +207,6 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
         return _skip("Automatic fix PRs support Azure DevOps and GitHub repositories")
     if not target.get("branch") or target.get("branch_deleted"):
         return _skip("A fix PR requires the exact reviewed AVIT branch")
-    patch = _patch(report)
-    if not patch:
-        return _skip("The report has no concrete proposed fix patch")
     repo = Path(checkout).resolve()
     if not (repo / ".git").is_dir() or (repo / ".git").is_symlink():
         return _skip("A fix PR requires a complete Git checkout")
@@ -247,6 +226,15 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
     head = _git(repo, ["rev-parse", "HEAD"]).decode().strip()
     if not _SHA.fullmatch(head):
         raise ResolveError("The reviewed checkout has an unsupported commit ID")
+    from .avit_evidence import fix_evidence_issues, review_evidence
+
+    evidence = review_evidence(avit, report, repo, target, verdict)
+    issues = evidence.issues or fix_evidence_issues(report)
+    if issues:
+        return _skip("; ".join(issues))
+    patch = _patch(report)
+    if not patch:
+        return _skip("The report has no concrete proposed fix patch")
     changes, tree = _prepare(repo, patch, head)
     avit_label = avit
     if instance:

@@ -348,10 +348,17 @@ def summarize(instance: str, token: str, record: dict, outcomes: list[dict]) -> 
         lines = ["All findings reviewed by Threatlint were false positives. This ISST and SCAN request can be closed.",
                  "Reviewed AVITs: " + ", ".join(expected)]
     else:
-        lines = ["True positives detected by Threatlint." if positives else "Threatlint review is incomplete for this ISST and SCAN request."]
+        if any(not item.get("unverified") for item in positives):
+            lines = ["True positives detected by Threatlint."]
+        elif positives:
+            lines = ["Unverified true-positive reviews from Threatlint."]
+        else:
+            lines = ["Threatlint review is incomplete for this ISST and SCAN request."]
         for item in positives:
-            lines.append(f"{item['avit']} true-positive report attached: {links[item['avit']]}")
+            label = "unverified true-positive" if item.get("unverified") else "true-positive"
+            lines.append(f"{item['avit']} {label} report attached: {links[item['avit']]}")
         pending = [avit for avit in expected if avit not in by_number or not by_number[avit].get("completed")
+                   or by_number[avit].get("unverified")
                    or by_number[avit].get("disposition") not in ("TRUE POSITIVE", "FALSE POSITIVE")]
         if pending:
             lines.append("AVITs needing follow-up: " + ", ".join(pending) + ". Keep this ISST and SCAN request open.")
@@ -375,7 +382,7 @@ def _outcomes_with_reports(instance: str, token: str, avits: list[str]) -> list[
         recorded = sctask.avit_outcome(instance, token, avit)
         disposition = recorded["disposition"]
         item = {"avit": avit, "disposition": disposition,
-                "completed": disposition in ("TRUE POSITIVE", "FALSE POSITIVE")}
+                "completed": disposition in ("TRUE POSITIVE", "FALSE POSITIVE"), "unverified": bool(recorded.get("unverified"))}
         if disposition == "TRUE POSITIVE":
             if not recorded.get("report"):
                 raise ResolveError(f"{avit} is a true positive but has no readable Threatlint report to attach; review the AVIT first")

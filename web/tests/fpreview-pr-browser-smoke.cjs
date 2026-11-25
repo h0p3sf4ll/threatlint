@@ -64,8 +64,27 @@ const { chromium } = require('playwright');
         }
       }
     }
+    const blocked = 'AVIT0000005';
+    const reason = 'The scanned deployment configuration is unavailable.';
+    await page.evaluate(({ avit, reason }) => {
+      window.run.start({ avits: [avit], sctasks: [] });
+      window.run.handle({
+        type: 'avit_item', avit, stage: 'info', done: true, result: 'noted',
+        disposition: 'TRUE POSITIVE',
+        detail: `Report attached. Draft fix PR blocked pending evidence. ${reason}`,
+        outcome: { attached: true, leftOpen: true, pullRequest: { status: 'blocked', reason } },
+      });
+      window.run.handle({ type: 'avit_batch_complete' });
+    }, { avit: blocked, reason });
+    const card = page.locator(`#avit-${blocked}`);
+    assert.equal(await card.getAttribute('data-result'), 'noted');
+    assert.equal(await card.locator('.avit-stage').textContent(), 'Info');
+    assert.match(await card.locator('.avit-detail').textContent(), /Draft fix PR blocked pending evidence/);
+    assert.ok((await card.locator('.avit-detail').textContent()).includes(reason));
+    assert.equal(await card.locator('.avit-actions a').count(), 0);
+    assert.match(await page.locator('#fpreview-counts').textContent(), /1 noted · 0 errors/);
     assert.deepEqual(errors, []);
-    console.log('PASS: Azure DevOps, GitHub, Enterprise Server and data residency PR links, reload persistence, and unsafe-link rejection.');
+    console.log('PASS: AVIT draft PR links, reload persistence, unsafe-link rejection, and evidence-blocked reviews.');
   } finally {
     await browser.close();
   }

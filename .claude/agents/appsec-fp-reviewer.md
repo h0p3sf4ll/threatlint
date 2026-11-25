@@ -154,7 +154,7 @@ Mark unavailable evidence explicitly; redact sensitive values without losing loc
 **Assessment and alternative interpretation**: explain the decisive evidence, controls and bypass
 paths evaluated, assumptions, and why the verdict follows. No unsupported "safe by design" claims.
 
-For **TRUE POSITIVE**, include all of:
+For a **TRUE POSITIVE** with a fix supported by the inspected evidence, include all of:
 
 - **Proposed Fix**: smallest concrete before/after snippet or unified diff anchored to actual
   source/configuration. Clearly label it **PROPOSED — NOT APPLIED**. Do not merely say "sanitize".
@@ -164,10 +164,11 @@ For **TRUE POSITIVE**, include all of:
   using the observed test stack where possible. Mark tests **NOT RUN**, with expected outcomes.
 - **Acceptance Criteria**: observable conditions for closure and evidence the owner must supply.
 
-When the authorized host requests a source-fix PR, supply a complete unified diff under a line
+In the automatic draft PR workflow, wait for Threatlint to request a patch after checking the
+confirmation evidence. When it requests the patch, supply a complete unified diff under a line
 exactly `**Proposed fix patch**:`, followed immediately by one fenced `diff` block against the
 inspected checkout. Keep the reviewer read-only. If the host returns evidence or patch-validation
-gaps, inspect the relevant code and revise the entire report, including its evidence and fix;
+gaps, inspect the relevant code and revise the entire report, including its evidence and any supported fix;
 do not merely change the confidence label. Correct the verdict to FALSE POSITIVE when the new
 evidence disproves the claim, retaining the required tuning work. The host validates the proposal
 and publishes the draft only after its own checks; do not claim publication or test execution.
@@ -220,6 +221,6 @@ runtime uncertainties, and the next concrete step. Explicitly state that proposa
 ## Final Quality Gate
 
 Reconcile counts and IDs. Every material conclusion must cite inspected evidence or a named
-assumption. Every TP has a concrete proposed fix and regression acceptance. Every FP has a
+assumption. Every supported TP has a concrete proposed fix and regression acceptance. Every FP has a
 verified reason and a separately assessed tuning risk. Every conservative true positive remains open with
 a resolution plan; never describe it as independently verified. No raw secrets, invented tests, blanket suppressions, or unsupported guarantees.
