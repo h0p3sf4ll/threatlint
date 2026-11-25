@@ -104,7 +104,7 @@ Pin `uses:` and `threatlint-ref` to the **same SHA**. The second checkout, at
 | Reusable workflow | Composite action | Default | Description |
 | --- | --- | --- | --- |
 | `agents` | `agent` | `appsec-code-reviewer` | Comma-separated agent IDs (workflow, max 20) or a single ID (action). Any agent in the [agent catalogue](agents.md). |
-| `provider` | `provider` | `claude` | `claude` (agentic, reads the repo), `openai`, or `github-models` (prompt-based, uses `github.token`). |
+| `provider` | `provider` | `claude` | `claude` (agentic, reads the repo) or `openai` (prompt-based). Legacy `github-models` input remains in some templates, but its inference service is retired. |
 | `model` | `model` | provider default (`claude-opus-5-5` for `claude`) | Model override, e.g. `claude-opus-5-5` or `gpt-4o`. |
 | `target` | `target` | `''` | Component, path, or objective; intended as analysis scope, not overriding instructions. |
 | — | `findings-file` | `''` | SARIF/JSON/Markdown evidence for `appsec-fp-reviewer` and specialist agents. |
@@ -125,10 +125,13 @@ Pin `uses:` and `threatlint-ref` to the **same SHA**. The second checkout, at
 | --- | --- |
 | `ANTHROPIC_API_KEY` | `provider: claude` |
 | `OPENAI_API_KEY` | `provider: openai` |
-| _(none)_ | `provider: github-models` uses the job's `github.token` |
 
 The reusable workflow skips fork PR analysis. For the composite, add the
 same-repository guard shown in the quick start; it is not built into the action.
+
+Do not select `github-models` for a new caller. [GitHub Models is retired](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/), including its inference API; a job token does not provide a working model endpoint. Existing automatic model workflows reject that selection explicitly.
+
+GitHub Copilot's separate Workbench and CLI providers are described in [Model providers](model-providers.md).
 
 ## Azure Pipelines
 
@@ -149,7 +152,7 @@ resource alias is not `threatlint`, set `threatlintRepository`.
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `agents` (job) / `agent` (steps) | `[appsec-code-reviewer]` / `appsec-code-reviewer` | Agent IDs to run. |
-| `provider` | `claude` | `claude` runs the headless CLI with analysis-only agent instructions; `openai` / `github-models` use `appsec_api.py`. |
+| `provider` | `claude` | `claude` runs the headless CLI with analysis-only agent instructions; `openai` uses `appsec_api.py`. Do not use the legacy retired `github-models` option. |
 | `model` | `''` | Model override. |
 | `target` | `''` | Scope passed to every agent. |
 | `findingsFile` | `''` | Evidence file for triage/specialist agents. |
@@ -160,7 +163,7 @@ resource alias is not `threatlint`, set `threatlintRepository`.
 | `pythonVersion` | `3.12` | `UsePythonVersion@0` spec. |
 | `maxTurns` | `25` | Claude turn budget. |
 | `claudeCodeVersion` | `2.1.302` | Exact `@anthropic-ai/claude-code` version run through `npx`. |
-| `anthropicApiKey` / `openaiApiKey` / `githubToken` | `''` | Provider credentials — pass secret variables, never literals. |
+| `anthropicApiKey` / `openaiApiKey` | `''` | Provider credentials — pass secret variables, never literals. The legacy `githubToken` input does not restore GitHub Models. |
 | `pool`, `timeoutInMinutes`, `dependsOn` (job only) | `ubuntu-latest`, `30`, `[]` | Job placement. |
 | `threatlintRepository` (job only) | `threatlint` | Repository resource alias to check out. |
 | `threatlintPath`, `sourcePath` (steps only) | `$(Build.SourcesDirectory)/.threatlint`, `$(Build.SourcesDirectory)` | Where the two checkouts live when you embed the steps yourself. |
@@ -170,7 +173,6 @@ build service **Contribute to pull requests**; the template uses `System.AccessT
 Set `uploadSarif: true` to publish `CodeAnalysisLogs`; viewing it requires the
 appropriate SARIF viewer or Advanced Security setup. These options default to
 **true** in the generic templates, so the starter explicitly disables them.
-For GitHub Models, pass a GitHub token in `githubToken`, not an Azure DevOps token.
 
 ## Gating
 
@@ -218,7 +220,6 @@ they do not apply patches or execute tests.
 | --- | --- | --- |
 | `claude` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` (`THREATLINT_GENERAL_MODEL` overrides) |
 | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
-| `github-models` | `GH_TOKEN` (the workflow token) | `openai/gpt-4o` |
 | `lmstudio` | none (`LMSTUDIO_BASE_URL`, self-hosted agents only) | the loaded model |
 
 ### GitHub

@@ -8,12 +8,18 @@ description: "Fetch, review, and resolve ServiceNow AVIT findings with recorded 
 A scanner alert is not yet a decision. Threatlint connects a ServiceNow
 Application Vulnerable Item (AVIT) to its source or runtime evidence, produces a
 review report, and records the outcome where the team tracks the work.
-False positives can be closed; true positives and ambiguous findings stay open.
+Proven false positives can be closed. True positives, including conservative decisions
+with unresolved evidence, keep their uncertainty and need follow-up.
 
 **Review and write-back are separate responsibilities.** The reviewer supplies the
 evidence and disposition. The CLI or Workbench performs authorized ServiceNow and
 Semgrep writes. The optional [orchestrator](avit-orchestrator.md) only schedules
 application-supplied handlers; it does not automate this integration by itself.
+
+For a read-only issue inbox, use **Issue management → Pull issues** instead. That
+workflow reads AVITs using the existing ServiceNow settings; it does not run a model,
+attach a review, close an AVIT, or tune a rule. This guide covers the separate review
+and write-back workflow.
 
 ## Shortest working path
 
@@ -64,8 +70,10 @@ AVIT completes as a false positive, it comments that the ISST and SCAN request
 can be closed; it does not change the ISST state. A partial review or any true
 positive keeps that closure suggestion out of the comment.
 
-Or open **Test → Finding triage** in the Workbench, enter an AVIT, SCTASK, or ISST,
-and start the review with the configured model. **These workflows can write to
+Or open **Finding triage** in the Workbench, select **ServiceNow** as the finding
+source, enter an AVIT, SCTASK, or ISST, and choose **Review AVITs** with the configured
+model. Desktop use does not require a Threatlint account; the selected model and
+connected services still need their own configured access. **These workflows can write to
 ServiceNow and Semgrep**; use records and credentials you are authorized to change.
 
 For explicit control, run the underlying stages:
@@ -80,7 +88,10 @@ threatlint avit resolve AVIT000000095938462 \
 
 The CLI asks before writing. Add `--yes` only after reviewing the verdict for a
 noninteractive run. The report must name this AVIT in `**Original finding**:` and
-state `**Disposition**: TRUE POSITIVE`, `FALSE POSITIVE`, or `AMBIGUOUS`.
+state `**Disposition**: TRUE POSITIVE` or `FALSE POSITIVE`.
+If the evidence cannot establish either claim, use **TRUE POSITIVE** with
+`**Decision basis**: CONSERVATIVE DEFAULT` and name the gaps. Legacy `AMBIGUOUS`
+reports are normalized to this unverified decision without discarding their uncertainty.
 `resolve` reads Markdown and attaches Word; it does not generate either report.
 Use `--snow-instance URL` or saved instance settings, and `--aws-profile PROFILE`
 when credentials come from a named AWS profile. Fetch also accepts repeated
@@ -99,13 +110,21 @@ later ServiceNow or Semgrep operation fails.
 Setup checks for ServiceNow OAuth credentials, an Azure DevOps PAT, and a Semgrep
 API token. The Workbench gates batches on these checks and local Semgrep
 availability. Individual CLI stages use the credentials their operation needs.
+In the app, service credentials are under **Settings → Scanning & triage**.
 
 | Need | Configure / verify |
 | --- | --- |
 | ServiceNow instance and OAuth client | `threatlint setup` / `threatlint setup --check` |
 | Azure DevOps service-account PAT in Parameter Store | `threatlint ado service-account --parameter <adoPatParameter> --organization <org> --aws-profile <profile> --region <region>` / `threatlint ado status` |
 | Semgrep deployment token with Web API access | `threatlint semgrep login` / `threatlint semgrep status` |
-| Local rule validation | Install Semgrep CE, then `semgrep login` and `semgrep install-semgrep-pro`; verify `semgrep --version` |
+| Local Semgrep executable | Install the CLI and verify `semgrep --version`; Community Edition satisfies this installation check |
+| False-positive rule proof | A Semgrep login and matching Pro engine: `semgrep login`, then `semgrep install-semgrep-pro`. Rule proof does not fall back to Community Edition |
+| GitHub-hosted source | `threatlint github login` ([GitHub App](github-app.md)) or `gh auth login`; verify `threatlint github status` |
+| AWS-backed credentials, if used | `threatlint aws login`; verify `aws sts get-caller-identity --profile appsec` |
+
+Ordinary [security scans](security-scanner.md) can use Semgrep CE without a login.
+That is separate from the Pro proof and authenticated platform operations used by
+false-positive tuning here.
 
 When `adoPatParameter` is configured, it is the authoritative credential source
 for the listed `adoOrganizations`, ahead of personal PATs in environment variables
@@ -126,8 +145,6 @@ Security task class in metadata. Set
 `THREATLINT_SNOW_ISST_TABLE` when the instance hides both discovery paths.
 An empty task response can also mean the OAuth client lacks row access; grant
 the table ACL before relying on an ISST run.
-| GitHub-hosted source | `threatlint github login` ([GitHub App](github-app.md)) or `gh auth login`; verify `threatlint github status` |
-| AWS-backed credentials, if used | `threatlint aws login`; verify `aws sts get-caller-identity --profile appsec` |
 
 Organization defaults are optional. Environment variables override
 `~/.threatlint/org.json`:
@@ -173,7 +190,7 @@ flowchart TD
     B --> C["Review; write Markdown and Word reports"]
     C --> D["Confirm write-back; attach Word report"]
     D --> E{"Disposition"}
-    E -- "TRUE POSITIVE / AMBIGUOUS" --> F["Add work note; leave state unchanged"]
+    E -- "TRUE POSITIVE" --> F["Add work note with evidence gaps; leave state unchanged"]
     E -- "FALSE POSITIVE" --> G["Request closure; report stored state"]
     G --> H{"CodeSecurity and Semgrep enabled?"}
     H -- no --> I["Inspect outcome"]
@@ -226,8 +243,8 @@ before the state update; an SCTASK copies the latest AVIT report.
 | Disposition | ServiceNow request | Semgrep |
 | --- | --- | --- |
 | FALSE POSITIVE | Close with state `3`, substate `3`; note “Closed by Threatlint as a false positive, see attached report.” | CodeSecurity only: triage, then eligible rule tuning |
-| TRUE POSITIVE | Note “True positive, see attached report.”; no state change. If the AVIT was already closed, the command reports that state and exits nonzero. | Unchanged |
-| AMBIGUOUS | Note “Ambiguous, see attached report. Left open pending the evidence the report names.”; no state change. If the AVIT was already closed, the command reports that state and exits nonzero. | Unchanged |
+| Evidence-backed TRUE POSITIVE | Note “True positive, see attached report.”; no state change. This does not reopen an already closed AVIT. | Unchanged |
+| Conservative TRUE POSITIVE | Attach and note the unresolved evidence without claiming verification; no state change. | Unchanged |
 
 `THREATLINT_SNOW_FP_STATE` and `THREATLINT_SNOW_FP_SUBSTATE` override the requested
 closure values. Business rules may store something else; read the printed result.
@@ -265,7 +282,7 @@ fixtures:
 2. Put the complete YAML after `**Tuned rule**:` and a fenced fixture block after
    `**Tuned rule fixtures**:` in the report. Keep at least one `ruleid:` true-positive
    case and one `ok:` false-positive case.
-3. Validation requires valid rule syntax, passing `semgrep --test` fixtures, and
+3. Validation uses the matching Semgrep Pro engine and requires valid rule syntax, passing `semgrep --test` fixtures, and
    original-rule matches on both fixture shapes. If the original reproduces the
    exact flagged line locally, the tuned rule must drop it.
 4. After proof, publish `org_private`. Legacy policy replacements enable the
@@ -317,8 +334,9 @@ threatlint sctask close SCTASK14120565 --yes
 its own decision; a requester's proposed verdict is not evidence. Task closure
 reads AVIT outcomes and attached Word reports, copies reports to the task, and
 adds a “Closed by Threatlint” summary. It requests Closed Complete (`3`, overridden
-by `THREATLINT_SNOW_SCTASK_CLOSED_STATE`) only when every outcome is TRUE POSITIVE
-or FALSE POSITIVE; otherwise it comments and leaves the task open. True-positive
+by `THREATLINT_SNOW_SCTASK_CLOSED_STATE`) only when every outcome is a decided,
+non-conservative TRUE POSITIVE or FALSE POSITIVE with its report; otherwise it
+comments and leaves the task open. True-positive
 AVITs still need remediation. OAuth access must include `sc_task` and attachments.
 
 ## Information Security tasks (ISST)
@@ -358,7 +376,7 @@ Workbench ends the run. The headless CLI (`threatlint avit headless`) has no AVI
 either; long lists are fetched from ServiceNow in batches. Each card shows fetch, checkout, model review, report, and
 write-back. One failure does not stop the remaining AVITs. Missing repositories
 trigger an ADO removal check before a no-report closure is attempted. A SCTASK is
-closed once its AVITs are decided; an ISST gets its true-positive reports attached
+closed once its AVITs have non-conservative decisions and reports; an ISST gets its true-positive reports attached
 and a comment and is left open (Threatlint never closes an ISST).
 
 **Stop is not rollback.** Stop prevents queued reviews and updates from starting
@@ -366,8 +384,10 @@ and cancels active review/fetch stages. An external update that has already star
 finishes before the run stops. Network or API failures can still leave partial
 external updates.
 
-The batch cleanup removes local reports, history entries, and working files even
-on failure. Verify attachment before relying on ServiceNow as the retained copy.
+The batch attempts to remove local reports, history entries, and working files even
+when a review or external update fails. A failed attachment does not leave a retained
+local review report. Check each result for a successful attachment before relying on
+ServiceNow as the retained copy, and address any reported cleanup warning.
 Credential-like values in the flagged file and neighboring files are heuristically
 redacted from the generated report; still review sensitive content before sharing.
 
@@ -408,7 +428,7 @@ WAF, proxy, or authentication context cannot prove those edge controls vulnerabl
 
 ```text
 **Original finding**: <AVIT>; <vulnerability>; Invicti DAST; <METHOD> <path> (<parameter>)
-**Disposition**: <TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS>
+**Disposition**: <TRUE POSITIVE|FALSE POSITIVE>
 **Severity**: <CRITICAL|HIGH|MEDIUM|LOW|INFO>
 **Confidence**: <CONFIRMED|LIKELY|POSSIBLE>
 ```
@@ -468,7 +488,7 @@ Azure DevOps PR publishing requires the service-account PAT referenced by the ex
 `adoPatParameter`, access to the repository's organization in `adoOrganizations`,
 and ADO permissions to create branches, contribute code, and create pull
 requests. It never falls back to a personal PAT. Configure this source through
-**Settings → Azure DevOps → AWS Parameter Store**, or `threatlint ado
+**Settings → Scanning & triage → Azure DevOps → AWS Parameter Store**, or `threatlint ado
 service-account`; the shared secret is fetched at runtime and not saved locally.
 
 GitHub PR publishing uses the existing GitHub authentication settings. A configured
@@ -521,7 +541,7 @@ flows use that assessment to drive the investigations described above.
 | OAuth client | Saved config or AWS Parameter Store → ServiceNow token endpoint |
 | AVIT evidence | ServiceNow → Markdown → reviewer; treat record content as untrusted data |
 | Source | ADO/GitHub → checkout → reviewer/model tools; not just a local-only operation when using a hosted model |
-| Report | Reviewer → local Markdown/Word → ServiceNow Word attachment; manual CLI stages retain their reports, while the headless Codex AVIT workflow and Workbench batch clean up temporary reports |
+| Report | Reviewer → temporary Markdown/Word → ServiceNow Word attachment when upload succeeds; manual CLI stages retain their reports, while headless AVIT workflows and Workbench batches attempt cleanup even after failure |
 | Semgrep token | Credential source → Semgrep API and rule publishing |
 | ADO service-account PAT | Configured AWS parameter → runtime memory → Azure DevOps; no local PAT copy |
 | Proposed fix | Reviewed diff → isolated applicability check → separate Azure DevOps or GitHub branch and draft PR |

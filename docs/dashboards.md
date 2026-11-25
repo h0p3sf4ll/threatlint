@@ -10,6 +10,11 @@ current-session runtime observations, and synced defect-tracker findings by seve
 specialist, and time.
 A workspace bar chart shows where reported HIGH findings cluster; inspect those reports before assigning work.
 
+Metrics reads the current profile's saved workspace reports, finished runtime scans, and its own
+detailed tracker snapshots. A raw scanner result, uploaded file, or **Issue management** inbox
+record is not automatically a Metrics record. Save a review report or explicitly sync a supported
+Metrics source when you need that evidence represented here. See [Reports and exports](reports.md).
+
 [Watch the walkthrough](../web/public/media/dashboards.mp4), or use **Learn & videos** in the app.
 
 ![Metrics dashboard](media/dashboards.png)
@@ -25,13 +30,29 @@ A workspace bar chart shows where reported HIGH findings cluster; inspect those 
 ## Connect defect trackers
 
 Open **Metrics → Connections** to see each supported tracker and its connection status.
-Set up ServiceNow under **Settings → ServiceNow**. **All AVITs** uses ServiceNow's Aggregate
+Set up ServiceNow under **Settings → Scanning & triage → ServiceNow**. **All AVITs** uses ServiceNow's Aggregate
 API to count the full AVIT population your account can read, with filters applied by ServiceNow.
 This summary does not download individual records. It reflects the last completed refresh and
 only shows dimensions your ServiceNow account permits. For per-finding charts and CSV, choose
 an explicit list of AVIT numbers or a bounded ServiceNow filter and run the separate detailed
 sync. The AVIT table can contain millions of records, so a full detailed download is not
-supported. DefectDojo uses its existing **Settings → DefectDojo** connection for a detailed sync.
+supported. DefectDojo uses its **Settings → Scanning & triage → DefectDojo** connection for a detailed sync.
+
+GitHub Issues, Jira, and Azure DevOps Boards also have detailed Metrics adapters. Configure their
+individual forms under **Settings → Scanning & triage**, or use **Configure in Settings** on the
+tracker's Metrics card:
+
+| Metrics source | Credentials and scope |
+| --- | --- |
+| GitHub Issues | API token with Issues and Metadata read access; one `owner/repository`. Pull requests are excluded. |
+| Jira | Jira Cloud account email and API token; the configured **Security findings JQL** query. |
+| Azure DevOps Boards | PAT with Work Items read access; one organization and project. This sync reads the project's work items, rather than an Issue management connection's selected work-item type. |
+
+These settings are separate from the connections and inbox in [Issue management](integrations.md).
+Saving or pulling an Issue management connection does not configure a Metrics adapter or generate
+a review report. Metrics uses each profile's saved tracker configuration; company members do not
+automatically share these legacy settings. An administrator is required to save integration credentials
+in a company profile; analysts can refresh configured sources and viewers can read saved results.
 
 The all-AVIT filters are:
 
@@ -59,7 +80,11 @@ count can understate triaged false positives.
 
 Refreshes are explicit and read-only; opening a dashboard does not query or update a tracker.
 The page shows the last successful refresh and its scope. Choose an individual detailed source
-to avoid combining the same issue from a report and its tracker record. GitHub Issues, Jira Cloud, and Azure DevOps Boards have detailed sync adapters as well. Configure them in Settings, then sync each source. The selected source combination is saved in the Workbench store and restored across desktop ports; sanitized snapshots are saved in the Workbench store and restored after restart. Failed or incomplete syncs preserve the previous snapshot. GitHub scopes to one repository, Jira to the configured JQL, and ADO to one project (up to 10,000 items per detailed sync).
+to avoid combining the same issue from a report and its tracker record. Select **Sync now** for each
+configured detailed source. The selected source combination and sanitized snapshots persist in the
+profile's Workbench store, including across desktop ports and restarts. Failed or incomplete syncs
+preserve the previous snapshot. GitHub and Jira pagination have 10,000-record safety bounds; Azure
+DevOps refuses a project with more than 10,000 work items. Narrow an oversized scope before retrying.
 
 ## The built-in dashboard
 
@@ -86,12 +111,13 @@ share a label. Scores prioritize reported evidence, not validated exploitability
 3. For heatmaps choose **Columns** too. Reorder with ↑ / ↓, remove with ×.
 4. **Save dashboard** and select it from the dashboard menu.
 
-**Result:** a layout saved locally in `dashboards.json` beside history.
+**Result:** a layout saved in the current profile's `dashboards.json` beside history. Desktop uses
+the local operating-system profile; the hosted app uses that signed-in profile's server storage.
 
 | Choice | Available values |
 | --- | --- |
 | Metric | `findings`, `riskScore`, `uniqueFindings` (fingerprint deduplication), `evidenceCoverage`, `reports` |
-| Group by | `severity`, `agent`, `category`, `workspace`, `day`, `week`, `disposition`, `confidence`, `source`, `rule` |
+| Group by | `severity`, `agent`, `category`, `workspace`, `day`, `week`, `disposition`, `confidence`, `source`, `rule`, `findingType` |
 | Chart | Stat tile, column, bar, line, donut, table, heatmap |
 | Size | Small (¼ row), medium (½), full width |
 
@@ -113,7 +139,7 @@ Heatmaps always show **finding counts**. Severity colors are fixed; other entity
 workspace, agent/category, ID, title, severity, confidence, disposition, and evidence flag.
 Formula-like prefixes are escaped. Treat exports as sensitive.
 
-With the browser Workbench running on its default port:
+For a local Workbench running on its default port:
 
 ```bash
 curl -s http://127.0.0.1:3000/api/metrics/overview
@@ -130,11 +156,13 @@ the last summary. Use `POST /api/trackers/servicenow-avit/sync` with an explicit
 `POST /api/trackers/defectdojo/sync`, for detailed findings. The detailed sync returns the
 source, finding count, and sync time. `GET /api/metrics/export?source=servicenow-avit`
 downloads only the scoped AVIT detail snapshot, not the full-population summary. All endpoints
-are available only to the local Workbench.
+use the current Workbench profile. Hosted requests require the existing authenticated session,
+active profile, and role permissions; these unauthenticated loopback examples are for local use.
 
 Filters: `severity`, `agent` (ID), `category`, `workspace`, `source` (`report`, `runtime`,
-`servicenow-avit`, or `defectdojo`),
-`disposition`, `since` (ISO date). The API checks browser origins; do not expose it publicly.
+`servicenow-avit`, `defectdojo`, `github`, `jira`, or `azure-devops`),
+`disposition`, `since` (ISO date). The local API checks browser origins; keep the local server
+on loopback. Use the authenticated gateway for a hosted deployment.
 
 ## Limits
 
@@ -145,7 +173,8 @@ requires read access and can fail if its scope, permissions, or pagination limit
 complete import. A failed refresh leaves the last completed summary or detail snapshot intact.
 `uniqueFindings` deduplicates
 fingerprints, not verified vulnerabilities. Report volume, scope, or model changes can move charts
-without code changes. Calculations stay local; reviews may send source to your provider.
+without code changes. Calculations run in the Workbench backend for the current profile; reviews
+may send source to your selected model provider.
 
 ## Troubleshooting
 
