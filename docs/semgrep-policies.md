@@ -1,3 +1,8 @@
+---
+title: "Semgrep policy tuning"
+description: "Read project rules, publish scoped tuning, and handle versioned policy updates and rollback."
+---
+
 # Semgrep policy compatibility and tuning
 
 Threatlint reads legacy policies first. Only **HTTP 410** selects Unified Policies

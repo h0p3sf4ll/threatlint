@@ -1,79 +1,53 @@
-# Turn a finding into an engineering handoff
+---
+title: Reports
+description: Read a review, export the result, and share findings with the right evidence and validation status.
+---
 
-A useful security report answers three questions: **what matters, where is the
-evidence, and what should we do next?** A file attachment is only the delivery format.
+Use a report to decide what needs attention, inspect the supporting evidence, and agree on the next action. A file attachment does not establish that a proposed fix or test has been executed.
+
+## Before you start
+
+Finish a review or import a scan report. Word conversion needs Python with `python-docx`; viewing an existing report does not require a model request.
+
+## View and export in the Workbench
+
+1. Finish a review or [triage a scan report](workbench.md#triaging-a-scan-report).
+2. Open **Findings**, then choose **Read report** on its card.
+3. Check the finding ID, inspected file/line, impact, proposed correction, and validation status.
+4. Download **Markdown** or **Word** where available. Choose **PowerPoint** for an editable one-slide summary of the top finding; the report's **Findings** tab can export a specific finding.
+5. Keep the original Markdown when you need a diffable review history.
+
+PowerPoint includes reported and proposed code when the report supplies them. Missing code is labelled rather than invented; remediation prose may be used instead.
+
+To remove a saved report and its files, choose **Delete…** on its card and confirm. Scan run history, downloaded copies, and tracker attachments remain.
 
 ## What to expect
 
-- **Decision first:** risk, scope, priorities, and unresolved uncertainty.
-- **Evidence next:** the original finding ID, inspected file/line, attacker path,
-  and relevant controls.
-- **Action last:** a proposed fix, compatibility notes, suggested owner/effort,
-  regression assertions, and acceptance criteria.
+A useful report states the decision, scope, evidence, unresolved uncertainty, and next action. Findings should include a proposed fix and a regression assertion or acceptance check.
 
-Finding reviews use the title **Finding Review** and exactly two dispositions: TRUE POSITIVE
-or FALSE POSITIVE. FP requires evidence disproving the scanner claim beyond reasonable doubt.
-If that proof is missing, the finding remains open as a conservative TP with its actual
-confidence, evidence gaps and validation limits. A conservative TP is not a confirmed exploit.
-The `fp-review` command and filename suffix remain compatible with existing integrations.
+Finding reviews use the title **Finding Review** and either **TRUE POSITIVE** or **FALSE POSITIVE**. A false-positive decision needs evidence disproving the scanner claim. Without that proof, a conservative true positive keeps its actual confidence and evidence gaps; it does not claim a confirmed exploit. The `fp-review` command and filename remain compatible.
 
-Eligible Semgrep false positives retain rule tuning. The tracker workflow validates complete
-rules and TP/FP fixtures before publication; missing or failed tuning is reported as incomplete.
-The findings-file CLI runner automatically validates eligible FP tuning before saving the
-report and records blocked tuning as an incomplete run. To validate an existing local/no-cloud
-report independently, include the full rule and fixtures in the review and run:
-
-```bash
-threatlint semgrep tune-report --report review.md --repo /path/to/checkout --output-dir /path/to/tuned-rules
-```
-
-This uses Pro to validate the exact FP location and retained TP fixtures, saves one cumulative
-replacement per original rule, and records a per-finding `tuning-manifest.json`. It never uploads
-findings or publishes rules. Only validated replacements are saved; blocked proposals return
-an unsuccessful exit status. Use the manifest to replace the listed original IDs in the local
-scan configuration. Adding both the original and replacement would keep the original noise.
-
-Semgrep token precedence is environment, native Semgrep settings, Threatlint saved login, then
-Parameter Store. The native login defaults to `~/.semgrep/settings.yml` and respects
-`SEMGREP_SETTINGS_FILE`. A token alone is not proof that Pro is installed: Threatlint checks the
-matching engine and does not silently downgrade. Reports preserve the input scan's actual
-engine provenance instead of inferring it from the installed CLI version.
-
-**A proposed test is not a passed test.** Look for actual execution evidence;
-otherwise validation remains **NOT RUN**. A report, clean guard run, or dashboard
-is not proof that an application is secure.
+A proposed test is **NOT RUN** unless execution and its result are recorded. Read the coverage and limitations alongside the verdict.
 
 ## Where the report goes
 
 | Workflow | Output |
 | --- | --- |
-| `threatlint run MODE` | Word when conversion succeeds; Markdown fallback otherwise |
-| Claude Code slash commands | The command coordinates export after the analysis |
-| Native agent/chat invocation | Client-dependent; a response in chat is not a saved file |
-| Workbench | Review results and the export controls described in the [guide](workbench.md) |
-| Workbench → Triage a scan report | A findings report (Markdown and Word) saved in Findings from a scanner PDF or supported structured export. See [the guide](workbench.md#triaging-a-scan-report). |
-| CI snapshot runner | The configured Markdown report/artifacts; see [CI templates](ci-templates.md) |
-| Teams | A conversation response, split into messages when needed |
+| Workbench review or scan-report triage | A report in Findings; Markdown and Word where conversion is available |
+| `threatlint run MODE` | Word when conversion succeeds, otherwise Markdown |
+| Claude Code slash command | The command coordinates export after analysis |
+| Native agent or chat | Client-dependent; chat text is not necessarily a saved file |
+| CI or Teams | Configured artifacts or conversation output; see [CI templates](ci-templates.md) and [Teams](teams.md) |
 
-In Workbench **Findings**, open a saved report and choose **PowerPoint** for an editable one-slide summary
-of its top finding. The **Findings** tab inside the report lets you export a specific finding instead.
-Each slide shows the reported code and proposed fixed code when the report supplies them, along with the impact
-and review status. If a report lacks a code excerpt, the slide says so and uses remediation prose when available.
-
-To remove a saved report and its local files, choose **Delete…** on its card in **Findings** and confirm.
-The scan run history, previously downloaded copies, and tracker attachments remain available.
-
-For the direct CLI, `--output-dir DIR` chooses the destination; otherwise it uses
-the repository root. Its basename is:
+Use `--output-dir DIR` for a direct CLI destination; otherwise it uses the repository root. Its basename is:
 
 ```text
 <repo>-<branch>-<mode>-local-YYYY-MM-DD
 ```
 
-The `-local-` suffix is the CLI's current naming convention, even when the chosen
-model provider is cloud-hosted. It is not a data-residency guarantee.
+The `-local-` suffix is a naming convention, even for cloud providers. It does not describe where prompts were processed.
 
-Native command filenames are command-specific. Examples:
+Native command names vary. Examples include:
 
 | Command | Typical basename |
 | --- | --- |
@@ -83,14 +57,11 @@ Native command filenames are command-specific. Examples:
 | `/security-review 42` | `<repo>-<branch>-security-review-pr42-YYYY-MM-DD` |
 | `/fp-review` | `<repo>-<branch>-fp-review-YYYY-MM-DD` |
 
-Repository names are lowercased, spaces become hyphens, and branch slashes become
-hyphens. Threat-model commands may choose a supplied path's directory; review
-commands generally use the repository root. The command confirms the actual path.
-For exact conventions, consult the relevant [command definition](../src/threatlint/data/commands/).
+Repository names are lowercased; spaces and branch slashes become hyphens. The command confirms the actual saved path.
 
 ## Convert an existing report
 
-Install Threatlint and its complete script bundle:
+From a Threatlint checkout, install the package and complete script bundle in the same Python environment:
 
 ```bash
 python3 -m pip install -e .
@@ -98,35 +69,42 @@ threatlint install -y
 python3 ~/.claude/scripts/md_to_docx.py report.md report.docx
 ```
 
-The package declares `python-docx` as a dependency. The converter handles headings,
-tables, lists, inline emphasis, and fenced code. It does not execute validation
-commands or turn a Mermaid source block into a verified architecture.
+On Windows, use your installation's `python` or `py -3` and the full script path:
 
-Keep the original Markdown when you need diffable review history.
+```powershell
+py -3 "$env:USERPROFILE\.claude\scripts\md_to_docx.py" report.md report.docx
+```
+
+Threatlint declares `python-docx` as a dependency. The converter supports headings, tables, lists, emphasis, and fenced code. It does not execute tests or turn Mermaid source into a verified architecture.
 
 ## No Word file
 
-Check the environment and converter:
+Check the interpreter and converter:
 
 ```bash
 python3 -c "import docx; print('python-docx available')"
 python3 ~/.claude/scripts/md_to_docx.py
 ```
 
-With no arguments, the second command prints usage and exits nonzero; that is
-expected. If the script or a sibling helper is missing, re-run the installer.
-If the library is missing, install Threatlint in that same Python environment.
-The direct CLI falls back to Markdown when conversion is unavailable or fails;
-inspect the reported saved path.
+The second command prints usage and exits nonzero because no files were supplied; that is expected. If a script or sibling helper is missing, re-run the installer. If the library is missing, install Threatlint in that interpreter's environment. The direct CLI falls back to Markdown when conversion fails, so check its saved-path message.
 
-## Share the decision, not sensitive evidence
+## Validate Semgrep false-positive tuning
 
-Before attaching a report to a ticket or public repository:
+Eligible false-positive reviews include rule tuning. The automated findings-file workflow validates supported tuning before saving; blocked tuning is reported as incomplete. To validate an existing local report containing the full rule and true/false-positive fixtures:
 
-1. Remove credentials, tokens, personal data, and customer-specific identifiers.
-2. Check that quoted code and architecture may be shared with that audience.
-3. Keep the scope, limitations, and validation status with the findings.
-4. Link each action to its owner and a measurable acceptance criterion.
+```bash
+threatlint semgrep tune-report --report review.md --repo /path/to/checkout --output-dir /path/to/tuned-rules
+```
 
-**Next:** use [fix verification](agents.md#appsec-verify-fix) to assess remediation,
-then execute the relevant tests in an authorized environment.
+This uses Pro to validate the exact false-positive location and retained true-positive fixtures. Only validated replacements are saved, with a per-finding `tuning-manifest.json`; blocked proposals return an unsuccessful exit status. It does not upload findings or publish rules. Replace the listed original rule IDs rather than enabling both original and replacement.
+
+Semgrep token lookup is environment, native settings (`SEMGREP_SETTINGS_FILE` or `~/.semgrep/settings.yml`), Threatlint saved login, then Parameter Store. A token alone does not establish Pro availability. Reports retain the input scan's recorded engine provenance. See [Semgrep policies](semgrep-policies.md).
+
+## Share the report
+
+1. Remove credentials, personal data, and customer identifiers that the audience should not receive.
+2. Confirm that quoted source and architecture may be shared.
+3. Keep scope, confidence, coverage, and validation status with the finding.
+4. Assign an owner and a measurable acceptance check to each agreed action.
+
+**Next:** use [fix verification](agents.md#appsec-verify-fix) to review remediation, then run the relevant tests in an authorized environment. Return to the [Quickstart](learning.md) for a complete review flow.

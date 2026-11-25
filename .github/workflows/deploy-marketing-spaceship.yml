@@ -1,6 +1,13 @@
 name: Deploy marketing site to Spaceship
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "marketing/**"
+      - "docs/**"
+      - "docs-site/**"
+      - ".github/workflows/deploy-marketing-spaceship.yml"
   push:
     branches: [main]
     paths:
@@ -14,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: threatlint-marketing-spaceship-production
+  group: threatlint-marketing-spaceship-production-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -156,29 +163,4 @@ jobs:
           bye
           EOF
       - name: Verify public website matches deployed source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import time
-          from pathlib import Path
-          from urllib.request import Request, urlopen
-
-          for name in ("index.html", "styles.css", "assets/mark.svg", "robots.txt", "sitemap.xml"):
-              path = "/" if name == "index.html" else f"/{name}"
-              url = f"https://threatlint.dev{path}?deployment={os.environ['GITHUB_SHA']}"
-              expected = (Path("marketing") / name).read_bytes()
-              for attempt in range(3):
-                  try:
-                      request = Request(url, headers={"Cache-Control": "no-cache"})
-                      with urlopen(request, timeout=30) as response:
-                          if response.status != 200 or response.read() != expected:
-                              raise ValueError(f"Published content does not match source: {name}")
-                      print(f"Verified {name}")
-                      break
-                  except Exception:
-                      if attempt == 2:
-                          raise
-                      time.sleep(5)
-          PY
+        run: node docs-site/scripts/verify-published.cjs

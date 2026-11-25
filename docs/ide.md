@@ -1,4 +1,9 @@
-# <img src="media/logo.svg" alt="" width="28" height="31" align="top"> Threatlint in the IDE: secure-by-default code generation
+---
+title: "IDE integration"
+description: "Set up Threatlint in your editor to review code and use local security checks."
+---
+
+# Threatlint in the IDE: secure-by-default code generation
 
 Catch a risky pattern while the code is still in front of you. Threatlint pairs secure-coding
 instructions for your AI assistant with an offline pattern checker, `threatlint guard`.

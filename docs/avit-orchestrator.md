@@ -1,3 +1,8 @@
+---
+title: "AVIT batch orchestration"
+description: "Manage an AVIT queue, run bounded batches, and recover safely from retries or interruptions."
+---
+
 # AVIT orchestrator
 
 Batch reviews need a reliable answer to “what ran, what failed, and what is safe to
@@ -153,9 +158,7 @@ one in-progress entry, not every concurrent handler.
 Make handlers idempotent and cancellation-safe. A ServiceNow write can succeed even
 if recording local completion fails.
 
-## Architecture
-
-### State Storage
+## Saved queue and recovery
 
 The default path is `~/.threatlint/avit_orchestrator/state.json`, independent of
 `THREATLINT_HOME`. Override it with `AVITOrchestrator(state_dir=Path("…"))`.
@@ -171,25 +174,14 @@ Loading preserves recorded statuses. After a crash, inspect external effects
 before resetting stranded `in_progress` entries with `update_item`.
 Atomic replacement prevents partial JSON, **not** lost updates between writers.
 
-### Thread Safety
+### Update queue items safely
 
-An in-process `RLock` protects queue operations and claims. Returned items remain
-live objects; update through methods, not direct field mutation. Use
+Queue operations and claims are protected within one orchestrator instance. Returned
+items remain live objects; update through methods, not direct field mutation. Use
 `claim_pending(item)`, not a peek followed by an unconditional status change, when
 writing your own worker.
 
-### Package Responsibilities
-
-Public imports remain under `threatlint.avit_orchestrator`:
-
-| Module | Responsibility |
-| --- | --- |
-| `models.py` | Status enum, queue/state dataclasses, JSON schema |
-| `storage.py` | `StateStore` protocol and atomic `JsonStateStore` |
-| `orchestrator.py` | Queue operations, locking, transitions, pause/resume |
-| `execution.py` | Synchronous canary and bounded async batch |
-| `cli.py` | Arguments and command output |
-| `__init__.py` | Public exports |
+### Use a custom state store
 
 `AVITOrchestrator(store=your_store)` accepts `load() -> OrchestratorState` and
 `save(state) -> None` without creating the default directory. Queue scans are
@@ -205,21 +197,6 @@ is claimed.
 | Canary is degraded | Inspect failed entries and unclaimed selections. Fix the handler or dependency, reconcile external effects, then retry eligible entries. |
 | CLI pause does not stop a worker | Call `pause()` on the worker's existing instance; CLI state is not cross-process control. |
 | Crash left work in progress | Verify ServiceNow/Semgrep effects first, then reset only entries safe to retry. |
-
-## Testing
-
-The package requires Python 3.9+. The focused tests cover queue compatibility,
-atomic persistence, explicit retries, pause, thresholds, concurrency, cancellation,
-and CLI registration using isolated state stores:
-
-```bash
-python3 -m pytest -q tests/test_avit_orchestrator.py \
-  tests/test_avit_orchestrator_storage.py \
-  tests/test_avit_orchestrator_execution.py \
-  tests/test_avit_orchestrator_cli.py
-```
-
-These are synthetic checks, not live ServiceNow acceptance tests.
 
 ## See Also
 

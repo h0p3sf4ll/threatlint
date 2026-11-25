@@ -1,3 +1,8 @@
+---
+title: "Runtime red team"
+description: "Run authorized attack and defense exercises in an isolated environment and inspect the recorded results."
+---
+
 # Runtime red team
 
 Build an application from its own repository in an isolated, throwaway environment, attack the *running* app with

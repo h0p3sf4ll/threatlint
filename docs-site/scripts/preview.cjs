@@ -2,12 +2,19 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { retired } = require('../navigation.cjs');
 const root = path.resolve(__dirname, '../../marketing');
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 function createPreviewServer() {
   return http.createServer((req, res) => {
     try {
       const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+      const removed = retired.find(item => pathname === `/docs/${item.route}` || pathname.startsWith(`/docs/${item.route}/`));
+      if (removed) {
+        if (removed.redirect) res.writeHead(301, { Location: removed.redirect }).end();
+        else res.writeHead(410, { 'Content-Type': 'text/plain; charset=utf-8' }).end('This page is no longer published. Visit /docs/ for user guides.');
+        return;
+      }
       let file = path.resolve(root, '.' + pathname);
       if (!file.startsWith(root + path.sep) && file !== root) { res.writeHead(403).end(); return; }
       if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');

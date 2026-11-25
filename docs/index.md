@@ -1,16 +1,35 @@
 ---
 slug: /
-sidebar_position: 1
-title: Threatlint documentation
+title: Introduction
+description: Get started with Threatlint and find guides for scanning, reviewing, and managing application security findings.
 ---
 
-Threatlint brings source code, scanner findings, security reviews, and remediation tracking into one workbench.
+# Threatlint documentation
 
-- [Set up Threatlint](setup.md) and [open the workbench](workbench.md).
-- [Connect a GitHub App](github-app.md) or configure source connections in Settings.
-- [Review findings and run scans](security-platform.md).
-- [Use Metrics and dashboards](dashboards.md) and [ServiceNow AVIT integration](avit-integration.md).
-- [Connect tools through MCP](mcp.md).
-- [Develop and test](development.md) or [deploy the web application](web-app.md).
+Threatlint helps you scan source code, review security findings, and produce reports with supporting evidence. Use the [web app](https://app.threatlint.dev) with a personal or company profile, or run the desktop app without a Threatlint account.
 
-Review outcomes depend on inspected evidence. A suggested fix or test is a proposal until its execution and result are recorded.
+## Start here
+
+1. [Follow the Quickstart](learning.md) to scan a small repository and read the results.
+2. [Install Threatlint](setup.md) if you want to work from your desktop or terminal.
+3. [Configure a model provider](model-providers.md) when you are ready for specialist reviews and threat modeling. Source scans do not require a model.
+
+See [Profiles and saved settings](profiles.md) for sign-in, company workspaces, and the settings saved to each profile.
+
+## Common tasks
+
+| I want to… | Guide |
+| --- | --- |
+| Connect a repository and navigate the app | [Use the Workbench](workbench.md) |
+| Run Semgrep and review suggested fixes | [Scan source code](security-scanner.md) |
+| Review a design alongside its implementation | [Create a threat model](threat-modeling.md) |
+| Verify findings and track repository risk | [Review findings](finding-intelligence.md) |
+| Save, export, or convert a report | [Reports and exports](reports.md) |
+| Send findings to an issue tracker | [Manage connections and tickets](integrations.md) |
+| Connect tools through MCP | [Threatlint MCP](mcp.md) |
+
+## Explore further
+
+Use **Integrations** for source providers, issue trackers, and collaboration tools. **Automation** covers editors, CI, and batch reviews. **Reference** includes specialist roles, advanced scanners, and self-hosting.
+
+If a step fails, start with [Troubleshooting](troubleshooting.md). Check each report's scope and coverage before treating an empty result as evidence that a repository is secure.
