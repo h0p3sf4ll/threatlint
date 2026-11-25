@@ -46,7 +46,7 @@ def test_complete_confirmed_proposal_is_ready_without_mutating_checkout(checkout
 def test_conservative_report_collects_real_source_and_specific_followup(checkout):
     text = confirmed().replace("**Confidence**: CONFIRMED", "**Confidence**: PLAUSIBLE\n**Decision basis**: CONSERVATIVE DEFAULT")
     result = assess(checkout, text)
-    assert result["status"] == "refine"
+    assert result["status"] == "refine" and result["unverified"] is True
     assert any("unverified" in issue for issue in result["issues"])
     assert "app.py\n1: def parse(value):\n2:     return eval(value)" in result["prompt"]
     assert git(checkout, "rev-parse", "HEAD") in result["prompt"]
@@ -62,6 +62,7 @@ def test_missing_proof_or_fix_section_requests_substantive_work(checkout, field)
     result = assess(checkout, text)
     assert result["status"] == "refine"
     assert any(field in issue for issue in result["issues"])
+    assert result.get("phase") == ("patch" if field in ("Fix rationale", "Regression assertions") else None)
 
 
 @pytest.mark.parametrize("location", ["app.py:999", "app.py:0", "missing.py:1", "../outside.py:1", "linked.py:1"])
@@ -80,8 +81,44 @@ def test_invalid_source_citation_does_not_confirm_a_finding(checkout, tmp_path, 
 @pytest.mark.parametrize("patch", ["", PATCH.replace("return eval(value)", "return not_the_source(value)")])
 def test_missing_or_inapplicable_fix_requests_repair_before_publication(checkout, patch):
     result = assess(checkout, confirmed(patch))
-    assert result["status"] == "refine"
+    assert result["status"] == "refine" and result["phase"] == "patch"
     assert any("patch" in issue or "proposed fix" in issue for issue in result["issues"])
+    assert "exactly one line reading **Proposed fix patch**:" in result["prompt"]
+
+
+@pytest.mark.parametrize(("change", "unverified"), [
+    ("conservative", True), ("nonconfirmed", True), ("explicitly unverified", True),
+    ("missing source", False), ("multiple findings", False),
+])
+def test_fix_preparation_waits_for_single_confirmed_finding_with_source(checkout, monkeypatch, change, unverified):
+    text = confirmed(patch="")
+    if change == "conservative":
+        text += "\n**Decision basis**: CONSERVATIVE DEFAULT\n"
+    elif change == "nonconfirmed":
+        text = text.replace("CONFIRMED", "PLAUSIBLE")
+    elif change == "explicitly unverified":
+        text += "\n**Validation status**: UNVERIFIED\n"
+    elif change == "missing source":
+        text = text.replace("app.py:", "missing.py:")
+    else:
+        text += text.replace(AVIT, "AVIT000000000000002").replace("FP-001", "FP-002")
+    text = "\n".join(line for line in text.splitlines() if not line.startswith(("**Fix rationale**", "**Regression assertions**")))
+    monkeypatch.setattr(evidence, "_patch", lambda *_: pytest.fail("Do not read patches during evidence investigation"))
+    result = assess(checkout, text)
+    assert result["status"] == "refine" and "phase" not in result
+    assert ("unverified" in result) is unverified
+    assert not any("patch" in issue.lower() or "Fix rationale" in issue or "Regression assertions" in issue for issue in result["issues"])
+    assert "exactly one line reading **Proposed fix patch**:" not in result["prompt"]
+
+
+def test_ignored_files_cannot_supply_review_evidence(checkout):
+    (checkout / ".git" / "info" / "exclude").write_text("ignored.py\n", encoding="utf-8")
+    (checkout / "ignored.py").write_text("untracked fixture\nsecond line\n", encoding="utf-8")
+    text = confirmed().replace("app.py:", "ignored.py:")
+    result = assess(checkout, text, file_path="ignored.py")
+    assert result["status"] == "refine" and "phase" not in result
+    assert any("invalid source citation" in issue for issue in result["issues"])
+    assert "untracked fixture" not in result["prompt"]
 
 
 def test_legacy_ambiguous_and_unverified_validation_are_refined(checkout):
@@ -139,7 +176,7 @@ def test_fenced_metadata_examples_do_not_block_confirmed_proposal(checkout):
 
 def test_formatted_unverified_status_still_requires_investigation(checkout):
     result = assess(checkout, confirmed() + "\n- **Validation status:** UNVERIFIED\n")
-    assert result["status"] == "refine"
+    assert result["status"] == "refine" and result["unverified"] is True
     assert any("still unverified" in issue for issue in result["issues"])
 
 
@@ -178,12 +215,13 @@ def test_stale_source_location_is_investigated_and_can_be_recovered(checkout):
 
 
 def test_remaining_blocker_is_named_and_redacted_in_issues(checkout):
-    text = confirmed().replace("**Confidence**: CONFIRMED", "**Confidence**: PLAUSIBLE\n**Decision basis**: CONSERVATIVE DEFAULT")
+    text = confirmed(patch="").replace("**Confidence**: CONFIRMED", "**Confidence**: PLAUSIBLE\n**Decision basis**: CONSERVATIVE DEFAULT")
     text += "\n**Blocking Evidence**: The deployed route registration is unavailable in this checkout.\n"
     text += "**Resolution Plan**: Inspect the deployment's routing configuration to determine exposure.\n"
     result = assess(checkout, text)
     assert any("deployed route registration is unavailable" in issue for issue in result["issues"])
     assert any("routing configuration" in issue for issue in result["issues"])
+    assert not any("patch" in issue.lower() for issue in result["issues"])
 
 
 def test_prepare_fix_cli_does_not_require_confirmation_or_authentication(checkout, tmp_path, monkeypatch, capsys):

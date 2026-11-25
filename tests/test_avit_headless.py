@@ -81,7 +81,8 @@ def test_headless_true_positive_runs_draft_pr_after_report_writeback(monkeypatch
     markdown = (f"# Finding Review\n\n#### [FP-001] — Finding\n**Original finding**: {AVIT_TP}; rule; scanner; src/flagged.js:2\n"
                 "**Disposition**: TRUE POSITIVE\n**Confidence**: CONFIRMED\n**Evidence**: src/flagged.js:2\n")
     def review(_provider, _system, prompt, *_):
-        assert ("**Proposed fix patch**:" in prompt) is (pr_status != "disabled")
+        assert "**Proposed fix patch**:" not in prompt
+        assert ("Wait for Threatlint to explicitly request a unified diff" in prompt) is (pr_status != "disabled")
         return markdown
 
     monkeypatch.setattr(avit_headless, "_run_review_model", review)
@@ -93,7 +94,8 @@ def test_headless_true_positive_runs_draft_pr_after_report_writeback(monkeypatch
     def publish(avit, report, checkout, reviewed_target, **options):
         assert calls == ["resolve"]
         assert avit == AVIT_TP and report == markdown and Path(checkout).is_dir()
-        assert reviewed_target == target and options["instance"] == "https://test.service-now.com"
+        assert reviewed_target == {**target, "file_path": "src/flagged.js", "line": "2"}
+        assert options["instance"] == "https://test.service-now.com"
         calls.append("pr")
         if pr_status == "error":
             raise avit_pr.ResolveError("The repository provider rejected the draft PR")

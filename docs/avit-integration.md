@@ -234,11 +234,15 @@ plausibility without printing the value: cite path, line, and key name instead.
 
 ### Write-back
 
-The Word report is the only report attachment. A manual `avit resolve` uses
-`<AVIT>-threatlint-fp-review.docx` and skips an existing attachment with that
-name. The headless workflow gives each review a UTC timestamp suffix so
-reruns preserve the new report alongside earlier reviews. Reports are uploaded
-before the state update; an SCTASK copies the latest AVIT report.
+Threatlint attaches one Word report to the AVIT. A manual `avit resolve` uses
+`<AVIT>-threatlint-fp-review.docx`. Workbench and headless reviews use a UTC
+timestamp suffix to identify the review. On reruns, Threatlint deletes previous
+reports matching either name format for that AVIT and verifies their removal
+before uploading the new report. If removal fails or cannot be verified,
+Threatlint stops before uploading or updating the AVIT. Other AVIT attachments
+are preserved. Removal and upload are separate ServiceNow requests. If an upload
+fails after deletion, Threatlint reports the failed replacement and stops before
+the state update. An SCTASK copies the latest AVIT report.
 
 | Disposition | ServiceNow request | Semgrep |
 | --- | --- | --- |
@@ -456,16 +460,15 @@ repositories are supported. The Workbench's **Open draft PRs for proposed fixes*
 option is enabled by default. Headless `run fp-review
 --resolve-avits --yes` includes the same step; pass `--no-fix-pr` to skip it.
 
-Before saving or attaching the report, Threatlint checks whether the review
-establishes the true positive and contains a concrete fix. A conservative-default
-or non-confirmed decision, missing source evidence, or absent/invalid patch
-triggers up to two follow-up investigations using the same reviewer and checkout.
-Each follow-up receives the original AVIT and scanner context, the exact gaps,
-bounded source excerpts, and the prior draft as untrusted evidence. The reviewer
-uses its read/search tools to inspect the flagged function, callers, input or
-exposure path, registered controls, configuration, and existing tests, then
-returns a complete revised report and fix. A supported true positive is not
-marked conservative merely because a false-positive interpretation was not proven.
+Before saving or attaching the report, the Workbench uses its configured model
+provider to inspect the flagged function, callers, exposure path, controls,
+configuration, and tests with read and search tools. Headless mode uses its
+selected provider. Threatlint checks the returned evidence and can request up to
+two evidence follow-ups on the same checkout. The reviewer receives the original
+AVIT and scanner context, bounded source excerpts, the exact gaps, and the prior
+draft as untrusted evidence. Threatlint requests a unified diff only after the
+true-positive review passes the evidence checks, with up to two follow-ups to
+prepare or repair the patch.
 
 Preparation requires a non-conservative `CONFIRMED` true positive, substantive
 evidence and exploit/exposure reasoning, source references that exist in the
@@ -475,10 +478,10 @@ Git index without changing the reviewed files. These checks validate report
 structure, source locations, and patch applicability; the reviewer remains
 responsible for the semantic evidence and fix assessment.
 
-Only the final report is attached, with a unique timestamped name so a rerun
-retains the new evidence alongside earlier reviews. The publisher then confirms that the target
-branch still points at the reviewed commit, publishes the proposed change on a
-separate branch, and opens a draft PR for engineering review. A retry reuses the
+Only the final report is attached. The publisher rechecks the evidence and
+confirms that the target branch still points at the reviewed commit. It then
+publishes the proposed change on a separate branch and opens a draft PR for
+engineering review. A retry reuses the
 matching PR or branch. The AVIT card and headless result include the PR link.
 Static source evidence can confirm a vulnerability without executing an exploit.
 Application tests are not run by this publishing step; the PR states that CI and
@@ -507,14 +510,13 @@ default is `https://api.github.com`. AVIT checkout and proposed-fix PR operation
 use that configured host. See [GitHub App setup](github-app.md).
 
 If further investigation disproves the claim, the final false-positive report
-follows the existing closure and rule-tuning flow. If the two follow-ups still
-cannot confirm the finding or produce a validated fix, Threatlint attaches the
-honest final report, records the remaining gaps, and marks automated remediation
-blocked without opening a PR. It does not manufacture confirmation to satisfy
-the publishing gate. Unsupported SCM providers or checkouts without the exact
-reviewed Git branch produce an explicit skip. If publishing fails after the
-report was attached, the completed ServiceNow work remains recorded and the PR
-failure is reported separately. The workflow never merges a PR.
+follows the closure and rule-tuning flow. For a true positive that remains
+unverified, successful attachment completes the review, and Threatlint shows the
+draft PR as blocked with its remaining evidence gaps. If Threatlint confirms a
+finding and patch validation or publication fails, it reports the fix error
+alongside the completed ServiceNow work. Unsupported SCM providers or
+checkouts without the exact reviewed Git branch produce an explicit skip. The
+workflow never merges a PR.
 
 For an existing review and checkout, the standalone entry point is:
 

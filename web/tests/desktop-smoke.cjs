@@ -34,6 +34,10 @@ const { SKILL_MAP } = require('../lib/agents.cjs');
     assert.ok(page, 'Workbench window did not open');
     page.on('pageerror', error => errors.push(error.message));
     await page.waitForSelector('#connection-status.online');
+    if (process.env.THREATLINT_DESKTOP_EXECUTABLE) {
+      assert.equal(await application.evaluate(({ app }) => !app.isPackaged || process.env.PYTHONDONTWRITEBYTECODE === '1'), true,
+        'bundled Python must not write bytecode into signed resources');
+    }
     return page;
   }
   try {

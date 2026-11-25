@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from threatlint.finding_review import (
-    FindingReviewError, _field_pattern, _structure, normalize_verdict, report_fields,
+    FindingReviewError, _field_pattern, _structure, is_conservative, normalize_verdict, report_fields,
 )
 
 _DISPOSITION = re.compile(r"TRUE POSITIVE|FALSE POSITIVE|AMBIGUOUS", re.IGNORECASE)
@@ -81,6 +81,14 @@ def verdict_for(report: str, avit: str) -> dict[str, str]:
     if not matches[0]["disposition"]:
         raise ResolveError(f"{matches[0]['id'] or avit} has no TRUE POSITIVE / FALSE POSITIVE disposition")
     return matches[0]
+
+
+def needs_confirmation(verdict: dict, report: str) -> bool:
+    """A true-positive disposition can remain unverified for automated remediation."""
+    return verdict.get("disposition") == "TRUE POSITIVE" and (
+        is_conservative(verdict) or verdict.get("confidence", "").upper() != "CONFIRMED"
+        or any(re.match(r"UNVERIFIED\b", value, re.I) for value in report_fields(report, "Validation status"))
+    )
 
 
 def report_line(report: str, avit: str, expected_path: str = "") -> int | None:

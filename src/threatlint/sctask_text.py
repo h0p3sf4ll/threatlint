@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from threatlint.finding_review import is_conservative, normalize_verdict
+from threatlint.finding_review import CONSERVATIVE_BASIS, is_conservative, normalize_verdict
 
 _SCTASK = re.compile(r"SCTASK\d{7,10}")
 
@@ -45,7 +45,9 @@ def closing_comment(outcomes: list[dict], leave_open: bool = False) -> str:
             "TRUE POSITIVE": f"- {item['avit']}: true positive, still open. Please remediate it in {item['avit']}.",
         }.get(item["disposition"], f"- {item['avit']}: not reviewed ({item['disposition'].lower()}); left open for AppSec follow-up.")
         if is_conservative(item):
-            detail = (f"- {item['avit']}: conservative true positive; false positive was not proven beyond reasonable doubt. "
+            decision = ("conservative true positive; false positive was not proven beyond reasonable doubt"
+                        if item.get("decision_basis") == CONSERVATIVE_BASIS else "unverified true positive")
+            detail = (f"- {item['avit']}: {decision}. "
                       f"Left open for AppSec follow-up ({'see its report' if item.get('report') else 'report unavailable'}); exploitation remains unverified.")
         lines.append(detail)
     true_positives = [item["avit"] for item in outcomes if item["disposition"] == "TRUE POSITIVE"]

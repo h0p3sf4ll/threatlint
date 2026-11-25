@@ -127,6 +127,8 @@ def _request_json(url: str, *, data: bytes | None = None, headers: dict[str, str
     request = urllib.request.Request(url, data=data, headers={"Accept": "application/json", **headers}, method=method)
     try:
         with _OPENER.open(request, timeout=_HTTP_TIMEOUT_S) as response:  # noqa: S310 - HTTPS origin validated
+            if method == "DELETE" and response.status == 204:
+                return {}
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         hint = {401: " Check the client ID and secret.", 403: " The OAuth client may not read the AVIT table.",

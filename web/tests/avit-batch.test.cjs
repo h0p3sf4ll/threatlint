@@ -142,7 +142,7 @@ describe('False positive review batch', () => {
       });
       socket.close();
       const current = calls.slice(start);
-      assert.equal(modelCalls.at(-1).userMessage.includes('**Proposed fix patch**:'), status !== 'disabled');
+      assert.equal(modelCalls.at(-1).userMessage.includes('Wait for Threatlint to explicitly request a unified diff'), status !== 'disabled');
       const done = events.find(event => event.type === 'avit_item' && event.done);
       assert.ok(done, JSON.stringify(events));
       assert.equal(done.stage, ['error', 'spawn-error'].includes(status) ? 'error' : 'done');
@@ -253,31 +253,44 @@ describe('False positive review batch', () => {
     });
   };
   const refine = (issue, prompt = `Inspect the caller and registered controls to resolve: ${issue}. Return the full report.`) => ({ status: 'refine', issues: [issue], prompt });
+  const preparePatch = (issue, prompt) => ({ ...refine(issue, prompt), phase: 'patch' });
   const uncertain = () => report(TP, 'TRUE POSITIVE') + '**Decision basis**: CONSERVATIVE DEFAULT\n**Blocking Evidence**: Caller control is not yet traced.\n';
 
   for (const scm of ['azure-devops', 'github']) it(`investigates ${scm} evidence and repairs a proposal before saving, resolving, and publishing once`, async t => {
     setupRefinement(t, scm);
     const firstModel = modelCalls.length;
-    preparationResults = [refine('Trace caller control', 'Inspect caller app.yaml:2 and its registered controls.'),
-      refine('Patch does not apply', 'Re-read the exact checkout and repair the unified diff context.'), { status: 'ready', issues: [], prompt: '' }];
-    modelReports = [uncertain(), report(TP, 'TRUE POSITIVE') + 'Confirmed caller evidence, but draft patch needs repair.\n',
+    preparationResults = [
+      refine('Trace caller control', 'Inspect caller app.yaml:2 and its registered controls.'),
+      refine('Read the deployment configuration', 'Inspect the matching deployment configuration.'),
+      preparePatch('Patch missing', 'Provide one complete Proposed fix patch unified diff against this checkout.'),
+      preparePatch('Patch does not apply', 'Re-read the exact checkout and repair the unified diff context.'),
+      { status: 'ready', issues: [], prompt: '' },
+    ];
+    modelReports = [uncertain(), uncertain(), report(TP, 'TRUE POSITIVE') + 'Confirmed caller evidence.\n',
+      report(TP, 'TRUE POSITIVE') + 'Draft patch needs repair.\n',
       report(TP, 'TRUE POSITIVE') + '**Exploit path**: Final inspected proof.\n**Proposed fix patch**:\n```diff\nvalidated fixture diff\n```\n'];
     modelHook = () => assert.equal(calls.some(args => args[1] === 'resolve' || args[1] === 'fix-pr'), false, 'all investigation occurs before tracker or PR writes');
-    const events = await runBatch(TP);
+    const events = await runBatch(TP, { provider: 'codex', model: 'selected-review-model' });
     const reviews = modelCalls.slice(firstModel);
-    assert.equal(reviews.length, 3);
+    assert.equal(reviews.length, 5);
     assert.match(reviews[0].userMessage, /TRUE POSITIVE when the inspected evidence establishes the vulnerability/);
+    assert.match(reviews[0].userMessage, /Wait for Threatlint to explicitly request a unified diff/);
     assert.match(reviews[1].userMessage, /Inspect caller app.yaml:2 and its registered controls/);
-    assert.match(reviews[2].userMessage, /repair the unified diff context/);
+    assert.match(reviews[2].userMessage, /Inspect the matching deployment configuration/);
+    assert.ok(reviews.slice(0, 3).every(review => !review.userMessage.includes('Provide one complete Proposed fix patch')));
+    assert.match(reviews[3].userMessage, /Provide one complete Proposed fix patch unified diff/);
+    assert.match(reviews[4].userMessage, /repair the unified diff context/);
     assert.ok(reviews.every(args => args.repoPath === reviews[0].repoPath && args.purpose === 'review' && args.agentId === 'appsec-fp-reviewer'));
-    assert.equal(preparedReports.length, 3);
+    assert.ok(reviews.every(args => args.provider === 'codex' && args.model === 'selected-review-model'));
+    assert.equal(preparedReports.length, 5);
     assert.match(preparedReports[0], /CONSERVATIVE DEFAULT/);
     assert.equal(resolvedReports.length, 1);
     assert.match(resolvedReports[0], /Final inspected proof/);
     assert.doesNotMatch(resolvedReports[0], /CONSERVATIVE DEFAULT/);
     const commands = calls.filter(args => ['prepare-fix', 'resolve', 'fix-pr'].includes(args[1])).map(args => args[1]);
-    assert.deepEqual(commands, ['prepare-fix', 'prepare-fix', 'prepare-fix', 'resolve', 'fix-pr']);
-    assert.equal(events.filter(event => event.attempt).length, 2);
+    assert.deepEqual(commands, [...Array(5).fill('prepare-fix'), 'resolve', 'fix-pr']);
+    assert.deepEqual(events.filter(event => event.attempt).map(({ phase, attempt }) => [phase, attempt]),
+      [['evidence', 1], ['evidence', 2], ['patch', 1], ['patch', 2]]);
     const final = events.find(event => event.avit === TP && event.done);
     assert.equal(final.stage, 'done'); assert.equal(final.outcome.pullRequest.status, 'created');
     assert.ok(!fs.existsSync(reviews[0].repoPath), 'temporary source and intermediate reports are deleted');
@@ -286,18 +299,34 @@ describe('False positive review batch', () => {
   it('retains honest evidence gaps after bounded investigation and reports blocked remediation without publishing', async t => {
     setupRefinement(t);
     const firstModel = modelCalls.length;
-    preparationResults = [refine('Deployment configuration is unavailable'), refine('Deployment configuration is unavailable'), refine('Deployment configuration is unavailable')];
+    const blocked = { ...refine('Deployment configuration is unavailable'), unverified: true };
+    preparationResults = [blocked, blocked, blocked];
     modelReports = [uncertain(), uncertain(), uncertain()];
     const events = await runBatch(TP);
     const final = events.find(event => event.avit === TP && event.done);
     assert.equal(modelCalls.length - firstModel, 3);
     assert.equal(resolvedReports.length, 1);
     assert.match(resolvedReports[0], /CONSERVATIVE DEFAULT/);
-    assert.equal(final.stage, 'error'); assert.equal(final.outcome.attached, true);
+    assert.equal(final.stage, 'info'); assert.equal(final.result, 'noted');
+    assert.equal(final.outcome.attached, true); assert.equal(final.outcome.leftOpen, true);
     assert.deepEqual(final.outcome.pullRequest, { status: 'blocked', reason: 'Deployment configuration is unavailable' });
-    assert.match(final.detail, /evidence investigation.*Deployment configuration is unavailable/);
+    assert.match(final.detail, /Draft fix PR blocked pending evidence.*Deployment configuration is unavailable/);
     assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
     assert.equal(calls.find(args => args[1] === 'resolve').includes('--keep-checkout'), false);
+  });
+
+  it('keeps an invalid fix for a confirmed true positive as an error after the patch attempts', async t => {
+    setupRefinement(t);
+    const firstModel = modelCalls.length;
+    const blocked = preparePatch('Patch does not apply');
+    preparationResults = [blocked, blocked, blocked];
+    const events = await runBatch(TP);
+    const final = events.find(event => event.avit === TP && event.done);
+    assert.equal(modelCalls.length - firstModel, 3);
+    assert.equal(final.stage, 'error'); assert.equal(final.result, 'error');
+    assert.equal(final.outcome.attached, true);
+    assert.deepEqual(final.outcome.pullRequest, { status: 'blocked', reason: 'Patch does not apply' });
+    assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
   });
 
   it('allows evidence investigation to prove a false positive and follows the normal closure and tuning path', async t => {

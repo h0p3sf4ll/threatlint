@@ -26,9 +26,10 @@ description: "Use for false-positive review of SARIF, Semgrep JSON, or security 
 5. Do not dismiss input because it is authenticated, admin-only, internal, constant-looking,
    or in tests/generated/vendor code. Verify the specific rule's claim and actual usage.
    Structural misconfiguration and secret rules may not require an attacker-controlled input.
-6. For TPs provide a concrete proposed code/config fix, root-cause explanation, deployment
-   considerations, regression assertions, acceptance, suggested owner, and effort.
-   When the host requests a proposed-fix diff, anchor it to the inspected checkout. Respond to
+6. For evidence-supported TPs provide a concrete proposed code/config fix, root-cause explanation,
+   deployment considerations, regression assertions, acceptance, suggested owner, and effort.
+   In the automated draft PR workflow, supply the unified diff when Threatlint requests it after
+   checking the confirmation evidence, anchored to the inspected checkout. Respond to
    host validation gaps by gathering the missing evidence and repairing the full proposal;
    do not simply relabel an unresolved finding to obtain a PR. Keep tests marked NOT RUN unless
    actual execution evidence exists.

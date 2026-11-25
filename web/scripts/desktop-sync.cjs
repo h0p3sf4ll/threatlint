@@ -58,6 +58,7 @@ function packagedInfo() {
 // `source` lets a packaged app find the checkout it was built from and rebuild itself on launch.
 function stamp() {
   const info = { fingerprint: fingerprint(), commit: commit(), version: require('../package.json').version, builtAt: new Date().toISOString(), source: WEB };
+  if (process.env.THREATLINT_LOCAL_DESKTOP_BUILD === '1') info.localBuild = true;
   fs.mkdirSync(path.dirname(INFO), { recursive: true });
   fs.writeFileSync(INFO, `${JSON.stringify(info, null, 2)}\n`);
   console.log(`Desktop build stamped: ${info.version} · ${info.commit} · ${info.fingerprint}`);

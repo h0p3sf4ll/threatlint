@@ -36,7 +36,7 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("number", metavar="AVIT")
     resolve.add_argument("--report", required=True, help="FP review report (Markdown) naming the AVIT in Original finding")
     resolve.add_argument("--docx", required=True, help="Word report to attach (the only file attached to the AVIT)")
-    resolve.add_argument("--attachment-name", help="Unique AVIT report filename for retaining a new review alongside earlier evidence")
+    resolve.add_argument("--attachment-name", help="Filename for the new AVIT report that replaces any previous Threatlint report")
     resolve.add_argument("--semgrep-deployment", help="Semgrep deployment slug when the token can access several")
     resolve.add_argument("--semgrep-rule-hash-id", help="Authoritative ruleHashId for Secrets-product correlation")
     resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")

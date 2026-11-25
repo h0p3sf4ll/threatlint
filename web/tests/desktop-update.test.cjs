@@ -87,8 +87,8 @@ it('clears asset caches without deleting preferences, cookies, or saved work', a
   assert.deepEqual(calls, ['http', {}, { storages: ['serviceworkers', 'cachestorage', 'shadercache'] }]);
 });
 
-function updater(t, { argv = [], failFetch = false, fingerprint = 'fresh', failBuild = false } = {}) {
-  const root = temporary(t), calls = [];
+function updater(t, { argv = [], env = {}, failFetch = false, fingerprint = 'fresh', failBuild = false, localBuild } = {}) {
+  const root = temporary(t), calls = [], logs = [];
   const installed = path.join(root, 'installed');
   const staged = path.join(root, 'staged');
   for (const directory of [installed, staged]) fs.mkdirSync(directory);
@@ -101,14 +101,16 @@ function updater(t, { argv = [], failFetch = false, fingerprint = 'fresh', failB
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../desktop/updater.cjs'), 'utf8'), {
     module, __dirname: path.join(__dirname, '../desktop'),
-    process: { platform: 'linux', execPath: path.join(installed, 'threatlint'), resourcesPath: path.join(installed, 'resources'), env: {}, argv },
+    process: { platform: 'linux', execPath: path.join(installed, 'threatlint'), resourcesPath: path.join(installed, 'resources'), env, argv },
     require: name => {
       if (name === 'electron') return electron;
       if (name === './user-path.cjs') return { userPath: () => process.env.PATH };
-      if (name === './update-source.cjs') return { prepareSource: async directory => {
+      if (name === './update-source.cjs') return { prepareSource: async (directory, runtime) => {
+        assert.equal(Object.hasOwn(runtime.env, 'THREATLINT_LOCAL_DESKTOP_BUILD'), false);
         calls.push(['fetch', directory]); if (failFetch) throw new Error('offline'); return path.join(root, 'managed/web');
       } };
-      if (name === 'node:child_process') return { spawn: (_node, args) => {
+      if (name === 'node:child_process') return { spawn: (_node, args, options) => {
+        assert.equal(Object.hasOwn(options.env, 'THREATLINT_LOCAL_DESKTOP_BUILD'), false);
         calls.push(['script', ...args]);
         const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
         queueMicrotask(() => {
@@ -120,15 +122,23 @@ function updater(t, { argv = [], failFetch = false, fingerprint = 'fresh', failB
       return require(name);
     },
   });
-  return { update: () => module.exports.updateOnLaunch({ source: '/missing/build/machine', fingerprint, commit: 'latest' },
-    { status: () => {} }, () => {}), calls, installed };
+  return { update: () => module.exports.updateOnLaunch({ source: '/missing/build/machine', fingerprint, commit: 'latest', localBuild },
+    { status: () => {} }, line => logs.push(line)), calls, installed, logs };
 }
 
 it('fetches before comparing fingerprints even without the original build checkout', async t => {
-  const fixture = updater(t);
+  const fixture = updater(t, { env: { THREATLINT_LOCAL_DESKTOP_BUILD: '1' }, localBuild: 'true' });
   assert.equal(await fixture.update(), true);
   assert.equal(fixture.calls[0][0], 'fetch');
   assert.equal(fixture.calls[1].at(-1), 'current');
+});
+
+it('keeps an explicitly stamped local build without fetching or staging upstream', async t => {
+  const fixture = updater(t, { fingerprint: 'old', failFetch: true, localBuild: true });
+  assert.equal(await fixture.update(), true);
+  assert.deepEqual(fixture.calls, []);
+  assert.equal(fs.readFileSync(path.join(fixture.installed, 'marker'), 'utf8'), 'old');
+  assert.match(fixture.logs[0], /explicitly packaged local build/);
 });
 
 it('skips the immediate update relaunch to prevent an update loop', async t => {

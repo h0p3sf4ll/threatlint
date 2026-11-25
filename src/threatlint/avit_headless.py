@@ -257,8 +257,12 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
         )
         prepare_fix = not getattr(args, "no_fix_pr", False) and target.get("scm") in ("azure-devops", "github")
         if prepare_fix:
-            from .avit_pr import FIX_PATCH_GUIDANCE  # noqa: PLC0415
-            prompt += "\n" + FIX_PATCH_GUIDANCE
+            prompt += (
+                "\nFor a supported true positive, include quoted Evidence with checkout file:line references "
+                "and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact "
+                "Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff "
+                "in a follow-up after checking the evidence."
+            )
         print(f"  Reviewing {kind.upper()} with {provider}", flush=True)
         output = _run_review_model(provider, system_prompt, prompt, repo, model, args, base_url, api_key)
         file_path = item["context"].get("file_path", "")
@@ -268,7 +272,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             if not file_path or not flagged.is_relative_to(root) or not flagged.is_file():
                 raise ResolveError("The flagged Secrets file is unavailable; no report was uploaded")
         redacted = 0
-        evidence_attempts = 0
+        followups = {"evidence": 0, "patch": 0}
         readiness = None
         evidence_target = {**target, "file_path": file_path, "line": item["context"].get("line", "")}
 
@@ -288,9 +292,13 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             if prepare_fix:
                 from .avit_evidence import assess_review  # noqa: PLC0415
                 readiness = assess_review(avit, output, str(repo), evidence_target)
-                while readiness["status"] == "refine" and evidence_attempts < 2:
-                    evidence_attempts += 1
-                    print(f"  Investigating evidence and preparing the fix (follow-up {evidence_attempts}/2)", flush=True)
+                while readiness["status"] == "refine":
+                    phase = "patch" if readiness.get("phase") == "patch" else "evidence"
+                    if followups[phase] >= 2:
+                        break
+                    followups[phase] += 1
+                    action = "Preparing the proposed fix" if phase == "patch" else "Investigating the finding evidence"
+                    print(f"  {action} (follow-up {followups[phase]}/2)", flush=True)
                     output = _run_review_model(provider, system_prompt, prompt + "\n\n" + readiness["prompt"],
                                                repo, model, args, base_url, api_key)
                     output, count = sanitized_draft(output)
@@ -340,13 +348,16 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 if readiness["status"] == "refine":
                     reason = "; ".join(readiness["issues"])
                     pull_request = {"status": "blocked", "reason": reason}
-                    completed = False
-                    print(f"  ! Report attached, but evidence investigation could not produce a validated fix: {reason}", flush=True)
+                    if readiness.get("unverified"):
+                        print(f"  INFO: Report attached. Draft fix PR blocked pending evidence: {reason}", flush=True)
+                    else:
+                        completed = False
+                        print(f"  ! Report attached, but evidence investigation could not produce a validated fix: {reason}", flush=True)
                 elif readiness["status"] == "skipped":
                     pull_request = {"status": "skipped", "reason": "; ".join(readiness["issues"])}
                     print(f"  INFO: Draft fix PR: {pull_request['reason']}", flush=True)
                 else:
-                    pull_request = create_fix_pr(avit, output, str(repo), target, profile=args.aws_profile, instance=instance)
+                    pull_request = create_fix_pr(avit, output, str(repo), evidence_target, profile=args.aws_profile, instance=instance)
                     print(f"  INFO: Draft fix PR: {pull_request.get('url') or pull_request.get('reason')}", flush=True)
             except (ResolveError, sn.ServiceNowError, OSError, ValueError, subprocess.SubprocessError) as exc:
                 completed = False
@@ -354,7 +365,8 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 print(f"  ! Report attached, but draft fix PR failed: {_safe_error(exc)}", flush=True)
         return {"avit": avit, "disposition": verdict["disposition"], "completed": completed, "kind": kind,
                 **({"pull_request": pull_request} if pull_request else {}),
-                "unverified": bool(verdict.get("unverified")), "decision_basis": verdict.get("decision_basis", ""),
+                "unverified": bool(verdict.get("unverified") or (readiness and readiness.get("unverified"))),
+                "decision_basis": verdict.get("decision_basis", ""),
                 "attachment_name": resolve_args.attachment_name,
                 "report_bytes": docx.read_bytes() if verdict["disposition"] == "TRUE POSITIVE" else b""}
 

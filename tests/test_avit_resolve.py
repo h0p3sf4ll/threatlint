@@ -100,6 +100,7 @@ def test_verdict_is_read_from_the_original_finding_line():
 class FakeServiceNow:
     def __init__(self):
         self.calls = []
+        self.attachments = []
 
     def __call__(self, url, *, data=None, headers, method=None):
         self.calls.append((method or ("POST" if data is not None else "GET"), url.split("?")[0], data))
@@ -115,9 +116,17 @@ class FakeServiceNow:
             return {"result": [{"name": sn.AVIT_TABLE, "element": "state", "value": "3", "label": "Closed"},
                                {"name": sn.AVIT_TABLE, "element": "substate", "value": "6", "label": "False Positive"}]}
         if url.split("?")[0].endswith("/api/now/attachment"):
-            return {"result": []}
+            return {"result": self.attachments}
+        if method == "DELETE":
+            attachment_id = url.rsplit("/", 1)[1]
+            self.attachments = [row for row in self.attachments if row.get("sys_id") != attachment_id]
+            return {}
         if "/attachment/file" in url:
-            return {"result": {"sys_id": "b" * 32}}
+            fields = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            result = {key: values[0] for key, values in fields.items()}
+            result["sys_id"] = "b" * 32
+            self.attachments.append(result)
+            return {"result": result}
         if method == "PATCH":
             body = json.loads(data)
             return {"result": {"state": body.get("state", "1"), "substate": body.get("substate", "")}}
@@ -152,7 +161,7 @@ def test_tuning_commands_pass_the_exact_project_name(monkeypatch, tmp_path, comm
                 "project": canonical, "product": "sast"}] if matched else []
     monkeypatch.setattr(ar, "_session", lambda args: (INSTANCE, "synthetic"))
     monkeypatch.setattr(ar, "_record", lambda *args: record)
-    monkeypatch.setattr(ar, "attachment_names", lambda *args: set())
+    monkeypatch.setattr(ar, "_report_attachments", lambda *args: set())
     monkeypatch.setattr(ar, "attach", lambda *args: None)
     monkeypatch.setattr(ar, "update", lambda *args: {"state": "3", "substate": "3"})
     monkeypatch.setattr(ar, "semgrep_token", lambda *args: "synthetic")
@@ -398,42 +407,104 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
     assert triage["issue_type"] == "sca" and triage["issue_ids"] == [91]
 
 
-def test_an_already_attached_report_is_not_attached_twice(monkeypatch, tmp_path):
+def _old_report(name, attachment_id, record_id=SYS_ID):
+    return {"file_name": name, "sys_id": attachment_id, "table_name": sn.AVIT_TABLE, "table_sys_id": record_id}
+
+
+@pytest.mark.parametrize("suffix", [".docx", "-20261104T180000123456Z.docx"])
+def test_replaces_previous_reports_before_attaching_a_new_review(monkeypatch, tmp_path, suffix):
     fake = FakeServiceNow()
-    original = fake.__call__
-    def existing(url, **kw):
-        if url.split("?")[0].endswith("/api/now/attachment"):
-            return {"result": [{"file_name": f"{AVIT}-threatlint-fp-review.docx"}]}
-        return original(url, **kw)
-    monkeypatch.setattr(sn, "_request_json", existing)
+    unrelated = _old_report(f"{AVIT}-supporting-evidence.docx", "c" * 32)
+    fake.attachments = [
+        _old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32),
+        _old_report(f"{AVIT}-threatlint-fp-review-20261103T180000123456Z.docx", "e" * 32),
+        unrelated,
+    ]
+    monkeypatch.setattr(sn, "_request_json", fake)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
-    monkeypatch.setattr("sys.stdout", io.StringIO())
     args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
+    args.attachment_name = f"{AVIT}-threatlint-fp-review{suffix}"
     assert ar.cmd_resolve(args) == 0
-    assert not any(u.endswith("/attachment/file") for _m, u, _d in fake.calls)
+    writes = [(method, url.split("/api/now/")[-1]) for method, url, _data in fake.calls
+              if "/api/now/" in url and method in ("POST", "DELETE", "PATCH")]
+    assert writes == [("DELETE", f"attachment/{'d' * 32}"), ("DELETE", f"attachment/{'e' * 32}"),
+                      ("POST", "attachment/file"), ("PATCH", f"table/{sn.AVIT_TABLE}/{SYS_ID}")]
+    assert fake.attachments == [unrelated, _old_report(args.attachment_name, "b" * 32)]
 
 
-def test_headless_repeat_attaches_new_version_beside_existing_report(monkeypatch, tmp_path):
+@pytest.mark.parametrize("failure", ["denied", "still listed", "missing id", "wrong record"])
+def test_replacement_failure_prevents_attachment_and_avit_update(monkeypatch, tmp_path, failure):
     fake = FakeServiceNow()
-    original = fake.__call__
+    attachment_id = "d" * 32 if failure != "missing id" else ""
+    record_id = SYS_ID if failure != "wrong record" else "e" * 32
+    fake.attachments = [_old_report(f"{AVIT}-threatlint-fp-review.docx", attachment_id, record_id)]
 
-    def existing(url, **kwargs):
-        if url.split("?")[0].endswith("/api/now/attachment"):
-            return {"result": [{"file_name": f"{AVIT}-threatlint-fp-review.docx"}]}
-        return original(url, **kwargs)
+    def request(url, **kwargs):
+        if kwargs.get("method") == "DELETE":
+            if failure == "denied":
+                raise sn.ServiceNowError("ServiceNow returned HTTP 403")
+            if failure == "still listed":
+                return {}
+            pytest.fail("No deletion with an unverified attachment ID or record")
+        return fake(url, **kwargs)
 
-    monkeypatch.setattr(sn, "_request_json", existing)
+    monkeypatch.setattr(sn, "_request_json", request)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
-    monkeypatch.setattr("sys.stdout", io.StringIO())
     args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
-    args.attachment_name = f"{AVIT}-threatlint-fp-review-20261104T180000123456Z.docx"
-    assert ar.cmd_resolve(args) == 0
-    uploads = [u for _m, u, _d in fake.calls if u.endswith("/attachment/file")]
-    assert len(uploads) == 1
+    with pytest.raises(ar.ResolveError, match="no new report was uploaded"):
+        ar.cmd_resolve(args)
+    assert fake.attachments
+    assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
 
+
+def test_rejects_unrelated_attachment_name(monkeypatch, tmp_path):
+    monkeypatch.setattr(sn, "_request_json", FakeServiceNow())
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
     args.attachment_name = f"{AVIT}-other.docx"
     with pytest.raises(ar.ResolveError, match="attachment name is invalid"):
         ar.cmd_resolve(args)
+
+
+def test_invalid_new_report_preserves_an_existing_attachment(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    fake.attachments = [_old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32)]
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    args = _args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))
+    with open(args.docx, "wb") as report:
+        report.write(b"Invalid document")
+    with pytest.raises(ar.ResolveError, match="not a Word document"):
+        ar.cmd_resolve(args)
+    assert fake.attachments and not any(method == "DELETE" for method, _, _ in fake.calls)
+
+
+def test_replacement_upload_failure_does_not_update_the_avit(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    fake.attachments = [_old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32)]
+
+    def request(url, **kwargs):
+        if "/attachment/file" in url:
+            raise sn.ServiceNowError("Upload failed")
+        return fake(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", request)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    with pytest.raises(ar.ResolveError, match="removed.*replacement attachment could not be confirmed"):
+        ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE")))
+    assert not fake.attachments and not any(method == "PATCH" for method, _, _ in fake.calls)
+
+
+def test_attachment_delete_accepts_a_no_content_response(monkeypatch):
+    class NoContent(io.BytesIO):
+        status = 204
+
+    def open_request(request, *, timeout):
+        assert request.get_method() == "DELETE"
+        return NoContent()
+
+    monkeypatch.setattr(sn, "_OPENER", types.SimpleNamespace(open=open_request))
+    assert sn._request_json(f"{INSTANCE}/api/now/attachment/{'d' * 32}", headers={}, method="DELETE") == {}
 
 
 def test_attachment_listing_failure_prevents_avit_update(monkeypatch, tmp_path):

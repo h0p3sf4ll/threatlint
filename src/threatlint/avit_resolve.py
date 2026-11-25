@@ -27,13 +27,14 @@ from threatlint import servicenow as sn
 from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_triage
 from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
 from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
-from threatlint.avit_report import ResolveError, report_line as _report_line, verdict_for
+from threatlint.avit_report import ResolveError, needs_confirmation, report_line as _report_line, verdict_for
 from threatlint.finding_review import CONSERVATIVE_REASON, is_conservative
 from threatlint.avit_semgrep import same_path as _same_path, tail as _tail
 
 # Work notes, exactly as AppSec asked for them.
 CLOSING_COMMENT = "Closed by Threatlint as a false positive, see attached report."
 TRUE_POSITIVE_COMMENT = "True positive, see attached report."
+UNVERIFIED_COMMENT = "Threatlint has not confirmed the scanner claim. See the report for the remaining evidence."
 AMBIGUOUS_COMMENT = "Ambiguous, see attached report. Left open pending the evidence the report names."  # Legacy journal recognition only.
 REPO_REMOVED_COMMENT = "Closed by Threatlint, repo removed."
 # AVR Closed state / substate for a false positive (override with THREATLINT_SNOW_FP_STATE / _SUBSTATE).
@@ -67,15 +68,58 @@ def _false_positive_choices() -> tuple[str, str]:
 
 def attach(instance: str, token: str, sys_id: str, name: str, content: bytes, content_type: str) -> None:
     query = urllib.parse.urlencode({"table_name": sn.AVIT_TABLE, "table_sys_id": sys_id, "file_name": name})
-    sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=content, headers={"Authorization": f"Bearer {token}", "Content-Type": content_type})
+    response = sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=content,
+                                headers={"Authorization": f"Bearer {token}", "Content-Type": content_type})
+    result = response.get("result") if isinstance(response, dict) else None
+    if not isinstance(result, dict) or not re.fullmatch(r"[0-9a-f]{32}", sn._field_value(result.get("sys_id"))):
+        raise ResolveError("ServiceNow did not confirm the new AVIT report attachment")
 
 
-def attachment_names(instance: str, token: str, sys_id: str) -> set[str]:
-    query = urllib.parse.urlencode({"sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
-    rows = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"}).get("result")
-    if not isinstance(rows, list) or any(not isinstance(row, dict) or not sn._field_value(row.get("file_name")) for row in rows):
-        raise ResolveError("ServiceNow did not return a readable AVIT attachment list")
-    return {sn._field_value(row["file_name"]) for row in rows}
+def _report_attachments(instance: str, token: str, sys_id: str, avit: str, report_name: re.Pattern[str]) -> set[str]:
+    reports: set[str] = set()
+    limit = 200
+    for offset in range(0, 2000, limit):
+        query = urllib.parse.urlencode({
+            "sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}^file_nameSTARTSWITH{avit}-threatlint-fp-review^ORDERBYsys_id",
+            "sysparm_fields": "sys_id,file_name,table_name,table_sys_id", "sysparm_limit": str(limit), "sysparm_offset": str(offset),
+        })
+        response = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"})
+        rows = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or not sn._field_value(row.get("file_name")) for row in rows):
+            raise ResolveError("ServiceNow did not return a readable AVIT attachment list")
+        for row in rows:
+            if not report_name.fullmatch(sn._field_value(row.get("file_name"))):
+                continue
+            attachment_id = sn._field_value(row.get("sys_id"))
+            if (not re.fullmatch(r"[0-9a-f]{32}", attachment_id) or attachment_id in reports
+                    or sn._field_value(row.get("table_name")) != sn.AVIT_TABLE
+                    or sn._field_value(row.get("table_sys_id")) != sys_id):
+                raise ResolveError("ServiceNow did not identify a previous report on this AVIT; no new report was uploaded")
+            reports.add(attachment_id)
+        if len(rows) < limit:
+            return reports
+    raise ResolveError("The AVIT attachment list exceeded the review limit; no new report was uploaded")
+
+
+def _replace_report(instance: str, token: str, sys_id: str, avit: str, report_name: re.Pattern[str],
+                    name: str, content: bytes) -> None:
+    previous = _report_attachments(instance, token, sys_id, avit, report_name)
+    if previous:
+        try:
+            for attachment_id in sorted(previous):
+                sn._request_json(f"{instance}/api/now/attachment/{attachment_id}", method="DELETE",
+                                 headers={"Authorization": f"Bearer {token}"})
+            if _report_attachments(instance, token, sys_id, avit, report_name):
+                raise ResolveError("ServiceNow still lists a previous report")
+        except (ResolveError, sn.ServiceNowError) as exc:
+            raise ResolveError(f"Could not remove the previous Threatlint report from {avit}; no new report was uploaded. {exc}") from exc
+    try:
+        attach(instance, token, sys_id, name, content, _DOCX)
+    except (ResolveError, sn.ServiceNowError) as exc:
+        if previous:
+            raise ResolveError(f"The previous Threatlint report was removed from {avit}, but the replacement attachment could not be confirmed. {exc}") from exc
+        raise
+    print(f"  ✓ Attached {name}")
 
 
 def update(instance: str, token: str, sys_id: str, values: dict[str, str]) -> dict:
@@ -220,27 +264,23 @@ def cmd_resolve(args) -> int:
     code_security = sn.in_code_security_view(record)
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
-    # One attachment: the Word report. A headless repeat review uses a unique
-    # timestamped name so the new evidence is kept alongside the earlier review.
     name = getattr(args, "attachment_name", None) or f"{avit}-threatlint-fp-review.docx"
-    if not re.fullmatch(rf"{re.escape(avit)}-threatlint-fp-review(?:-\d{{8}}T\d{{12}}Z)?\.docx", name):
+    report_name = re.compile(rf"{re.escape(avit)}-threatlint-fp-review(?:-\d{{8}}T\d{{12}}Z)?\.docx")
+    if not report_name.fullmatch(name):
         raise ResolveError("The AVIT report attachment name is invalid")
     with open(os.path.expanduser(args.docx), "rb") as handle:
-        files = [(name, handle.read(), _DOCX)]
-    action = ("attach the report and close it as Closed / False Positive" if false_positive
-              else "attach the report and add a TRUE POSITIVE work note (state unchanged)")
-    _confirm(f"{avit}: {action}?", args.yes)
-    # Attach first so the AVIT is never closed without its evidence.
-    existing = attachment_names(instance, token, record["sys_id"])
-    for name, content, content_type in files:
-        if name in existing:
-            print(f"  ✓ {name} is already attached")
-            continue
-        attach(instance, token, record["sys_id"], name, content, content_type)
-        print(f"  ✓ Attached {name}")
+        content = handle.read()
+    if not content.startswith(b"PK"):
+        raise ResolveError("The new AVIT report is not a Word document")
+    action = ("close it as Closed / False Positive" if false_positive
+              else "add a TRUE POSITIVE work note (state unchanged)")
+    _confirm(f"{avit}: replace any previous Threatlint report, attach this report, and {action}?", args.yes)
+    _replace_report(instance, token, record["sys_id"], avit, report_name, name, content)
     note = CLOSING_COMMENT if false_positive else TRUE_POSITIVE_COMMENT
     if is_conservative(verdict):
         note += " " + CONSERVATIVE_REASON
+    elif needs_confirmation(verdict, markdown):
+        note += " " + UNVERIFIED_COMMENT
     values = {"work_notes": note}
     if false_positive:
         state, substate = _false_positive_choices()
