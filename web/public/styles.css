@@ -694,3 +694,19 @@ output.operations-status,output.field-note,output.toast{display:block}
 #aws-parameters-form .settings-actions{flex-wrap:wrap;justify-content:flex-start;gap:10px}
 
 .management-add-member{border-top:1px solid var(--border);margin-top:24px;padding-top:12px;display:grid;gap:12px}.management-add-member h3,.management-add-member p{margin:0}.management-add-member label{display:grid;gap:7px;font-size:14px}.management-add-member .management-actions{align-items:center;flex-wrap:wrap}.management-add-member select{min-width:130px;max-width:100%}.web-profile a.web-signout{text-decoration:none}
+
+/* Read-only source pulls save a shared issue inbox without changing upstream tickets. */
+.management-pull-selection{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 12px}
+.management-pull-source-list{border:0;padding:0;margin:0;min-width:0}.management-pull-source-list>legend{font-size:13px;font-weight:500;margin-bottom:9px}
+#management-pull-sources{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.management-pull-source{display:flex;flex-direction:column;gap:12px;min-width:0;border:1px solid var(--border);border-radius:8px;padding:15px;background:#111914}
+.management-pull-source:has(input:checked){border-color:#4a7758;background:#15241b}.management-pull-source.unavailable{opacity:.75}
+.management-pull-source-choice{display:flex;align-items:flex-start;gap:11px;cursor:pointer}.management-pull-source-choice>input{width:16px;height:16px;margin:3px 0 0;accent-color:var(--accent);flex-shrink:0}
+.management-pull-source-choice>span{display:grid;gap:5px;min-width:0}.management-pull-source-choice strong{font-size:15px;font-weight:500;overflow-wrap:anywhere}.management-pull-source-choice .small{font-size:12px;line-height:1.5}
+.management-pull-type{display:grid;gap:7px;font-size:13px;color:var(--muted);padding-left:27px}.management-pull-type input{width:100%;min-width:0;font-size:14px}
+.management-pull-source-note{margin:0;padding-left:27px;line-height:1.6;overflow-wrap:anywhere}
+.management-pull-options{display:flex;align-items:flex-end;gap:15px;flex-wrap:wrap;margin:18px 0}.management-pull-options label{display:grid;gap:7px;font-size:13px}.management-pull-options select{min-width:170px;font-size:14px}.management-pull-options>p{margin:0 0 8px;font-size:12px}
+.management-pull-snow-note{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--border);border-radius:8px;margin:0 0 18px}.management-pull-snow-note p{margin:0;line-height:1.6;font-size:13px}.management-pull-snow-note .button{flex-shrink:0}
+.management-pull-results{display:grid;gap:8px;list-style:none;padding:0;margin:16px 0 0}.management-pull-results:empty{display:none}.management-pull-result{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:#111914}.management-pull-result>div{min-width:0}.management-pull-result strong{font-size:14px;font-weight:500;overflow-wrap:anywhere}.management-pull-result p{margin:5px 0 0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}.management-pull-result.has-error{border-color:#775348}.management-pull-result .button{flex-shrink:0}
+#management-pull-status{line-height:1.6;margin-top:12px}#management-pull-error{overflow-wrap:anywhere}
+@media(max-width:740px){#management-pull-sources{grid-template-columns:minmax(0,1fr)}.management-pull-options{align-items:stretch;flex-direction:column;gap:8px}.management-pull-options select{width:100%}.management-pull-options>p{margin:0}.management-pull-result{align-items:flex-start;flex-wrap:wrap}.management-pull-result>.button{margin-left:auto}.management-pull-selection>.management-actions{width:auto}}

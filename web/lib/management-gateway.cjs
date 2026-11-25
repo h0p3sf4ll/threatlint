@@ -44,6 +44,9 @@ function registerGatewayManagement(app, { scopeDirectory, userForRequest, worker
   app.use('/api/management', express.json({ limit: '128kb' }));
   return registerManagementRoutes(app, { scopeDirectory, integrations,
     actor: req => userForRequest(req).id,
+    serviceNowSource: req => workerCall(workers, userForRequest(req), '/internal/management/servicenow/source'),
+    serviceNowPage: (req, connection, input) => workerCall(workers, userForRequest(req), '/internal/management/servicenow/page',
+      { instance: connection.instance, filters: input.filters, offset: input.offset }),
     resolveReport: (req, id) => {
       if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/i.test(id)) throw new HttpError('Report not found', 404);
       return workerCall(workers, userForRequest(req), `/internal/management/report/${encodeURIComponent(id)}`);

@@ -12,9 +12,11 @@ function publicConnection(connection) {
   const provider = PROVIDERS.find(item => item.id === connection.provider);
   return { id: connection.id, name: connection.name, kind: connection.kind, provider: connection.provider,
     enabled: connection.enabled !== false, isDefault: connection.isDefault === true, hasToken: !!connection.token,
-    updatedAt: connection.updatedAt, ...Object.fromEntries((provider?.fields || []).map(field => [field.name, connection[field.name] || ''])) };
+    updatedAt: connection.updatedAt, ...(provider?.credentialSource ? { credentialSource: provider.credentialSource, pullOnly: true, instance: connection.instance } : {}),
+    ...Object.fromEntries((provider?.fields || []).map(field => [field.name, connection[field.name] || ''])) };
 }
 function reviewReference(connection, externalId) {
+  if (connection.provider === 'servicenow-avit') return `${connection.instance}#${externalId}`;
   if (connection.provider === 'jira') return `${connection.baseUrl}/browse/${externalId}`;
   if (connection.provider === 'github-issues') return `${connection.repository}#${externalId}`;
   return `${connection.organization}/${connection.project}#${externalId}`;
@@ -39,8 +41,15 @@ function createManagementStore(directory = null) {
     if (fs.existsSync(file)) {
       try {
         const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-        if (saved.version !== 1 || !Array.isArray(saved.connections) || !Array.isArray(saved.findings) || !Array.isArray(saved.operations) || !Array.isArray(saved.audit) || saved.connections.length > MAX_CONNECTIONS || saved.findings.length > MAX_FINDINGS || saved.operations.length > MAX_FINDINGS || saved.audit.length > 2000) throw new Error('Invalid registry');
-        state = { ...state, ...saved, connections: saved.connections.map(connection => ({ ...connection, token: decrypt(connection.encryptedToken) })) };
+        if (![1, 2].includes(saved.version) || !Array.isArray(saved.connections) || !Array.isArray(saved.findings) || !Array.isArray(saved.operations) || !Array.isArray(saved.audit) || saved.connections.length > MAX_CONNECTIONS || saved.findings.length > MAX_FINDINGS || saved.operations.length > MAX_FINDINGS || saved.audit.length > 2000) throw new Error('Invalid registry');
+        state = { ...state, ...saved, connections: saved.connections.map(connection => {
+          if (connection.provider === 'servicenow-avit') {
+            if (saved.version !== 2 || connection.credentialSource !== 'servicenow-settings' || Object.hasOwn(connection, 'encryptedToken') || Object.hasOwn(connection, 'token') ||
+                require('./servicenow.cjs').validateInstanceUrl(connection.instance) !== connection.instance || connection.id !== serviceNowId(connection.instance)) throw new Error('Invalid ServiceNow descriptor');
+            return { ...connection };
+          }
+          return { ...connection, token: decrypt(connection.encryptedToken) };
+        }) };
       } catch { throw new Error('Integration settings could not be read; existing data was preserved'); }
     }
   }
@@ -58,7 +67,7 @@ function createManagementStore(directory = null) {
   }
   function save() {
     if (!file) return;
-    const connections = state.connections.map(connection => { const { token, encryptedToken, ...safe } = connection; return { ...safe, encryptedToken: encrypt(token) }; });
+    const connections = state.connections.map(connection => { const { token, encryptedToken, ...safe } = connection; return connection.provider === 'servicenow-avit' ? safe : { ...safe, encryptedToken: encrypt(token) }; });
     const temporary = `${file}.${crypto.randomUUID()}.tmp`;
     try { fs.writeFileSync(temporary, JSON.stringify({ ...state, connections }, null, 2), { mode: 0o600 }); fs.renameSync(temporary, file); }
     finally { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
@@ -86,6 +95,20 @@ function createManagementStore(directory = null) {
     else state.connections.push(value);
     return value;
   }
+  function serviceNowId(instance) { return 'servicenow-avit-' + crypto.createHash('sha256').update(instance).digest('hex'); }
+  function serviceNowConnection(instance, { create = true } = {}) {
+    const normalized = require('./servicenow.cjs').validateInstanceUrl(instance), id = serviceNowId(normalized);
+    const previous = state.connections.find(item => item.id === id);
+    if (previous) {
+      if (previous.enabled === false) throw new HttpError('This ServiceNow issue source is disabled', 409);
+      return previous;
+    }
+    if (create && state.connections.length >= MAX_CONNECTIONS) throw new HttpError('At most 100 saved connections are supported', 409);
+    const value = { id, name: 'ServiceNow AVIT — ' + new URL(normalized).hostname, provider: 'servicenow-avit', kind: 'tracker',
+      credentialSource: 'servicenow-settings', instance: normalized, enabled: true, isDefault: false, updatedAt: Date.now() };
+    if (create) { state.version = 2; state.connections.push(value); }
+    return value;
+  }
   function remove(id) {
     const value = connection(id, { enabled: false });
     if (state.findings.some(item => item.connectionId === id) || state.operations.some(item => item.connectionId === id)) throw new HttpError('This connection has tracked findings or ticket operations. Disable it to preserve ticket history.', 409);
@@ -101,7 +124,7 @@ function createManagementStore(directory = null) {
     const disposition = issue.closed ? previous?.disposition === 'FALSE POSITIVE' ? 'FALSE POSITIVE' : 'RESOLVED' : 'OPEN';
     const value = { ...previous, id: previous?.id || crypto.randomUUID(), connectionId: connection.id, provider: connection.provider,
       externalId: issue.externalId, title: issue.title, state: issue.state, url: issue.url, severity: issue.severity || 'UNSPECIFIED',
-      disposition, generated: previous?.generated === true, reviewReference: reviewReference(connection, issue.externalId),
+      disposition, generated: previous?.generated === true, reviewReference: reviewReference(connection, issue.externalId), issueType: issue.issueType || previous?.issueType || '',
       closureAcknowledgement: issue.closed ? previous?.closureAcknowledgement : undefined, updatedAt: Date.now(), ...extra };
     if (previous) state.findings[state.findings.indexOf(previous)] = value; else state.findings.push(value);
     return value;
@@ -113,7 +136,28 @@ function createManagementStore(directory = null) {
     try { const result = work(); save(); return result; }
     catch (error) { state = previous; throw error; }
   }
+  const cursorKey = key || crypto.randomBytes(32);
+  function cursorScope(connection, filters) {
+    return crypto.createHash('sha256').update(JSON.stringify([connection.id, connection.provider, connection.instance, connection.baseUrl,
+      connection.organization, connection.project, connection.repository, connection.issueType, connection.closeState, filters])).digest('hex');
+  }
+  function pullCursor(connection, filters, position) {
+    if (position === null || position === undefined) return null;
+    const payload = Buffer.from(JSON.stringify({ version: 1, scope: cursorScope(connection, filters), position })).toString('base64url');
+    const signature = crypto.createHmac('sha256', cursorKey).update('issue-pull-v1:' + payload).digest('base64url');
+    return payload + '.' + signature;
+  }
+  function readPullCursor(connection, filters, cursor) {
+    if (cursor === undefined || cursor === null) return null;
+    if (typeof cursor !== 'string' || cursor.length > 4096 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(cursor)) throw new HttpError('Invalid issue pull cursor; start this source again');
+    const [payload, signature] = cursor.split('.'), expected = crypto.createHmac('sha256', cursorKey).update('issue-pull-v1:' + payload).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new HttpError('Invalid issue pull cursor; start this source again');
+    let value; try { value = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { throw new HttpError('Invalid issue pull cursor'); }
+    if (value.version !== 1 || value.scope !== cursorScope(connection, filters)) throw new HttpError('Issue pull filters or source changed; start this source again');
+    return value.position;
+  }
   return { get state() { return state; }, save, transaction, mutate, connection, upsert, remove, audit, putFinding,
+    serviceNowConnection, pullCursor, readPullCursor,
     listConnections: () => state.connections.map(publicConnection), listFindings: () => state.findings.map(publicFinding) };
 }
 
