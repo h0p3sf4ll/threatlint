@@ -23,10 +23,11 @@
     const response = await (profile?.fetch || fetch)(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
     if (response.status === 401 && profile?.web) location.replace('/login');
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+    if (!response.ok) throw Object.assign(new Error(result.error || `Request failed (${response.status})`), { status: response.status });
     return result;
   }
   function can(permission) { return state.access?.permissions?.[permission] === true; }
+  const issuePull = { sources: [], selected: new Set(), types: new Map(), results: new Map(), controls: [], busy: false, loading: false, version: 0 };
   const avits = { items: [], filters: {}, nextOffset: null, busy: false, dirty: true };
   function initializeAvits() {
     // Share the Metrics filter form so field names, choice values, and available filters stay aligned.
@@ -41,7 +42,7 @@
     const project = form.elements.namedItem('project');
     const syncScm = () => { const ado = form.elements.namedItem('scm').value === 'ado'; project.closest('label').hidden = !ado; if (!ado) project.value = ''; };
     syncScm(); form.elements.namedItem('scm').addEventListener('change', syncScm);
-    form.addEventListener('input', () => { avits.dirty = true; $('management-avits-more').disabled = true; note.textContent = 'Filters changed. Load AVITs to update the records.'; });
+    form.addEventListener('input', () => { avits.dirty = true; $('management-avits-more').disabled = true; note.textContent = 'Filters changed. Load AVITs to update the records.'; invalidateIssuePull(); });
     form.addEventListener('submit', event => { event.preventDefault(); void loadAvits(false); });
     form.querySelector('#management-avit-aggregate-configure').addEventListener('click', () => document.dispatchEvent(new CustomEvent('threatlint:settings-open', { detail: { section: 'servicenow' } })));
     $('management-avit-filters').append(form);
@@ -64,7 +65,7 @@
     }
   }
   async function loadAvits(append) {
-    if (avits.busy || (append && (avits.dirty || avits.nextOffset === null))) return;
+    if (avits.busy || (issuePull.busy && issuePull.selected.has('servicenow-avit')) || (append && (avits.dirty || avits.nextOffset === null))) return;
     const filters = append ? avits.filters : Object.fromEntries([...new FormData($('management-avit-form'))].filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
     if (filters.scm !== 'ado') delete filters.project;
     avits.busy = true; $('management-avit-error').textContent = '';
@@ -99,8 +100,163 @@
       $('management-avits-more').disabled = avits.dirty;
     }
   }
+  function automaticServiceNow(value) { return value?.provider === 'servicenow-avit' || value?.credentialSource === 'servicenow-settings'; }
+  function pullOnly(value) { return value?.pullOnly === true || automaticServiceNow(value) || providerFor(value?.provider)?.pullOnly === true; }
+  function issueSource(id) { return issuePull.sources.find(source => source.id === id); }
+  function refreshPullControls() {
+    const locked = issuePull.busy || issuePull.loading;
+    const allowed = can('manageFindings');
+    for (const control of issuePull.controls) {
+      control.checkbox.disabled = locked || !allowed || !control.source.available;
+      if (control.type) control.type.disabled = locked || !allowed || !issuePull.selected.has(control.source.id);
+    }
+    $('management-pull-state').disabled = locked || !allowed;
+    $('management-pull-all').disabled = locked || !allowed || !issuePull.sources.some(source => source.available);
+    $('management-pull-clear').disabled = locked || !allowed || issuePull.selected.size === 0;
+    $('management-pull-refresh').disabled = locked;
+    $('management-pull-start').disabled = locked || !allowed || issuePull.selected.size === 0;
+    $('management-pull-selection').textContent = issuePull.selected.size ? `${issuePull.selected.size} source${issuePull.selected.size === 1 ? '' : 's'} selected` : 'Choose sources to pull.';
+    const snowSelected = issuePull.selected.has('servicenow-avit');
+    $('management-pull-snow-note').hidden = !snowSelected;
+    $('management-pull-snow-filters').disabled = issuePull.busy;
+    if (snowSelected) {
+      const form = $('management-avit-form');
+      if (form) for (const input of form.querySelectorAll('input, select, button')) input.disabled = avits.busy || issuePull.busy;
+    }
+    for (const control of $('management-pull-results').querySelectorAll('button')) control.disabled = locked || !allowed;
+  }
+  function invalidateIssuePull() {
+    if (issuePull.busy) return;
+    issuePull.results.clear();
+    $('management-pull-results').replaceChildren();
+    $('management-pull-status').textContent = issuePull.selected.size ? 'Sources or filters changed. Pull selected sources to refresh the inbox.' : '';
+    refreshPullControls();
+  }
+  function selectIssueSources(all) {
+    if (issuePull.busy || issuePull.loading || !can('manageFindings')) return;
+    issuePull.selected = new Set(all ? issuePull.sources.filter(source => source.available).map(source => source.id) : []);
+    renderPullSources(); invalidateIssuePull();
+  }
+  function renderPullSources() {
+    const list = $('management-pull-sources'); list.replaceChildren(); issuePull.controls = [];
+    if (!issuePull.sources.length) {
+      list.append(node('p', 'subtle', 'No issue sources are available. Add Jira, Azure Boards, or GitHub Issues in Integrations, or configure ServiceNow in Settings.'));
+      return;
+    }
+    issuePull.sources.forEach((source, index) => {
+      const row = node('div', `management-pull-source${source.available ? '' : ' unavailable'}`);
+      const label = node('label', 'management-pull-source-choice');
+      const checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.checked = issuePull.selected.has(source.id); checkbox.value = source.id;
+      const info = node('span'); info.append(node('strong', '', source.name), node('span', 'small subtle', automaticServiceNow(source) ? 'ServiceNow AVITs · uses ServiceNow Settings' : providerFor(source.provider)?.label || source.provider));
+      label.append(checkbox, info); row.append(label);
+      const control = { source, checkbox };
+      checkbox.addEventListener('change', () => {
+        if (checkbox.disabled) return;
+        if (checkbox.checked) issuePull.selected.add(source.id); else issuePull.selected.delete(source.id);
+        invalidateIssuePull();
+      });
+      if (['jira', 'azure-boards'].includes(source.provider)) {
+        const typeLabel = node('label', 'management-pull-type', source.provider === 'jira' ? 'Issue type' : 'Work item type');
+        const input = node('input'); input.type = 'text'; input.maxLength = 200; input.autocomplete = 'off'; input.id = `management-pull-type-${index}`;
+        input.value = issuePull.types.get(source.id) ?? source.issueType ?? ''; input.placeholder = 'Use connection default';
+        typeLabel.htmlFor = input.id; typeLabel.append(input); row.append(typeLabel); control.type = input;
+        input.addEventListener('input', () => { issuePull.types.set(source.id, input.value); invalidateIssuePull(); });
+      }
+      if (!source.available) row.append(node('p', 'small subtle management-pull-source-note', source.error || 'Configure this source in Settings before pulling issues.'));
+      issuePull.controls.push(control); list.append(row);
+    });
+    refreshPullControls();
+  }
+  async function loadIssueSources() {
+    if (issuePull.busy) return;
+    const version = ++issuePull.version; issuePull.loading = true; refreshPullControls();
+    $('management-pull-sources').setAttribute('aria-busy', 'true'); $('management-pull-error').textContent = '';
+    try {
+      const result = await api('/api/management/issue-sources');
+      if (!Array.isArray(result.sources)) throw new Error('Connected issue sources could not be loaded. Try refreshing sources.');
+      const sources = result.sources.filter(source => source && typeof source.id === 'string' && typeof source.name === 'string' && source.kind === 'tracker' && ['jira', 'azure-boards', 'github-issues', 'servicenow-avit'].includes(source.provider));
+      if (new Set(sources.map(source => source.id)).size !== sources.length) throw new Error('Connected issue sources could not be verified. Try refreshing sources.');
+      if (version !== issuePull.version) return;
+      issuePull.sources = sources;
+      issuePull.selected = new Set([...issuePull.selected].filter(id => sources.some(source => source.id === id && source.available)));
+      if (Array.isArray(result.providers) && result.providers.length) state.providers = result.providers;
+      renderPullSources(); invalidateIssuePull(); fillTrackerFilters(); renderFindings();
+    } catch (error) { if (version === issuePull.version) $('management-pull-error').textContent = `${error.message} Previously saved issues remain in the inbox.`; }
+    finally {
+      if (version === issuePull.version) { issuePull.loading = false; $('management-pull-sources').setAttribute('aria-busy', 'false'); refreshPullControls(); }
+    }
+  }
+  function sourcePullFilters(source) {
+    if (automaticServiceNow(source)) {
+      const filters = Object.fromEntries([...new FormData($('management-avit-form'))].filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
+      if (filters.scm !== 'ado') delete filters.project;
+      return filters;
+    }
+    const filters = { state: $('management-pull-state').value || 'all' };
+    const type = (issuePull.types.get(source.id) ?? source.issueType ?? '').trim();
+    if (['jira', 'azure-boards'].includes(source.provider) && type) filters.issueType = type;
+    return filters;
+  }
+  function renderPullResults() {
+    const list = $('management-pull-results'); list.replaceChildren();
+    for (const [id, result] of issuePull.results) {
+      const row = node('li', `management-pull-result${result.error ? ' has-error' : ''}`); const info = node('div');
+      info.append(node('strong', '', result.name));
+      info.append(node('p', result.error ? 'form-error' : 'small subtle', result.pending ? 'Pulling issues…' : result.error || `${result.imported} issue${result.imported === 1 ? '' : 's'} added or updated on this page.`));
+      row.append(info);
+      if (!result.pending && result.error) row.append(button('Retry source', () => pullIssues({ retry: id })));
+      else if (!result.pending && result.nextCursor) row.append(button('Load more', () => pullIssues({ more: id })));
+      list.append(row);
+    }
+    refreshPullControls();
+  }
+  async function pullIssues({ more, retry } = {}) {
+    if (issuePull.busy || issuePull.loading || !can('manageFindings')) return;
+    let requests;
+    if (more || retry) {
+      const previous = issuePull.results.get(more || retry);
+      if (!previous || (more && (!previous.nextCursor || previous.error)) || (retry && !previous.error)) return;
+      requests = [{ ...previous.request, ...(more ? { cursor: previous.nextCursor } : {}) }];
+    } else {
+      requests = issuePull.sources.filter(source => source.available && issuePull.selected.has(source.id)).map(source => ({ connectionId: source.id, filters: sourcePullFilters(source) }));
+    }
+    if (!requests.length) return;
+    if (avits.busy && requests.some(request => automaticServiceNow(issueSource(request.connectionId)))) { $('management-pull-error').textContent = 'Wait for the ServiceNow AVIT load to finish before pulling these sources.'; return; }
+    issuePull.busy = true; $('management-pull-error').textContent = '';
+    if (!more && !retry) issuePull.results.clear();
+    for (const request of requests) issuePull.results.set(request.connectionId, { name: issueSource(request.connectionId)?.name || 'Issue source', request, pending: true, imported: 0, nextCursor: null });
+    renderPullResults();
+    let accountChanged = false;
+    try {
+      for (let start = 0; start < requests.length; start += 10) {
+        const batch = requests.slice(start, start + 10);
+        $('management-pull-status').textContent = `Pulling ${requests.length} source${requests.length === 1 ? '' : 's'}…`;
+        try {
+          const result = await api('/api/management/findings/pull', { method: 'POST', body: { sources: batch } });
+          if (!Array.isArray(result.sources)) throw new Error('The pull response could not be verified. Retry the affected sources.');
+          for (const request of batch) {
+            const row = issuePull.results.get(request.connectionId); const matches = result.sources.filter(source => source.connectionId === request.connectionId);
+            const response = matches.length === 1 ? matches[0] : null;
+            Object.assign(row, { pending: false, imported: Number.isSafeInteger(response?.imported) && response.imported >= 0 ? response.imported : 0,
+              nextCursor: typeof response?.nextCursor === 'string' && response.nextCursor ? response.nextCursor : null,
+              error: response ? (typeof response.error === 'string' ? response.error : '') : 'This source did not return a result. Retry this source.' });
+          }
+        } catch (error) {
+          for (const request of batch) Object.assign(issuePull.results.get(request.connectionId), { pending: false, error: error.message });
+          if ([401, 409].includes(error.status)) { accountChanged = true; break; }
+        }
+        renderPullResults();
+      }
+    } finally {
+      for (const result of issuePull.results.values()) if (result.pending) Object.assign(result, { pending: false, error: 'This source was not pulled. Refresh your account and try again.' });
+      const refreshed = !accountChanged && await loadFindings();
+      issuePull.busy = false; renderPullResults();
+      const errors = [...issuePull.results.values()].filter(result => result.error).length;
+      $('management-pull-status').textContent = accountChanged ? 'Your account changed. Reload before pulling more issues.' : !refreshed ? 'Pull finished. The inbox refresh failed; previously shown issues remain visible.' : errors ? `Pull finished. ${errors} source${errors === 1 ? ' needs' : 's need'} attention; successful issues are saved in the inbox.` : 'Pull finished. Issues are saved in the inbox.';
+    }
+  }
   function providerFor(id) { return state.providers.find(p => p.id === id) || fallbackProviders.find(p => p.id === id); }
-  function trackerConnections() { return state.connections.filter(c => c.kind === 'tracker' && c.enabled !== false); }
+  function trackerConnections() { return state.connections.filter(c => c.kind === 'tracker' && c.enabled !== false && !pullOnly(c)); }
   function selectedConnectionLabel(c) { return `${c.name} · ${providerFor(c.provider)?.label || c.provider}${c.isDefault ? ' · default' : ''}`; }
   function chooseCategory(category) {
     if (!['general', 'integrations', 'scanners', 'access', 'aws'].includes(category)) category = 'general';
@@ -134,6 +290,7 @@
     const company = profile?.user?.company;
     $('management-scope').textContent = company ? `Shared with ${company.name}. Administrators manage connections; analysts can work with findings.` : 'Connections are saved in your workspace. Add separate named connections for each team or account.';
     $('management-access-scope').textContent = company ? `Roles apply within ${company.name}. Access is enforced by the server.` : 'This is your personal workspace. You have administrator access.';
+    refreshPullControls();
   }
   async function loadAccess() {
     try {
@@ -224,7 +381,7 @@
   function renderConnections() {
     const list = $('management-connections'); list.replaceChildren();
     const kind = $('management-connection-kind').value;
-    const entries = state.connections.filter(c => !kind || c.kind === kind);
+    const entries = state.connections.filter(c => !automaticServiceNow(c) && (!kind || c.kind === kind));
     if (!entries.length) {
       const empty = node('div', 'management-empty'); empty.append(node('h3', '', 'Connect the tools your teams use.'), node('p', 'subtle', 'Add Jira, Azure Boards, or GitHub Issues for ticket management, and source control accounts for repository access.'));
       list.append(empty); return;
@@ -262,17 +419,17 @@
     }
   }
   function openConnection(connection = null) {
-    if (!can('manageSettings')) return;
+    if (!can('manageSettings') || automaticServiceNow(connection)) return;
     $('management-connection-form').reset(); $('management-connection-id').value = connection?.id || '';
     $('management-connection-name').value = connection?.name || '';
     const select = $('management-connection-provider'); select.replaceChildren();
     for (const kind of ['tracker', 'scm']) {
       const group = node('optgroup'); group.label = kind === 'tracker' ? 'Issue trackers' : 'Source control';
       if (kind === 'scm' && !connection) group.append(option('github-app', 'GitHub App · use saved installation'));
-      for (const p of state.providers.filter(item => item.kind === kind)) group.append(option(p.id, p.id === 'github' ? 'GitHub · access token' : p.label));
+      for (const p of state.providers.filter(item => item.kind === kind && !item.pullOnly && !automaticServiceNow(item) && item.id !== 'servicenow-avit')) group.append(option(p.id, p.id === 'github' ? 'GitHub · access token' : p.label));
       select.append(group);
     }
-    select.value = connection?.provider || state.providers[0]?.id || 'jira'; select.disabled = !!connection;
+    select.value = connection?.provider || state.providers.find(item => !item.pullOnly && item.id !== 'servicenow-avit')?.id || 'jira'; select.disabled = !!connection;
     $('management-connection-enabled').checked = connection?.enabled !== false;
     $('management-connection-default').checked = connection?.isDefault === true;
     $('management-connection-token').value = ''; $('management-connection-token').required = !connection?.hasToken;
@@ -334,13 +491,17 @@
   }
   function fillTrackerFilters() {
     const select = $('management-tracker-filter'); const previous = select.value;
-    select.replaceChildren(option('', 'All trackers'), ...state.connections.filter(c => c.kind === 'tracker').map(c => option(c.id, c.name))); select.value = previous;
+    // The current-profile ServiceNow alias is only a pull target. Saved inbox rows
+    // belong to their persisted instance descriptor, which may outlive Settings changes.
+    const sources = state.connections.filter(source => source.kind === 'tracker' && source.id !== 'servicenow-avit');
+    select.replaceChildren(option('', 'All sources'), ...sources.map(source => option(source.id, source.name)));
+    select.value = sources.some(source => source.id === previous) ? previous : '';
   }
   function isFalsePositive(item) { return /false[ -]?positive/i.test(item.disposition || ''); }
   function isClosed(item) { return isFalsePositive(item) || /^(?:RESOLVED|REMEDIATED|CLOSED)$/i.test(item.disposition || '') || /closed|done|resolved|removed|completed/i.test(item.state || ''); }
   function safeLink(url, label) {
     let parsed; try { parsed = new URL(url); } catch { return node('span', '', label); }
-    if (parsed.protocol !== 'https:') return node('span', '', label);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return node('span', '', label);
     const a = node('a', '', label); a.href = parsed.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a;
   }
   async function loadFindings() {
@@ -349,7 +510,8 @@
       const payload = await api('/api/management/findings'); state.findings = Array.isArray(payload.findings) ? payload.findings : [];
       if (Array.isArray(payload.connections)) state.connections = payload.connections;
       fillTrackerFilters(); renderFindings(); $('management-findings-error').textContent = '';
-    } catch (error) { $('management-findings-error').textContent = error.message; }
+      return true;
+    } catch (error) { $('management-findings-error').textContent = error.message; return false; }
     finally { $('management-findings').setAttribute('aria-busy', 'false'); }
   }
   function renderFindings() {
@@ -357,22 +519,23 @@
     $('management-count-open').textContent = state.findings.filter(item => !isClosed(item)).length;
     $('management-count-fp').textContent = state.findings.filter(isFalsePositive).length;
     const search = $('management-search').value.trim().toLowerCase(); const selected = $('management-tracker-filter').value; const filter = $('management-state-filter').value;
-    const rows = state.findings.filter(item => (!selected || item.connectionId === selected) && (!search || [item.title, item.externalId, item.findingId, item.provider].filter(Boolean).join(' ').toLowerCase().includes(search)) && (!filter || (filter === 'false-positive' ? isFalsePositive(item) : filter === 'closed' ? isClosed(item) : !isClosed(item))));
+    const rows = state.findings.filter(item => (!selected || item.connectionId === selected) && (!search || [item.title, item.externalId, item.findingId, item.provider, item.issueType, state.connections.find(c => c.id === item.connectionId)?.name, issueSource(item.connectionId)?.name].filter(Boolean).join(' ').toLowerCase().includes(search)) && (!filter || (filter === 'false-positive' ? isFalsePositive(item) : filter === 'closed' ? isClosed(item) : !isClosed(item))));
     const list = $('management-findings'); list.replaceChildren();
     if (!rows.length) {
-      const empty = node('div', 'management-empty'); empty.append(node('h3', '', state.findings.length ? 'No tickets match these filters.' : 'Bring your findings into one view.'), node('p', 'subtle', state.findings.length ? 'Try another tracker, status, or search term.' : 'Connect an issue tracker in Settings, then create a ticket from a report or import existing ticket IDs.'));
+      const empty = node('div', 'management-empty'); empty.append(node('h3', '', state.findings.length ? 'No issues match these filters.' : 'Your issue inbox is ready.'), node('p', 'subtle', state.findings.length ? 'Try another source, status, or search term.' : 'Choose sources above and pull issues, import ticket IDs, or create a ticket from a saved finding.'));
       if (!state.findings.length) empty.append(button('Manage integrations', () => { navigate('settings'); chooseCategory('integrations'); }));
       list.append(empty); return;
     }
     for (const finding of rows) {
       const row = node('article', 'management-finding'); const info = node('div', 'management-finding-info'); const title = node('h3'); title.append(safeLink(finding.url, `${finding.externalId} · ${finding.title || 'Security finding'}`));
-      const connection = state.connections.find(c => c.id === finding.connectionId);
-      info.append(title, node('p', 'small subtle', `${connection?.name || 'Removed connection'} · ${providerFor(finding.provider)?.label || finding.provider}${finding.findingId ? ` · ${finding.findingId}` : ''}${finding.generated ? ' · Created by Threatlint' : ' · Imported'}`));
+      const connection = state.connections.find(c => c.id === finding.connectionId) || issueSource(finding.connectionId);
+      info.append(title, node('p', 'small subtle', `${connection?.name || 'Removed connection'} · ${providerFor(finding.provider)?.label || finding.provider}${finding.findingId ? ` · ${finding.findingId}` : ''}${finding.generated ? ' · Created by Threatlint' : ' · Read from source'}`));
       const details = node('div', 'management-finding-meta'); details.append(node('span', 'management-badge', isFalsePositive(finding) ? 'False positive' : finding.state || 'Open'));
+      if (finding.issueType) details.append(node('span', 'management-badge muted', finding.issueType));
       if (finding.severity && finding.severity !== 'UNSPECIFIED') details.append(node('span', `management-severity severity-${String(finding.severity).toLowerCase()}`, finding.severity));
       if (finding.updatedAt) { const date = new Date(finding.updatedAt); if (!Number.isNaN(date.getTime())) details.append(node('span', 'small subtle', `Updated ${date.toLocaleDateString()}`)); }
       info.append(details); row.append(info);
-      if (!isClosed(finding)) {
+      if (!isClosed(finding) && !pullOnly(connection) && !automaticServiceNow(finding)) {
         const close = button('Close as false positive', () => openTicket('close', finding)); close.disabled = !can('manageFindings') || !connection || connection.enabled === false; row.append(close);
       }
       list.append(row);
@@ -383,7 +546,7 @@
     select.value = trackers.find(c => c.isDefault)?.id || (trackers.length === 1 ? trackers[0].id : '');
   }
   async function openTicket(mode, finding = null) {
-    if (!can('manageFindings')) return;
+    if (!can('manageFindings') || (mode === 'close' && (automaticServiceNow(finding) || pullOnly(state.connections.find(c => c.id === finding?.connectionId))))) return;
     state.ticket = { mode, finding }; $('management-ticket-form').reset(); $('management-ticket-error').textContent = ''; $('management-ticket-preview').textContent = '';
     const closing = mode === 'close'; $('management-ticket-title').textContent = closing ? `Close ${finding.externalId} as false positive` : 'Create a ticket';
     $('management-ticket-eyebrow').textContent = closing ? 'EVIDENCE-BACKED CLOSURE' : 'FINDING TO TICKET';
@@ -438,17 +601,22 @@
   async function syncFindings(buttonNode) {
     buttonNode.disabled = true; $('management-findings-error').textContent = ''; $('management-sync-status').textContent = 'Reading the latest ticket status…';
     try {
-      const errors = []; let cursor = null; let pages = 0; let synced = 0;
+      const errors = []; let cursor = null; let pages = 0; let synced = 0; let skippedReadOnly = 0;
       const connectionId = $('management-tracker-filter').value;
+      if (automaticServiceNow(issueSource(connectionId) || state.connections.find(connection => connection.id === connectionId))) {
+        $('management-sync-status').textContent = 'Use Pull issues to refresh ServiceNow AVIT records.'; return;
+      }
       do {
         const payload = await api('/api/management/findings/sync', { method: 'POST', body: { ...(connectionId ? { connectionId } : {}), ...(cursor ? { cursor } : {}) } });
         errors.push(...(Array.isArray(payload.errors) ? payload.errors : [])); synced += payload.findings?.length || 0;
+        if (Number.isSafeInteger(payload.skippedReadOnly) && payload.skippedReadOnly > 0) skippedReadOnly = Math.max(skippedReadOnly, payload.skippedReadOnly);
         cursor = payload.nextCursor || null; pages++;
         $('management-sync-status').textContent = `Synced ${synced} ticket${synced === 1 ? '' : 's'}${payload.total ? ` of ${payload.total}` : ''}…`;
       } while (cursor && pages < 100);
       if (cursor) errors.push({ id: 'Sync', error: 'More tickets remain. Run sync again to continue.' });
       await loadFindings();
       $('management-sync-status').textContent = errors.length ? `Sync finished with ${errors.length} ticket${errors.length === 1 ? '' : 's'} requiring attention. Successful updates are shown.` : 'Ticket status is up to date.';
+      if (skippedReadOnly) $('management-sync-status').textContent += ` ${skippedReadOnly} ServiceNow AVIT record${skippedReadOnly === 1 ? ' is' : 's are'} refreshed with Pull issues.`;
       if (errors.length) $('management-findings-error').textContent = errors.map(e => `${e.id || 'Ticket'}: ${e.error || 'Could not sync'}`).join(' · ');
     } catch (error) { $('management-sync-status').textContent = ''; $('management-findings-error').textContent = error.message; }
     finally { buttonNode.disabled = !can('manageFindings'); }
@@ -459,6 +627,12 @@
   $('management-connection-provider').addEventListener('change', () => renderConnectionFields()); $('management-connection-form').addEventListener('submit', saveConnection);
   $('management-configure').addEventListener('click', () => { navigate('settings'); chooseCategory('integrations'); });
   $('management-refresh').addEventListener('click', loadFindings); $('management-search').addEventListener('input', renderFindings); $('management-tracker-filter').addEventListener('change', renderFindings); $('management-state-filter').addEventListener('change', renderFindings); $('management-sync').addEventListener('click', event => syncFindings(event.currentTarget));
+  $('management-pull-refresh').addEventListener('click', loadIssueSources);
+  $('management-pull-all').addEventListener('click', () => selectIssueSources(true));
+  $('management-pull-clear').addEventListener('click', () => selectIssueSources(false));
+  $('management-pull-state').addEventListener('change', invalidateIssuePull);
+  $('management-pull-start').addEventListener('click', () => { void pullIssues(); });
+  $('management-pull-snow-filters').addEventListener('click', () => $('management-avits-title').scrollIntoView({ behavior: 'smooth', block: 'start' }));
   $('management-create').addEventListener('click', () => openTicket('create')); $('management-ticket-workspace').addEventListener('change', loadTicketReports); $('management-ticket-report').addEventListener('change', fillTicketFindings); $('management-ticket-finding').addEventListener('change', updateTicketPreview); $('management-ticket-form').addEventListener('submit', submitTicket);
   $('management-import').addEventListener('click', () => { if (!can('manageFindings')) return; $('management-import-form').reset(); fillTrackers($('management-import-tracker')); $('management-import-error').textContent = ''; $('management-import-dialog').showModal(); });
   $('management-import-form').addEventListener('submit', async event => {
@@ -473,7 +647,7 @@
   });
   document.addEventListener('threatlint:view', event => {
     if (event.detail.view === 'settings') { chooseCategory(state.category); void loadAccess(); }
-    if (event.detail.view === 'management') { void Promise.all([loadConnections(), loadFindings(), loadAccess()]).then(() => { renderConnections(); renderFindings(); }); }
+    if (event.detail.view === 'management') { void Promise.all([loadConnections(), loadFindings(), loadIssueSources(), loadAccess()]).then(() => { renderConnections(); renderFindings(); }); }
   });
   document.addEventListener('threatlint:settings-section', event => { const section = event.detail.section; chooseCategory(section === 'aws' ? 'aws' : ['integrations', 'github'].includes(section) ? 'integrations' : section === 'access' ? 'access' : (['servicenow', 'semgrep', 'ado', 'defectdojo', 'sonarqube'].includes(section) || section?.startsWith('tracker-')) ? 'scanners' : 'general'); });
   document.addEventListener('threatlint:context', event => { state.contextSession = event.detail.session?.id || null; });
@@ -484,5 +658,5 @@
   initializeAvits();
   await loadAccess();
   if (!state.providers.length) state.providers = fallbackProviders; applyAccess(); chooseCategory(state.category);
-  if (!$('view-management').hidden) { await loadConnections(); await loadFindings(); }
+  if (!$('view-management').hidden) { await Promise.all([loadConnections(), loadFindings(), loadIssueSources()]); }
 })();
