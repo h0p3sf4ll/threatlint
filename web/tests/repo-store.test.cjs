@@ -9,7 +9,7 @@ const { repoStoreBase, createRepositoryDirectory, mountedStorageDirectory } = re
 const { createStore } = require('../lib/store.cjs');
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-repo-store-test-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-repo-store-test-')));
   const external = path.join(root, 'external'), primary = path.join(root, 'primary');
   fs.mkdirSync(external); fs.mkdirSync(primary);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
