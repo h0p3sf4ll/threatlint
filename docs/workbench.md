@@ -116,7 +116,7 @@ Open **Finding triage** and choose the ticket system, scanner integration, or re
 
 For an uploaded report, use the scanner's complete export, check the extracted findings, and select source at the scanned revision where available. Add sanitized supporting evidence for deployment-specific claims. **Import without review** saves the findings without calling a model.
 
-For model triage, confirm the provider and start the review. Inspect each disposition and its evidence before taking an action. Use the destination guide for [ServiceNow AVITs](avit-integration.md), [DefectDojo](integrations/defectdojo.md), or [SonarQube](integrations/sonarqube.md).
+For model triage, confirm the provider and start the review. In ServiceNow batches, **Parallel reviews** starts up to three findings at once by default; choose 1–8 to suit your provider. Each finding has its own progress and result. Inspect each disposition and its evidence before taking an action. Use the destination guide for [ServiceNow AVITs](avit-integration.md), [DefectDojo](integrations/defectdojo.md), or [SonarQube](integrations/sonarqube.md).
 
 ## Use findings and reports
 

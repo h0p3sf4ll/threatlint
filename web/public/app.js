@@ -949,7 +949,12 @@
   }
   function fpreviewRunning(running) {
     state.fpreviewRunning = running;
-    $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-fix-pr').disabled = running; $('fpreview-cancel').classList.toggle('hidden', !running);
+    $('fpreview-start').disabled = running; $('fpreview-avits').disabled = running; $('fpreview-fix-pr').disabled = running; $('fpreview-concurrency').disabled = running;
+    $('fpreview-cancel').classList.toggle('hidden', !running); $('fpreview-cancel').disabled = false; $('fpreview-cancel').textContent = 'Stop batch';
+  }
+  function syncFpreviewExecution(event) {
+    const value = event?.execution?.maxConcurrency;
+    if (Number.isInteger(value) && value >= 1 && value <= 8) $('fpreview-concurrency').value = String(value);
   }
   // Required setup, as `threatlint setup --check` sees it; ServiceNow values typed this session also count.
   const SETUP_SECTIONS = { 'ServiceNow OAuth client': 'servicenow', 'Azure DevOps PAT': 'ado', 'Semgrep API token': 'semgrep' };
@@ -973,10 +978,14 @@
   async function startAvitBatch(event) {
     event.preventDefault(); $('fpreview-error').textContent = '';
     // Any mix of AVIT and SCTASK numbers; the runner expands each SCTASK into its AVITs and deduplicates them.
-    let parsed;
-    try { parsed = window.ThreatlintFpRun.parseInput($('fpreview-avits').value); } catch (error) { $('fpreview-error').textContent = error.message; return; }
+    let parsed, maxConcurrency;
+    if (!$('fpreview-concurrency').reportValidity()) return;
+    try {
+      parsed = window.ThreatlintFpRun.parseInput($('fpreview-avits').value);
+      maxConcurrency = window.ThreatlintPlatformControls.integer($('fpreview-concurrency').value, 3, 8);
+    } catch (error) { $('fpreview-error').textContent = error.message; return; }
     const { avits, sctasks, order } = parsed;
-    // No AVIT limit: the Workbench reviews them one at a time and keeps going if this page is left.
+    // The Workbench owns the bounded review queue, so page navigation never schedules duplicate reviews.
     if (!avits.length && !sctasks.length && !parsed.issts.length) { $('fpreview-error').textContent = 'Enter at least one AVIT, SCTASK, or ISST number.'; return; }
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
@@ -989,17 +998,21 @@
     fpreviewRunning(true);
     const provider = state.preferences.provider;
     state.ws.send(JSON.stringify({ action: 'run_avit_batch', avits: order.join(' '), modelLabel: displayModel(), provider, model: selectedModel(), lmstudioUrl: state.preferences.lmstudioUrl, lmstudioModel: state.preferences.models.lmstudio,
-      createFixPr: $('fpreview-fix-pr').checked,
+      createFixPr: $('fpreview-fix-pr').checked, execution: { maxConcurrency },
       ...providerKeys(provider), awsProfile: $('snow-aws-profile').value.trim() || undefined,
       servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId || undefined, clientSecret: state.credentials.snowClientSecret || undefined } }));
   }
 
   function handleEvent(event) {
     switch (event.type) {
-      case 'fp_run_start': fpRun()?.handle(event); fpreviewRunning(true); break;
-      case 'avit_batch_start': case 'sctask_item': case 'avit_item': fpRun()?.handle(event); break;
+      case 'fp_run_start': syncFpreviewExecution(event); fpRun()?.handle(event); fpreviewRunning(true); break;
+      case 'avit_batch_start': syncFpreviewExecution(event); fpRun()?.handle(event); break;
+      case 'sctask_item': case 'avit_item': fpRun()?.handle(event); break;
       case 'avit_batch_replay': resumeAvitBatch(event); break;
-      case 'avit_batch_cancel_ack': if (event.accepted) toast('Stopping the review after the current AVIT…'); break;
+      case 'avit_batch_cancel_ack':
+        $('fpreview-cancel').disabled = !!event.accepted;
+        if (event.accepted) { $('fpreview-cancel').textContent = 'Stopping…'; toast('Stopping active reviews. Service updates already underway may finish.'); }
+        break;
       case 'avit_batch_complete': fpRun()?.handle(event); fpreviewRunning(false); toast(event.cancelled ? 'AVIT review stopped.' : 'AVIT review complete.'); break;
       case 'avit_batch_error':
         // A second start while a run is active leaves that run (already shown here) untouched.
@@ -1053,6 +1066,7 @@
     if (!run) return;
     if (event.runId && event.events?.length) {
       run.replay(event.events);
+      for (const entry of event.events) if (entry.type === 'fp_run_start' || entry.type === 'avit_batch_start') syncFpreviewExecution(entry);
       fpreviewRunning(!!event.active);
       return;
     }
@@ -1122,7 +1136,9 @@
     $('refresh-reports').addEventListener('click', () => refreshReports().catch(error => toast(error.message, true)));
     $('configure-provider').addEventListener('click', showSettings);
     $('servicenow-form').addEventListener('submit', saveServiceNow);
-    $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ action: 'avit_batch_cancel' })); });
+    $('fpreview-form').addEventListener('submit', startAvitBatch); $('fpreview-cancel').addEventListener('click', () => {
+      if (state.ws?.readyState === 1) { $('fpreview-cancel').disabled = true; state.ws.send(JSON.stringify({ action: 'avit_batch_cancel' })); }
+    });
     document.addEventListener('threatlint:view', event => { if (event.detail.view === 'fpreview') { void loadSemgrepSettings().then(updateFpreviewSetup); } }); $('semgrep-form').addEventListener('submit', saveSemgrep); $('ado-form').addEventListener('submit', saveAdo); $('ado-auth-mode').addEventListener('change', updateAdoFields); $('github-form').addEventListener('submit', saveGithub); $('github-remove').addEventListener('click', removeGithub);
     $('github-use-app').addEventListener('change', () => { $('github-app-fields').hidden = !$('github-use-app').checked; });
     for (const link of document.querySelectorAll('.settings-nav a')) link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(link.getAttribute('href').replace('#settings-', '')); });

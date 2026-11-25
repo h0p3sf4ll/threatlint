@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * False-positive review of ServiceNow AVITs from the Workbench, one AVIT at a time. For each AVIT:
+ * False-positive review of ServiceNow AVITs from the Workbench, with bounded independent reviews. For each AVIT:
  *   1. `threatlint avit fetch`    – the AVIT (CodeSecurity, or another tool/view: no Semgrep step)
  *   2. `threatlint avit checkout` – its repository and branch, from the AVIT fields
  *   3. the Findings triage agent, with the selected model, against that checkout
@@ -25,10 +25,22 @@ const { orgValue } = require('./org-config.cjs');
 const { HttpError } = require('./http.cjs');
 const { normalizeReviewMarkdown } = require('./finding-disposition.cjs');
 const { superviseChild } = require('./child-lifecycle.cjs');
+const { mapBounded, batchExecution, checkAbort, createLimiter } = require('./concurrency.cjs');
 
 const AGENT_ID = 'appsec-fp-reviewer';
 const CLI_TIMEOUT_MS = 20 * 60_000;
 let lastAttachmentMicros = 0n;
+
+function avitExecution(value) {
+  try {
+    const raw = typeof value === 'string' ? JSON.parse(value) : value;
+    if (raw && typeof raw === 'object' && (Object.hasOwn(raw, 'maxModelRuns') || Object.hasOwn(raw, 'plannedModelRuns'))) {
+      throw new Error('AVIT triage accepts execution.mode and execution.maxConcurrency; total model-run budgets are not supported');
+    }
+    const { mode, maxConcurrency } = batchExecution(raw);
+    return { mode, maxConcurrency };
+  } catch (error) { throw new HttpError(error.message); }
+}
 
 function reviewAttachmentName(avit) {
   const now = BigInt(Date.now()) * 1000n;
@@ -217,20 +229,23 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     // SCTASK and ISST numbers are expanded server-side (SCTASK from its description, ISST by repository + branch).
     if (message.createFixPr !== undefined && typeof message.createFixPr !== 'boolean') throw new HttpError('createFixPr must be true or false');
     const { avits: numbers, sctasks, issts, order } = parseBatchInput(message.avits);
-    return { numbers, sctasks, issts, order, settings: providerRequest(message) };
+    return { numbers, sctasks, issts, order, settings: providerRequest(message), execution: avitExecution(message.execution) };
   }
 
   /** Session-only ServiceNow values from the page; anything blank comes from the saved Threatlint config. */
   function cliEnv(message) {
     const snow = message.servicenow && typeof message.servicenow === 'object' ? message.servicenow : {};
+    const saved = readServiceNow();
     const env = {};
-    if (snow.instance) env.THREATLINT_SNOW_INSTANCE = servicenow.validateInstanceUrl(snow.instance);
-    if (snow.clientId && snow.clientSecret) { env.THREATLINT_SNOW_CLIENT_ID = String(snow.clientId); env.THREATLINT_SNOW_CLIENT_SECRET = String(snow.clientSecret); }
+    const instance = snow.instance || saved.instance || orgValue('snowInstance');
+    if (instance) env.THREATLINT_SNOW_INSTANCE = servicenow.validateInstanceUrl(instance);
+    const credentials = snow.clientId && snow.clientSecret ? snow : saved;
+    if (credentials.clientId && credentials.clientSecret) { env.THREATLINT_SNOW_CLIENT_ID = String(credentials.clientId); env.THREATLINT_SNOW_CLIENT_SECRET = String(credentials.clientSecret); }
     if (typeof message.awsProfile === 'string' && /^[\w.@+-]{1,128}$/.test(message.awsProfile)) env.THREATLINT_AWS_PROFILE = message.awsProfile;
     return env;
   }
 
-  async function reviewOne(avit, { settings, message, semgrep, env, instance, profile, signal, send }) {
+  async function reviewOne(avit, { settings, message, semgrep, env, instance, profile, signal, send, writeback }) {
     let url = avitRecordUrl(instance, avit);
     const step = (stage, detail = '', extra = {}) => send({ type: 'avit_item', avit, stage, detail, ...(url ? { url } : {}), ...extra, ...(extra.done ? { result: terminalResult(stage, extra) } : {}) });
     let work, repo, created = null, sessionId = null;
@@ -250,7 +265,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       if (checkout.code !== 0 && !noRepository && /repository .* not found|not found/i.test(errorOf(checkout))) {
         // A deleted repository: verified with Azure DevOps by the CLI, then closed with no report.
         step('resolving', 'Repository not found; confirming it was deleted');
-        const removed = await cli(['avit', 'close-removed', avit, '--yes', ...profile], { env });
+        const removed = await writeback(() => cli(['avit', 'close-removed', avit, '--yes', ...profile], { env }), { signal });
         return step(removed.code === 0 ? 'done' : 'error', removed.code === 0 ? 'Closed: repository removed (no report)' : `${errorOf(checkout)} (${errorOf(removed)})`, { disposition: removed.code === 0 ? 'REPO REMOVED' : undefined, done: true });
       }
       if (checkout.code !== 0 && !noRepository) return step('error', errorOf(checkout), { done: true });
@@ -312,45 +327,47 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       step('reported', count ? `Report written (${count} credential value${count > 1 ? 's' : ''} redacted)` : 'Report written', { disposition });
       if (!report.docxPath) return step('error', 'The Word report could not be generated (install python-docx for THREATLINT_PYTHON); nothing was attached or closed', { disposition, done: true });
 
-      step('resolving', disposition === 'FALSE POSITIVE' ? 'Attaching the report, closing the AVIT, and tuning Semgrep' : disposition === 'TRUE POSITIVE' ? 'Attaching the report and adding the true-positive work note' : 'No change for this disposition');
-      // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
-      const createFixPr = prepareFix && preparation?.status === 'ready' && disposition === 'TRUE POSITIVE';
-      const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath,
-        '--attachment-name', reviewAttachmentName(avit), '--checkout', repo, ...(createFixPr ? ['--keep-checkout'] : []), '--yes', ...profile], { env });
-      const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);
-      // Each ServiceNow / Semgrep action is its own history entry before the final status.
-      for (const action of outcomeActions(outcome, disposition)) step('resolving', action.detail, { action: action.kind });
-      if (resolved.code === 0 && disposition === 'FALSE POSITIVE' && ['sast', 'secrets'].includes(target.kind) && !outcome.tuned) {
-        return step('error', 'Semgrep rule tuning did not complete. The tracker may already have changed; inspect the partial outcome before retrying.', { disposition, outcome, done: true });
-      }
-      if (resolved.code === 0 && disposition === 'TRUE POSITIVE' && preparation?.status === 'refine') {
-        const reason = preparation.issues.join('; ') || 'The review could not establish the vulnerability and a safe, applicable fix';
-        outcome.pullRequest = { status: 'blocked', reason };
-        return step('error', `Report attached, but evidence investigation could not produce a validated fix: ${reason}`, { disposition, outcome, done: true });
-      }
-      if (resolved.code === 0 && disposition === 'TRUE POSITIVE' && preparation?.status === 'skipped') {
-        outcome.pullRequest = { status: 'skipped', reason: preparation.reason || preparation.issues.join('; ') || 'This checkout cannot support an automatic source-fix PR' };
-        step('info', outcome.pullRequest.reason, { pullRequest: outcome.pullRequest, disposition });
-      }
-      if (resolved.code === 0 && createFixPr) {
-        step('fix-pr', 'Opening a draft pull request for the proposed fix', { disposition });
-        let proposed;
-        try {
-          proposed = await cli(['avit', 'fix-pr', avit, '--report', report.mdPath, '--checkout', repo, '--target', targetPath, '--yes', ...profile], { env });
-        } catch {
-          return step('error', 'Report attached, but the draft fix PR command could not complete. Retry after checking the Workbench connection.', { disposition, outcome, done: true });
+      return await writeback(async () => {
+        step('resolving', disposition === 'FALSE POSITIVE' ? 'Attaching the report, closing the AVIT, and tuning Semgrep' : disposition === 'TRUE POSITIVE' ? 'Attaching the report and adding the true-positive work note' : 'No change for this disposition');
+        // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
+        const createFixPr = prepareFix && preparation?.status === 'ready' && disposition === 'TRUE POSITIVE';
+        const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath,
+          '--attachment-name', reviewAttachmentName(avit), '--checkout', repo, ...(createFixPr ? ['--keep-checkout'] : []), '--yes', ...profile], { env });
+        const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);
+        // Each ServiceNow / Semgrep action is its own history entry before the final status.
+        for (const action of outcomeActions(outcome, disposition)) step('resolving', action.detail, { action: action.kind });
+        if (resolved.code === 0 && disposition === 'FALSE POSITIVE' && ['sast', 'secrets'].includes(target.kind) && !outcome.tuned) {
+          return step('error', 'Semgrep rule tuning did not complete. The tracker may already have changed; inspect the partial outcome before retrying.', { disposition, outcome, done: true });
         }
-        let pullRequest;
-        try { pullRequest = JSON.parse(lastLine(proposed.stdout)); } catch { /* invalid output is reported below */ }
-        if (proposed.code !== 0 || !['created', 'existing', 'skipped'].includes(pullRequest?.status)) {
-          return step('error', `Report attached, but the draft fix PR could not be opened: ${errorOf(proposed)}`, { disposition, outcome, done: true });
+        if (resolved.code === 0 && disposition === 'TRUE POSITIVE' && preparation?.status === 'refine') {
+          const reason = preparation.issues.join('; ') || 'The review could not establish the vulnerability and a safe, applicable fix';
+          outcome.pullRequest = { status: 'blocked', reason };
+          return step('error', `Report attached, but evidence investigation could not produce a validated fix: ${reason}`, { disposition, outcome, done: true });
         }
-        outcome.pullRequest = pullRequest;
-        step(pullRequest.status === 'skipped' ? 'info' : 'fix-pr', pullRequest.reason || (pullRequest.status === 'existing' ? 'Existing draft fix PR found' : 'Draft fix PR opened for engineering review'),
-          { action: pullRequest.status === 'skipped' ? undefined : 'pull-request', pullRequest, disposition });
-      }
-      if (resolved.code === 0 && outcome.information) return step('info', outcome.information, { disposition, outcome, done: true });
-      return step(resolved.code === 0 ? 'done' : 'error', resolved.code === 0 ? 'Report attached to the AVIT in ServiceNow (not kept locally)' : errorOf(resolved), { disposition, outcome, done: true });
+        if (resolved.code === 0 && disposition === 'TRUE POSITIVE' && preparation?.status === 'skipped') {
+          outcome.pullRequest = { status: 'skipped', reason: preparation.reason || preparation.issues.join('; ') || 'This checkout cannot support an automatic source-fix PR' };
+          step('info', outcome.pullRequest.reason, { pullRequest: outcome.pullRequest, disposition });
+        }
+        if (resolved.code === 0 && createFixPr) {
+          step('fix-pr', 'Opening a draft pull request for the proposed fix', { disposition });
+          let proposed;
+          try {
+            proposed = await cli(['avit', 'fix-pr', avit, '--report', report.mdPath, '--checkout', repo, '--target', targetPath, '--yes', ...profile], { env });
+          } catch {
+            return step('error', 'Report attached, but the draft fix PR command could not complete. Retry after checking the Workbench connection.', { disposition, outcome, done: true });
+          }
+          let pullRequest;
+          try { pullRequest = JSON.parse(lastLine(proposed.stdout)); } catch { /* invalid output is reported below */ }
+          if (proposed.code !== 0 || !['created', 'existing', 'skipped'].includes(pullRequest?.status)) {
+            return step('error', `Report attached, but the draft fix PR could not be opened: ${errorOf(proposed)}`, { disposition, outcome, done: true });
+          }
+          outcome.pullRequest = pullRequest;
+          step(pullRequest.status === 'skipped' ? 'info' : 'fix-pr', pullRequest.reason || (pullRequest.status === 'existing' ? 'Existing draft fix PR found' : 'Draft fix PR opened for engineering review'),
+            { action: pullRequest.status === 'skipped' ? undefined : 'pull-request', pullRequest, disposition });
+        }
+        if (resolved.code === 0 && outcome.information) return step('info', outcome.information, { disposition, outcome, done: true });
+        return step(resolved.code === 0 ? 'done' : 'error', resolved.code === 0 ? 'Report attached to the AVIT in ServiceNow (not kept locally)' : errorOf(resolved), { disposition, outcome, done: true });
+      }, { signal });
     } catch (error) {
       return step(signal.aborted ? 'cancelled' : 'error', signal.aborted ? 'Cancelled' : error.message, { done: true });
     } finally {
@@ -371,10 +388,13 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   }
 
   async function run(message, rawSend, controller) {
-    void cleanup.retry();
     // Every event carries the time it happened, so the page can keep a timestamped history per card and per run.
     const send = event => rawSend({ at: new Date().toISOString(), ...event });
-    const { numbers, sctasks, issts, order, settings } = validate(message);
+    const { numbers, sctasks, issts, order, settings, execution } = validate(message);
+    checkAbort(controller.signal);
+    await cleanup.retry();
+    checkAbort(controller.signal);
+    const writeback = createLimiter(1);
     const semgrep = await semgrepVersion();
     if (!semgrep) throw Object.assign(new HttpError(servicenow.SEMGREP_INSTALL, 412), { code: 'semgrep_missing' });
     const env = cliEnv(message);
@@ -406,7 +426,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       if (listed.code !== 0 || !avits.length) { send({ type: 'sctask_item', sctask: number, kind, stage: 'error', detail: errorOf(listed) || `The ${groupNoun(kind)} names no AVITs`, done: true, result: 'error' }); continue; }
       fromTasks[number] = avits;
     }
-    // No AVIT limit: AVITs are reviewed one at a time, however many the input and its SCTASKs/ISSTs name.
+    // The number of AVITs stays unlimited; only simultaneous reviews are bounded.
     const { all, shared } = planBatch(order, fromTasks);
     for (const [number, avits] of Object.entries(fromTasks)) {
       const kind = groupKind[number];
@@ -415,7 +435,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     }
     if (!all.length && !groups.length) throw new HttpError('Enter at least one AVIT, SCTASK, or ISST number');
     send({ type: 'avit_batch_start', avits: all, sctasks: sctasks.filter(number => fromTasks[number]), issts: issts.filter(number => fromTasks[number]),
-      requested: groups, truncated: null });
+      requested: groups, truncated: null, execution });
     const finished = new Set();
     const finalizeGroup = async number => {
       const kind = groupKind[number];
@@ -441,26 +461,35 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     };
     // A group is finalized as soon as its own AVITs are reviewed, without waiting for the rest of the batch.
     const pending = new Set(Object.keys(fromTasks));
-    const finalizeReady = async () => {
+    let groupTail = Promise.resolve();
+    const finalizeReady = () => {
       for (const number of [...pending]) {
         if (controller.signal.aborted) return;
         if (!fromTasks[number].every(avit => finished.has(avit))) continue;
+        // Reserve synchronously before any await: overlapping completions must finalize each group once.
         pending.delete(number);
-        await finalizeGroup(number);
+        groupTail = groupTail.then(async () => {
+          try { await writeback(() => finalizeGroup(number), { signal: controller.signal }); }
+          catch (error) { send({ type: 'sctask_item', sctask: number, kind: groupKind[number], stage: controller.signal.aborted ? 'cancelled' : 'error',
+            detail: controller.signal.aborted ? 'Cancelled before the group update started' : error.message, done: true, result: controller.signal.aborted ? 'skipped' : 'error' }); }
+        });
       }
     };
-    await finalizeReady();
-    for (const avit of all) {
-      if (controller.signal.aborted) { send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled', done: true, result: 'skipped' }); continue; }
-      await reviewOne(avit, { settings, message, semgrep, env, instance, profile, signal: controller.signal, send });
+    const started = new Set();
+    try { await mapBounded(all, async avit => {
+      started.add(avit);
+      await reviewOne(avit, { settings, message, semgrep, env, instance, profile, signal: controller.signal, send, writeback });
       finished.add(avit);
       for (const number of pending) {
         const avits = fromTasks[number];
         if (avits.includes(avit)) send({ type: 'sctask_item', sctask: number, kind: groupKind[number], stage: 'reviewing', progress: { reviewed: avits.filter(item => finished.has(item)).length, total: avits.length },
           detail: `${avit} reviewed · ${avits.filter(item => finished.has(item)).length} of ${avits.length} AVITs done` });
       }
-      await finalizeReady();
-    }
+      finalizeReady();
+    }, { concurrency: execution.maxConcurrency, signal: controller.signal }); }
+    catch (error) { if (!controller.signal.aborted) throw error; }
+    finally { await groupTail; }
+    for (const avit of all.filter(avit => !started.has(avit))) send({ type: 'avit_item', avit, stage: 'cancelled', detail: 'Cancelled before starting', done: true, result: 'skipped' });
     for (const number of pending) send({ type: 'sctask_item', sctask: number, kind: groupKind[number], stage: 'cancelled', detail: `Cancelled before every AVIT was reviewed; the ${groupNoun(groupKind[number])} was not updated`, done: true, result: 'skipped' });
     send({ type: 'avit_batch_complete', cancelled: controller.signal.aborted });
   }
@@ -468,4 +497,4 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
   return { run, retryCleanup: cleanup.retry };
 }
 
-module.exports = { createAvitBatch, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, avitRecordUrl, runCli, setupStatus, pythonPath, python };
+module.exports = { createAvitBatch, avitExecution, redactSecrets, resolveOutcome, outcomeActions, terminalResult, parseBatchInput, planBatch, errorOf, avitRecordUrl, runCli, setupStatus, pythonPath, python };

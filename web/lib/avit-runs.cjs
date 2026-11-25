@@ -5,9 +5,10 @@
  *
  * A run belongs to the Workbench, not to a WebSocket: leaving the page, reloading it, or losing the connection
  * does not stop it. Each run keeps a compact, append-only event log; a page that connects later attaches, gets the
- * log replayed (`avit_batch_replay`), then follows live events. One run is active at a time because every AVIT
- * review shares the ServiceNow, Git, and Semgrep credentials and updates ServiceNow records. The most recent run's
- * log is kept after it finishes so a returning page can still show the outcome. Quitting the Workbench stops it.
+ * log replayed (`avit_batch_replay`), then follows live events. One batch stays active per Workbench to prevent
+ * duplicate work and own its serialized external-update queue; independent reviews inside that batch overlap.
+ * The most recent run's log is kept after it finishes so a returning page can still show the outcome. Quitting
+ * the Workbench stops new work and drains updates and cleanup that have already started.
  *
  * Events hold only what the page already receives (stages, details, outcomes); the start message's provider and
  * ServiceNow credentials are never recorded, and the message is released when the run ends.
@@ -15,14 +16,14 @@
 
 const { randomUUID } = require('node:crypto');
 const { HttpError } = require('./http.cjs');
-const { parseBatchInput } = require('./avit-batch.cjs');
+const { parseBatchInput, avitExecution } = require('./avit-batch.cjs');
 
 // A run has no AVIT limit, so the log is bounded instead: past this many events, intermediate AVIT stages are
 // dropped while every final outcome and every task/run event is still kept.
 const MAX_EVENTS = 200_000;
 
 function createAvitRuns(avitBatch) {
-  let current = null;
+  let current = null, closing = false;
 
   function record(run, event) {
     const last = run.events[run.events.length - 1];
@@ -36,14 +37,16 @@ function createAvitRuns(avitBatch) {
 
   /** Starts a run and subscribes the starting page. Invalid input throws before any run exists. */
   function start(message, subscriber) {
+    if (closing) throw new HttpError('The Workbench is shutting down', 503);
     if (current?.active) throw Object.assign(new HttpError('A finding triage run is already in progress. It is shown on this page; stop it or wait for it to finish.', 409), { code: 'run_active' });
     const { avits, sctasks, issts } = parseBatchInput(message?.avits);
+    const execution = avitExecution(message.execution);
     const run = { id: randomUUID(), active: true, events: [], controller: new AbortController(), subscribers: new Set(subscriber ? [subscriber] : []) };
     current = run;
     const label = typeof message.modelLabel === 'string' ? message.modelLabel.slice(0, 200) : '';
-    record(run, { type: 'fp_run_start', at: new Date().toISOString(), runId: run.id, avits, sctasks, issts, model: label });
-    (async () => {
-      try { await avitBatch.run(message, event => record(run, event), run.controller); }
+    record(run, { type: 'fp_run_start', at: new Date().toISOString(), runId: run.id, avits, sctasks, issts, model: label, execution });
+    run.promise = (async () => {
+      try { await avitBatch.run({ ...message, execution }, event => record(run, event), run.controller); }
       catch (error) { record(run, { type: 'avit_batch_error', at: new Date().toISOString(), message: error.message }); }
       finally { run.active = false; run.subscribers.clear(); }
     })();
@@ -65,8 +68,13 @@ function createAvitRuns(avitBatch) {
     current.controller.abort();
     return true;
   }
+  function close() {
+    closing = true;
+    cancel();
+    return current?.promise || Promise.resolve();
+  }
 
-  return { start, attach, detach, cancel, close: cancel, get active() { return !!current?.active; } };
+  return { start, attach, detach, cancel, close, get active() { return !!current?.active; } };
 }
 
 module.exports = { createAvitRuns, MAX_EVENTS };
