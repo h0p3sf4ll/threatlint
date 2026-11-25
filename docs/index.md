@@ -27,6 +27,7 @@ See [Profiles and saved settings](profiles.md) for sign-in, company workspaces, 
 | Review results from supported sources and export reports | [Reports and exports](reports.md) |
 | Pull existing issues or create and track tickets | [Manage connections and tickets](integrations.md) |
 | Run scans and reviews from MCP clients or scripts | [MCP and headless workflows](mcp.md) |
+| Look up every MCP tool and its arguments | [MCP tool reference](mcp-tools.md) |
 
 ## Explore further
 
