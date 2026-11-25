@@ -7,6 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { createOrganizationService } = require('../lib/organization-service.cjs');
 const { createCompanies } = require('../lib/companies.cjs');
+const { createAuth0Management } = require('../lib/auth0-management.cjs');
 const issuer = 'https://tenant.auth0.test/', identity = { issuer, subject: 'github|creator' };
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-organizations-'));
@@ -43,7 +44,8 @@ it('resumes a lost create response across restart without duplicates and grants 
   assert.equal(state.calls.filter(value => value === 'create').length, 1); assert.equal(state.grants.length, 1);
   assert.equal(state.grants[0][0].subject, identity.subject); assert.equal(company.organizationId, 'org_1');
   assert.equal(state.remote.size, 1); assert.equal(state.remote.values().next().value.enabled_connections[0].assign_membership_on_login, false);
-  assert.equal(state.remote.values().next().value.enabled_connections[0].is_signup_enabled, false);
+  assert.equal(Object.hasOwn(state.remote.values().next().value.enabled_connections[0], 'is_signup_enabled'), false);
+  assert.equal(Object.hasOwn(state.remote.values().next().value.enabled_connections[0], 'show_as_button'), false);
   assert.equal((await state.restart().service.create(identity, input)).organizationId, company.organizationId);
   assert.equal(state.grants.length, 1, 'retrying a completed request cannot promote a demoted creator');
   await assert.rejects(restarted.service.create(identity, { ...input, name: 'Changed' }), { status: 409 });
@@ -94,4 +96,57 @@ it('refuses to complete creation if enabled connections drift outside approved i
     await assert.rejects(service.create(identity, { name: 'Private Team', idempotencyKey: crypto.randomUUID() }), { status: 503 });
     assert.equal(state.grants.length, 0); assert.equal(state.memberships.size, 0); assert.deepEqual(companies.list(), []);
   }
+});
+
+it('resumes a rejected legacy social-connection request with the same journal entry and explicitly adds only its creator', async t => {
+  const state = fixture(t), input = { name: 'Social Team', idempotencyKey: crypto.randomUUID() };
+  const requests = [], remote = new Map(), members = new Set(), grants = [];
+  const management = createAuth0Management({ domain: 'tenant.auth0.test', clientId: 'fixture-m2m', clientSecret: 'fixture-only-secret',
+    connectionIds: ['con_Google', 'con_GitHub'], transport: async (url, init) => {
+      const route = new URL(url), body = init.body ? JSON.parse(init.body) : undefined;
+      requests.push({ path: route.pathname, method: init.method, body });
+      if (route.pathname === '/oauth/token') return Response.json({ access_token: 'fixture-only-management-token', expires_in: 3600 });
+      if (route.pathname.startsWith('/api/v2/organizations/name/')) {
+        const organization = remote.get(decodeURIComponent(route.pathname.split('/').at(-1)));
+        return organization ? Response.json(organization) : Response.json({}, { status: 404 });
+      }
+      if (route.pathname.endsWith('/organizations') && init.method === 'GET') return Response.json({ organizations: [...remote.values()].filter(() => members.has(identity.subject)) });
+      if (route.pathname === '/api/v2/organizations' && init.method === 'POST') {
+        if (body.enabled_connections.some(value => Object.hasOwn(value, 'is_signup_enabled') || Object.hasOwn(value, 'show_as_button'))) {
+          return Response.json({ errorCode: 'invalid_body', message: 'Only database connections support is_signup_enabled' }, { status: 400 });
+        }
+        const organization = { ...body, id: 'org_SocialTeam' }; remote.set(body.name, organization);
+        return Response.json(organization, { status: 201 });
+      }
+      if (route.pathname.endsWith('/enabled_connections')) return Response.json({ enabled_connections: [...remote.values()][0].enabled_connections });
+      if (route.pathname.endsWith('/members') && init.method === 'POST') {
+        assert.deepEqual(body, { members: [identity.subject] }); for (const subject of body.members) members.add(subject);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error('Unexpected synthetic Auth0 request');
+    } });
+  const start = transport => createOrganizationService({ directory: state.directory, issuer,
+    companies: createCompanies({ directory: state.directory, companies: [] }), management: transport,
+    grantCreator: (...values) => grants.push(values) });
+  // Reproduce the deployed request that Auth0 rejected, leaving its real durable pending journal.
+  const legacy = { ...management, createOrganization: body => management.createOrganization({ ...body,
+    enabled_connections: body.enabled_connections.map(value => ({ ...value, is_signup_enabled: false, show_as_button: true })) }) };
+  await assert.rejects(start(legacy).create(identity, input), { status: 503 });
+  const file = path.join(state.directory, 'organization-operations.json');
+  const pending = JSON.parse(fs.readFileSync(file, 'utf8')).operations[0];
+  assert.equal(pending.complete, false); assert.equal(Object.hasOwn(pending, 'organizationId'), false);
+  assert.equal(remote.size, 0); assert.equal(members.size, 0); assert.equal(grants.length, 0);
+  const restarted = start(management), company = await restarted.create(identity, input);
+  const completed = JSON.parse(fs.readFileSync(file, 'utf8')).operations;
+  assert.equal(completed.length, 1); assert.equal(completed[0].key, pending.key); assert.equal(completed[0].slug, pending.slug);
+  assert.equal(completed[0].complete, true); assert.equal(completed[0].organizationId, company.organizationId);
+  assert.equal(remote.size, 1); assert.deepEqual([...members], [identity.subject]); assert.equal(grants.length, 1);
+  assert.equal(grants[0][0].subject, identity.subject);
+  const accepted = [...remote.values()][0];
+  assert.deepEqual(accepted.enabled_connections, [{ connection_id: 'con_Google', assign_membership_on_login: false },
+    { connection_id: 'con_GitHub', assign_membership_on_login: false }]);
+  assert.equal((await start(management).create(identity, input)).organizationId, company.organizationId);
+  assert.equal(remote.size, 1); assert.equal(grants.length, 1);
+  assert.equal(requests.filter(value => value.path === '/api/v2/organizations' && value.method === 'POST').length, 2, 'one rejected legacy request plus one accepted fixed request');
+  assert.equal(requests.filter(value => value.path.endsWith('/members') && value.method === 'POST').length, 1, 'only explicit creator membership is granted once');
 });

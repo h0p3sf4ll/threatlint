@@ -101,8 +101,10 @@ function createOrganizationService({ directory, issuer, companies, management, g
       // Resolve the deterministic name before any create: a lost HTTP response must not create a second organization.
       let remote = await management.getOrganizationByName(operation.slug);
       requireManagement();
+      // Only common connection fields apply to all approved strategies. Auth0 rejects the
+      // database-only signup field on social connections; its omitted default remains false.
       if (!remote) remote = await management.createOrganization({ name: operation.slug, display_name: operation.name,
-        metadata: { threatlint_creation: key }, enabled_connections: management.connections.map(connection_id => ({ connection_id, assign_membership_on_login: false, is_signup_enabled: false, show_as_button: true })) });
+        metadata: { threatlint_creation: key }, enabled_connections: management.connections.map(connection_id => ({ connection_id, assign_membership_on_login: false })) });
       requireManagement();
       if (!remote) remote = await management.getOrganizationByName(operation.slug);
       requireManagement();
