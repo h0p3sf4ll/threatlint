@@ -139,7 +139,8 @@ it('keeps configured repository storage pinned for clone, verification, and late
   const checkout = await f.managers.checkout(connection.id, { repositoryId: repositories[0].id });
   configured = path.join(root, 'unmounted');
   assert.equal(allocations, 1);
-  assert.equal(path.dirname(checkout.tempDir), await fs.realpath(external));
+  const selected = await fs.stat(path.dirname(checkout.tempDir)), expected = await fs.stat(external);
+  assert.deepEqual({ dev: selected.dev, ino: selected.ino }, { dev: expected.dev, ino: expected.ino });
   assert.ok(f.executions.every(execution => execution.options.cwd === checkout.tempDir || execution.options.cwd === checkout.repoPath));
   assert.match(await fs.readFile(path.join(checkout.repoPath, '.git/config'), 'utf8'), /github\.com\/octocat/);
   assert.deepEqual(await fs.readdir(primary), []);
