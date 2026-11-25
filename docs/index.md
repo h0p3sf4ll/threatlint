@@ -24,8 +24,8 @@ See [Profiles and saved settings](profiles.md) for sign-in, company workspaces, 
 | Run Semgrep and review suggested fixes | [Scan source code](security-scanner.md) |
 | Review a design alongside its implementation | [Create a threat model](threat-modeling.md) |
 | Verify findings and track repository risk | [Review findings](finding-intelligence.md) |
-| Save, export, or convert a report | [Reports and exports](reports.md) |
-| Send findings to an issue tracker | [Manage connections and tickets](integrations.md) |
+| Review results from supported sources and export reports | [Reports and exports](reports.md) |
+| Pull existing issues or create and track tickets | [Manage connections and tickets](integrations.md) |
 | Run scans and reviews from MCP clients or scripts | [MCP and headless workflows](mcp.md) |
 
 ## Explore further
