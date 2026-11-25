@@ -37,6 +37,25 @@ def test_engine_execution_keeps_original_environment_and_process_seams(monkeypat
     }
 
 
+def test_invalid_tuning_pattern_returns_its_yaml_location_without_echoing_source(tmp_path, monkeypatch):
+    from threatlint.avit_tuning import repairable_rule_error
+
+    def validate(args):
+        assert "--validate" in args and "--json" in args
+        error = {"type": ["PatternParseError", ["pattern-not-inside", "0", "patterns"]],
+                 "message": "Pattern parse error in rule demo: const token = [REDACTED]\"sha256\"",
+                 "spans": [{"config_path": ["rules", "0", "patterns", "0", "pattern-not-inside"]}]}
+        return SimpleNamespace(returncode=2, stdout=json.dumps({"errors": [error]}), stderr="Configuration is invalid")
+
+    monkeypatch.setattr(sp, "_semgrep", validate)
+    with pytest.raises(sp.SemgrepError) as failed:
+        sp.validate_tuned_rule("rules:\n  - id: demo\n", "demo", "fixture.ts", 1, work=tmp_path)
+    diagnostic = str(failed.value)
+    assert "rules.0.patterns.0.pattern-not-inside" in diagnostic and "$VALUE" in diagnostic
+    assert "sha256" not in diagnostic and "[REDACTED]" not in diagnostic
+    assert repairable_rule_error(failed.value)
+
+
 def test_invalid_scan_json_uses_the_original_public_error_class(monkeypatch):
     monkeypatch.setattr(sp, "_pro_flags", lambda: [])
     monkeypatch.setattr(sp, "_semgrep", lambda args: SimpleNamespace(returncode=0, stdout="invalid", stderr="synthetic failure"))

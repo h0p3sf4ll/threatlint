@@ -103,6 +103,20 @@ function errorOf(result) {
   return diagnostic.replace(/^(?:ERROR:|!)\s*/, '');
 }
 
+// A JS template can contain both a credential literal and a computed signature.
+// Inspect its literal parts. Ambiguous or multiline syntax uses the existing assignment matcher.
+function templateLiteralParts(line) {
+  const template = /^\s*(?:(?:const|let|var)\s+)?["']?[\w.-]+["']?\s*[:=]\s*`([^`\\]*)`/.exec(line);
+  if (!template) return null;
+  const interpolation = /\$\{(?:[^{}"']|"[^"]*"|'[^']*')*\}/g;
+  const parts = template[1].split(interpolation);
+  if (parts.some(part => part.includes('${'))) return null;
+  for (const [expression] of template[1].matchAll(interpolation)) {
+    for (const literal of expression.matchAll(/"([^"]*)"|'([^']*)'/g)) parts.push(literal[1] ?? literal[2]);
+  }
+  return parts;
+}
+
 /**
  * Replace any long, credential-like value from the flagged file (and its directory) that appears in the
  * report. The agent is told never to print secrets; this is the enforcement.
@@ -119,13 +133,19 @@ function redactSecrets(markdown, repo, filePath) {
   }
   const values = new Set();
   for (const file of files) {
+    const javascript = /\.[cm]?[jt]sx?$/i.test(file);
     for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-      const match = /^\s*#?\s*["']?[\w.-]+["']?\s*[:=]\s*["']?([^"'\s#,]{16,})["']?/.exec(line);
-      if (match && /\d/.test(match[1]) && /[A-Za-z]/.test(match[1]) && !match[1].includes('/')) values.add(match[1]);
+      for (const token of line.match(/\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b/g) || []) values.add(token);
+      const parts = javascript ? templateLiteralParts(line) : null;
+      const candidates = parts ? parts.flatMap(part => part.match(/[^"'\s#,]{16,}/g) || [])
+        : [line.match(/^\s*#?\s*["']?[\w.-]+["']?\s*[:=]\s*["']?([^"'\s#,]{16,})/)?.[1]];
+      for (const value of candidates) {
+        if (value && /\d/.test(value) && /[A-Za-z]/.test(value) && !value.includes('/')) values.add(value);
+      }
     }
   }
   let redacted = markdown, count = 0;
-  for (const value of values) {
+  for (const value of [...values].sort((a, b) => b.length - a.length)) {
     if (redacted.includes(value)) { redacted = redacted.split(value).join('[REDACTED]'); count++; }
   }
   return { markdown: redacted, count };
@@ -295,6 +315,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         'Investigate the actual rule claim using the read-only repository tools: inspect the complete flagged function, its callers, registered controls, configuration, and relevant tests. Return TRUE POSITIVE when the inspected evidence establishes the vulnerability, with CONFIRMED confidence only when its necessary preconditions are proved. Return FALSE POSITIVE only when inspected evidence disproves the claim beyond reasonable doubt, including relevant bypasses. If neither conclusion can be established after investigation, retain TRUE POSITIVE with **Decision basis**: CONSERVATIVE DEFAULT and name the unresolved evidence. Failure to prove a false positive alone does not make an evidence-supported true positive conservative. A test/fixture label, internal deployment, or assumed trust alone is insufficient. Proven false positives still require the narrow tuned rule and passing fixture validation.',
         `Use finding ID FP-001. Include this field, replacing the placeholders with the actual rule, scanner, and flagged source location:\n**Original finding**: ${avit}; <rule or vulnerability>; <scanner>; <path>:<line>`,
         'Never write any secret, key, token, password, or connection-string value; refer to it by path:line, key name, and characterization, and use [REDACTED] in excerpts.',
+        'In a tuned Semgrep pattern, use a metavariable for a sensitive value and keep the surrounding expression valid in the target language. Use synthetic literals in the fixtures.',
         'For a SAST or Secrets FALSE POSITIVE you MUST include a tuned rule: copy the complete "Semgrep rule to tune from" in the attachment (when it is a live tuned rule, keep every exclusion it already has), add the narrowest pattern-not, pattern-not-inside, pattern-not-regex or sanitizer that removes only this false-positive shape, and set the id to the original rule id plus `.tuned`. Put it in one ```yaml block directly after a line reading exactly `**Tuned rule**:`, then a line reading exactly `**Tuned rule fixtures**:` and one fenced block in the target language with at least one `ruleid: <id>.tuned` comment line (a true-positive shape; the line after it must still match) and one `ok: <id>.tuned` comment line (this false-positive shape, which the original rule matches). Never write placeholders. If no rule source is attached, say so in the report.',
         ...(prepareFix ? ['For a supported TRUE POSITIVE, include quoted Evidence with checkout file:line references and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff in a follow-up after checking the evidence.'] : []),
       ].join('\n');
