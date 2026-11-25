@@ -5,7 +5,7 @@ description: Pull issues from ServiceNow, Azure DevOps, Jira, and GitHub, then t
 
 # Manage connections and tickets
 
-Use **Settings → Integrations** to save named source and tracker connections. You can keep multiple connections for different projects, repositories, or credentials and choose an enabled default for each kind.
+Use **Settings → Integrations** to save named source and tracker connections. You can keep multiple connections for different projects, repositories, or credentials and choose an enabled default for each kind. Company administrators manage these connections; analysts can use them to manage issues, and viewers can read the inbox.
 
 On the web, company connections and tracked ticket records are shared within the company, subject to your role. Personal users have their own scope. Repository checkouts and review reports remain in each user's profile. Desktop connections use the local Workbench scope.
 
@@ -35,14 +35,16 @@ When editing a connection, a blank token preserves the saved credential. Enter a
 ### Pull existing issues
 
 1. Open **Issue management → Pull issues**.
-2. Select one or more sources. Saved, enabled Jira, Azure Boards, and GitHub Issues connections appear here. ServiceNow AVITs uses your existing [ServiceNow settings](avit-integration.md).
-3. For Jira or Azure Boards, enter the issue or work item type used by that project. Custom types are supported; the saved connection provides the initial value.
+2. Select one or more sources. Saved, enabled Jira, Azure Boards, and GitHub Issues connections appear here. The ServiceNow AVIT source uses your existing [ServiceNow settings](avit-integration.md).
+3. For Jira or Azure Boards, enter the exact issue or work item type used by that project. Custom types are supported; the saved connection provides the initial value. A pull override does not change the saved connection.
 4. Choose the status to pull, then select **Pull issues**. For ServiceNow, use the AVIT filters to narrow the results.
 5. Use **Load more** for a source with additional results.
 
 You can pull from several providers or several projects at once. Each source reports its own result, so a failed connection does not prevent successful sources from being imported. GitHub pull requests are excluded.
 
-Pulled issues appear in the issue inbox with their source, status, and native link. Pulling the same issue again updates its existing record. It does not create a duplicate, change the external issue, or remove previously tracked issues that are outside the current filters.
+Pulled issues appear in the issue inbox with their source, status, and native link. Pulling the same issue again updates its existing record. It does not create a duplicate, change the external issue, or remove previously tracked issues that are outside the current filters. Pulling does not run a model review or create a review report; use [Finding triage](workbench.md#triaging-a-scan-report) to investigate findings.
+
+ServiceNow is a pull-only source here. It uses the saved instance and credentials without a second connection setup. Refresh its rows with **Pull issues**. The inbox cannot create, manually import, or close ServiceNow records; use the separate [AVIT review and closure workflow](avit-integration.md).
 
 Company administrators and analysts can pull issues into their company's inbox. Viewers can read the inbox. Personal web profiles and the desktop app use their own connection and ticket scope; desktop use does not require a Threatlint login.
 
@@ -50,7 +52,7 @@ Company administrators and analysts can pull issues into their company's inbox. 
 
 Use **Issue management** to create a ticket from a saved report finding, or create it directly from that finding. You can also import specific Jira, Azure Boards, or GitHub ticket IDs. Imported records retain their provider scope and native ticket link.
 
-Use status sync to refresh tracked records. Check individual errors when an update is partial; a failed provider request does not erase existing records. Imports accept up to 100 IDs per request. Large status lists are paged.
+Use status sync to refresh Jira, Azure Boards, and GitHub ticket records. A sync across all sources skips ServiceNow AVITs; pull them again instead. Check individual errors when an update is partial; a failed provider request does not erase existing records. Imports accept up to 100 IDs per request. Large status lists are paged.
 
 ### Recover an uncertain ticket creation
 
@@ -84,3 +86,12 @@ Bare numeric IDs, bare Jira keys, and report-local IDs such as `F-001` do not es
 Threatlint posts the review as a comment or history note, requests closure, and reads the ticket back before recording **FALSE POSITIVE**. If confirmation fails after an acknowledged closure, retry with the same review proof to check the result without repeating that mutation. An unacknowledged network failure stays uncertain.
 
 A ticket closed externally is not automatically reclassified as a false positive. Sync it to see the provider status. ServiceNow uses its separate [AVIT closure and tuning workflow](avit-integration.md).
+
+## Review findings and report progress
+
+Named connections and the issue inbox are separate from the credentials used by **Finding triage** and **Metrics**. Configure the relevant source under **Settings → Scanning & triage** before using those views. Pulling issues does not automatically add them to Metrics or publish reports.
+
+- [Finding triage](workbench.md#triaging-a-scan-report) reviews ticket evidence or an uploaded scan report with the selected model and source context.
+- [DefectDojo](integrations/defectdojo.md) and [SonarQube](integrations/sonarqube.md) have dedicated review and confirmed posting workflows.
+- [Metrics](dashboards.md) reads configured tracker and findings sources for reporting.
+- [Reports](reports.md) explains where review evidence is retained and how to export it.

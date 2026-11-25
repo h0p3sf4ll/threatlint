@@ -229,14 +229,14 @@ The official Claude GitHub App has broader permissions than these workflow jobs.
 
 ### Switch Provider for PR Review
 
-Set the `APPSEC_PROVIDER` repository variable to `openai` or `github-models` without editing the workflow file.
+Set the `APPSEC_PROVIDER` repository variable to `claude` or `openai` without editing the workflow file. `github-models` is retired and the automatic configuration check rejects it.
 
 ### Change the Provider Model
 
 For Claude, set `THREATLINT_SCAN_MODEL` (default: `claude-opus-5-5`).
-For API providers, add `--model <model-id>` to `appsec_api.py`; defaults are
-`gpt-4o` (OpenAI) and `openai/gpt-4o` (GitHub Models). Confirm model access
-with your provider before changing it.
+For OpenAI, add `--model <model-id>` to `appsec_api.py`; the bundled default is
+`gpt-4o`. Confirm model access with your provider before changing it. Legacy
+GitHub Models flags do not restore the retired inference service.
 
 ### Change Triggering Paths
 
@@ -267,11 +267,14 @@ fixes that cannot be offered as a native diff suggestion.
 1. Open **Actions → Apply security fix and rescan → Run workflow**.
 2. Enter `base_branch`, the full `expected_sha`, and the exact `finding_id` from
    the Security scanner JSON artifact.
-3. Leave both application checkboxes off to prepare a proposal artifact only.
-   After reviewing it, `apply_reviewed_fix` authorizes that edit. The separate
-   `auto_apply_debug_policy` checkbox explicitly permits only the supported
-   Python `DEBUG = True` → `False` transformation without per-edit approval.
-   Both default to `false`; other remediation remains advisory.
+3. Leave both application checkboxes off and `auto_apply_rule` at `none` to prepare
+   a proposal artifact only. After reviewing it, `apply_reviewed_fix` authorizes
+   that edit. Alternatively, select one supported rule in `auto_apply_rule`:
+   `TL-DEBUG-ENABLED`, `TL-PY-YAML`, or `TL-TLS-VERIFY-OFF`. That selection explicitly
+   authorizes the corresponding narrow transformation without per-edit approval;
+   review its [compatibility limits](security-scanner.md#review-and-apply) first.
+   The older `auto_apply_debug_policy` checkbox remains a DEBUG-only option.
+   Application checkboxes default to `false`; the rule selector defaults to `none`.
 4. Review the draft PR and run application checks before merging. The workflow
    never merges automatically.
 
@@ -307,7 +310,7 @@ The `# v6` and `# v1` comments identify the release each SHA was resolved from. 
 | Workflow is absent from the Actions tab | Confirm the workflow file is on the default branch and Actions are enabled. |
 | Authentication failure (Claude) | Confirm `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` exists, is valid, and is accessible to the workflow. |
 | Authentication failure (OpenAI) | Confirm `OPENAI_API_KEY` is set as a repository or organization secret. |
-| GitHub Models API returns 401 | Confirm `GITHUB_TOKEN` has access to GitHub Models in your plan. |
+| GitHub Models configuration is rejected | Select `claude` or `openai` and configure that provider's credential; a GitHub token cannot restore the retired inference API. |
 | Claude Code Action cannot authenticate to GitHub | Confirm the Claude GitHub App is installed and `id-token: write` remains granted. |
 | PR review did not run | Check whether the PR is draft, from a fork, or did not match a configured trigger. |
 | Full report is not visible on the pull request | PR review posts a summary; download the full Markdown artifact from the Actions run. Manual threat models do not post PR summaries. |

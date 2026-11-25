@@ -47,6 +47,8 @@ Organization administrators can open **Settings → Roles & access** to see ever
 3. To change an existing member's role, choose the role on their row and select **Save role**.
 4. To revoke membership, select **Remove access** and confirm.
 
+Account lookup uses the exact email recorded by the sign-in provider, including its letter case. If **Find account** returns no match after the person has signed in, confirm that provider's recorded address before retrying.
+
 | Role | Access |
 | --- | --- |
 | Administrator | Manage members, shared integrations and settings; run reviews and manage findings |
