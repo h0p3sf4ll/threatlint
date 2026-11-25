@@ -8,6 +8,8 @@
     "start:web": "node web-server.cjs",
     "start": "node server.js",
     "mcp": "node scripts/mcp.cjs",
+    "docs:mcp": "node scripts/mcp-reference.cjs",
+    "docs:mcp:check": "node scripts/mcp-reference.cjs --check",
     "dev": "node --watch server.js",
     "desktop": "electron .",
     "predesktop:pack": "node node_modules/electron/install.js && node desktop/build-icon.cjs && node scripts/desktop-sync.cjs stamp",

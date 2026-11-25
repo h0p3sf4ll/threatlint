@@ -32,3 +32,5 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm test
+      - name: Check MCP tool documentation
+        run: npm --prefix web run docs:mcp:check

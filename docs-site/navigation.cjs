@@ -8,7 +8,7 @@ const sidebar = [
   category('Core workflows', ['workbench', 'security-scanner', 'threat-modeling', 'finding-intelligence', 'reports', 'dashboards', 'sidekick']),
   category('Integrations', ['integrations', 'github-app', 'aws-parameters', 'avit-integration', 'integrations/defectdojo', 'integrations/sonarqube', 'teams', 'mcp']),
   category('Automation', ['ide', 'github-actions', 'ci-templates', 'review-orchestration', 'avit-orchestrator']),
-  category('Reference', ['agents', 'runtime-redteam', 'assurance', 'semgrep-policies', 'integrations/README', 'integrations/authoring', 'web-app']),
+  category('Reference', ['mcp-tools', 'agents', 'runtime-redteam', 'assurance', 'semgrep-policies', 'integrations/README', 'integrations/authoring', 'web-app']),
 ];
 const publishedIds = sidebar.flatMap(item => typeof item === 'string' ? [item] : item.items);
 const retired = [

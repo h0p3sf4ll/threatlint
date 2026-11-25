@@ -181,6 +181,35 @@ up to 250 progress events within a 256 KiB event budget.
 such as `ensemble` also go there; independent provider review still requires its own explicit
 consent for every provider. Explicit top-level IDs/settings take precedence over `options`.
 
+### Provider request options
+
+Use inherited or configured credentials when possible. If a client supplies a credential for
+one run, put it in the provider-specific `options` field below. These field names apply to
+review, conversation, import, and triage requests; `list_models` instead takes its optional
+credential as the top-level `key` field.
+
+| Provider | Optional request fields inside `options` |
+| --- | --- |
+| `claude` | `apiKey` |
+| `openai`, `daybreak` | `openaiApiKey` |
+| `bedrock`, `daybreak-bedrock` | `bedrockApiKey`, `bedrockRegion` |
+| `copilot` | `copilotToken` |
+| `lmstudio` | `lmstudioUrl`, `lmstudioModel` |
+| `claude-code`, `codex` | Use the CLI login on the server host |
+
+For example, discover a model on a local compatible server, then use its returned model ID:
+
+```json
+{"name":"list_models","arguments":{"provider":"lmstudio","baseUrl":"http://127.0.0.1:1234/v1"}}
+{"name":"start_review","arguments":{"sessionId":"WORKSPACE_ID","agentIds":["appsec-code-reviewer"],"provider":"lmstudio","model":"RETURNED_MODEL_ID","options":{"lmstudioUrl":"http://127.0.0.1:1234/v1"},"confirm":true}}
+```
+
+`lmstudioModel`, when supplied, selects the model ahead of `model`. The URL is resolved from
+the MCP server host. See [credential lookup](model-providers.md#credential-lookup-in-the-workbench)
+for each provider's environment and CLI fallback behavior.
+
+### Supporting documents and conversations
+
 Upload supporting documents/diagrams with `upload_design_inputs` using
 `files:[{"name":"architecture.md","content":"BASE64_BYTES"}]` and `confirm: true`.
 Pass the returned bundle ID as `designInputsId`, then remove it with `remove_design_inputs`
@@ -210,6 +239,61 @@ SonarQube. `post_scanner_review` posts a completed workspace Finding Review to i
 DefectDojo/SonarQube reference. Both retain the existing evidence and reference-mapping
 checks. Importing a report or starting review does not implicitly post it.
 
+### Scanner filters and writeback mappings
+
+For a scoped scanner review, provide `filter` with the scanner's field names. This example
+reviews at most ten active DefectDojo findings for one product:
+
+```json
+{
+  "name": "start_scanner_review",
+  "arguments": {
+    "sessionId": "WORKSPACE_ID",
+    "tool": "dojo",
+    "filter": {"product": 123, "active": true, "limit": 10},
+    "provider": "codex",
+    "confirm": true
+  }
+}
+```
+
+| Scanner | Supported `filter` fields |
+| --- | --- |
+| `dojo` | Positive IDs `product`, `engagement`, `test`; booleans `active`, `verified`; `severity` values `Critical`, `High`, `Medium`, `Low`, `Info`; `tags` |
+| `sonar` | Required `project`; optional `branch`, `pullRequest`, `organization`; `types` values `VULNERABILITY`, `BUG`, `CODE_SMELL`, `SECURITY_HOTSPOT`; `severities` values `BLOCKER`, `CRITICAL`, `MAJOR`, `MINOR`, `INFO`; `statuses` values `OPEN`, `CONFIRMED`, `REOPENED`, `RESOLVED`, `CLOSED`, `ACCEPTED`, `TO_REVIEW`, `REVIEWED` |
+
+The list fields accept arrays or comma/whitespace-separated strings. DefectDojo filters must
+narrow by product, engagement, test, or tag. Both scanners accept `limit`: a positive integer
+bounds the results; zero or omission selects every matching finding. Explicit `references`
+and filter results are combined and deduplicated. Poll the returned job with `get_review`.
+
+After an import reaches `done`, inspect its report before authorizing writeback. An import
+from the destination scanner can use its original finding references automatically. For
+other imports, pass a single destination reference or a mapping from imported finding IDs:
+
+```json
+{
+  "name": "post_import_review",
+  "arguments": {
+    "importId": "IMPORT_ID",
+    "destination": "dojo",
+    "options": {"references": {"FP-001": "DOJO-123"}},
+    "confirm": true
+  }
+}
+```
+
+Replace both IDs with the reviewed finding and its exact destination. `references` also
+accepts text such as `FP-001=DOJO-123`, with newline/comma/semicolon-separated pairs. SonarQube
+accepts an optional HTTPS `options.reportUrl` for the report's location. ServiceNow uses
+`options.number` for one AVIT, ISST, or SCTASK, or `options.avit` for finding-to-AVIT mappings;
+do not send both. ISST/SCTASK posting attaches the review; AVIT posting follows the reviewed
+disposition and evidence gates. Inspect `ok` and every returned action because a multi-target
+write can partly succeed. See [DefectDojo resolve](integrations/defectdojo.md#resolve) and
+[SonarQube resolve](integrations/sonarqube.md#resolve) for destination behavior.
+
+### ServiceNow batch
+
 For the native ServiceNow batch, `start_avit_review` accepts AVIT/SCTASK/ISST `references`,
 provider/model/options, and **both** `confirm:true` and `confirmWriteback:true`. This workflow
 **writes results back**: it can attach reports, close proven false positives, tune eligible
@@ -223,13 +307,105 @@ Omitting `runId` selects the current or latest profile-wide batch. Only one batc
 time, and only the latest is retained. `cancel_avit_review` takes `runId` and `confirm:true`;
 already-admitted external writes and cleanup drain before the batch becomes inactive.
 
-`start_runtime_scan` takes the existing runtime request as `config`, plus `confirm: true`.
-That confirmation does not replace `config.authorization.confirmed:true`, its authorization
-reason, target/path limits, or the source sandbox's explicit build authorization. Configure
-only targets and identities you are authorized to inspect. Use `get_runtime_scan`,
-`cancel_runtime_scan`, and `export_runtime_scan` to follow and retrieve results. Manual
-`start_browser_signin`/`finish_browser_signin` run on the server host and require a usable
-browser there. See [runtime configuration and limits](runtime-redteam.md).
+### Runtime request configuration
+
+`start_runtime_scan` accepts the following nested `config` for a live target. Replace the
+example target and authorization reason with the environment you are authorized to inspect:
+
+```json
+{
+  "name": "start_runtime_scan",
+  "arguments": {
+    "config": {
+      "target": "https://staging.example.test",
+      "paths": ["/health"],
+      "authorization": {"confirmed": true, "reason": "Authorized staging review"},
+      "auth": {"type": "none"},
+      "limits": {"maxRequests": 20, "timeoutMs": 10000, "delayMs": 150}
+    },
+    "confirm": true
+  }
+}
+```
+
+| `config` field | Contract |
+| --- | --- |
+| `target` | HTTP(S) URL without embedded credentials, query string, or fragment |
+| `authorization` | Required `confirmed: true` and nonempty `reason` of at most 300 characters; `allowPrivate: true` explicitly permits approved private-network/loopback targets |
+| `paths` | 1–100 normalized origin-relative paths, such as `/api/status`; no query strings, fragments, whitespace, dot segments, or encoded separators |
+| `auth` | Primary identity, default `{ "type": "none" }`; authentication fields below |
+| `roles` | Up to four additional `{ "label": "role name", "auth": { ... } }` identities; labels are nonempty and at most 60 characters |
+| `checks.compareAnonymous` | Set `true` to compare an authenticated primary identity with an anonymous caller |
+| `assertions` | Objects such as `{ "path": "/api/private", "expectedAnonymousStatus": [401, 403] }`; paths must appear in `paths`, and expected statuses must be nonempty arrays of HTTP status integers |
+| `limits.maxRequests` | Integer 1–100; default 20 |
+| `limits.timeoutMs` | Integer 500–30000; default 10000 |
+| `limits.delayMs` | Integer 0–10000; default 150 |
+
+Supply authentication material through the client's approved secret handling. The live
+runtime accepts these `auth` shapes; the same shapes apply to each additional role:
+
+| `auth.type` | Fields |
+| --- | --- |
+| `none` | No additional fields |
+| `bearer` | `token` |
+| `basic` | `username`, `password` |
+| `api-key` | `name`, `value`, `location` (`header` or `query`) |
+| `headers` | `headers` object containing 1–30 valid header names and single-line string values; connection/transport headers are rejected |
+| `cookie` | `cookie` header value |
+| `oauth-client-credentials` | `tokenUrl`, `clientId`, `clientSecret`; optional `scope`, `audience` |
+| `oauth-refresh-token` | `tokenUrl`, `clientId`, `refreshToken`; optional `clientSecret`, `scope`, `audience` |
+| `oauth-password` | `tokenUrl`, `clientId`, `username`, `password`; optional `clientSecret`, `scope`, `audience` |
+| `form-login` | `loginUrl`, `username`, `password`; optional `usernameField` (default `username`) and `passwordField` (default `password`) |
+| `mtls` | PEM `cert` and `key`; optional `passphrase` |
+| `browser-state` | `storageState.cookies`: 1–200 cookie objects with `name`, `value`, and optional `domain` |
+| `browser-session` | `sessionId` returned by completed manual browser sign-in |
+
+OAuth token URLs and form-login URLs undergo the same private-network authorization checks.
+Remote OAuth token endpoints require HTTPS unless private-network access was explicitly
+enabled. Use `get_runtime_scan` with the returned `id` as `scanId`; terminal live-scan statuses
+are `complete`, `failed`, and `cancelled`. Inspect coverage and events. `export_runtime_scan`
+returns `{ contentType, body }` for `json`, `md`, or `html`; its body is text, unlike the base64
+chunks from `export_report`. `cancel_runtime_scan` requests cancellation and does not erase
+completed observations.
+
+To build and scan an opened repository in an ephemeral environment, supply `config.source`
+instead of a live target:
+
+```json
+{
+  "name": "start_runtime_scan",
+  "arguments": {
+    "config": {
+      "source": {"workspaceId": "WORKSPACE_ID", "confirmBuild": true, "anonymousConfirmed": true},
+      "paths": ["/health"],
+      "authorization": {"confirmed": true, "reason": "Authorized isolated source review"},
+      "auth": {"type": "none"},
+      "limits": {"maxRequests": 20}
+    },
+    "confirm": true
+  }
+}
+```
+
+Alternatively, `source` accepts `url` and optional `branch`; choose either `workspaceId` or
+`url`. Building requires `source.confirmBuild: true`. Anonymous-only scans additionally
+require `source.anonymousConfirmed: true`. Source scans support `none`, `bearer`, `basic`,
+`cookie`, header-based `api-key`, or `headers` authentication with sandbox test credentials.
+They allow at most 40 requests and two concurrent source scans. Paths multiplied by the
+number of identities must fit the request budget; role names must be unique and cannot be
+`primary` or `anonymous`. Authenticated assertions require `checks.compareAnonymous: true`.
+The runner needs Docker and source-build support; see the [isolated runtime workflow](runtime-redteam.md)
+and [hosted runtime limitations](web-app.md).
+
+For manual browser sign-in, call `start_browser_signin` with `confirm: true` and
+`config: { "target": "https://staging.example.test", "authorization": { "confirmed": true,
+"reason": "Authorized staging sign-in" } }`. Complete sign-in in the browser on the server
+host, then call `finish_browser_signin` with the returned `id` as `browserId` and `confirm: true`.
+Its `{ "id": "...", "type": "browser-session" }` result supplies the scan's
+`auth: { "type": "browser-session", "sessionId": "RETURNED_ID" }`. Cookies remain server-side
+and are scoped to the target origin. Sessions expire 15 minutes after starting; at most three
+sessions are retained at once. This workflow requires a usable headed Playwright browser on
+the host and is unavailable in the standard hosted server image.
 
 ## Sources and repository checkout
 
@@ -269,7 +445,9 @@ See [Finding intelligence](finding-intelligence.md).
 
 ## Tool reference
 
-The schemas returned by `tools/list` define required fields and supported options.
+The [complete MCP tool reference](mcp-tools.md) documents every tool's required and optional
+inputs, defaults, limits, effect annotations, and full nested JSON schema. The schemas returned
+by `tools/list` describe the connected server's supported options.
 
 | Workflow | Tools |
 | --- | --- |
