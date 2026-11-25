@@ -49,6 +49,39 @@ it('refuses unsafe ServiceNow record link origins', () => {
   }
 });
 
+it('preserves a computed HMAC signature in a tuning pattern and masks literal credentials', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-signature-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const hmac = '`sha256=${createHmac("sha256", webhookSecret).update(body).digest("hex")}`';
+  const prefix = 'syntheticPrefix12345', suffix = 'syntheticSuffix67890';
+  const quoted = 'literal12345678${getValue()}';
+  const embedded = 'syntheticHmacKey012345';
+  const providerToken = 'ghp_' + 'a'.repeat(30);
+  fs.writeFileSync(path.join(repo, 'signed.test.ts'), [
+    `    "x-hub-signature-256": ${hmac},`,
+    'const label = `' + prefix + '${stage}' + suffix + '`;',
+    'const value = `${use("' + embedded + '")}`;',
+    'credential: "' + quoted + '",',
+    'const other = ["' + providerToken + '"];',
+  ].join('\n'));
+  const draft = 'pattern: |\n  const signature = ' + hmac + ';\n'
+    + [prefix, suffix, embedded, quoted, providerToken].join('\n');
+  const result = redactSecrets(draft, repo, 'signed.test.ts');
+  assert.equal(result.markdown, 'pattern: |\n  const signature = ' + hmac + ';\n' + Array(5).fill('[REDACTED]').join('\n'));
+  assert.equal(result.count, 5);
+});
+
+it('retains masking for data files and ambiguous JavaScript template assignments', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-literal-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const configValue = '`credential0123456789${config}`';
+  const unfinishedValue = '`credential0123456789${lookup(';
+  fs.writeFileSync(path.join(repo, 'settings.yaml'), 'token: ' + configValue);
+  fs.writeFileSync(path.join(repo, 'example.js'), 'token: ' + unfinishedValue + '\n  stage\n)}`');
+  const result = redactSecrets(configValue + '\n' + unfinishedValue, repo, 'example.js');
+  assert.equal(result.markdown, '[REDACTED]\n[REDACTED]');
+});
+
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [], modelCalls = [];

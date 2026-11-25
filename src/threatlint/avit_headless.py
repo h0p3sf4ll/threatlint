@@ -24,6 +24,9 @@ from .run_context import _build_run_message
 
 
 _CREDENTIAL_ASSIGNMENT = re.compile(r"^\s*#?\s*[\"']?[\w.-]+[\"']?\s*[:=]\s*[\"']?([^\"'\s#,]{16,})")
+_JS_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
+_JS_TEMPLATE_ASSIGNMENT = re.compile(r"^\s*(?:(?:const|let|var)\s+)?[\"']?[\w.-]+[\"']?\s*[:=]\s*`([^`\\]*)`")
+_JS_INTERPOLATION = re.compile(r'''\$\{(?:[^{}"']|"[^"]*"|'[^']*')*\}''')
 _KNOWN_SECRET = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b")
 _RULE_GUIDANCE = (
     "Use only TRUE POSITIVE or FALSE POSITIVE. A FALSE POSITIVE requires inspected evidence "
@@ -43,8 +46,23 @@ _RULE_GUIDANCE = (
     "after a line exactly `**Tuned rule**:`, followed by `**Tuned rule fixtures**:` "
     "and one fenced target-language block containing `ruleid: <id>.tuned` for a "
     "true-positive shape and `ok: <id>.tuned` for the false-positive shape. "
-    "Never use placeholders. If no rule source is available, say so in the report."
+    "Use a Semgrep metavariable for a sensitive value in a pattern, preserve the surrounding "
+    "expression, and use synthetic literals in the fixtures. If no rule source is available, say so in the report."
 )
+
+
+def _assignment_candidates(line: str, javascript: bool) -> list[str]:
+    if javascript and (template := _JS_TEMPLATE_ASSIGNMENT.match(line)):
+        # In a signing expression the digest prefix is literal and the HMAC call is code.
+        # Keep scanning the static parts of simple templates for credentials.
+        body = template.group(1)
+        parts = _JS_INTERPOLATION.split(body)
+        if all("${" not in part for part in parts):
+            for expression in _JS_INTERPOLATION.finditer(body):
+                parts.extend(literal[1:-1] for literal in re.findall(r"\"[^\"]*\"|'[^']*'", expression.group()))
+            return [value for part in parts for value in re.findall(r"[^\"'\s#,]{16,}", part)]
+    match = _CREDENTIAL_ASSIGNMENT.match(line)
+    return [match.group(1)] if match else []
 
 
 def redact_secrets(markdown: str, repo: Path, file_path: str, evidence: str = "") -> tuple[str, int]:
@@ -59,18 +77,17 @@ def redact_secrets(markdown: str, repo: Path, file_path: str, evidence: str = ""
         except OSError:
             pass
     values: set[str] = set()
-    sources = [evidence]
+    sources = [(Path(file_path), evidence)]
     for item in files:
         try:
-            sources.append(item.read_text(encoding="utf-8", errors="replace"))
+            sources.append((item, item.read_text(encoding="utf-8", errors="replace")))
         except OSError:
             continue
-    for source in sources:
+    for file, source in sources:
         values.update(_KNOWN_SECRET.findall(source))
+        javascript = file.suffix.lower() in _JS_SUFFIXES
         for line in source.splitlines():
-            match = _CREDENTIAL_ASSIGNMENT.match(line)
-            if match:
-                value = match.group(1)
+            for value in _assignment_candidates(line, javascript):
                 if any(char.isdigit() for char in value) and any(char.isalpha() for char in value) and "/" not in value:
                     values.add(value)
     count = 0

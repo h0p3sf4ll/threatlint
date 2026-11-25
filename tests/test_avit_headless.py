@@ -178,6 +178,27 @@ def test_report_redacts_credential_assignments_from_flagged_directory(tmp_path):
     assert avit_headless.redact_secrets("unchanged", repo, "../../elsewhere") == ("unchanged", 0)
 
 
+def test_signing_template_remains_intact_in_rule_and_fixtures(tmp_path):
+    signing = '`sha256=${createHmac("sha256", webhookSecret).update(body).digest("hex")}`'
+    header = f'"X-Hub-Signature-256": {signing},'
+    (tmp_path / "webhook.ts").write_text(header, encoding="utf-8")
+    report = (f"**Tuned rule**:\n```yaml\npattern: |\n  const signature = {signing};\n```\n"
+              f"**Tuned rule fixtures**:\n```typescript\nconst signature = {signing};\n```\n")
+    assert avit_headless.redact_secrets(report, tmp_path, "webhook.ts", header) == (report, 0)
+
+
+def test_redacts_static_credentials_in_js_templates_and_quoted_values(tmp_path):
+    prefix, suffix = "synthetic-A1b2c3d4", "synthetic-Z9y8x7w6"
+    quoted, known = "mixed!P4ssword(value)", "sk-syntheticAbc1234567890"
+    argument, static = "synthetic{Arg}12345678", "plain!Synthet1cValue"
+    file = tmp_path / "secrets.js"
+    file.write_text(f'const value = `{prefix}${{scope}}{suffix}`;\nquoted = "{quoted}";\n'
+                    f'const computed = `${{lookup("{known}", "{argument}")}}`;\n'
+                    f'const token = `{static}`;\n', encoding="utf-8")
+    report = f"{prefix} {suffix} {quoted} {known} {argument} {static}"
+    assert avit_headless.redact_secrets(report, tmp_path, file.name) == (" ".join(["[REDACTED]"] * 6), 6)
+
+
 def test_fp_tuning_guard_requires_rule_source_fixture_and_real_line(tmp_path):
     repo = tmp_path / "repo"
     flagged = repo / "src" / "flagged.js"

@@ -196,6 +196,40 @@ def _check_location(original_path, rule_path, target_file, line, *, matches, err
     return local
 
 
+def _rule_validation_error(result) -> str:
+    """Use Semgrep's YAML location for pattern errors without copying the source into a diagnostic."""
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        payload = {}
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    detail = (result.stderr or result.stdout or "").strip()
+    pattern_error = False
+    location = ""
+    for error in errors if isinstance(errors, list) else ():
+        if not isinstance(error, dict):
+            continue
+        kind = error.get("type")
+        if kind == "PatternParseError" or (isinstance(kind, list) and kind[:1] == ["PatternParseError"]):
+            pattern_error = True
+            spans = error.get("spans")
+            span = spans[0] if isinstance(spans, list) and spans and isinstance(spans[0], dict) else {}
+            path = span.get("config_path")
+            if isinstance(path, list) and 0 < len(path) <= 20 and all(
+                isinstance(key, str) and re.fullmatch(r"[a-z][a-z-]{0,30}|[0-9]{1,5}", key) for key in path
+            ):
+                location = " at " + ".".join(path)
+            break
+        message = error.get("short_msg") or error.get("message")
+        if isinstance(message, str) and message.strip():
+            detail = message
+    if pattern_error or re.search(r"(?im)^\s*(?:\[ERROR\]\s*)?Pattern parse error in rule\b", detail):
+        return (f"Semgrep could not parse the tuned rule pattern{location}. Use a complete expression or statement "
+                "in the target language. Use a metavariable such as $VALUE for a sensitive operand and "
+                "preserve the enclosing call, quotes, and template delimiters.")
+    return f"Tuned rule is not valid: {detail.strip()[-300:]}"
+
+
 def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures="", token=None, *,
                         run, pro_flags, matches, original_rule_yaml, fixture_lines, error_type, work=None):
     """Require valid YAML, passing fixtures, original-rule coverage, and any reproducible local drop."""
@@ -206,9 +240,9 @@ def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures=""
     rule_id = ids[0]
     rule_path = work / f"{rule_id}.yaml"
     rule_path.write_text(rule_yaml, encoding="utf-8")
-    check = run(["--validate", "--config", str(rule_path), "--metrics", "off"])
+    check = run(["--validate", "--json", "--config", str(rule_path), "--metrics", "off"])
     if check.returncode != 0:
-        raise error_type(f"Tuned rule is not valid: {(check.stderr or check.stdout).strip()[-300:]}")
+        raise error_type(_rule_validation_error(check))
     if not fixtures:
         raise error_type("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
     scan_path = _write_fixture(work, rule_id, target_file, rule_yaml, fixtures)
