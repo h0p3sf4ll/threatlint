@@ -58,6 +58,13 @@ def add_resolve_parsers(actions) -> None:
     prepare.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
     prepare.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
     prepare.add_argument("--aws-profile", help="Accepted for workflow compatibility; evidence preparation uses no AWS credentials")
+    tuning = actions.add_parser("prepare-tuning", help="Check a proposed Semgrep tuning before AVIT write-back")
+    tuning.add_argument("number", metavar="AVIT")
+    tuning.add_argument("--report", required=True, help="Reviewed Markdown report to assess")
+    tuning.add_argument("--checkout", required=True, help="Repository checkout used for the review")
+    tuning.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
+    tuning.add_argument("--rule-base", help="Project rule source saved by semgrep rule-base")
+    tuning.add_argument("--aws-profile", help="AWS profile for reading the Semgrep credential")
     from threatlint.dast import add_dast_parser
     add_dast_parser(actions)
 
@@ -98,6 +105,14 @@ def cmd_prepare_fix(args) -> int:
 
     avit, report, target = _proposal_inputs(args)
     print(json.dumps(assess_review(avit, report, args.checkout, target)))
+    return 0
+
+
+def cmd_prepare_tuning(args) -> int:
+    from threatlint.avit_tuning import assess_draft  # noqa: PLC0415
+
+    avit, report, target = _proposal_inputs(args)
+    print(json.dumps(assess_draft(avit, report, target, args)))
     return 0
 
 

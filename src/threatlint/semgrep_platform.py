@@ -30,7 +30,7 @@ import base64  # noqa: F401 - kept for parity with ado_login
 import json
 import os
 import re
-import shutil
+import shutil  # noqa: F401 - the public engine adapter retains the executable lookup seam
 import stat
 import subprocess
 import sys
@@ -270,11 +270,12 @@ def original_rule_yaml(rule: str, token: str) -> str:
 
 
 def validate_tuned_rule(rule_yaml: str, original_rule: str, target_file: str, line: int | None, fixtures: str = "",
-                        token: str | None = None) -> dict:
+                        token: str | None = None, *, work: Path | None = None) -> dict:
     """Prove validity, fixture coverage, and any reproducible local false-positive drop."""
     return semgrep_engine.validate_tuned_rule(
         rule_yaml, original_rule, target_file, line, fixtures, token, run=_semgrep, pro_flags=_pro_flags,
         matches=_matches, original_rule_yaml=original_rule_yaml, fixture_lines=_fixture_lines, error_type=SemgrepError,
+        work=work,
     )
 
 
@@ -393,6 +394,16 @@ def _replace_ruleset_tuning(token: str, dep: dict, kind: str, original_rule: str
                                 call=call, same_rule=_same_rule, error_type=SemgrepError)
 
 
+def live_rule_matches(rule_yaml: str, target_file: str, line: int | None) -> list[int] | None:
+    """Scan one exact line with live rule source. An unavailable check returns None."""
+    if not target_file or not os.path.exists(target_file) or not line:
+        return None
+    with tempfile.TemporaryDirectory(prefix="threatlint-live-", ignore_cleanup_errors=True) as work:
+        config = Path(work) / "live.yaml"
+        config.write_text(rule_yaml, encoding="utf-8")
+        return _matches(str(config), target_file, line, exact=True)
+
+
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
               out=sys.stdout, *, project: str | None = None, verified_finding: bool = False) -> list[dict]:
     """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
@@ -408,18 +419,14 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     if already:
         live_path = already[0]["tuned"]
         live_yaml = original_rule_yaml(live_path, token)
-        work = Path(tempfile.mkdtemp(prefix="threatlint-live-"))
-        (work / "live.yaml").write_text(live_yaml, encoding="utf-8")
-        can_check = bool(target_file and os.path.exists(target_file) and line)
-        still = _matches(str(work / "live.yaml"), target_file, line, exact=True) if can_check else None
-        shutil.rmtree(work, ignore_errors=True)
-        if can_check and not still:
+        still = live_rule_matches(live_yaml, target_file, line)
+        if still == []:
             for item in already:
                 print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)
             repairs = disable_originals(token, dep, kind, original_rule, **scope)
             _report_disabled(repairs, out)
             return [change for change in repairs if "rollback" in change]
-        if not can_check:
+        if still is None:
             print(f"  ! The live tuned rule {live_path} cannot be checked against the flagged line; validating an extension", file=out)
         else:
             print(f"  ! The live tuned rule {live_path} still reports this line; extending it", file=out)

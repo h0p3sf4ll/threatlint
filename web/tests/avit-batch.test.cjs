@@ -54,8 +54,8 @@ describe('False positive review batch', () => {
   const calls = [], modelCalls = [];
   const attachmentNames = new Set();
   let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, prScm = '', prResult = null;
-  let preparationResults = [], modelReports = [], modelHook = null;
-  const preparedReports = [], resolvedReports = [];
+  let preparationResults = [], tuningResults = [], modelReports = [], modelHook = null, checkoutOverride = {};
+  const preparedReports = [], tuningDrafts = [], resolvedReports = [];
   const taskAvits = {};
   before(async () => {
     const threatlintCli = async args => {
@@ -69,6 +69,10 @@ describe('False positive review batch', () => {
       }
       if (args[0] === 'sctask' && args[1] === 'close') return { code: 0, stdout: `  ✓ Attached x\n  ✓ Closed ${args[2]}\n`, stderr: '' };
       const [, command, avit] = args;
+      if (args[0] === 'semgrep' && command === 'rule-base') {
+        fs.writeFileSync(args[args.indexOf('-o') + 1], 'rules:\n  - id: rule.x.y\n');
+        return { code: 0, stdout: '✓', stderr: '' };
+      }
       if (command === 'fetch') {
         if (avit === OUT) return { code: 1, stdout: '', stderr: `ERROR: None of the requested AVITs are in the AVR CodeSecurity view (${OUT}).` };
         fs.writeFileSync(args[args.indexOf('-o') + 1], avitMarkdown || `## ${avit}\n`); return { code: 0, stdout: '✓', stderr: '' };
@@ -76,7 +80,7 @@ describe('False positive review batch', () => {
       if (command === 'checkout') {
         const dir = args[args.indexOf('--dir') + 1];
         fs.mkdirSync(path.join(dir, '.git'), { recursive: true }); fs.writeFileSync(path.join(dir, 'app.yaml'), `name: svc\nAPI_KEY: "${SECRET}"\n`);
-        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml', ...(prScm ? { scm: prScm, organization: 'contoso', project: 'project' } : {}) })}\n`, stderr: '' };
+        return { code: 0, stdout: `✓ Checked out\n${JSON.stringify({ kind: 'secrets', name: 'svc', branch: 'main', file_path: 'app.yaml', ...(prScm ? { scm: prScm, organization: 'contoso', project: 'project' } : {}), ...checkoutOverride })}\n`, stderr: '' };
       }
       if (command === 'fix-pr') {
         assert.ok(fs.existsSync(args[args.indexOf('--checkout') + 1]), 'the checkout remains until the PR step completes');
@@ -91,6 +95,16 @@ describe('False positive review batch', () => {
         assert.equal(JSON.parse(fs.readFileSync(args[args.indexOf('--target') + 1], 'utf8')).avit, avit);
         preparedReports.push(md);
         const result = preparationResults.shift() || { status: 'ready', issues: [], prompt: '' };
+        return Object.hasOwn(result, 'code') ? result : { code: 0, stdout: JSON.stringify(result), stderr: '' };
+      }
+      if (command === 'prepare-tuning') {
+        const md = fs.readFileSync(args[args.indexOf('--report') + 1], 'utf8');
+        assert.ok(md.startsWith('# Finding Review') && !md.includes(SECRET), 'preflight uses the normalized and redacted draft');
+        assert.equal(JSON.parse(fs.readFileSync(args[args.indexOf('--target') + 1], 'utf8')).avit, avit);
+        assert.ok(fs.existsSync(args[args.indexOf('--checkout') + 1]));
+        tuningDrafts.push(md);
+        const disposition = /\*\*Disposition\*\*: (FALSE POSITIVE|TRUE POSITIVE)/.exec(md)?.[1];
+        const result = tuningResults.shift() || { status: disposition === 'FALSE POSITIVE' ? 'ready' : 'skipped', disposition };
         return Object.hasOwn(result, 'code') ? result : { code: 0, stdout: JSON.stringify(result), stderr: '' };
       }
       if (command === 'resolve') {
@@ -244,17 +258,21 @@ describe('False positive review batch', () => {
     return events;
   };
   const setupRefinement = (t, scm = 'github') => {
-    calls.length = 0; preparedReports.length = 0; resolvedReports.length = 0;
+    calls.length = 0; preparedReports.length = 0; tuningDrafts.length = 0; resolvedReports.length = 0;
     prScm = scm;
     prResult = { code: 0, stdout: JSON.stringify({ status: 'created', url: 'https://git.example.com/contoso/svc/pull/42' }), stderr: '' };
     t.after(() => {
-      prScm = ''; prResult = null; preparationResults = []; modelReports = []; modelHook = null;
-      calls.length = 0; preparedReports.length = 0; resolvedReports.length = 0;
+      prScm = ''; prResult = null; preparationResults = []; tuningResults = []; modelReports = []; modelHook = null; checkoutOverride = {};
+      calls.length = 0; preparedReports.length = 0; tuningDrafts.length = 0; resolvedReports.length = 0;
     });
   };
   const refine = (issue, prompt = `Inspect the caller and registered controls to resolve: ${issue}. Return the full report.`) => ({ status: 'refine', issues: [issue], prompt });
   const preparePatch = (issue, prompt) => ({ ...refine(issue, prompt), phase: 'patch' });
   const uncertain = () => report(TP, 'TRUE POSITIVE') + '**Decision basis**: CONSERVATIVE DEFAULT\n**Blocking Evidence**: Caller control is not yet traced.\n';
+  const missingFixtures = { status: 'refine', disposition: 'FALSE POSITIVE', reason: 'The tuned rule needs true-positive and false-positive fixtures' };
+  const readyTuning = { status: 'ready', disposition: 'FALSE POSITIVE' };
+  const ruleProposal = '**Tuned rule**:\n```yaml\nrules:\n  - id: rule.x.y.tuned\n```\n';
+  const fixtureProposal = '**Tuned rule fixtures**:\n```yaml\n# ruleid: rule.x.y.tuned\nname: sample\n# ok: rule.x.y.tuned\nname: allowed-sample\n```\n';
 
   for (const scm of ['azure-devops', 'github']) it(`investigates ${scm} evidence and repairs a proposal before saving, resolving, and publishing once`, async t => {
     setupRefinement(t, scm);
@@ -339,6 +357,67 @@ describe('False positive review batch', () => {
     assert.equal(final.outcome.closed, true); assert.equal(final.outcome.tuned, true);
     assert.match(resolvedReports[0], /Disposition\*\*: FALSE POSITIVE/);
     assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
+  });
+
+  it('repairs missing FP fixtures with the selected reviewer and proves the exact final report before writing', async t => {
+    setupRefinement(t, 'azure-devops');
+    checkoutOverride = { code_security: true, rule: 'rule.x.y' };
+    const firstModel = modelCalls.length;
+    preparationResults = [refine('Inspect the actual control'), { status: 'skipped', issues: [] }];
+    tuningResults = [missingFixtures, readyTuning];
+    const disproved = report(TP, 'FALSE POSITIVE') + ruleProposal;
+    modelReports = [uncertain(), disproved, disproved + fixtureProposal];
+    modelHook = () => assert.equal(calls.some(args => args[1] === 'resolve'), false, 'no writeback during proof or repair');
+
+    const events = await runBatch(TP, { provider: 'codex', model: 'selected-review-model' });
+    const reviews = modelCalls.slice(firstModel);
+    assert.equal(reviews.length, 3);
+    assert.ok(reviews.every(review => review.provider === 'codex' && review.model === 'selected-review-model' && review.purpose === 'review'));
+    assert.match(reviews[2].userMessage, /needs true-positive and false-positive fixtures/);
+    assert.match(reviews[2].userMessage, /Preserve its FALSE POSITIVE disposition, source evidence, and Verified Safe Behavior/);
+    assert.ok(!reviews[2].userMessage.includes(SECRET));
+    const source = calls.find(args => args[1] === 'rule-base');
+    assert.equal(source[source.indexOf('--project') + 1], 'contoso/project/svc');
+    const commands = calls.filter(args => ['prepare-fix', 'prepare-tuning', 'resolve'].includes(args[1])).map(args => args[1]);
+    assert.deepEqual(commands, ['prepare-fix', 'prepare-fix', 'prepare-tuning', 'prepare-tuning', 'resolve']);
+    assert.ok(calls.filter(args => args[1] === 'prepare-tuning').every(args => args.includes('--rule-base')));
+    assert.doesNotMatch(tuningDrafts[0], /Tuned rule fixtures/);
+    assert.match(tuningDrafts[1], /# ok: rule\.x\.y\.tuned/);
+    assert.deepEqual(resolvedReports, [tuningDrafts[1]]);
+    assert.equal(events.find(event => event.done && event.avit === TP).outcome.tuned, true);
+    assert.deepEqual(events.filter(event => event.attempt).map(({ phase, attempt }) => [phase, attempt]), [['evidence', 1], ['tuning', 1]]);
+  });
+
+  for (const failure of ['missing fixtures', 'changed disposition', 'deleted branch']) it(`keeps an FP unwritten when tuning preflight reports ${failure}`, async t => {
+    setupRefinement(t, '');
+    const firstModel = modelCalls.length;
+    if (failure === 'missing fixtures') tuningResults = [missingFixtures, missingFixtures, missingFixtures];
+    if (failure === 'changed disposition') {
+      tuningResults = [missingFixtures, { status: 'skipped', disposition: 'TRUE POSITIVE' }];
+      modelReports = [report(FP, 'FALSE POSITIVE'), report(FP, 'TRUE POSITIVE')];
+    }
+    if (failure === 'deleted branch') {
+      checkoutOverride = { branch: '', branch_deleted: 'previous' };
+      tuningResults = [{ status: 'blocked', disposition: 'FALSE POSITIVE', reason: 'The reviewed branch was deleted' }];
+    }
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.equal(final.stage, 'error');
+    assert.equal(modelCalls.length - firstModel, { 'missing fixtures': 3, 'changed disposition': 2, 'deleted branch': 1 }[failure]);
+    assert.equal(calls.some(args => args[1] === 'resolve' || args[1] === 'fix-pr'), false);
+    assert.equal(events.some(event => event.stage === 'reported'), false);
+  });
+
+  for (const target of [{ kind: 'sca' }, { code_security: false }]) it(`does not require rule tuning for ${target.kind || 'non-CodeSecurity'} FPs`, async t => {
+    setupRefinement(t, '');
+    checkoutOverride = target;
+    omitTuning = true;
+    t.after(() => { omitTuning = false; });
+    const events = await runBatch(FP, { createFixPr: false });
+    assert.equal(calls.some(args => args[1] === 'prepare-tuning'), false);
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.equal(final.stage, 'done');
+    assert.equal(final.outcome.closed, true);
   });
 
   for (const followup of [false, true]) for (const label of ['- **Verified Safe Behavior**:', '- **Verified Safe Behavior:**']) {

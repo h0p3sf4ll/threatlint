@@ -247,7 +247,7 @@ def test_tuned_rule_is_proven_against_flagged_file_before_writeback(monkeypatch,
               "// ok: js.rule.tuned\nfoo(safe);\n```\n")
     monkeypatch.setattr(avit_resolve, "semgrep_token", lambda _profile: "synthetic-token")
     checked = []
-    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *values: checked.append(values) or {"dropped": True})
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *values, work: checked.append(values) or {"dropped": True})
     avit_headless._prove_tuned_rule(item, tmp_path, report, AVIT_FP, _args(AVIT_FP))
     assert checked[0][1:4] == ("js.rule", str(flagged), 2)
     assert checked[0][5] == "synthetic-token"

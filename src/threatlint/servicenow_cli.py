@@ -69,9 +69,10 @@ def add_avit_parser(sub, *, add_arguments):
 
 
 def cmd_avit(args, *, requested_avits, collect_avits, error_type):
-    if args.avit_command in ("fix-pr", "prepare-fix"):
+    if args.avit_command in ("fix-pr", "prepare-fix", "prepare-tuning"):
         from threatlint import avit_cli, avit_resolve
-        handler = avit_cli.cmd_fix_pr if args.avit_command == "fix-pr" else avit_cli.cmd_prepare_fix
+        handler = {"fix-pr": avit_cli.cmd_fix_pr, "prepare-fix": avit_cli.cmd_prepare_fix,
+                   "prepare-tuning": avit_cli.cmd_prepare_tuning}[args.avit_command]
         return avit_resolve.run(handler, args)
     if args.avit_command in ("checkout", "resolve", "semgrep", "note", "close-removed", "dast"):
         from threatlint import avit_resolve
