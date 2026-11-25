@@ -25,12 +25,7 @@
       <p class="login-eyebrow">THREATLINT WEB</p>
       <h2 id="login-title">Welcome back.</h2>
       <p class="login-card-description" id="login-description">Sign in to your Threatlint workspace.</p>
-      <div class="company-context" id="company-context" hidden><strong id="company-name"></strong><span id="company-slug"></span></div>
-      <form class="company-picker" id="company-form">
-        <label for="company-input">Company workspace</label>
-        <div class="company-input-row"><input id="company-input" name="companySlug" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="your-company" minlength="3" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9\-]{1,61}[A-Za-z0-9]" aria-describedby="company-hint" required><button type="submit">Continue</button></div>
-        <p id="company-hint">Enter your company’s workspace slug, or sign in personally below.</p>
-      </form>
+      <div class="company-context" id="company-context" hidden><strong id="company-name"></strong><span>Organization workspace</span></div>
       <div class="identity-options" id="identity-options" aria-label="Sign-in options" aria-describedby="login-error login-status" aria-busy="true">
         <button class="identity-button" type="button" data-identity="google" hidden disabled>Continue with Google</button>
         <button class="identity-button" type="button" data-identity="apple" hidden disabled>Continue with Apple</button>
@@ -38,9 +33,22 @@
         <div class="identity-divider" id="identity-sso-divider" hidden><span>OR USE YOUR ORGANIZATION</span></div>
         <button class="identity-button identity-sso" type="button" data-identity="sso" hidden disabled>Continue with SSO</button>
       </div>
+      <section id="workspace-options" class="workspace-options" aria-label="Your workspaces" hidden>
+        <p id="workspace-description" class="login-card-description"></p>
+        <div id="organization-list" class="identity-options"></div>
+        <form id="organization-create" class="organization-create" hidden>
+          <label for="organization-name">Organization name</label>
+          <input id="organization-name" name="organizationName" maxlength="120" autocomplete="organization" placeholder="Your organization" required>
+          <button id="organization-create-submit" class="identity-button identity-sso" type="submit">Create organization</button>
+          <p class="login-footnote">You’ll be its first administrator. Only people you add can join.</p>
+        </form>
+        <button id="organizations-retry" class="identity-button" type="button" hidden>Try loading workspaces again</button>
+        <button id="personal-workspace" class="workspace-personal" type="button">Continue with personal workspace</button>
+        <button id="use-another-account" class="workspace-personal" type="button">Use another account</button>
+      </section>
       <p class="login-status" id="login-status" role="status" aria-live="polite">Loading secure sign-in…</p>
       <p class="login-error" id="login-error" role="alert" aria-live="polite"></p>
-      <a class="personal-login-link" id="personal-login-link" href="/login" hidden>Use a personal workspace</a>
+      <a class="personal-login-link" id="personal-login-link" href="/login?workspace=personal" hidden>Use a personal workspace</a>
       <p class="login-footnote">Secure sign-in is provided by Auth0. Your settings and security work stay with your Threatlint profile.</p>
     </section>
     <footer class="login-footer">Evidence-led security. A clear next step.</footer>

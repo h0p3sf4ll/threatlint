@@ -69,8 +69,17 @@
     const companySlug = config.company?.slug || null;
     if (companySlug) { try { window.sessionStorage.setItem(PENDING_COMPANY, companySlug); } catch { /* SDK appState also preserves the route */ } }
     else clearPendingCompany();
-    return client.loginWithRedirect({ appState: { companySlug },
+    const personal = !companySlug && new URLSearchParams(location.search).get('workspace') === 'personal';
+    return client.loginWithRedirect({ appState: { companySlug, ...(personal ? { workspace: 'personal' } : {}) },
       ...(provider === 'sso' ? {} : { authorizationParams: { connection: config.connections[provider] } }) });
+  }
+  async function loginOrganization(company) {
+    const slug = normalizeCompanySlug(company?.slug);
+    const { client } = await initialize();
+    const config = await configuration(slug);
+    if (config.company.organizationId !== company.organizationId) throw new Error('The workspace changed. Reload your workspace list.');
+    try { window.sessionStorage.setItem(PENDING_COMPANY, slug); } catch { /* SDK appState also preserves context */ }
+    return client.loginWithRedirect({ appState: { companySlug: slug }, authorizationParams: { organization: config.company.organizationId } });
   }
   async function completeRedirect() {
     const { client, config } = await initialize();
@@ -88,7 +97,7 @@
         ...(companySlug ? { 'X-Threatlint-Company': companySlug } : {}) } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Your sign-in could not be verified. Please try again.');
-      return result;
+      return { ...result, ...(transaction?.appState?.workspace === 'personal' ? { personalRequested: true } : {}) };
     } finally {
       clearPendingCompany();
       // Authorization codes and transaction state have no purpose in browser history after processing.
@@ -100,5 +109,5 @@
     clearPendingCompany();
     return client.logout({ logoutParams: { returnTo: config.redirectUri } });
   }
-  window.ThreatlintAuth = { initialize, login, completeRedirect, callbackPresent, logout, normalizeCompanySlug, companyFromPath };
+  window.ThreatlintAuth = { initialize, login, loginOrganization, completeRedirect, callbackPresent, logout, normalizeCompanySlug, companyFromPath };
 })();

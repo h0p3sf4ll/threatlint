@@ -13,14 +13,14 @@ const publicConfig = { provider: 'auth0', domain: 'threatlint.us.auth0.com', cli
   connections: { google: 'google-oauth2', apple: 'apple', github: 'github' }, enabledProviders: ['google', 'apple', 'github', 'sso'] };
 const plain = value => JSON.parse(JSON.stringify(value));
 function setup({ search = '', pathname = '/', config = publicConfig, lazy = false, callbackError, token = 'api-access-token', status = 200,
-  pendingCompany, callbackCompany = null, desktop = false } = {}) {
+  pendingCompany, callbackCompany = null, callbackWorkspace, desktop = false } = {}) {
   const calls = [];
   const hints = new Map();
   if (pendingCompany) hints.set('threatlint.auth.pending-company.v1', pendingCompany);
   const companies = { acme: { slug: 'acme', name: 'Acme', organizationId: 'org_acme' }, beta: { slug: 'beta', name: 'Beta', organizationId: 'org_beta' } };
   const client = {
     loginWithRedirect: async options => { calls.push({ kind: 'login', options }); },
-    handleRedirectCallback: async () => { calls.push({ kind: 'callback' }); if (callbackError) throw callbackError; return { appState: { companySlug: callbackCompany } }; },
+    handleRedirectCallback: async () => { calls.push({ kind: 'callback' }); if (callbackError) throw callbackError; return { appState: { companySlug: callbackCompany, ...(callbackWorkspace ? { workspace: callbackWorkspace } : {}) } }; },
     getTokenSilently: async options => { calls.push({ kind: 'token', options }); return token; },
     logout: async options => { calls.push({ kind: 'logout', options }); },
   };
@@ -117,7 +117,7 @@ test('a callback URL outside this application is rejected before SDK initializat
 test('login page offers only social and SSO buttons and does not automatically restart login after logout', async () => {
   const html = fs.readFileSync(path.join(__dirname, '../public/login.html'), 'utf8');
   assert.doesNotMatch(html, /type=["']password|name=["'](?:email|password|displayName)["']|\/auth\/(?:register|login)/i);
-  assert.match(html, /name="companySlug"/);
+  assert.doesNotMatch(html, /name="companySlug"|id="company-input"/);
   assert.deepEqual([...html.matchAll(/data-identity="([^"]+)"/g)].map(match => match[1]), ['google', 'apple', 'github', 'sso']);
   const nodes = Object.fromEntries(['identity-options', 'login-status', 'login-error', 'company-form', 'identity-sso-divider'].map(id => [id,
     { textContent: '', setAttribute: () => {}, addEventListener: () => {} }]));
@@ -211,4 +211,27 @@ test('company slug routing accepts only bounded slug syntax', () => {
   const { auth } = setup();
   assert.equal(auth.normalizeCompanySlug('  ACME-TEAM  '), 'acme-team');
   for (const value of ['ab', '../acme', 'acme/other', '-acme', 'acme-', 'a'.repeat(64), '<script>']) assert.throws(() => auth.normalizeCompanySlug(value), /company slug/);
+});
+
+test('discovered organization redirects use canonical server metadata and reject a changed organization binding', async () => {
+  const session = setup();
+  await session.auth.loginOrganization({ slug: 'acme', name: 'Acme', organizationId: 'org_acme' });
+  assert.deepEqual(plain(session.calls.find(call => call.kind === 'login').options), {
+    appState: { companySlug: 'acme' }, authorizationParams: { organization: 'org_acme' },
+  });
+  assert.equal(session.hints.get('threatlint.auth.pending-company.v1'), 'acme');
+  const changed = setup();
+  await assert.rejects(changed.auth.loginOrganization({ slug: 'acme', organizationId: 'org_beta' }), /workspace changed/);
+  assert.equal(changed.calls.some(call => call.kind === 'login'), false);
+});
+
+test('explicit personal workspace choice survives the SDK transaction without granting organization access', async () => {
+  const start = setup({ search: '?workspace=personal' });
+  await start.auth.login('github');
+  assert.equal(start.calls.find(call => call.kind === 'login').options.appState.workspace, 'personal');
+  const callback = setup({ search: '?code=code&state=state', callbackWorkspace: 'personal' });
+  const result = await callback.auth.completeRedirect();
+  assert.equal(result.personalRequested, true);
+  assert.equal(result.user.company, undefined);
+  assert.equal(callback.calls.find(call => call.url === '/auth/session').options.headers['X-Threatlint-Company'], undefined);
 });

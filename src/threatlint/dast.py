@@ -93,6 +93,9 @@ def clone(target: dict[str, str], directory: str) -> None:
                             capture_output=True, text=True, timeout=600, check=False, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     if result.returncode != 0:
         raise ResolveError(f"Could not clone {target['web_url']} branch {target['branch']}: {(result.stderr.strip().splitlines() or ['git clone failed'])[-1][:200]}")
+    # This new clone is owned by the run; the supplied local source repository is not.
+    from threatlint.servicenow_checkout import mark_checkout  # noqa: PLC0415
+    mark_checkout(directory)
 
 
 # ── Steps ────────────────────────────────────────────────────────────────────

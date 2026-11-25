@@ -18,8 +18,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -153,7 +151,7 @@ def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict
     line = int(context["line"]) if context.get("line", "").isdigit() else _report_line(markdown, avit, path)
     if not line or line < 1:
         raise ResolveError("Rule tuning needs the flagged line from the AVIT or report")
-    with tempfile.TemporaryDirectory(prefix="threatlint-tune-", dir=rt.repo_store_base()) as temporary:
+    with rt.temporary_repo(prefix="threatlint-tune-") as temporary:
         checkout = Path(getattr(args, "checkout", "") or temporary).expanduser().resolve()
         flagged = (checkout / path).resolve()
         if not flagged.is_relative_to(checkout):
@@ -304,16 +302,9 @@ def cmd_resolve(args) -> int:
 
 
 def remove_checkout(path: str | None) -> bool:
-    """Delete the AVIT checkout once triage and validation are done; read-only git objects are made writable first."""
-    if not path or not os.path.isdir(path) or not os.path.isdir(os.path.join(path, ".git")):
-        return False
-    import stat  # noqa: PLC0415
-
-    def writable(function, target, _info):
-        os.chmod(target, stat.S_IWRITE)
-        function(target)
-    shutil.rmtree(path, onerror=writable)  # onerror: Windows marks git pack files read-only
-    return True
+    """Clean only a checkout created by Threatlint; preserve triage if its disk disappeared."""
+    from threatlint.servicenow_checkout import remove_owned_checkout  # noqa: PLC0415
+    return remove_owned_checkout(path)
 
 
 def cmd_semgrep(args) -> int:

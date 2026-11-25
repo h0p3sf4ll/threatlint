@@ -8,6 +8,8 @@ const { HttpError } = require('./http.cjs');
 const { validateBaseUrl } = require('./providers.cjs');
 
 const PROVIDERS = new Set(['lmstudio', 'claude', 'claude-code', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'codex', 'copilot']);
+// Accept the obsolete authorization field from saved files and older clients, but
+// discard it: choosing a provider no longer requires a separate sharing flag.
 const FIELDS = new Set(['provider', 'models', 'codexDaybreak', 'bedrockRegion', 'lmstudioUrl', 'remoteAuthorizations']);
 const MAX_FILE_BYTES = 32 * 1024;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -29,19 +31,7 @@ function normalizePreferences(value) {
   let lmstudioUrl;
   try { lmstudioUrl = validateBaseUrl(value.lmstudioUrl); }
   catch { throw new HttpError('Use a model-server URL without credentials, query, or fragment; remote servers require HTTPS'); }
-  let authorizations;
-  if (value.remoteAuthorizations !== undefined) {
-    if (!Array.isArray(value.remoteAuthorizations) || value.remoteAuthorizations.length > 32) throw new HttpError('Invalid remote-provider authorizations');
-    authorizations = [...new Set(value.remoteAuthorizations.map(key => {
-      if (typeof key !== 'string' || key.length > 2048) throw new HttpError('Invalid remote-provider authorization');
-      if (PROVIDERS.has(key) && key !== 'lmstudio' && key !== 'bedrock') return key;
-      if (/^bedrock:(?:default|[a-z]{2,5}(?:-[a-z0-9]+)+-\d{1,2})$/.test(key)) return key;
-      try { if (!key.startsWith('https://') || validateBaseUrl(key) !== key) throw new Error(); return key; }
-      catch { throw new HttpError('Authorize a specific remote provider or HTTPS model endpoint'); }
-    }))];
-  }
-  return { provider: value.provider, models, codexDaybreak: value.codexDaybreak ?? false, bedrockRegion: bedrockRegion.trim(), lmstudioUrl,
-    ...(authorizations ? { remoteAuthorizations: authorizations } : {}) };
+  return { provider: value.provider, models, codexDaybreak: value.codexDaybreak ?? false, bedrockRegion: bedrockRegion.trim(), lmstudioUrl };
 }
 
 function createModelPreferences(directory) {

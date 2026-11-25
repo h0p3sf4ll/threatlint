@@ -2,7 +2,9 @@
 
 import argparse
 import copy
+import errno
 import types
+from pathlib import Path
 
 import pytest
 
@@ -126,14 +128,150 @@ def test_collect_probe_keeps_raw_responses_out_of_persistable_evidence():
 def test_scratch_dir_uses_configured_repo_store(tmp_path, monkeypatch):
     from threatlint import runtime_env as rt
     store = tmp_path / "Repo Store"
+    store.mkdir()
     monkeypatch.setenv("THREATLINT_REPO_STORE", str(store))
-    assert not store.exists()
     base = rt.repo_store_base()
-    assert base == str(store) and store.is_dir()  # created on demand
+    assert base == str(store.resolve()) and store.is_dir()
     created = rt.scratch_dir()
     import os
     assert os.path.dirname(created) == str(store)  # clone workspace lands on the configured drive
     os.rmdir(created)
+
+
+def test_missing_optional_store_falls_back_without_creating_mount_parents(tmp_path, monkeypatch):
+    import tempfile
+    from threatlint import runtime_env as rt
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    missing = tmp_path / "unmounted" / "repositories"
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(missing))
+    monkeypatch.setattr(tempfile, "tempdir", str(primary))
+    assert rt.repo_store_base() is None
+    created = rt.scratch_dir()
+    assert Path(created).parent == primary
+    assert not missing.parent.exists()
+
+
+def test_existing_unmounted_volume_directory_falls_back_without_writing(tmp_path, monkeypatch):
+    import io
+    import tempfile
+    from threatlint import runtime_env as rt
+    external, primary = tmp_path / "external", tmp_path / "primary"
+    external.mkdir()
+    primary.mkdir()
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(external))
+    monkeypatch.setattr(tempfile, "tempdir", str(primary))
+    monkeypatch.setattr(rt.os.path, "ismount", lambda _path: False)
+    import builtins
+    ordinary_open = builtins.open
+    monkeypatch.setattr(builtins, "open", lambda filename, *args, **kwargs:
+        io.StringIO("") if filename == "/proc/self/mountinfo" else ordinary_open(filename, *args, **kwargs))
+    mounted = rt._mounted_store_directory
+    assert mounted("/mnt/external/repos", platform="posix") is False
+    monkeypatch.setattr(rt, "_mounted_store_directory", lambda _path: mounted("/mnt/external/repos", platform="posix"))
+    assert Path(rt.scratch_dir()).parent == primary
+    assert list(external.iterdir()) == []
+
+
+def test_known_volume_roots_require_a_mount_but_custom_folders_remain_allowed(monkeypatch):
+    import builtins
+    import io
+    from threatlint import runtime_env as rt
+    monkeypatch.setattr(rt.os.path, "ismount", lambda value: value == "/Volumes/External")
+    ordinary_open = builtins.open
+    table = "31 20 0:1 /source /mnt/External\\040Drive rw - ext4 /dev/synthetic rw\n"
+    monkeypatch.setattr(builtins, "open", lambda filename, *args, **kwargs:
+        io.StringIO(table) if filename == "/proc/self/mountinfo" else ordinary_open(filename, *args, **kwargs))
+    assert rt._mounted_store_directory("/Volumes/External/repos", platform="posix") is True
+    assert rt._mounted_store_directory("/mnt/External Drive/repos", platform="posix") is True
+    assert rt._mounted_store_directory("/run/media/user/unmounted/repos", platform="posix") is False
+    assert rt._mounted_store_directory("/home/user/custom-repos", platform="posix") is True
+
+
+def test_conventional_volume_parent_itself_requires_a_proven_mount(monkeypatch):
+    import builtins
+    import io
+    from threatlint import runtime_env as rt
+    ordinary_open = builtins.open
+    table = ""
+    monkeypatch.setattr(builtins, "open", lambda filename, *args, **kwargs:
+        io.StringIO(table) if filename == "/proc/self/mountinfo" else ordinary_open(filename, *args, **kwargs))
+    monkeypatch.setattr(rt.os.path, "ismount", lambda _path: False)
+    assert rt._mounted_store_directory("/mnt", platform="posix") is False
+    assert rt._mounted_store_directory("/media/repos", platform="posix") is False
+    monkeypatch.setattr(rt.os.path, "ismount", lambda value: value == "/mnt")
+    assert rt._mounted_store_directory("/mnt", platform="posix") is True
+    assert rt._mounted_store_directory("/mnt/repos", platform="posix") is True
+    table = "31 20 0:1 /source /media rw - ext4 /dev/synthetic rw\n"
+    assert rt._mounted_store_directory("/media", platform="posix") is True
+    assert rt._mounted_store_directory("/media/repos", platform="posix") is True
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EROFS, errno.ENODEV, errno.ENOSPC])
+def test_unwritable_optional_store_uses_primary_storage(tmp_path, monkeypatch, code):
+    import tempfile
+    from threatlint import runtime_env as rt
+    external, primary = tmp_path / "external", tmp_path / "primary"
+    external.mkdir()
+    primary.mkdir()
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(external))
+    monkeypatch.setattr(tempfile, "tempdir", str(primary))
+    def unavailable(**_kwargs):
+        raise OSError(code, "synthetic unavailable storage")
+    monkeypatch.setattr(rt.tempfile, "mkstemp", unavailable)
+    created = rt.scratch_dir()
+    assert Path(created).parent == primary
+    assert list(external.iterdir()) == []
+
+
+def test_optional_store_disappearing_before_allocation_falls_back(tmp_path, monkeypatch):
+    import tempfile
+    from threatlint import runtime_env as rt
+    external, primary = tmp_path / "external", tmp_path / "primary"
+    external.mkdir()
+    primary.mkdir()
+    monkeypatch.setattr(rt, "repo_store_base", lambda: str(external))
+    monkeypatch.setattr(tempfile, "tempdir", str(primary))
+    allocate = tempfile.mkdtemp
+    attempted = []
+    def disappearing(*args, **kwargs):
+        attempted.append(kwargs.get("dir"))
+        if kwargs.get("dir") == str(external):
+            raise FileNotFoundError("synthetic disconnected disk")
+        return allocate(*args, **kwargs)
+    monkeypatch.setattr(tempfile, "mkdtemp", disappearing)
+    assert Path(rt.scratch_dir()).parent == primary
+    assert attempted == [str(external), None]
+
+
+def test_temporary_repo_keeps_selected_path_and_does_not_fail_when_it_disappears(tmp_path, monkeypatch):
+    import shutil
+    from threatlint import runtime_env as rt
+    external, later = tmp_path / "external", tmp_path / "later"
+    external.mkdir()
+    later.mkdir()
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(external))
+    with rt.temporary_repo() as directory:
+        selected = Path(directory)
+        assert selected.parent == external
+        monkeypatch.setenv("THREATLINT_REPO_STORE", str(later))
+        (selected / "evidence").write_text("selected once", encoding="utf-8")
+        assert (selected / "evidence").read_text(encoding="utf-8") == "selected once"
+        shutil.rmtree(selected)
+    assert list(later.iterdir()) == []
+
+
+def test_optional_cleanup_failure_preserves_completed_result(tmp_path, monkeypatch, capsys):
+    from threatlint import runtime_env as rt, servicenow_checkout
+    monkeypatch.setenv("THREATLINT_REPO_STORE", str(tmp_path))
+    def blocked(_directory):
+        raise PermissionError("synthetic disconnected or locked disk")
+    monkeypatch.setattr(servicenow_checkout, "remove_checkout", blocked)
+    def completed_review():
+        with rt.temporary_repo():
+            return {"status": "complete"}
+    assert completed_review() == {"status": "complete"}
+    assert "cleanup could not finish" in capsys.readouterr().err
 
 
 def test_scratch_dir_falls_back_to_system_temp_when_unset(monkeypatch):

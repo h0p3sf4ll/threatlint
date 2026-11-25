@@ -40,6 +40,8 @@ Connected checkouts are pinned to the verified commit. If the branch moves durin
 
 Manage saved accounts under **Settings → Integrations**. If an account is listed as disconnected, use **Reconnect** and check its access. See [GitHub App setup](github-app.md) for installation-based access.
 
+Downloaded repositories use the normal temporary location unless an existing, writable optional repository store is configured. Unavailable optional storage falls back before the download starts. The selected path stays with the workspace and its saved sessions; changing storage settings does not move it. See [Repository storage](setup.md#where-scanned-repositories-are-cloned) for configuration and disconnected-disk behavior.
+
 ## Choose your experience
 
 Use the **Experience** menu at the top of the Workbench:
@@ -55,7 +57,7 @@ Changing the experience does not start a scan or apply a fix. The selection is s
 
 The built-in baseline scan and sample findings report work without a model. Specialist reviews, model-based triage, and **Ask Threatlint** need a configured provider.
 
-Open **Settings → Model provider**, choose the provider and model, and save the settings. Authorize sharing before using a remote provider. Prompts, supporting documents, and inspected source may be sent to that provider.
+Open **Settings → Model provider**, choose the provider and model, and save the settings. Starting a review or chat sends prompts, supporting documents, and inspected source to that provider.
 
 In the web app, model-server URLs and credential files are reached from the server runtime. A loopback URL there does not point to your laptop.
 
@@ -79,7 +81,7 @@ See [Scan source code](security-scanner.md) for engine setup, supported fixes, a
 2. Confirm the selected workspace.
 3. Enter a focused question in **Scope and additional context**.
 4. Attach relevant findings or supporting documents.
-5. Confirm the model and sharing authorization, then choose **Run pipeline**.
+5. Confirm the model, then choose **Run pipeline**.
 6. Follow **Live activity**, then open the completed report in **Findings**.
 
 For example:

@@ -38,6 +38,19 @@ def test_nonempty_checkout_is_rejected_before_starting_a_tool(monkeypatch, tmp_p
         sn.checkout_repository(TARGET, str(tmp_path))
 
 
+def test_successful_host_checkout_is_marked_for_owned_cleanup(monkeypatch, tmp_path):
+    destination = tmp_path / "new-checkout"
+    monkeypatch.setattr(sn.shutil, "which", lambda name: "/synthetic/git")
+    monkeypatch.setattr(sn, "_git_auth_env", lambda *args: {})
+    def clone(*_args, **_kwargs):
+        (destination / ".git").mkdir(parents=True)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(sn.subprocess, "run", clone)
+    assert sn.checkout_repository(TARGET, str(destination)) == str(destination)
+    assert checkout.remove_owned_checkout(str(destination)) is True
+    assert not destination.exists()
+
+
 def test_sparse_checkout_stops_after_the_first_failed_command(monkeypatch, tmp_path):
     calls = []
     failure = SimpleNamespace(returncode=1, stderr="synthetic failure")

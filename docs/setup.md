@@ -98,13 +98,19 @@ Choose an available model in Settings or pass `--model`. The [model guide](model
 
 ### Where scanned repositories are cloned
 
-DAST, runtime red-team, and AVIT workflows use temporary checkouts. Set `THREATLINT_REPO_STORE`, or the `repoStore` key in your local `~/.threatlint/org.json`, to use another disk:
+Repository storage is optional. By default, automatic checkouts use the normal temporary location. To use another disk for Workbench downloads, AVIT reviews, or runtime working copies, mount the disk and create the destination folder first. Set `THREATLINT_REPO_STORE`, or the `repoStore` key in your local `~/.threatlint/org.json`:
 
 ```json
-{"repoStore": "/Volumes/Repo Store/threatlint"}
+{"repoStore": "/path/to/mounted-drive/repositories"}
 ```
 
-Each run gets a separate subdirectory, normally removed afterward. `--keep-checkout` retains a runtime red-team checkout. Keep this machine-specific setting outside the repository.
+Replace the example with an existing folder on your machine. The environment setting takes precedence. Threatlint checks that it can write there before downloading; a missing, disconnected, read-only, or otherwise unwritable destination falls back to the normal temporary location. It does not create a missing optional storage path.
+
+On macOS and Linux, paths beneath `/Volumes`, `/mnt`, `/media`, or `/run/media` must have an active mounted volume at or below that parent; a leftover unmounted folder is not enough. Ordinary custom folders are also supported. For a custom mount location, confirm that its disk is mounted before starting.
+
+Each checkout gets a separate directory. That actual path is retained for later reads and saved Workbench sessions; changing the setting does not relocate an existing workspace. Disconnecting a disk during active work can still cause an I/O error. Reconnect it before reopening a workspace stored there.
+
+Temporary review copies are normally removed afterward. Cleanup errors are reported without changing a completed review's result. Automatic AVIT cleanup removes only checkouts marked as created by Threatlint; existing unmarked user repositories are preserved. Use `--keep-checkout` in workflows that support it to retain a managed copy. Keep this machine-specific setting outside the repository. In the web app, it refers to storage available inside your server profile, not a disk attached to your laptop.
 
 ## Check the result
 

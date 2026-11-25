@@ -237,9 +237,11 @@ the requested closed state.
 `--skip-semgrep` leaves Semgrep untouched. `--skip-rule-tuning` permits finding
 triage but skips rule replacement. Neither option prevents ServiceNow write-back.
 
-`resolve --checkout DIR` deletes a Git checkout in its cleanup path **even on
-error**; `--keep-checkout` retains it. The standalone `semgrep --checkout` command
-also cleans up. These CLI commands do not delete your report files.
+`resolve --checkout DIR` and the standalone `semgrep --checkout` command clean up
+checkouts marked as created by Threatlint, including after an error; `--keep-checkout`
+retains them. Existing unmarked user repositories and report files are preserved.
+If storage disappears or cleanup is blocked, Threatlint reports the remaining cleanup
+work without changing a completed triage result. See [Repository storage](setup.md#where-scanned-repositories-are-cloned).
 
 ### Semgrep tuning
 

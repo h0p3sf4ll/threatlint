@@ -14,6 +14,7 @@ from threatlint import avit_resolve as ar
 from threatlint import dast
 from threatlint import runtime_env as rt
 from threatlint import servicenow as sn
+from threatlint.servicenow_checkout import mark_checkout
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "dast"
@@ -310,10 +311,13 @@ def test_full_run_writes_evidence_and_review_request_and_always_tears_down(monke
 def test_a_failed_step_still_tears_down_and_deletes_the_checkout(monkeypatch, tmp_path, fail_at):
     monkeypatch.setattr("sys.stdout", io.StringIO())
     provider = FakeProvider(fail_at)
+    source = _git_repo(tmp_path)
     with pytest.raises(rt.EnvError):
-        dast.cmd_dast(_dast_args(tmp_path, _git_repo(tmp_path)), provider)
+        dast.cmd_dast(_dast_args(tmp_path, source), provider)
     assert provider.steps[-1] == "teardown"
     assert not os.path.exists(tmp_path / "run" / "repo")
+    assert (source / ".git").is_dir(), "cleanup must preserve the supplied source repository"
+    assert not (source / ".git" / "threatlint-checkout-owner.json").exists()
 
 
 def test_steps_run_alone_against_the_saved_state(monkeypatch, tmp_path):
@@ -382,7 +386,8 @@ def _report(disposition):
 
 
 @pytest.mark.parametrize("disposition, note, closed", [("FALSE POSITIVE", ar.CLOSING_COMMENT, True), ("TRUE POSITIVE", ar.TRUE_POSITIVE_COMMENT, False)])
-def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, disposition, note, closed):
+@pytest.mark.parametrize("managed", [True, False])
+def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, disposition, note, closed, managed):
     fake, hook = FakeServiceNow(), []
     monkeypatch.setattr(sn, "_request_json", fake)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
@@ -393,6 +398,8 @@ def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, dispo
     monkeypatch.setattr("sys.stdout", out)
     work = tmp_path / "run"
     (work / "repo" / ".git").mkdir(parents=True)
+    if managed:
+        mark_checkout(str(work / "repo"))
     (work / dast.REPORT_FILE).write_text(_report(disposition), encoding="utf-8")
     (work / "AVIT0000000900001-threatlint-fp-review.docx").write_bytes(b"PK-docx")
     state = {"work": str(work), "run_id": "tl-dast-0123456789", "avit": "AVIT0000000900001", "finding": finding(), "checkout": str(work / "repo")}
@@ -406,7 +413,7 @@ def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, dispo
     assert len(uploads) == 1
     assert hook == ([("synthetic-issue-0001", "FALSE POSITIVE")] if closed else [])
     assert ("Semgrep not applicable" in out.getvalue()) is closed
-    assert not (work / "repo").exists(), "the checkout is deleted after resolving"
+    assert (work / "repo").exists() is not managed, "only the run-owned checkout is deleted after resolving"
 
 
 def test_the_invicti_hook_is_a_no_op_until_configured():

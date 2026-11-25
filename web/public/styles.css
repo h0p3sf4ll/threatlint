@@ -692,3 +692,5 @@ output.operations-status,output.field-note,output.toast{display:block}
 @media(max-width:500px){.management-stats{grid-template-columns:1fr}.management-stats article{display:flex;align-items:center;gap:16px}.management-stats strong{font-size:27px;margin:0;min-width:40px}.management-connection-heading{flex-wrap:wrap}.management-actions{width:100%}.management-actions>.button{flex:1}.management-connection-filters{flex-wrap:wrap}.management-connection-filters>.button{margin-left:0}.management-dialog .dialog-footer{flex-direction:column;align-items:stretch}.management-dialog .dialog-footer>.button{width:100%}}
 
 #aws-parameters-form .settings-actions{flex-wrap:wrap;justify-content:flex-start;gap:10px}
+
+.management-add-member{border-top:1px solid var(--border);margin-top:24px;padding-top:12px;display:grid;gap:12px}.management-add-member h3,.management-add-member p{margin:0}.management-add-member label{display:grid;gap:7px;font-size:14px}.management-add-member .management-actions{align-items:center;flex-wrap:wrap}.management-add-member select{min-width:130px;max-width:100%}.web-profile a.web-signout{text-decoration:none}

@@ -20,9 +20,25 @@ function identity(fields = {}) {
     expiresAt: Date.now() + 3600000, ...fields };
 }
 
+it('revokes all sessions of one exact organization identity while preserving personal and other profiles', t => {
+  const root = directory(t); let auth = createAuth({ directory: root });
+  const company = { slug: 'acme', name: 'Acme', organizationId: 'org_Acme' };
+  const first = auth.establish(identity({ company })), second = auth.establish(identity({ company }));
+  const personal = auth.establish(identity()), other = auth.establish(identity({ subject: 'github|other', company }));
+  assert.deepEqual(auth.identity(first.user.id), { issuer: ISSUER, subject: identity().subject });
+  assert.equal(auth.profile({ issuer: ISSUER, subject: identity().subject, organizationId: 'org_Acme' }).id, first.user.id);
+  assert.equal(auth.identity('missing'), null);
+  auth.revoke({ issuer: ISSUER, subject: identity().subject, organizationId: 'org_Acme' });
+  auth = createAuth({ directory: root });
+  assert.equal(auth.authenticate(request(first.token)), null); assert.equal(auth.authenticate(request(second.token)), null);
+  assert.equal(auth.authenticate(request(personal.token)).user.id, personal.user.id);
+  assert.equal(auth.authenticate(request(other.token)).user.id, other.user.id);
+  assert.equal(auth.profile({ issuer: ISSUER, subject: identity().subject, organizationId: 'org_Acme' }).id, first.user.id, 'revocation preserves profile data and UUID');
+});
+
 it('restores a stable issuer/subject profile without persisting provider or session tokens', t => {
   const root = directory(t), auth = createAuth({ directory: root });
-  assert.deepEqual(Object.keys(auth).sort(), ['authenticate', 'establish', 'logout']);
+  assert.deepEqual(Object.keys(auth).sort(), ['authenticate', 'establish', 'identity', 'logout', 'profile', 'revoke']);
   const first = auth.establish(identity({ accessToken: 'unpersisted-oidc-access-token', idToken: 'unpersisted-oidc-id-token' }));
   assert.deepEqual(Object.keys(first.user).sort(), ['displayName', 'email', 'id']);
   assert.equal(first.user.email, 'alice@example.test'); assert.equal(first.user.displayName, 'Alice');

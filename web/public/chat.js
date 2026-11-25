@@ -47,7 +47,7 @@
     const context = state.context;
     const model = context?.models?.chat || context?.settings?.model;
     $('chat-model-tag').textContent = model ? `${context.settings.provider.toUpperCase()} · ${model}` : 'MODEL NOT SET';
-    const blocked = !context?.session ? 'Open a repository first. Threatlint answers by reading your code.' : !context.ready ? 'Choose a model (and approve remote sharing for cloud models) in Model & settings.' : !context.connected ? 'Reconnecting to the local runner…' : '';
+    const blocked = !context?.session ? 'Open a repository first. Threatlint answers by reading your code.' : !context.ready ? 'Choose a model in Model & settings.' : !context.connected ? 'Reconnecting to the local runner…' : '';
     $('chat-send').disabled = !!blocked || !!state.pending;
     $('chat-input').disabled = !!blocked;
     $('chat-input').placeholder = blocked || 'Ask about a finding, a file, or a fix… (Enter to send, Shift+Enter for a new line)';
