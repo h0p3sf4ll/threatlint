@@ -79,6 +79,27 @@ test('shows three active reviews and independently completes or fails findings o
   assert.equal(f.run.running, true);
 });
 
+test('distinguishes an unverified Semgrep triage write from an incomplete rule proposal', () => {
+  const f = client(); f.run.start({ avits: avits.slice(0, 3), sctasks: [] });
+  const mismatch = 'Semgrep affected IDs/count differ from the requested branch scope. Inspect triage audit /tmp/fixture.json before retrying.';
+  const missingFixtures = 'Rule not tuned: The report has no `**Tuned rule fixtures**:` block.';
+  const closed = { attached: true, closed: true, tuned: false };
+  item(f.run, avits[0], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: mismatch, outcome: closed });
+  item(f.run, avits[1], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: 'The tuning proof is incomplete.', outcome: { ...closed, semgrep: [`! ${missingFixtures}`] } });
+  item(f.run, avits[2], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: 'Rule tuning proof failed before AVIT write-back: The report needs one complete tuned rule and its fixtures' });
+  f.run.handle({ type: 'avit_batch_complete' });
+
+  const card = avit => f.node(`avit-${avit}`);
+  const outcomes = avit => card(avit).querySelector('.avit-outcome').textContent;
+  assert.match(outcomes(avits[0]), /Word report attached.*Closed as false positive.*Review the triage audit and reconcile the affected findings/);
+  assert.equal(card(avits[0]).querySelector('.avit-detail').textContent, mismatch);
+  assert.doesNotMatch(outcomes(avits[0]), /Correct the proposal|Re-run this AVIT/);
+  assert.match(outcomes(avits[1]), /Word report attached.*Closed as false positive.*requires a complete proposal with passing fixtures/);
+  assert.match(outcomes(avits[2]), /requires a complete proposal with passing fixtures/);
+  assert.doesNotMatch(outcomes(avits[2]), /attached|Closed as false positive/);
+  assert.doesNotMatch(f.root.textContent, /Re-run this AVIT/);
+});
+
 test('keeps completed results while cancelling remaining active and queued reviews, including scoped restore/replay', () => {
   const f = client(); f.run.handle({ type: 'fp_run_start', runId: 'fixture-run', avits: avits.slice(0, 3), sctasks: [], execution: { maxConcurrency: 2 } });
   item(f.run, avits[0], 'triage'); item(f.run, avits[1], 'triage');

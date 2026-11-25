@@ -46,7 +46,9 @@ def cmd_checkout(args, *, session, read_record, checkout_branch, renamed_reposit
         shutil.rmtree(args.dir, ignore_errors=True)
         target = checkout_branch({**target, "clone_url": url, "web_url": url, "renamed_to": renamed}, args.dir, path)
     print(f"✓ Checked out to {args.dir}")
-    print(json.dumps({"avit": avit, "kind": kind, "checkout": os.path.abspath(args.dir), **target, **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
+    print(json.dumps({"avit": avit, "kind": kind, "code_security": sn.in_code_security_view(record),
+                      "checkout": os.path.abspath(args.dir), **target,
+                      **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
     return 0
 
 

@@ -470,6 +470,8 @@ async function fpReviewRun(page) {
   });
   await page.goto(`${base(page)}/#fpreview`); await page.reload(); await page.locator('#connection-status.online').waitFor();
   await page.locator('#view-fpreview:not([hidden])').waitFor();
+  // The mid-run snapshot below expects A4 to stay queued while A3 waits.
+  await page.locator('#fpreview-concurrency').fill('1');
   assert.match(await page.locator('#fpreview-avits').getAttribute('placeholder'), /SCTASK\d+, SCTASK\d+/);
   await page.locator('#fpreview-avits').fill('SCTASK3000001, INC0012345');
   await page.locator('#fpreview-start').click();
@@ -484,7 +486,7 @@ async function fpReviewRun(page) {
   assert.equal(await bar.getAttribute('role'), 'progressbar');
   assert.equal(await bar.getAttribute('aria-valuemax'), '4');
   assert.equal(await bar.getAttribute('aria-valuenow'), '2');
-  assert.equal(await page.locator('#fpreview-counts').innerText(), '2 / 4 · 1 closed · 1 noted · 0 errors');
+  assert.equal(await page.locator('#fpreview-counts').innerText(), '2 / 4 · 1 active · 1 queued · 1 closed · 1 noted · 0 errors');
   assert.equal(await page.locator('#fpreview-run .fp-run-header .fp-spinner').isVisible(), true, 'the run header spins while the run is active');
   assert.equal(await page.locator(`#avit-${FPR.A3} .fp-spinner`).isVisible(), true, 'the active card spins');
   assert.equal(await page.locator(`#avit-${FPR.A1} .fp-spinner`).isVisible(), false, 'a finished card does not');
@@ -560,7 +562,7 @@ async function fpReviewRun(page) {
   await page.waitForTimeout(300);
   await page.reload(); await page.locator('#connection-status.online').waitFor();
   await page.locator(`#avit-${FPR.A3}.active`).waitFor();
-  assert.match(await page.locator('#fpreview-run-status').textContent(), /Reviewing/, 'the reloaded page shows the run still in progress');
+  assert.equal(await page.locator('#fpreview-run-status').textContent(), '0 of 1 reviewed · 1 active', 'the reloaded page shows the run still in progress');
   assert.equal(await page.locator('#fpreview-run .fp-run-header .fp-spinner').isVisible(), true);
   assert.equal(await page.locator('#fpreview-start').isDisabled(), true, 'the reloaded page knows a run is active');
   // Navigating to another page and back keeps it as well.

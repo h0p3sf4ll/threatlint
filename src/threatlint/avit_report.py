@@ -125,3 +125,12 @@ def report_line(report: str, avit: str, expected_path: str = "") -> int | None:
             return None
         locations.add((path, start, end))
     return next(iter(locations))[1] if len(locations) == 1 else None
+
+
+def safe_error(exc: Exception) -> str:
+    """Keep actionable diagnostics without echoing likely credential values."""
+    message = str(exc).replace("\n", " ")[:500]
+    message = re.sub(r"(?i)\b(password|passwd|client[_-]?secret|api[_-]?key|access[_-]?token|authorization)\b\s*[:=]\s*\S+",
+                     r"\1=[REDACTED]", message)
+    message = re.sub(r"\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]+", "[REDACTED]", message)
+    return message or type(exc).__name__

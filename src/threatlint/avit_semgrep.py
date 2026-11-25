@@ -52,16 +52,21 @@ def tuning_project(target: dict[str, str], matches: list[dict]) -> str:
 
 
 def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status=None):
-    """Yield normalized findings without truncating pagination or trusting ignored filters. A Secrets search with
-    ``rule=None`` yields every finding on the repository and branch, for location-based correlation."""
+    """Yield normalized findings without truncating pagination or trusting ignored filters.
+
+    Pass ``branch=None`` to inspect the same rule across refs for a triage preflight.
+    A Secrets search with ``rule=None`` is used for location-based correlation.
+    """
     seen, cursors, cursor, page = set(), set(), "", 0
     while True:
         if kind == "secrets":
             params = {"limit": 1000, "repo": repository, **({"cursor": cursor} if cursor else {})}
             endpoint = f"/deployments/{dep['id']}/secrets?"
         else:
-            params = {"issue_type": kind, "repos": repository, "ref": branch, "dedup": "false",
+            params = {"issue_type": kind, "repos": repository, "dedup": "false",
                       "page": page, "page_size": 1000}
+            if branch is not None:
+                params["ref"] = branch
             if kind == "sast":
                 params["rules"] = rule
             if status:
@@ -74,31 +79,34 @@ def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status
         for row in rows:
             if (row.get("repository") or {}).get("name") != repository:
                 raise ResolveError("Semgrep returned another repository or omitted its identity")
-            ref = str(row.get("ref", ""))
-            if kind != "secrets" and ref != branch:
+            ref = row.get("ref")
+            if kind != "secrets" and branch is not None and ref != branch:
                 raise ResolveError("Semgrep did not honor the requested branch")
             if kind == "secrets":
                 path, separator, line = str(row.get("findingPath", "")).rpartition(":")
                 if not separator:
                     path, line = str(row.get("findingPath", "")), ""
-                name = str(row.get("ruleHashId", ""))
+                name = str(row.get("ruleHashId") or "")
                 stored_status = str(row.get("status", "")).removeprefix("FINDING_STATUS_").lower()
             else:
                 location = row.get("location") or {}
                 path, line = location.get("file_path", ""), location.get("line")
-                name = str(row.get("rule_name") or (row.get("rule") or {}).get("name", ""))
+                name = str(row.get("rule_name") or (row.get("rule") or {}).get("name") or "")
                 stored_status = str(row.get("status", ""))
+            if branch is None and (not isinstance(ref, str) or not ref.strip() or not name):
+                raise ResolveError("Semgrep omitted a branch or rule needed to verify triage scope")
             identifier = row.get("id")
             if isinstance(identifier, bool) or not str(identifier).isdigit() or int(identifier) <= 0:
                 raise ResolveError("Semgrep returned an invalid finding ID")
-            identity = (int(identifier), ref)
+            identity = (int(identifier), str(ref))
             if identity in seen:
                 raise ResolveError("Semgrep repeated a finding across pages; results are incomplete")
             seen.add(identity)
-            if ref != branch or (rule is not None and name != rule) or (status and stored_status != status):
+            if (branch is not None and ref != branch) or (rule is not None and name != rule) or (status and stored_status != status):
                 continue
             yield {"id": int(identifier), "rule": name, "path": path, "line": line, "ref": ref,
-                   "project": repository, "product": kind, "status": stored_status}
+                   "project": repository, "product": kind, "status": stored_status,
+                   "match_based_id": row.get("match_based_id")}
         if kind != "secrets":
             if not rows:
                 return

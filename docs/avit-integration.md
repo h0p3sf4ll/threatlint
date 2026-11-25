@@ -273,8 +273,11 @@ when no `--semgrep-rule-hash-id` is given, the open Secrets finding at that exac
 matched and its own `ruleHashId` is used. If findings with different rules share the location,
 nothing is changed and you choose one with `--semgrep-rule-hash-id`.
 **No flagged line means no match**, not file-wide suppression. Put the line in the
-AVIT/report, or use `avit semgrep --line N`. Semgrep fingerprint triage can carry
-across later scans and branches.
+AVIT/report, or use `avit semgrep --line N`. A Semgrep ignore can immediately affect
+other refs with the same fingerprint. Threatlint checks the project's findings
+across refs before submitting IDs and stops when it cannot establish the requested
+scope. It also checks the affected IDs in the response and reads back their stored
+status. [Semgrep triage behavior](https://semgrep.dev/docs/for-developers/resolve-findings-through-app#triage-behavior-across-refs-and-branches)
 
 SCA receives triage only because it has no Code or Secrets rule to replace.
 SAST and Secrets rule tuning uses the flagged file and a proposed rule with
@@ -300,15 +303,22 @@ the line, the proposed extension must preserve its existing exclusions; conflict
 proposals are rejected. Pro/interfile findings may rely on fixture proof when the
 local checkout cannot reproduce the line.
 
-The headless runner checks the proposed rule and fixtures against the flagged
-file **before** AVIT write-back. It asks the selected model for a corrected
-report up to two more times when the proposal fails. If the source rule or
-required proof remains unavailable, it leaves that AVIT unchanged and exits
-nonzero. A manual `avit resolve` can attach or close the AVIT before its later
-Semgrep step; publishing and policy updates can also fail independently, so
-inspect remote state before retrying.
+Workbench and the headless runner check the proposed rule and fixtures against
+the flagged file **before** AVIT write-back. The configured model gets up to two
+attempts to repair a proposal that fails validation. If the required proof
+remains unavailable, Threatlint stops before attaching the report or closing the
+AVIT. The tracker update, finding triage, and rule publication can still succeed
+or fail independently.
 
 ## Re-running the Semgrep step
+
+If Semgrep acknowledged extra IDs, use the named triage audit to compare the
+submitted and returned IDs. Check each finding's branch, triage history, and
+current state in Semgrep before making another write. Reopening a finding can
+also affect copies on other refs. Threatlint blocks repeat triage for IDs listed
+in an unresolved write audit on this machine. After reconciling the incident,
+retain that audit with the resolution record in an archive outside the active
+`~/.threatlint/triage/*.json` set.
 
 For an AVIT already displayed as Closed with Threatlint's false-positive note:
 
@@ -556,8 +566,8 @@ flows use that assessment to drive the investigations described above.
 | ServiceNow kept another state/substate | Inspect stored values and business rules before claiming closure. |
 | Wrong/missing repository or branch | Check AVIT form fields, per-organization credentials, rename/default-branch messages, and actual checkout scope. |
 | Semgrep unchanged / no match | Check deployment, original project name, file, rule, and flagged line. Do not broaden suppression to make it match. |
-| Rule not tuned | Check local Semgrep, report blocks, fixtures, and checkout; refresh the checkout if cleanup removed it. |
-| ServiceNow succeeded, Semgrep failed | Reconcile both systems, then rerun the standalone Semgrep step rather than assuming an atomic rollback. |
+| Rule not tuned | Check the validator's diagnostic and include a matching and a nonmatching fixture for the exact tuned rule. |
+| ServiceNow succeeded, Semgrep failed | Review the recorded tracker outcome and reconcile the affected finding IDs in Semgrep before making further changes. |
 | Need a work note only | `threatlint avit note <AVIT> --message "Reason" --yes` leaves state unchanged. |
 | ADO repository appears deleted | `threatlint avit close-removed <AVIT> --yes` checks the credential-visible repository list before closing with “Closed by Threatlint, repo removed.” No report is attached. Access/network failures are not proof of deletion; restricted visibility remains a review concern. |
 | Corporate DNS blocks `semgrep.app` | The default API host is `https://semgrep.dev`; `THREATLINT_SEMGREP_API` overrides it. |

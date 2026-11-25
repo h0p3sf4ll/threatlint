@@ -5,6 +5,7 @@ import os
 import json
 import types
 import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,13 @@ REPORT = f"""# FP Review
 **Evidence**: `src/synthetic.py:12` — the inspected sink receives a bound value.
 **Verified Safe Behavior**: The binding treats the supplied value as data, never query syntax.
 """
+
+
+def _with_tuning(report, rule, *, fixtures=True):
+    report += f"\n**Tuned rule**:\n```yaml\nrules:\n- id: {rule}.tuned\n```\n"
+    if fixtures:
+        report += f"\n**Tuned rule fixtures**:\n```python\n# ruleid: {rule}.tuned\nfirst()\n# ok: {rule}.tuned\nsecond()\n```\n"
+    return report
 
 
 @pytest.fixture(autouse=True)
@@ -170,10 +178,61 @@ def test_tuning_commands_pass_the_exact_project_name(monkeypatch, tmp_path, comm
     calls = []
     monkeypatch.setattr(sp, "tune_rule", lambda *args, **kwargs: calls.append(kwargs) or [])
     (tmp_path / "file.py").write_text("synthetic = True\n", encoding="utf-8")
-    args = _args(tmp_path, REPORT)
+    args = _args(tmp_path, _with_tuning(REPORT, context["rule"]))
     args.checkout, args.skip_rule_tuning, args.line = str(tmp_path), False, None
     assert (ar.cmd_resolve(args) if command == "resolve" else ar.cmd_semgrep(args)) == 0
     assert calls == [{"project": canonical, "verified_finding": False}]
+
+
+@pytest.mark.parametrize("command", ["resolve", "semgrep"])
+@pytest.mark.parametrize("finding_source", ["SAST", "Secrets"])
+@pytest.mark.parametrize("live", ["absent", "still-matches", "covers-line"])
+def test_incomplete_tuning_never_changes_trackers_unless_live_rule_covers_the_line(
+    monkeypatch, tmp_path, capsys, command, finding_source, live,
+):
+    from threatlint import semgrep_platform as sp
+
+    rule = "synthetic.rule"
+    context = {"scm_tool": "GitHub", "organization": "fixture", "repository": "repo", "branch": "main",
+               "file_path": "file.py", "line": "2", "rule": rule, "finding_source": finding_source}
+    record = {"sys_id": "a" * 32, "fields": {"state": "Closed", "work_notes": ar.CLOSING_COMMENT},
+              "context": context, "in_view": True}
+    flagged = tmp_path / "file.py"
+    flagged.write_text("first()\nsecond()\n", encoding="utf-8")
+    steps = []
+    kind = finding_source.lower()
+    matches = [{"id": 1, "rule": rule, "path": "file.py", "line": 2, "ref": "main", "project": "fixture/repo", "product": kind}]
+    active = [{"policy": "fixture", "tuned": f"fixture.{rule}.tuned", "mode": "MODE_MONITOR"}]
+    monkeypatch.setattr(ar, "_session", lambda *_args: (INSTANCE, "synthetic"))
+    monkeypatch.setattr(ar, "_record", lambda *_args: record)
+    monkeypatch.setattr(ar, "_replace_report", lambda *_args: steps.append("attach"))
+    monkeypatch.setattr(ar, "update", lambda *_args: steps.append("close") or {"state": "3", "substate": "3"})
+    monkeypatch.setattr(ar, "semgrep_token", lambda *_args: "synthetic")
+    monkeypatch.setattr(ar, "semgrep_matches", lambda *_args: ({"id": 7, "slug": "fixture"}, matches))
+    monkeypatch.setattr(ar, "ignore_matches", lambda *_args: steps.append("triage") or 1)
+    monkeypatch.setattr(sp, "existing_tuning", lambda *_args, **_kwargs: [] if live == "absent" else active)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *_args: f"rules:\n- id: fixture.{rule}.tuned\n")
+    monkeypatch.setattr(sp, "disable_originals", lambda *_args, **_kwargs: steps.append("policy check") or [])
+    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *_args: pytest.fail("An incomplete proposal cannot be validated"))
+    monkeypatch.setattr(sp, "publish", lambda *_args: pytest.fail("An incomplete proposal cannot be published"))
+
+    def scan(_config, target, line, *, exact):
+        steps.append("live scan")
+        assert (Path(target), line, exact) == (flagged, 2, True)
+        return [2] if live == "still-matches" else []
+
+    monkeypatch.setattr(sp, "_matches", scan)
+    args = _args(tmp_path, _with_tuning(REPORT, rule, fixtures=False))
+    args.checkout, args.skip_rule_tuning, args.line = str(tmp_path), False, None
+    result = (ar.cmd_resolve if command == "resolve" else ar.cmd_semgrep)(args)
+    if live == "covers-line":
+        assert result == 0
+        tracker_writes = ["attach", "close"] if command == "resolve" else []
+        assert steps == ["live scan", *tracker_writes, "triage", "live scan", "policy check"]
+    else:
+        assert result == 1
+        assert steps == (["live scan"] if live == "still-matches" else [])
+        assert "fixtures" in capsys.readouterr().out
 
 
 def test_rule_tuning_fetches_the_exact_avit_branch_when_checkout_is_missing(monkeypatch):
@@ -305,7 +364,7 @@ def test_headless_false_positive_still_tunes_rule_without_semgrep_match_and_repo
     monkeypatch.setattr(ar, "semgrep_matches", lambda *_args: ({"id": 7, "slug": "synthetic"}, []))
     tuned = []
     monkeypatch.setattr("threatlint.semgrep_platform.tune_rule", lambda *_args, **_kwargs: tuned.append(True))
-    args = _args(tmp_path, REPORT)
+    args = _args(tmp_path, _with_tuning(REPORT, "generic.secrets.aws-access-key"))
     args.require_complete_semgrep = True
     args.skip_rule_tuning = False
     path = sn._flatten(ROW)["u_file_path"]
@@ -395,6 +454,7 @@ def test_sca_false_positive_ignores_the_supply_chain_finding(monkeypatch, tmp_pa
             page = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["page"][0]
             return {"findings": [{"id": 91, "rule": {"name": "ssc-dc3aa06a"}, "repository": {"name": "contoso/Platform/infra-terraform"},
                                   "ref": "feature-branch", "status": "ignored" if 91 in ignored else "open",
+                                  "match_based_id": "synthetic-fingerprint",
                                   "location": {"file_path": "package-lock.json", "line": 40}}] if page == "0" else []}
         ignored.update(body["issue_ids"])
         return {"num_triaged": len(body["issue_ids"]), "triaged_issues": body["issue_ids"]}

@@ -712,3 +712,8 @@ output.operations-status,output.field-note,output.toast{display:block}
 @media(max-width:740px){#management-pull-sources{grid-template-columns:minmax(0,1fr)}.management-pull-options{align-items:stretch;flex-direction:column;gap:8px}.management-pull-options select{width:100%}.management-pull-options>p{margin:0}.management-pull-result{align-items:flex-start;flex-wrap:wrap}.management-pull-result>.button{margin-left:auto}.management-pull-selection>.management-actions{width:auto}}
 
 .fpreview-form .fpreview-concurrency{max-width:180px}
+@media(max-width:740px){
+  .fpreview-form .settings-actions,.fpreview-form .settings-actions .input-row{flex-wrap:wrap}
+  .fpreview-form .settings-actions .input-row{margin-left:auto}
+  #fpreview-model{overflow-wrap:anywhere}
+}

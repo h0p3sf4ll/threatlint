@@ -197,9 +197,9 @@ def _check_location(original_path, rule_path, target_file, line, *, matches, err
 
 
 def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures="", token=None, *,
-                        run, pro_flags, matches, original_rule_yaml, fixture_lines, error_type):
+                        run, pro_flags, matches, original_rule_yaml, fixture_lines, error_type, work=None):
     """Require valid YAML, passing fixtures, original-rule coverage, and any reproducible local drop."""
-    work = Path(tempfile.mkdtemp(prefix="threatlint-rule-"))
+    work = Path(work) if work is not None else Path(tempfile.mkdtemp(prefix="threatlint-rule-"))
     ids = re.findall(r"(?m)^\s*-\s*id:\s*([\w.-]+)", rule_yaml)
     if len(ids) != 1:
         raise error_type("The tuned rule must contain exactly one rule")

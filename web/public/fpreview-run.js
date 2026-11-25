@@ -209,7 +209,7 @@
       const notes = [];
       if (running) notes.push(`Up to ${plural(run.maxConcurrency, 'review')} at once. Finished findings keep their results while other reviews continue.`);
       if (run.truncated) notes.push(`Limited to ${run.truncated.reviewed} of ${run.truncated.total} AVITs (the maximum per run): ${run.truncated.skipped.length} not reviewed and listed as skipped. Run them again in another batch.`);
-      if (run.status === 'interrupted') notes.push('The runner reported an error or its saved run could not be recovered. Page reloads and brief connection losses do not stop a run while the Workbench stays open; reconnecting replays its history. Check the item errors below before retrying unfinished AVITs. A ServiceNow update already under way still completes.');
+      if (run.status === 'interrupted') notes.push('The runner reported an error or its saved run could not be recovered. Reconnecting can recover the history while the Workbench stays open. Check ServiceNow and Semgrep for changes from any interrupted item before retrying.');
       if (run.error) notes.push(run.error);
       note.textContent = notes.join(' ');
       note.className = `fp-run-note small ${notes.length ? 'fp-status-warn' : ''}`.trim();
@@ -281,7 +281,7 @@
           const detail = `${event.detail || ''}${event.disposition && event.stage === 'reported' ? ` · ${event.disposition}` : ''}`;
           addHistory(item, at, label, detail, kind);
           runLog(at, event.avit, label, detail, kind);
-          if (event.outcome) renderOutcome(item, event);
+          if (event.outcome || event.done) renderOutcome(item, event);
           if (event.done) finish(item, resultOf(event)); else if (event.stage !== 'queued') activate(item);
           for (const task of run.avitTasks.get(event.avit) || []) refreshTaskChips(task);
           break;
@@ -312,13 +312,21 @@
     }
     function renderOutcome(item, event) {
       const list = item.node.querySelector('.avit-outcome'); list.replaceChildren();
-      const o = event.outcome;
+      const o = event.outcome || {};
+      const semgrep = o.semgrep || [];
+      const diagnostics = [event.detail || '', ...semgrep].join('\n');
       if (o.attached) list.append(el('li', '', 'Word report attached to the AVIT'));
       if (o.closed === true) list.append(el('li', '', 'Closed as false positive with the Threatlint work note'));
-      if (event.disposition === 'FALSE POSITIVE' && o.closed && !o.tuned && (o.semgrep || []).some(line => /Rule not tuned/.test(line))) list.append(el('li', 'fp-status-warn', 'The rule was not tuned, so this false positive can recur. Re-run this AVIT, or run `threatlint avit semgrep <AVIT> --report <report> --checkout <dir>`.'));
+      if (/Semgrep affected IDs\/count differ from the requested branch scope/i.test(diagnostics)) {
+        list.append(el('li', 'fp-status-warn', 'Review the triage audit and reconcile the affected findings before making any further Semgrep updates.'));
+      } else if (!o.tuned && /(?:no .*Tuned rule fixtures|fixtures.*required|Tuned rule fixtures did not pass|complete tuned rule and its fixtures|needs true-positive and false-positive fixtures)/i.test(diagnostics)) {
+        list.append(el('li', 'fp-status-warn', 'Rule tuning requires a complete proposal with passing fixtures. Correct the proposal before publishing tuning.'));
+      } else if (event.disposition === 'FALSE POSITIVE' && o.closed && !o.tuned && /Rule not tuned/i.test(diagnostics)) {
+        list.append(el('li', 'fp-status-warn', 'Review the Semgrep tuning failure before making any further updates.'));
+      }
       if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
       if (o.leftOpen) list.append(el('li', '', 'Left open with the Threatlint work note and the report attached.'));
-      for (const line of o.semgrep || []) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
+      for (const line of semgrep) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
     }
     function renderPullRequest(item, result) {
       const actions = item.node.querySelector('.avit-actions');
