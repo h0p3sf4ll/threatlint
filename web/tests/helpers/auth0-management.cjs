@@ -34,6 +34,7 @@ function createManagementFixture() {
       return value ? Response.json(value) : Response.json({}, { status: 404 });
     }
     if (parts[0] === 'organizations' && parts.length === 1 && method === 'POST') {
+      if (body.enabled_connections?.some(value => Object.hasOwn(value, 'is_signup_enabled') || Object.hasOwn(value, 'show_as_button'))) return Response.json({ errorCode: 'invalid_body', message: 'Only database connections support is_signup_enabled' }, { status: 400 });
       const value = { id: `org_Created${organizations.size + 1}`, ...body }; organizations.set(value.id, value); memberships.set(value.id, new Set());
       return Response.json(value, { status: 201 });
     }
