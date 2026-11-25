@@ -46,7 +46,7 @@ For example, use the [authentication reviewer](agents.md#appsec-auth-reviewer) f
 
 > Review the password-reset flow. Explain how an expired token is rejected and propose an acceptance test.
 
-Confirm the workspace and sharing authorization, then choose **Run pipeline**. Specialist analysis is read-only; a proposed test is not a test result.
+Confirm the workspace and model, then choose **Run pipeline**. Specialist analysis is read-only; a proposed test is not a test result.
 
 **Expected result:** a saved report in **Findings** with evidence, recommendations, and stated limits.
 

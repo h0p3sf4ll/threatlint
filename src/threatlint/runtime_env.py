@@ -15,12 +15,14 @@ Requests go only to the sandbox application by service name; the probe refuses a
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import os
 import re
 import secrets
 import shutil
 import subprocess
 import tempfile
+import sys
 from typing import Protocol
 
 from threatlint.avit_resolve import ResolveError
@@ -279,21 +281,94 @@ def provider(name: str = "docker", **kwargs) -> EnvironmentProvider:
     return PROVIDERS[name](**kwargs)
 
 
+def _mounted_store_directory(directory: str, *, platform: str | None = None) -> bool:
+    """Conservatively reject stale directories beneath conventional POSIX volume parents."""
+    if (platform or os.name) == "nt":
+        return True  # The normal existence probe checks the Windows drive/share.
+    parent = next((root for root in ("/Volumes", "/mnt", "/media", "/run/media")
+                   if directory == root or directory.startswith(root + "/")), None)
+    if parent is None:
+        return True
+    mounts = set()
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as handle:
+            table = handle.read(1024 * 1024 + 1)
+        if len(table) <= 1024 * 1024:
+            for line in table.splitlines():
+                fields = line.split()
+                if len(fields) > 5 and fields[0].isdigit():
+                    mounts.add(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4]))
+    except OSError:
+        pass
+    current = directory
+    while current == parent or current.startswith(parent + "/"):
+        if current in mounts or os.path.ismount(current):
+            return True
+        if current == parent:
+            break
+        current = os.path.dirname(current)
+    return False
+
+
 def repo_store_base() -> str | None:
     """Base directory to clone scanned repositories under.
 
     Resolved from the ``repoStore`` setting (``THREATLINT_REPO_STORE`` env var, then ``~/.threatlint/org.json``).
-    When set, the directory is created if missing and returned; when unset, returns ``None`` so callers fall back to
-    the system temporary location. Keeping the actual path in local config, not in code, honours the no-org-paths rule.
+    Only an existing writable directory is used. Missing/unmounted optional storage is never created;
+    returning ``None`` selects the normal temporary location before any repository download starts.
     """
     from threatlint import org_config  # noqa: PLC0415 - lazy to avoid an import cycle
 
-    base = os.path.expanduser(org_config.value("repoStore"))
-    if not base:
+    configured = org_config.value("repoStore")
+    if not configured:
         return None
-    os.makedirs(base, exist_ok=True)
-    return base
+    probe = None
+    try:
+        requested = os.path.abspath(os.path.expanduser(configured))
+        base = os.path.realpath(requested)
+        if not os.path.isdir(base) or not _mounted_store_directory(requested) or not _mounted_store_directory(base):
+            return None
+        descriptor, probe = tempfile.mkstemp(prefix=".threatlint-storage-", dir=base)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(b"1")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.unlink(probe)
+        probe = None
+        return base
+    except (OSError, ValueError):
+        return None
+    finally:
+        if probe:
+            try:
+                os.unlink(probe)
+            except OSError:
+                pass
 
 
 def scratch_dir(prefix: str = "threatlint-dast-") -> str:
-    return tempfile.mkdtemp(prefix=prefix, dir=repo_store_base())
+    if not isinstance(prefix, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", prefix):
+        raise ValueError("Invalid repository directory prefix")
+    base = repo_store_base()
+    if base:
+        try:
+            return tempfile.mkdtemp(prefix=prefix, dir=base)
+        except OSError:
+            pass  # Optional storage can disappear between its probe and allocation.
+    return tempfile.mkdtemp(prefix=prefix)
+
+
+@contextmanager
+def temporary_repo(prefix: str = "threatlint-repo-"):
+    """Own one selected directory for the entire job; cleanup never overturns its result."""
+    directory = scratch_dir(prefix)
+    try:
+        yield directory
+    finally:
+        from threatlint.servicenow_checkout import remove_checkout  # noqa: PLC0415
+        try:
+            remove_checkout(directory)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            print(f"  ! Temporary repository cleanup could not finish: {directory}; inspect it before removing it manually.", file=sys.stderr)

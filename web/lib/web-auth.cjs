@@ -153,7 +153,22 @@ function createAuth({ directory, sessionTtlMs = SESSION_TTL_MS, now = Date.now }
     const sessions = state.sessions.filter(item => item.tokenHash !== hash && item.expiresAt > now());
     if (sessions.length !== state.sessions.length) persist({ ...state, sessions });
   }
-  return { establish, authenticate, logout };
+  function identity(userId) {
+    const user = state.users.find(item => item.id === userId);
+    return user ? { issuer: user.issuer, subject: user.subject } : null;
+  }
+  function profile({ issuer, subject, organizationId }) {
+    const user = state.users.find(item => item.issuer === issuer && item.subject === subject &&
+      (item.company?.organizationId || null) === (organizationId || null));
+    return user ? publicUser(user) : null;
+  }
+  function revoke({ issuer, subject, organizationId }) {
+    if (!validIssuer(issuer) || !validSubject(subject) || !/^org_[A-Za-z0-9]{1,128}$/.test(organizationId || '')) throw failure();
+    const ids = new Set(state.users.filter(user => user.issuer === issuer && user.subject === subject && user.company?.organizationId === organizationId).map(user => user.id));
+    const sessions = state.sessions.filter(session => !ids.has(session.userId));
+    if (sessions.length !== state.sessions.length) persist({ ...state, sessions });
+  }
+  return { establish, authenticate, logout, identity, profile, revoke };
 }
 
 module.exports = { createAuth, sessionCookie, clearCookie, COOKIE_NAME };

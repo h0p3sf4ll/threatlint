@@ -11,7 +11,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -236,7 +235,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
 
     avit = item["fields"]["number"]
     print(f"\n{avit}: fetching evidence and checking out the AVIT branch", flush=True)
-    with tempfile.TemporaryDirectory(prefix="threatlint-avit-", dir=rt.repo_store_base()) as work:
+    with rt.temporary_repo(prefix="threatlint-avit-") as work:
         repo = Path(work) / "repo"
         target = _checkout(item, args, repo)
         kind = sn.finding_kind(item)

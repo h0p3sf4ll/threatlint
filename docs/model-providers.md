@@ -15,10 +15,9 @@ You need access to the model you select and permission to send it the repository
 2. Select a provider from the table below.
 3. Use **Load models** where available, or enter the exact model ID manually. Bedrock model IDs are entered manually.
 4. Enter a session key if needed, or leave it empty to use an already configured credential.
-5. For a remote provider, review the sharing checkbox and authorize only the context you are permitted to send.
-6. Choose **Save model settings**, then start a small review from the [Quickstart](learning.md).
+5. Choose **Save model settings**, then start a small review from the [Quickstart](learning.md).
 
-Saving settings does not start a model request. Non-secret selections and remote-provider authorizations are saved with your profile. Typed session keys remain in memory; they are not saved as model preferences.
+Saving settings does not start a model request. Starting a review or chat sends its prompts, supporting documents, and inspected source to the selected provider. Non-secret selections are saved with your profile. Typed session keys remain in memory; they are not saved as model preferences.
 
 | Workbench provider | Connection |
 | --- | --- |

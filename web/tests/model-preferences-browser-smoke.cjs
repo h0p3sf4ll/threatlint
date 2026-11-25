@@ -63,6 +63,18 @@ async function save(page) {
   assert.equal(await page.locator('#settings-error').innerText(), '');
 }
 
+async function assertModelReady(page) {
+  const ready = await page.evaluate(() => {
+    let context;
+    document.addEventListener('threatlint:context', event => { context = event.detail; }, { once: true });
+    document.dispatchEvent(new CustomEvent('threatlint:request-context'));
+    return context.ready;
+  });
+  assert.equal(ready, true, 'Configured models are ready without a separate sharing flag');
+  assert.equal(await page.locator('#cloud-consent').count(), 0);
+  assert.equal(await page.locator('#scanimport-start').textContent(), 'Triage findings', 'Triage receives the same model readiness');
+}
+
 (async () => {
   const storage = path.join(temporary, 'history');
   const launch = { headless: true };
@@ -80,12 +92,13 @@ async function save(page) {
     await page.locator('#model-id').fill(BEDROCK_MODEL);
     await page.locator('#bedrock-region').fill('us-west-2');
     await page.locator('#api-key').fill(SESSION_KEY);
-    await page.locator('#cloud-consent').check();
     await save(page);
     await page.locator('input[name=provider][value=codex]').check();
+    await save(page);
+    assert.equal((await preferences(page)).models.codex, '', 'Codex can use its default model without an authorization bootstrap');
+    await assertModelReady(page);
     await page.locator('#model-id').fill(CODEX_MODEL);
     await page.locator('#codex-daybreak').check();
-    await page.locator('#cloud-consent').check();
     await save(page);
     const saved = await preferences(page);
     assert.equal(saved.provider, 'codex');
@@ -93,9 +106,18 @@ async function save(page) {
     assert.equal(saved.models.bedrock, BEDROCK_MODEL);
     assert.equal(saved.bedrockRegion, 'us-west-2');
     assert.equal(saved.codexDaybreak, true);
+    assert.equal(Object.hasOwn(saved, 'remoteAuthorizations'), false);
     assert.equal(JSON.stringify(saved).includes(SESSION_KEY), false);
     assert.equal(Object.hasOwn(saved, 'consent'), false);
     assert.equal(diskContents(storage).includes(SESSION_KEY), false);
+    await assertModelReady(page);
+
+    const repo = path.join(temporary, 'repo');
+    fs.mkdirSync(repo); fs.writeFileSync(path.join(repo, 'README.md'), '# Model readiness fixture\n');
+    await page.locator('#choose-repo').click();
+    await page.locator('#repo-path').fill(repo); await page.locator('#open-repository').click();
+    await page.locator('#repository-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#chat-input').isDisabled(), false, 'Chat is ready for the configured remote model');
 
     const previous = active.base;
     const oldPort = active.workbench.server.address().port;
@@ -114,7 +136,8 @@ async function save(page) {
     assert.equal(await page.locator('input[name=provider][value=codex]').isChecked(), true);
     assert.equal(await page.locator('#model-id').inputValue(), CODEX_MODEL);
     assert.equal(await page.locator('#codex-daybreak').isChecked(), true);
-    assert.equal(await page.locator('#cloud-consent').isChecked(), true, 'Saved sharing authorization survives restart');
+    assert.equal(await page.locator('#cloud-consent').count(), 0, 'Remote providers do not require a sharing checkbox');
+    await assertModelReady(page);
     await page.locator('input[name=provider][value=bedrock]').check();
     assert.equal(await page.locator('#model-id').inputValue(), BEDROCK_MODEL);
     assert.equal(await page.locator('#bedrock-region').inputValue(), 'us-west-2');
@@ -153,7 +176,7 @@ async function save(page) {
     await context.addInitScript(({ key }) => localStorage.setItem('threatlint.preferences.v2', JSON.stringify({
       provider: 'codex', models: { codex: 'legacy-codex-model', bedrock: 'legacy-bedrock-model' },
       codexDaybreak: true, bedrockRegion: 'eu-west-1', lmstudioUrl: 'http://localhost:1234/v1',
-      apiKey: key, consent: ['codex'],
+      apiKey: key, consent: false, remoteAuthorizations: false,
     })), { key: LEGACY_KEY });
     page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
@@ -164,10 +187,11 @@ async function save(page) {
     assert.equal(migrated.models.bedrock, 'legacy-bedrock-model');
     assert.equal(migrated.bedrockRegion, 'eu-west-1');
     assert.equal(migrated.codexDaybreak, true);
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false);
+    await assertModelReady(page);
     assert.equal(diskContents(migratedStorage).includes(LEGACY_KEY), false);
     assert.equal(Object.hasOwn(migrated, 'apiKey'), false);
     assert.equal(Object.hasOwn(migrated, 'consent'), false);
+    assert.equal(Object.hasOwn(migrated, 'remoteAuthorizations'), false);
     assert.deepEqual(errors, []);
     console.log('PASS: model preferences survive a changed-origin restart; provider models, region and Daybreak restore; legacy migration, stale-browser precedence, save failures and credential privacy.');
   } finally {

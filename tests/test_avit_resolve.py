@@ -538,6 +538,8 @@ def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypat
     (checkout / ".git" / "objects").mkdir(parents=True)
     (checkout / ".git" / "objects" / "pack").write_text("x", encoding="utf-8")
     os.chmod(checkout / ".git" / "objects" / "pack", 0o444)
+    from threatlint.servicenow_checkout import mark_checkout
+    mark_checkout(str(checkout))
     args = types.SimpleNamespace(avit_command="resolve", checkout=str(checkout), keep_checkout=False)
     monkeypatch.setattr("sys.stdout", io.StringIO())
     def fails(_args):
@@ -545,6 +547,26 @@ def test_the_checkout_is_deleted_after_resolve_even_on_error(tmp_path, monkeypat
     assert ar.run(fails, args) == 1
     assert not checkout.exists()
     assert ar.remove_checkout(str(tmp_path)) is False, "only git checkouts are deleted"
+
+
+def test_existing_unmarked_user_repository_is_not_deleted_after_triage(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "user-source.py").write_text("preserve", encoding="utf-8")
+    args = types.SimpleNamespace(avit_command="resolve", checkout=str(tmp_path), keep_checkout=False)
+    assert ar.run(lambda _args: 0, args) == 0
+    assert (tmp_path / "user-source.py").read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.parametrize("failure", [FileNotFoundError, PermissionError])
+def test_checkout_cleanup_failure_does_not_override_success(tmp_path, monkeypatch, failure):
+    from threatlint import servicenow_checkout
+    (tmp_path / ".git").mkdir()
+    servicenow_checkout.mark_checkout(str(tmp_path))
+    def unavailable(_path):
+        raise failure("synthetic unavailable storage")
+    monkeypatch.setattr(servicenow_checkout, "remove_checkout", unavailable)
+    args = types.SimpleNamespace(avit_command="resolve", checkout=str(tmp_path), keep_checkout=False)
+    assert ar.run(lambda _args: 0, args) == 0
 
 
 def test_semgrep_rerun_requires_a_threatlint_false_positive_closure(monkeypatch):

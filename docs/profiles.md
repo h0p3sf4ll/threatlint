@@ -18,11 +18,42 @@ Threatlint does not offer local username-and-password accounts. Your identity pr
 
 To end your Threatlint session, choose **Sign out** in the top bar. Logging out does not delete saved settings or reports. Your identity provider may keep its own session, so signing in again can reuse that provider account.
 
-## Use a company workspace
+## Choose an organization
 
-Use your company's entry link, or enter its company slug on the sign-in screen. The slug selects the company workspace; it does not grant access. An administrator must add your identity as a member and enable the appropriate connection.
+Sign in with your provider first. Threatlint checks the organizations your exact sign-in identity belongs to:
 
-If company sign-in fails, confirm the slug and provider with your administrator. An email address at the company domain alone does not make you a member.
+- One organization opens automatically.
+- Several organizations appear in a workspace chooser.
+- With no organization membership, you can create an organization or continue with your personal workspace.
+
+You do not need to enter an organization slug. An existing company entry link still opens that organization's sign-in flow. Use **Workspaces** in the top bar to switch between your organization and personal profiles.
+
+An administrator must add the identity you use. An email address at the company domain does not enroll you automatically, and accounts from different providers are not linked by email. If you were added through GitHub, use that GitHub identity to sign in.
+
+If membership discovery is unavailable, retry or continue personally. An unavailable directory is not treated as an empty membership list.
+
+## Create an organization
+
+If you do not belong to an organization, enter its display name and choose **Create organization** after sign-in. Threatlint creates the workspace, makes you its first administrator, and takes you through organization sign-in. The workspace address is generated for you.
+
+Organization creation does not enable automatic membership. Add each teammate deliberately.
+
+## Manage members and access
+
+Organization administrators can open **Settings → Roles & access** to see every member, including people who have not opened the Workbench yet.
+
+1. To add a teammate, enter the email they use for Threatlint and choose **Find account**. They must sign in to Threatlint once before you can add them.
+2. Choose the correct provider account if more than one identity matches. Select a role, then choose **Add member**.
+3. To change an existing member's role, choose the role on their row and select **Save role**.
+4. To revoke membership, select **Remove access** and confirm.
+
+| Role | Access |
+| --- | --- |
+| Administrator | Manage members, shared integrations and settings; run reviews and manage findings |
+| Analyst | Run reviews, choose personal models, and manage findings and tickets |
+| Viewer | Read findings and reports |
+
+Role changes apply to subsequent requests. Removal ends organization sessions without deleting the person's personal profile. At least one administrator must remain. A failed identity-provider removal can leave the member listed with access blocked; **Restore access** is a separate, deliberate action.
 
 ## Understand what is separate
 

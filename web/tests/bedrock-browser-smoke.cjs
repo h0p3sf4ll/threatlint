@@ -80,11 +80,7 @@ async function filesBelow(directory) {
     await page.locator('#api-key').fill(BEDROCK_KEY);
     await page.locator('#settings-form button[type=submit]').click();
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
-    await page.locator('#view-settings:not([hidden])').waitFor();
-    assert.equal(observed.length, 0, 'Cloud consent is required before a model request');
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false);
-    await page.locator('#cloud-consent').check(); await page.locator('#settings-form button[type=submit]').click();
-    await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
+    assert.equal(await page.locator('#cloud-consent').count(), 0, 'A remote provider can run immediately after saving settings');
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
     assert.equal(observed.length, 3);
     for (const call of observed) {
@@ -97,8 +93,6 @@ async function filesBelow(directory) {
 
     await page.locator('#settings-button').click();
     await page.locator('#bedrock-region').fill('us-west-2');
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false, 'Changing the destination region resets consent');
-    await page.locator('#cloud-consent').check();
     await page.locator('#settings-form button[type=submit]').click();
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
@@ -125,7 +119,7 @@ async function filesBelow(directory) {
     assert.equal(await page.locator('#bedrock-region').inputValue(), 'us-west-2');
     assert.equal(await page.locator('#model-id').inputValue(), MODEL);
     assert.equal(await page.locator('#api-key').inputValue(), '', 'Reload clears session credentials');
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false, 'Reload clears data-sharing consent');
+    assert.equal(await page.locator('#cloud-consent').count(), 0);
     const daybreakChoices = page.getByRole('group', { name: 'Daybreak Blue', exact: true });
     assert.deepEqual(await daybreakChoices.locator('input[name=provider]').evaluateAll(inputs => inputs.map(input => input.value)), ['daybreak', 'daybreak-bedrock']);
     await page.locator('input[name=provider][value=daybreak]').check();
@@ -136,7 +130,6 @@ async function filesBelow(directory) {
     assert.match(await page.locator('#environment-key-note').innerText(), /API key entered for this session/);
     await page.locator('#api-key').fill('');
     assert.match(await page.locator('#environment-key-note').innerText(), /Codex login/);
-    await page.locator('#cloud-consent').check();
     await page.locator('#settings-form button[type=submit]').click();
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
     await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
@@ -154,7 +147,6 @@ async function filesBelow(directory) {
     assert.equal(await page.locator('#api-key').isVisible(), false, 'Codex login needs no API key field');
     assert.equal(await page.locator('#codex-daybreak-label').isVisible(), true);
     assert.equal(await page.locator('#model-id').inputValue(), '', 'Codex can use its CLI default model');
-    await page.locator('#cloud-consent').check();
     await page.locator('#settings-form button[type=submit]').click();
     assert.equal(await page.locator('#settings-error').innerText(), '', 'Saving Codex with no model is valid');
     await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();

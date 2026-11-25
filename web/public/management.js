@@ -21,6 +21,7 @@
   function navigate(view) { document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view } })); }
   async function api(path, { body, ...options } = {}) {
     const response = await (profile?.fetch || fetch)(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    if (response.status === 401 && profile?.web) location.replace('/login');
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
     return result;
@@ -142,24 +143,75 @@
   }
   function renderMembers() {
     const list = $('management-members'); list.replaceChildren();
-    if (!can('manageMembers')) { $('management-members-note').textContent = 'Ask an administrator to change organization roles.'; return; }
+    if (!profile?.user?.company) { $('management-members-note').textContent = 'Your personal workspace belongs to you. Use Workspaces to open an organization.'; return; }
+    if (!can('manageMembers')) { $('management-members-note').textContent = 'Ask an administrator to change organization access.'; return; }
     const members = Array.isArray(state.access.members) ? state.access.members : [];
-    $('management-members-note').textContent = members.length ? 'Members appear after signing in. Role changes take effect on their next request.' : 'Company administrators can assign roles to members after they sign in. Personal workspaces have one owner.';
-    if (!members.length) return;
-    list.append(node('h3', '', 'Organization members'));
+    $('management-members-note').textContent = 'All organization members are listed, including people who have not opened this workspace yet. Changes apply to their next request.';
+    list.append(node('h3', '', `Organization members (${members.length})`));
     for (const member of members) {
       const row = node('div', 'management-member'); const info = node('div');
-      info.append(node('strong', '', member.displayName || member.email || member.userId), node('span', 'small subtle', member.email || member.userId));
-      const select = node('select'); select.setAttribute('aria-label', `Role for ${member.displayName || member.email || member.userId}`);
+      info.append(node('strong', '', member.displayName || member.email || 'Organization member'), node('span', 'small subtle', member.email || member.subject || member.userId));
+      if (member.blocked) info.append(node('span', 'small subtle', 'Access removed. Restore access explicitly to let this member return.'));
+      const select = node('select'); select.setAttribute('aria-label', `Role for ${member.displayName || member.email || member.subject || member.userId}`);
       select.append(...(state.access.roles || ['administrator', 'analyst', 'viewer']).map(role => option(role, role)));
       select.value = member.role;
-      const save = button('Save role', async b => {
+      const save = button(member.blocked ? 'Restore access' : 'Save role', async b => {
         b.disabled = true;
-        try { await api('/api/access/members', { method: 'POST', body: { userId: member.userId, role: select.value } }); await loadAccess(); toast('Member role updated.'); }
-        catch (error) { $('management-access-error').textContent = error.message; b.disabled = false; }
+        try {
+          const target = member.subject ? { subject: member.subject } : { userId: member.userId };
+          await api('/api/access/members', { method: 'POST', body: { ...target, role: select.value } });
+          await loadAccess(); toast('Member role updated.');
+        } catch (error) { $('management-access-error').textContent = error.message; b.disabled = false; }
       });
-      row.append(info, select, save); list.append(row);
+      row.append(info, select, save);
+      if (member.subject) row.append(button('Remove access', async b => {
+        if (!window.confirm(`Remove ${member.displayName || member.email || 'this member'} from ${profile.user.company.name}? They will lose access to this organization.`)) return;
+        b.disabled = true;
+        try {
+          const result = await api(`/api/access/members/${encodeURIComponent(member.subject)}`, { method: 'DELETE' });
+          if (result.signedOut) { location.replace('/login'); return; }
+          await loadAccess(); toast('Organization access removed.');
+        }
+        catch (error) { $('management-access-error').textContent = error.message; b.disabled = false; }
+      }));
+      list.append(row);
     }
+    renderAddMember(list);
+  }
+  function renderAddMember(list) {
+    const form = node('form', 'management-add-member'); form.setAttribute('aria-label', 'Add an organization member');
+    const heading = node('h3', '', 'Add a member');
+    const help = node('p', 'small subtle', 'Enter the email they use to sign in to Threatlint. They must sign in once before you can add them. Choose the correct sign-in account if more than one is listed.');
+    const label = node('label', '', 'Member email'); const email = node('input'); email.type = 'email'; email.required = true; email.maxLength = 254; email.autocomplete = 'off'; label.append(email);
+    const choices = node('select'); choices.setAttribute('aria-label', 'Sign-in account to add'); choices.hidden = true;
+    const role = node('select'); role.setAttribute('aria-label', 'New member role'); role.append(...(state.access.roles || []).map(value => option(value, value))); role.value = 'analyst';
+    const resultNote = node('p', 'small subtle'); resultNote.setAttribute('role', 'status');
+    let candidates = new Set(), version = 0;
+    const add = button('Add member', async b => {
+      if (!candidates.has(choices.value)) return;
+      b.disabled = true;
+      try { await api('/api/access/members', { method: 'POST', body: { subject: choices.value, role: role.value } }); await loadAccess(); toast('Member added to this organization.'); }
+      catch (error) { $('management-access-error').textContent = error.message; b.disabled = false; }
+    }, 'button primary small-button'); add.disabled = true;
+    const find = button('Find account', async b => {
+      if (!email.reportValidity()) return;
+      const current = ++version, value = email.value.trim(); b.disabled = true; add.disabled = true; choices.hidden = true; candidates = new Set();
+      resultNote.textContent = 'Checking sign-in accounts…'; $('management-access-error').textContent = '';
+      try {
+        const result = await api(`/api/access/candidates?email=${encodeURIComponent(value)}`);
+        if (current !== version) return;
+        const users = Array.isArray(result.users) ? result.users : [];
+        choices.replaceChildren(...(users.length > 1 ? [option('', 'Choose a sign-in account')] : []), ...users.map(user => option(user.subject, `${user.displayName || user.email} · ${user.provider || 'SSO'}`)));
+        candidates = new Set(users.map(user => user.subject)); choices.hidden = users.length === 0; add.disabled = !candidates.has(choices.value);
+        resultNote.textContent = users.length ? 'Select the account and access level, then add the member.' : 'No sign-in account found. Ask them to sign in to Threatlint first, then try again.';
+      } catch (error) { if (current === version) { resultNote.textContent = ''; $('management-access-error').textContent = error.message; } }
+      finally { b.disabled = false; }
+    });
+    email.addEventListener('input', () => { version++; candidates.clear(); choices.hidden = true; add.disabled = true; resultNote.textContent = ''; });
+    choices.addEventListener('change', () => { add.disabled = !candidates.has(choices.value); });
+    form.addEventListener('submit', event => { event.preventDefault(); find.click(); });
+    const controls = node('div', 'management-actions'); controls.append(find, choices, role, add);
+    form.append(heading, help, label, controls, resultNote); list.append(form);
   }
   async function loadConnections() {
     try {

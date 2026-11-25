@@ -21,7 +21,7 @@ See [Profiles and saved settings](profiles.md). Do not create a second provider 
 
 ## A model review cannot start
 
-Check the selected provider, model identifier, credentials, and any required region or sharing consent. Source-provider login and model-provider login can be separate steps. For a CLI-backed provider, confirm its executable is available to the app and its own authentication is complete.
+Check the selected provider, model identifier, credentials, and any required region. Source-provider login and model-provider login can be separate steps. For a CLI-backed provider, confirm its executable is available to the app and its own authentication is complete.
 
 You can still run supported source scans without a model. See [Model providers](model-providers.md).
 
