@@ -15,7 +15,9 @@ threatlint assure run --repo https://github.com/acme/web.git --branch main
 
 Run only against applications you are authorized to test. Install Semgrep Community Edition on PATH. The default web/API environment requires Docker and builds and executes the target in a bounded internal network with no external route, resource limits, and no host mounts.
 
-See [repository storage](setup.md#where-scanned-repositories-are-cloned) and [Runtime red team](runtime-redteam.md) for the checkout and runtime workflow.
+The initial checkout is saved as `repo/` inside the assurance run directory. Use `--work /path/to/run-directory`
+to choose that location; the optional `repoStore` setting does not select this initial assurance checkout.
+See [Runtime red team](runtime-redteam.md) for the runtime workflow.
 
 ## Read the result
 

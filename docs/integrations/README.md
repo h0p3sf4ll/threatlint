@@ -5,6 +5,8 @@ description: "Use the common fetch, checkout, resolve, and note commands for sup
 
 # Integrations
 
+This reference covers the Python integration registry and its CLI commands. For the Workbench's ServiceNow, Jira, Azure Boards, and GitHub issue inbox, use [Manage connections and tickets](../integrations.md). Those issue connections are separate from the Python plugin types below.
+
 Threatlint connects to the tools where findings live, so a reviewed verdict and its evidence end up
 next to the finding instead of in a side channel. Integrations are grouped by **what the tool is**,
 because that decides where a verdict belongs and what Threatlint may change.

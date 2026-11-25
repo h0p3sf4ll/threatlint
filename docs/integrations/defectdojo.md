@@ -21,8 +21,8 @@ confirmation. Semgrep-origin false positives can also trigger Semgrep writes; se
 | --- | --- |
 | HTTPS URL / token | Instance URL; profile → **API v2 Key**. Pasted `/api/v2/…` paths are trimmed |
 | Permissions | View findings/tests/engagements; edit findings/notes/files/status only for posting |
-| Repository / model | [GitHub App](../github-app.md), GitHub token/CLI, or `threatlint ado login`; [model setup](../setup.md) |
-| Direct CLI triage | Semgrep Community Edition on PATH (`semgrep --version`); `run fp-review` requires it |
+| Repository / model | [GitHub App](../github-app.md), GitHub token/CLI, or [Azure DevOps credentials](../avit-integration.md#one-time-setup); [model setup](../model-providers.md) |
+| Direct CLI triage | Semgrep CLI on PATH (`semgrep --version`); Community Edition satisfies the installation check, but Semgrep false-positive rule proof requires a matching Pro engine and login |
 
 ## CLI
 
@@ -110,8 +110,12 @@ threatlint dojo note DOJO-123 --message "Review blocked: repository archived."
 | Verdict | Applied changes, in order |
 | --- | --- |
 | FALSE POSITIVE | Attach Word report; note “Closed by Threatlint as a false positive, see attached report.”; set `false_p=true, active=false, verified=false` |
-| TRUE POSITIVE | Attach; note “True positive, see attached report.”; set `verified=true`; if previously false positive, clear `false_p` and reactivate |
-| AMBIGUOUS | Attach; note “Ambiguous, see attached report. Left open pending the evidence the report names.”; no status change |
+| Evidence-backed TRUE POSITIVE | Attach; note “True positive, see attached report.”; set `verified=true`; if previously false positive, clear `false_p` and reactivate |
+| Conservative TRUE POSITIVE | Attach and note the evidence gaps; do not add a verification claim. The CLI reactivates a finding previously marked false positive |
+
+Current reviews use **TRUE POSITIVE** or **FALSE POSITIVE**. Legacy `AMBIGUOUS`
+reports become conservative, unverified true positives with their uncertainty retained.
+This is a triage decision, not proof that exploitation was reproduced.
 
 Attachment comes first; matching titles skip upload. Writes are **not transactional**: failure
 can leave attachments/notes without status changes. Inspect returned status/warnings before retrying.
@@ -119,21 +123,32 @@ can leave attachments/notes without status changes. Inspect returned status/warn
 **Semgrep:** omitting `--skip-semgrep` allows CLI false-positive resolution to ignore matching
 open Semgrep findings. `--skip-rule-tuning` keeps that triage write but skips replacement rules.
 With `--checkout`, supported rule tuning is validated against the flagged file; replacement rules
-are monitor-only and the original is disabled. The supplied checkout is deleted afterward,
+need a Semgrep login and matching Pro engine for proof; there is no Community Edition fallback.
+Policy changes depend on the deployment: legacy replacements use monitor mode before disabling
+the original, while supported Unified policies use project-scoped selection and exclusions.
+The supplied checkout is deleted afterward,
 including on failure, unless `--keep-checkout` is set. Use a disposable checkout, not your working
 repository. DefectDojo and Semgrep outcomes are separate; inspect both.
 
 ## Workbench
 
-1. Save URL/token in **Settings → DefectDojo**.
-2. Open **DefectDojo review**, enter IDs or a scoped filter, and run. Reports appear in **Findings**;
+1. Save URL/token in **Settings → Scanning & triage → DefectDojo**.
+2. Open **Finding triage**, select **DefectDojo** as the finding source, enter IDs or a scoped filter, and run. Reports appear in **Findings**;
    the review itself posts no external changes.
 3. Inspect each report, then **Post to DefectDojo…**. Confirm the previewed changes.
-   Semgrep posting is opt-in in the Workbench.
+   A Semgrep-origin false positive in this direct review workflow also updates Semgrep triage;
+   eligible SAST and Secrets findings require rule tuning. Do not treat posting as a DefectDojo-only action.
 
 **Triage a scan report** also accepts `/api/v2/findings/` JSON exports. Imported findings can post
-back to their original references or explicit mapped references after confirmation.
-Workbench review batches have no limit: every listed or matching finding is reviewed in turn.
+back to their original references or explicit mapped references after confirmation. This imported-report
+posting path attaches the report and updates DefectDojo; it does not publish Semgrep changes.
+
+Direct Workbench reviews use one model run per finding, with up to **64** model runs per batch.
+Narrow a filter or split a longer list before reviewing. Reviews run concurrently, normally **3** at a time.
+In **Advanced** experience, **Parallel review and budget** lets you choose **1–8** parallel reviewers
+and a lower model-run budget. Reports remain in Findings after temporary checkouts are removed.
+Company administrators configure the connection; administrators and analysts can review and post.
+The desktop app uses its local profile without a Threatlint login.
 
 ## API calls
 

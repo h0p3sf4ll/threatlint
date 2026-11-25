@@ -21,8 +21,8 @@ requires separate confirmation.
 | User token | **My Account → Security** |
 | Read permissions | **Browse** on the project |
 | Posting permissions | **Administer Issues** / **Administer Security Hotspots**, as applicable |
-| Source and model | SCM link or DevOps binding; GitHub/Azure DevOps access; [configured model](../setup.md) |
-| Direct CLI triage | Semgrep Community Edition on PATH (`semgrep --version`); `run fp-review` requires it |
+| Source and model | SCM link or DevOps binding; GitHub/Azure DevOps access; [configured model](../model-providers.md) |
+| Direct CLI triage | Semgrep CLI on PATH (`semgrep --version`); `run fp-review` checks that it is installed. This does not establish which engine produced the Sonar finding |
 
 ## CLI
 
@@ -61,7 +61,7 @@ threatlint sonar fetch --project web --branch develop --severity CRITICAL -o son
 
 Search filters: required `--project`; `--branch` or `--pull-request`;
 `--organization` for SonarCloud; repeatable `--type`, `--severity`, `--status`; `--limit`
-(default: every matching finding, up to SonarQube's own 10,000-result search window per type). Types default to `VULNERABILITY` and `SECURITY_HOTSPOT`.
+(default: every matching finding, within a 10,000-result window for each issue or hotspot search). Types default to `VULNERABILITY` and `SECURITY_HOTSPOT`.
 Issues default to `OPEN,CONFIRMED,REOPENED`; hotspots to `TO_REVIEW`.
 
 File/line: `components[].path` (else suffix after `project:`), `line` / `textRange`.
@@ -94,8 +94,11 @@ name a local file, not a shared report. `--docx` names a file but does not uploa
 | Verdict | Issue | Security hotspot |
 | --- | --- | --- |
 | FALSE POSITIVE | Add summary comment, then `falsepositive` transition | Mark `REVIEWED` / `SAFE` with comment |
-| TRUE POSITIVE | Add comment, attempt `confirm` | Comment only |
-| AMBIGUOUS | Comment only | Comment only |
+| Evidence-backed TRUE POSITIVE | Add comment, attempt `confirm` | Comment only |
+| Conservative TRUE POSITIVE | Comment only; do not claim independent confirmation | Comment only |
+
+Current reviews use **TRUE POSITIVE** or **FALSE POSITIVE**. Legacy `AMBIGUOUS`
+reports become conservative, unverified true positives while retaining their confidence and evidence gaps.
 
 Comments include ID, confidence, title, outcome, and report location. Unavailable Confirm (HTTP 400)
 leaves the comment; other failures are reported. Writes are nontransactional: inspect server state before retrying.
@@ -106,14 +109,19 @@ For a status-neutral note, use
 
 ## Workbench
 
-1. Save URL/token in **Settings → SonarQube**.
-2. Open **SonarQube review** with keys or project/branch filters; run and inspect each report
+1. Save URL/token in **Settings → Scanning & triage → SonarQube**.
+2. Open **Finding triage**, select **SonarQube** as the finding source, and enter keys or project/branch filters. Run and inspect each report
    in **Findings**.
 3. Select **Post to SonarQube…**, supply an optional HTTPS report location, and confirm.
 
 **Triage a scan report** also accepts `/api/issues/search` and `/api/hotspots/search` JSON exports;
 posting maps each imported result back to its issue/hotspot.
-Workbench review batches have no limit: every listed or matching finding is reviewed in turn.
+Direct Workbench reviews use one model run per finding, with up to **64** model runs per batch.
+Narrow a filter or split a longer list before reviewing. Reviews run concurrently, normally **3** at a time.
+In **Advanced** experience, **Parallel review and budget** lets you choose **1–8** parallel reviewers
+and a lower model-run budget. Reports remain in Findings after temporary checkouts are removed.
+Company administrators configure the connection; administrators and analysts can review and post.
+The desktop app uses its local profile without a Threatlint login.
 See [Workbench import limits](../workbench.md#triaging-a-scan-report).
 
 ## API calls

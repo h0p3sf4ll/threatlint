@@ -14,8 +14,10 @@ threatlint redteam run --repo https://github.com/acme/web.git --branch main
 ```
 
 Output lands in a run directory: `redteam-report.md`, `avits.json` (AVIT drafts), and `redteam-state.json`.
-The repository is cloned into the configurable repo store, and the checkout is deleted after the run unless you
-pass `--keep-checkout` (see [Where scanned repositories are cloned](setup.md#where-scanned-repositories-are-cloned)).
+The repository is cloned into the optional repo store, with temporary-storage fallback as described in
+[Where scanned repositories are cloned](setup.md#where-scanned-repositories-are-cloned). Cleanup is attempted
+after the run. `--keep-checkout` retains the checkout after a successful assessment; failed assessments still
+request checkout cleanup.
 
 ## What it does
 
@@ -32,7 +34,8 @@ pass `--keep-checkout` (see [Where scanned repositories are cloned](setup.md#whe
    listing, CORS reflection, cookie flags, missing security headers, version disclosure, debug leakage).
 7. **Draft AVITs** for the confirmed findings. **Posting to ServiceNow is stubbed** — drafts are written to the report
    and `avits.json`. A real integration registers one hook (`redteam.servicenow_stub.set_avit_publisher`).
-8. **Tear down** everything the run created, always, including on failure.
+8. **Attempt teardown** of the run's labeled containers, networks, volumes, images, and temporary credential files,
+   including on failure. Resource removal is best-effort; inspect cleanup errors rather than assuming every resource was removed.
 
 Every observation is a **candidate finding for confirmation, not a proven exploit**. Nothing is exfiltrated, no
 persistence is attempted, and the report states the isolation it ran under.

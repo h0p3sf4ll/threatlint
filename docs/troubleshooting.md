@@ -15,9 +15,11 @@ For private repositories, confirm that the saved source connection has access to
 
 ## Company sign-in fails, or my settings look different
 
-Confirm the company slug, provider identity, and signed-in profile in the top bar. Your personal, company, and desktop profiles have separate settings. Company access requires an administrator to add the identity you use; a matching email domain does not enroll you automatically.
+Confirm the intended organization, provider identity, and signed-in profile in the top bar. Your personal, company, and desktop profiles have separate settings. Company access requires an administrator to add the identity you use; a matching email domain does not enroll you automatically.
 
 See [Profiles and saved settings](profiles.md). Do not create a second provider identity to recover settings from the first.
+
+If an administrator's **Find account** search returns no match, sign in once with the intended provider, then use the exact email it records, including letter case. A different spelling or provider identity is a separate lookup.
 
 ## A model review cannot start
 

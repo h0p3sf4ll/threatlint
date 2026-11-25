@@ -8,6 +8,8 @@ description: "Implement and register a Threatlint integration with its connectio
 New integrations are welcome. You can ship one as **your own Python package** without forking
 Threatlint, or contribute it upstream. The steps are the same either way.
 
+These steps register Python CLI integrations. They do not automatically add a provider to the Workbench's [Issue management](../integrations.md) connection forms, issue inbox, or [Metrics](../dashboards.md) adapters; those are separate interfaces.
+
 ## 1. Pick the type
 
 Ask what the tool *is*, not what data it happens to hold:
