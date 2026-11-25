@@ -8,4 +8,4 @@ async function close() { if (closing) return; closing = true; await server.close
 process.once('SIGINT', () => { void close(); });
 process.once('SIGTERM', () => { void close(); });
 process.stdin.once('end', () => { void close(); });
-server.connect(new StdioServerTransport()).catch(async () => { console.error('Threatlint MCP could not start'); await close(); process.exitCode = 1; });
+server.connect(new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: require('../lib/mcp.cjs').MAX_REQUEST_BYTES })).catch(async () => { console.error('Threatlint MCP could not start'); await close(); process.exitCode = 1; });

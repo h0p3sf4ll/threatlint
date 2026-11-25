@@ -26,7 +26,7 @@ See [Profiles and saved settings](profiles.md) for sign-in, company workspaces, 
 | Verify findings and track repository risk | [Review findings](finding-intelligence.md) |
 | Review results from supported sources and export reports | [Reports and exports](reports.md) |
 | Pull existing issues or create and track tickets | [Manage connections and tickets](integrations.md) |
-| Connect tools through MCP | [Threatlint MCP](mcp.md) |
+| Run scans and reviews from MCP clients or scripts | [MCP and headless workflows](mcp.md) |
 
 ## Explore further
 

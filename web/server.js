@@ -94,6 +94,10 @@ function createWorkbench(options = {}) {
   const scanImports = createScanImports({ store, reports, override: options.runProvider, integrations: { ...options.integrations, resolveSource } });
   const issueTrackers = require('./lib/ticket-ingestion.cjs');
   const scannerBatch = createScannerBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
+  const avitRuns = createAvitRuns(avitBatch);
+  const reviews = require('./lib/mcp-reviews.cjs').createMcpReviews({ pipeline, store, scannerBatch, conversations });
+  const workspaces = require('./lib/workspaces.cjs').createWorkspaces({ store, integrations: options.integrations });
   // A disconnected socket can leave an aborting provider operation in flight. Keep the worker busy
   // until those promises settle, in addition to background jobs that intentionally outlive a page.
   let socketOperations = 0;
@@ -103,9 +107,10 @@ function createWorkbench(options = {}) {
   }
 
   app.use(securityHeaders(server));
-  // Scan reports and design inputs upload up to 25 MB; every other route keeps the 7 MB JSON limit.
+  // Scan reports, design inputs and MCP support 25 MB uploads; other routes keep the 7 MB JSON limit.
   scanImportBodyParsers(app);
   designInputBodyParsers(app);
+  app.use('/api/mcp', express.json({ limit: require('./lib/mcp.cjs').MAX_REQUEST_BYTES }));
   app.use(express.json({ limit: BODY_LIMIT }));
   app.get('/vendor/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
   app.get('/vendor/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.min.js')));
@@ -116,7 +121,7 @@ function createWorkbench(options = {}) {
   server.once('listening', () => { if (awsParameters.autoLoad()) void awsParameters.pull().catch(() => {}); });
   registerModelPreferenceRoutes(app, { store });
   registerUiPreferenceRoutes(app, { store });
-  registerSourceRoutes(app, { store, scm, integrations: options.integrations });
+  const sources = registerSourceRoutes(app, { store, scm, integrations: options.integrations });
   registerRuntimeRoutes(app, { runtime, history });
   registerInsightRoutes(app, { store, history, dashboards, conversations, trackerMetrics, avitAggregate, integrations: options.integrations });
   registerTriageRoutes(app, { reports, scannerPolicies, integrations: options.integrations });
@@ -127,7 +132,9 @@ function createWorkbench(options = {}) {
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
   registerSecurityScannerRoutes(app, { securityScanner });
   registerFindingIntelligenceRoutes(app, { intelligence, store });
-  const mcpDependencies = { store, intelligence, reports, scm, securityScanner };
+  const mcpActivity = { active: 0 };
+  const mcpDependencies = { store, intelligence, reports, scm, securityScanner, workspaces, reviews, sources, mcpActivity,
+    scanImports, designInputs, runtime, history, conversations, scannerBatch, avitRuns, integrations: options.integrations };
   require('./lib/mcp.cjs').registerMcpRoutes(app, mcpDependencies);
 
   // Native desktop remains an individually owned application. Company authorization and shared
@@ -170,16 +177,15 @@ function createWorkbench(options = {}) {
   // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
   app.get('/internal/activity', (_req, res) => {
     if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
-    res.json({ busy: activeRequestCount() > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || [...store.sessions.keys()].some(id => securityScanner.isBusy(id)) || sidekick.active || runtime.active === true || wss.clients.size > 0 });
+    res.json({ busy: activeRequestCount() > 0 || mcpActivity.active > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || [...store.sessions.keys()].some(id => securityScanner.isBusy(id)) || sidekick.active || runtime.active === true || wss.clients.size > 0 });
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
   app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
-  app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413 ? 'Request exceeds the 7 MB limit' : 'Request could not be processed' }));
+  app.use((error, req, res, _next) => res.status(error.status || 500).json({ error: error.status === 413
+    ? (req.path.toLowerCase().startsWith('/api/mcp') ? 'MCP request exceeds the 36 MiB limit' : 'Request exceeds the 7 MB limit') : 'Request could not be processed' }));
 
-  const avitBatch = createAvitBatch({ store, reports, override: options.runProvider, integrations: options.integrations });
   server.once('listening', () => { void avitBatch.retryCleanup(); });
-  const avitRuns = createAvitRuns(avitBatch);
   const wss = attachSocket(server, { pipeline, conversations, avitRuns, scannerBatch });
   // Scan-import progress goes to every open Workbench connection; polling GET /api/scan-import/:id works too.
   const unsubscribe = scanImports.subscribe(event => { for (const socket of wss.clients) if (socket.readyState === 1) socket.send(JSON.stringify(event)); });
@@ -189,7 +195,7 @@ function createWorkbench(options = {}) {
     pipeline.abortAll();
     const avitClosing = avitRuns.close();
     unsubscribe();
-    await Promise.all([avitClosing, pipeline.close(), scanImports.close(), securityScanner.close()]);
+    await Promise.all([avitClosing, reviews.close(), pipeline.close(), scanImports.close(), securityScanner.close()]);
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));

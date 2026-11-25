@@ -137,13 +137,13 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     if (current.id !== id) throw new HttpError('Azure DevOps credentials were refreshed. Refresh Connected accounts and select the repository again.', 409);
     return current.id;
   }
-  app.get('/api/scm/connections', handle(async () => {
+  async function list() {
     connecting ||= connectSaved().finally(() => { connecting = null; });
     await connecting;
     return connectionsView();
-  }, { fallback: 'Connections unavailable' }));
-  app.post('/api/scm/reconnect', handle(async req => {
-    if (req.body?.provider !== 'github') throw new HttpError('Choose the saved GitHub App to reconnect.');
+  }
+  async function reconnect({ provider } = {}) {
+    if (provider !== 'github') throw new HttpError('Choose the saved GitHub App to reconnect.');
     if (connecting) await connecting;
     appFailedAt = 0;
     if (appConnection) appConnection.expiresAt = 0;
@@ -151,7 +151,9 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     connecting = connectSaved().finally(() => { connecting = null; });
     await connecting;
     return connectionsView();
-  }, { fallback: 'The saved GitHub App could not reconnect' }));
+  }
+  app.get('/api/scm/connections', handle(list, { fallback: 'Connections unavailable' }));
+  app.post('/api/scm/reconnect', handle(req => reconnect(req.body), { fallback: 'The saved GitHub App could not reconnect' }));
   // Settings → GitHub. GET and POST return only which values are set, never the key or a token.
   app.get('/api/github/settings', handle(() => githubApp.publicStatus()));
   app.post('/api/github/settings', handle(async req => {
@@ -165,25 +167,28 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     dropAppConnection();
     return githubApp.publicStatus();
   }));
-  app.post('/api/scm/connections', handle(async req => {
-    if (req.body?.provider === 'azure-devops') {
+  async function connect(input = {}) {
+    if (input.provider === 'azure-devops') {
       const status = await cli(['ado', 'status', '--json']);
       if (status.code !== 0) throw new HttpError('Azure DevOps credential settings could not be read.', 503);
       if (publicAdoStatus(status.stdout).serviceAccount.parameter) throw new HttpError('Azure DevOps uses the configured AWS Parameter Store service account. Refresh Connected accounts to connect it.');
     }
-    return scm.connect(req.body);
-  }, { status: 201, fallback: 'Connection failed' }));
-  app.delete('/api/scm/connections/:id', (req, res) => res.status(scm.disconnect(req.params.id) ? 204 : 404).end());
+    return scm.connect(input);
+  }
+  const disconnect = id => scm.disconnect(id);
+  const repositories = async (id, input = {}) => scm.repositories(await currentConnection(id), input);
+  const branches = async (id, repositoryId, input = {}) => scm.branches(await currentConnection(id), repositoryId, input);
+  app.post('/api/scm/connections', handle(req => connect(req.body), { status: 201, fallback: 'Connection failed' }));
+  app.delete('/api/scm/connections/:id', (req, res) => res.status(disconnect(req.params.id) ? 204 : 404).end());
   app.get('/api/scm/connections/:id/repositories', handle(async req => {
     const input = {};
     if (typeof req.query.search === 'string' && req.query.search) input.search = req.query.search;
     if (req.query.page !== undefined) input.page = Number(req.query.page);
-    return scm.repositories(await currentConnection(req.params.id), input);
+    return repositories(req.params.id, input);
   }, { fallback: 'Repositories unavailable' }));
-  app.get('/api/scm/connections/:id/branches', handle(async req => scm.branches(await currentConnection(req.params.id), String(req.query.repositoryId || ''),
+  app.get('/api/scm/connections/:id/branches', handle(async req => branches(req.params.id, String(req.query.repositoryId || ''),
     req.query.page !== undefined ? { page: Number(req.query.page) } : {}), { fallback: 'Branches unavailable' }));
-  app.post('/api/scm/checkout', handle(async req => {
-    const { connectionId, repositoryId, branch } = req.body || {};
+  async function checkout({ connectionId, repositoryId, branch } = {}) {
     const input = { repositoryId, ...(branch ? { branch } : {}) };
     let result;
     try { result = await scm.checkout(await currentConnection(connectionId), input); }
@@ -198,7 +203,12 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
     store.sessions.get(sessionId).provenance = result.provenance;
     store.save();
     return { sessionId, repoPath: result.repoPath, provenance: result.provenance };
-  }, { status: 201, fallback: 'Checkout failed' }));
+  }
+  app.post('/api/scm/checkout', handle(req => checkout(req.body), { status: 201, fallback: 'Checkout failed' }));
+
+  // Both transports share saved-source activation, credential rotation, discovery scoping,
+  // and checkout provenance. Never hand MCP the raw manager and bypass these checks.
+  return { providers: () => SOURCE_MANAGER_CAPABILITIES, list, connect, reconnect, disconnect, repositories, branches, checkout };
 }
 
 module.exports = { registerSourceRoutes };

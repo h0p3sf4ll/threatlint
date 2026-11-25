@@ -5,29 +5,25 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
 const { AGENTS, SKILLS, publicAgent } = require('../agents.cjs');
 const { parseReport } = require('../reports.cjs');
 const { onePageFinding, primaryFinding } = require('../report-one-page.cjs');
-const { validateBaseUrl } = require('../providers.cjs');
+const { listConfiguredModels } = require('../model-discovery.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
 const catalog = require('../model-catalog.cjs');
 const threatlintConfig = require('../threatlint-config.cjs');
 const { modelPolicy } = require('../model-policy.cjs');
 const { publicAdoStatus } = require('../ado-settings.cjs');
-const { createRepositoryDirectory } = require('../repo-store.cjs');
+const { createWorkspaces } = require('../workspaces.cjs');
 
-const execFileAsync = promisify(execFile);
-const CLONE_TIMEOUT_MS = 300_000;
-const MODEL_LIST_TIMEOUT_MS = 5000;
 const EXAMPLES = path.join(__dirname, '../../examples');
 const expandHome = value => value.replace(/^~(?=\/|$)/, os.homedir());
 
 function registerWorkspaceRoutes(app, { store, reports, build, integrations = {} }) {
   const credentialSources = integrations.credentialSources || catalog.credentialSources;
   const { sessions } = store;
+  const workspaces = createWorkspaces({ store, integrations });
   const sessionFor = id => sessions.get(id) || (() => { throw new HttpError('Session not found', 404); })();
 
   app.get('/api/config', handle(async () => ({ desktop: !!process.versions.electron, persistent: !!store.directory, build,
@@ -125,41 +121,9 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
   app.get('/api/examples/runtime', (_req, res) => res.json(JSON.parse(fs.readFileSync(path.join(EXAMPLES, 'runtime-scan.json'), 'utf8'))));
 
   // Models the configured (or session) credential can use, for the settings dropdown. POST keeps a typed key out of URLs and logs.
-  app.post('/api/models', handle(async req => {
-    const provider = String(req.body?.provider || '');
-    if (!['claude', 'claude-code', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'copilot', 'codex'].includes(provider)) throw new HttpError('Unknown model provider');
-    if (provider === 'claude-code') {
-      const status = await (integrations.claudeCodeStatus || require('../claude-code.cjs').status)();
-      if (!status.installed) throw new HttpError('Claude Code is not installed. Install it, run `claude` once to sign in, then reload.', 401);
-      if (!status.loggedIn) throw new HttpError('Claude Code is not signed in. Run `claude` in a terminal and sign in, then reload.', 401);
-      return { source: status.source, models: await catalog.listModels(provider, {}) };
-    }
-    if (provider === 'codex') {
-      const status = await (integrations.codexStatus || require('../codex.cjs').status)();
-      if (!status.installed) throw new HttpError('Codex CLI is not installed. Install it, run `codex login`, then retry.', 401);
-      if (!status.loggedIn) throw new HttpError('Codex CLI is not signed in. Run `codex login` in a terminal and retry.', 401);
-      return { source: status.source, models: [] };
-    }
-    const credential = await (integrations.resolveKey || catalog.resolveKey)(provider, req.body?.key, { region: req.body?.bedrockRegion });
-    if (provider === 'daybreak' && !credential.key) {
-      const status = await (integrations.codexStatus || require('../codex.cjs').status)();
-      if (!status.installed) throw new HttpError('Daybreak Blue needs your Codex login or an OpenAI API key. Install Codex and sign in, or enter an API key in Settings.', 401);
-      if (!status.loggedIn) throw new HttpError('Sign in to Codex with your Daybreak Blue account (`codex login`), or enter an OpenAI API key in Settings.', 401);
-      return { source: status.source, transport: 'codex', models: await catalog.listModels(provider, { transport: 'codex' }) };
-    }
-    return { source: credential.source, models: await catalog.listModels(provider, credential, { fetchImpl: integrations.fetchImpl }),
-      ...(['bedrock', 'daybreak-bedrock'].includes(provider) ? { manual: provider === 'bedrock', region: credential.region } : {}) };
-  }));
-  app.get('/api/lmstudio/models', handle(async req => {
-    const baseUrl = validateBaseUrl(typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined);
-    let data;
-    try {
-      const response = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS), redirect: 'error' });
-      if (!response.ok) throw new Error(`Model server returned HTTP ${response.status}`);
-      data = await response.json();
-    } catch (error) { throw new HttpError(`Cannot load model list: ${error.message}`, 503); }
-    return { models: (data.data || []).map(model => model.id).filter(id => typeof id === 'string') };
-  }));
+  app.post('/api/models', handle(req => listConfiguredModels(req.body, integrations)));
+  app.get('/api/lmstudio/models', handle(req => listConfiguredModels({ provider: 'lmstudio',
+    baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined }, integrations)));
 
   app.get('/api/fs/browse', handle(req => {
     let requested;
@@ -171,43 +135,12 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     return { path: requested, parent: path.dirname(requested) === requested ? null : path.dirname(requested), entries };
   }));
 
-  app.get('/api/sessions', (_req, res) => res.json([...sessions.values()].map(session => ({ id: session.id, repoPath: session.repoPath,
-    reportCount: session.reports.length, createdAt: session.createdAt, updatedAt: session.updatedAt })).sort((a, b) => b.updatedAt - a.updatedAt)));
+  app.get('/api/sessions', (_req, res) => res.json(workspaces.list()));
 
   // The repository path is chosen by the local user on purpose: this loopback runner reviews their own folders.
-  app.post('/api/session/local', handle(req => {
-    if (typeof req.body?.repoPath !== 'string' || !req.body.repoPath.trim()) throw new HttpError('repoPath required');
-    let repoPath;
-    try { repoPath = fs.realpathSync(path.resolve(expandHome(req.body.repoPath))); } catch { throw new HttpError('That folder does not exist'); }
-    if (!fs.statSync(repoPath).isDirectory()) throw new HttpError('Choose a repository directory, not a file');
-    const existing = [...sessions.values()].find(session => session.repoPath === repoPath && !session.isTempRepo);
-    return { sessionId: existing?.id || store.create(repoPath), repoPath };
-  }));
-
-  app.post('/api/session/clone', handle(async req => {
-    let url;
-    try { url = new URL(req.body?.url); } catch { throw new HttpError('Use an HTTPS repository URL without embedded credentials'); }
-    if (url.protocol !== 'https:' || url.username || url.password) throw new HttpError('Use an HTTPS repository URL without embedded credentials');
-    const branch = req.body.branch;
-    if (branch && (typeof branch !== 'string' || branch.startsWith('-') || !/^[\w./-]{1,200}$/.test(branch))) throw new HttpError('Invalid branch name');
-    let tempDir;
-    try { tempDir = createRepositoryDirectory('threatlint-'); }
-    catch { throw new HttpError('Repository storage is unavailable. Check local disk space and folder permissions.', 503); }
-    const repoPath = path.join(tempDir, 'repo');
-    try {
-      await execFileAsync('git', ['-c', 'core.hooksPath=', 'clone', '--depth=20', ...(branch ? ['--branch', branch] : []), '--', url.toString(), repoPath], {
-        timeout: CLONE_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' }, windowsHide: true });
-    } catch {
-      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* Keep the clone error if its disk disappeared. */ }
-      throw new HttpError('Clone failed. Verify the HTTPS URL, network access, and existing Git credentials.');
-    }
-    return { sessionId: store.create(repoPath, true, tempDir), repoPath };
-  }));
-
-  app.get('/api/session/:id', handle(req => {
-    const session = sessionFor(req.params.id);
-    return { id: session.id, repoPath: session.repoPath, reportCount: session.reports.length, provenance: session.provenance || null };
-  }));
+  app.post('/api/session/local', handle(req => workspaces.open(req.body)));
+  app.post('/api/session/clone', handle(req => workspaces.clone(req.body)));
+  app.get('/api/session/:id', handle(req => workspaces.get(req.params.id)));
   app.get('/api/session/:id/reports', handle(req => sessionFor(req.params.id).reports.map(reports.metadata).reverse()));
 
   app.delete('/api/session/:id/reports/:reportId', handle(req => {
