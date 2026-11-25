@@ -87,7 +87,7 @@ function createAuth0Management({ domain, clientId = process.env.AUTH0_MANAGEMENT
     getOrganizationByName: name => request('GET', `organizations/name/${encodeURIComponent(name)}`, undefined, { missing: true }),
     createOrganization: body => request('POST', 'organizations', body, { conflict: true }),
     listConnections: org => pages(`organizations/${identifier(org, ORGANIZATION)}/enabled_connections`, 'enabled_connections'),
-    enableConnection: (org, connection) => request('POST', `organizations/${identifier(org, ORGANIZATION)}/enabled_connections`, { connection_id: connection, assign_membership_on_login: false, is_signup_enabled: false, show_as_button: true }),
+    enableConnection: (org, connection) => request('POST', `organizations/${identifier(org, ORGANIZATION)}/enabled_connections`, { connection_id: connection, assign_membership_on_login: false }),
     addMember: (org, user) => request('POST', `organizations/${identifier(org, ORGANIZATION)}/members`, { members: [decodeURIComponent(subject(user))] }),
     removeMember: (org, user) => request('DELETE', `organizations/${identifier(org, ORGANIZATION)}/members`, { members: [decodeURIComponent(subject(user))] }),
   });

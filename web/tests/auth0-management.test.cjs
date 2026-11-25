@@ -36,7 +36,7 @@ it('retrieves all member pages and sends invitation-only connection and exact su
   } });
   assert.equal((await management.listMembers('org_Acme')).length, 101);
   await management.enableConnection('org_Acme', 'con_Google');
-  assert.deepEqual(JSON.parse(calls.at(-1).init.body), { connection_id: 'con_Google', assign_membership_on_login: false, is_signup_enabled: false, show_as_button: true });
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body), { connection_id: 'con_Google', assign_membership_on_login: false });
   await management.removeMember('org_Acme', 'github|123');
   assert.equal(calls.at(-1).init.method, 'DELETE'); assert.deepEqual(JSON.parse(calls.at(-1).init.body), { members: ['github|123'] });
   assert.throws(() => management.listMembers('../org_Elsewhere'), { status: 400 });
