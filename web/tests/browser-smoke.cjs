@@ -203,11 +203,11 @@ async function scanImport(page) {
   const error = await alert.boundingBox();
   assert.ok(error.y - (choose.y + choose.height) < 55, 'The upload error appears directly below the file controls');
   await page.locator('#scanimport-file').setInputFiles({ name: 'unreadable.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF') });
-  assert.equal(await page.locator('#scanimport-start').innerText(), 'Import without review');
+  assert.equal(await page.locator('#scanimport-start').innerText(), 'Triage findings');
   await page.locator('#scanimport-start').click();
   await page.getByRole('alert').filter({ hasText: 'The PDF could not be read.' }).waitFor();
-  assert.equal(calls.unreadable.provider, undefined, 'An upload without sharing consent omits the provider');
-  assert.equal(calls.unreadable.openaiApiKey, undefined, 'An upload without sharing consent omits credentials');
+  assert.equal(calls.unreadable.provider, 'openai', 'A configured remote provider is available without a sharing checkbox');
+  assert.equal(calls.unreadable.openaiApiKey, 'synthetic-key-not-a-secret', 'The configured session key is sent only for model review');
   await page.waitForFunction(() => {
     const alert = document.getElementById('scanimport-error').getBoundingClientRect();
     const header = document.querySelector('.topbar').getBoundingClientRect();
@@ -215,7 +215,6 @@ async function scanImport(page) {
   });
   await page.setViewportSize(viewport);
   await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
-  await page.locator('#cloud-consent').check();
   await page.locator('#settings-form button[type=submit]').click();
   await page.locator('[data-view="fpreview"]').click();
   await page.locator('#triage-source').selectOption('report');
@@ -324,8 +323,7 @@ async function scannerFlows(page) {
     return json(200, { ok: true, reference: 'DOJO-1201', lines: ['✓ Attached DOJO-1201-threatlint-fp-review.docx', '✓ Note added', '✓ Marked false positive (inactive)'] });
   });
   await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
-  // The remote fixture model from the earlier step needs consent before any review can start.
-  await page.locator('#cloud-consent').check(); await page.locator('#settings-form button[type=submit]').click();
+  await page.locator('#settings-form button[type=submit]').click();
   await page.locator('#settings-button').click(); await page.locator('.settings-nav [data-settings-category=general]').click();
   await page.locator('.settings-nav [data-settings-category=scanners]').click();
   await page.locator('#dojo-form').scrollIntoViewIfNeeded();
@@ -636,15 +634,17 @@ async function fpReviewRun(page) {
     await page.locator('#model-id').fill('fixture-remote-model'); await page.locator('#api-key').fill('synthetic-key-not-a-secret'); await page.locator('#settings-form button[type=submit]').click();
     const saved = await page.evaluate(() => JSON.stringify(Object.fromEntries(Object.entries(localStorage))));
     assert.equal(saved.includes('synthetic-key-not-a-secret'), false);
-    await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click(); await page.locator('#view-settings:not([hidden])').waitFor();
-    assert.equal(await page.locator('#cloud-consent').isChecked(), false);
+    await page.locator('[data-view="workbench"]').click(); await page.locator('#start-run').click();
+    await page.waitForFunction(() => document.getElementById('activity-badge').textContent.includes('Review complete'));
+    assert.equal(await page.locator('#cloud-consent').count(), 0);
+    await page.locator('#settings-button').click();
     await page.locator('.settings-nav [data-settings-category="scanners"]').click();
     assert.equal(await page.locator('#servicenow-form').isVisible(), true, 'ServiceNow is its own settings section');
     await page.locator('.settings-nav [data-settings-category="general"]').click();
     await scanImport(page);
     if (process.env.THREATLINT_BROWSER_SCENARIO === 'scan-import') {
       assert.deepEqual(errors, []);
-      console.log('PASS: PDF import, upload errors, model consent, supporting evidence, review status, report downloads, and confirmed posting.');
+      console.log('PASS: PDF import, upload errors, model readiness, supporting evidence, review status, report downloads, and confirmed posting.');
       return;
     }
     await scannerFlows(page);

@@ -4,8 +4,10 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const os = require('node:os');
 const { inspect } = require('node:util');
 const { createSourceManagers, SOURCE_MANAGER_CAPABILITIES: CAPABILITIES } = require('../lib/scm.cjs');
+const { createRepositoryDirectory } = require('../lib/repo-store.cjs');
 
 // All credentials, responses, DNS answers, and Git executions are synthetic.
 // Filesystem fixtures live exclusively in the checkout's OS temporary directory.
@@ -106,7 +108,8 @@ function fixture(t, settings = {}) {
     if (settings.lookup) return settings.lookup(host, options);
     return [{ address: PUBLIC_ADDRESS, family: 4 }];
   };
-  const managers = createSourceManagers({ fetch, execFile, lookup });
+  const managers = createSourceManagers({ fetch, execFile, lookup,
+    createRepositoryDirectory: settings.createRepositoryDirectory || (prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix))) });
   t.after(async () => {
     for (const connection of managers.list()) managers.disconnect(connection.id);
     for (const directory of directories) await fs.rm(directory, { recursive: true, force: true });
@@ -121,6 +124,33 @@ function fixture(t, settings = {}) {
     },
   };
 }
+
+it('keeps configured repository storage pinned for clone, verification, and later reads', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'threatlint-scm-storage-'));
+  const external = path.join(root, 'external'), primary = path.join(root, 'primary');
+  await fs.mkdir(external); await fs.mkdir(primary);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  let configured = external, allocations = 0;
+  const f = fixture(t, { createRepositoryDirectory(prefix) {
+    allocations++;
+    return createRepositoryDirectory(prefix, { configured, temporary: primary });
+  } });
+  const { connection, repositories } = await f.discovered();
+  const checkout = await f.managers.checkout(connection.id, { repositoryId: repositories[0].id });
+  configured = path.join(root, 'unmounted');
+  assert.equal(allocations, 1);
+  assert.equal(path.dirname(checkout.tempDir), await fs.realpath(external));
+  assert.ok(f.executions.every(execution => execution.options.cwd === checkout.tempDir || execution.options.cwd === checkout.repoPath));
+  assert.match(await fs.readFile(path.join(checkout.repoPath, '.git/config'), 'utf8'), /github\.com\/octocat/);
+  assert.deepEqual(await fs.readdir(primary), []);
+});
+
+it('reports unavailable default storage before invoking Git', async t => {
+  const f = fixture(t, { createRepositoryDirectory() { throw Object.assign(new Error('private disk path'), { code: 'EACCES' }); } });
+  const { connection, repositories } = await f.discovered();
+  await rejectsCode(() => f.managers.checkout(connection.id, { repositoryId: repositories[0].id }), 'SCM_STORAGE_UNAVAILABLE');
+  assert.equal(f.executions.length, 0);
+});
 
 describe('Source manager public contract and session-only credentials', () => {
   it('documents fixed cloud origins, permissions, bounds, and lifecycle without dependencies', () => {

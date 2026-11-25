@@ -7,9 +7,8 @@ import os
 import shutil
 import signal
 import sys
-import tempfile
 
-from threatlint.runtime_env import DockerProvider, Limits, detect
+from threatlint.runtime_env import DockerProvider, Limits, detect, scratch_dir
 
 
 def auth_headers(auth: dict) -> dict:
@@ -33,7 +32,7 @@ def auth_headers(auth: dict) -> dict:
 def run(config: dict, *, provider=None, progress=lambda stage: None) -> dict:
     limits = Limits(max_requests=config["limits"]["maxRequests"], request_timeout=max(1, config["limits"]["timeoutMs"] // 1000))
     env = provider or DockerProvider(limits)
-    work = tempfile.mkdtemp(prefix="threatlint-workbench-runtime-")
+    work = scratch_dir(prefix="threatlint-workbench-runtime-")
     state = {"run_id": DockerProvider.new_run_id(), "work": work}
     result = {}
     try:

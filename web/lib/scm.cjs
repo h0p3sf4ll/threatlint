@@ -38,6 +38,7 @@ const https = require('node:https');
 const { isIP } = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { createRepositoryDirectory } = require('./repo-store.cjs');
 
 const PAGE_SIZE = 100;
 const MAX_PAGE = 100;
@@ -89,6 +90,7 @@ const ERRORS = Object.freeze({
   SCM_GIT_NOT_FOUND: [503, 'Git could not be found. Install Git and restart Threatlint.'],
   SCM_GIT_TLS_FAILED: [502, 'Git could not verify the source server certificate. Configure the trusted certificate chain for Git and retry.'],
   SCM_GIT_NETWORK_FAILED: [502, 'Git could not reach the source server. Check network or proxy access and retry.'],
+  SCM_STORAGE_UNAVAILABLE: [503, 'Repository storage is unavailable. Check local disk space and folder permissions, then retry.'],
 });
 
 class SourceManagerError extends Error {
@@ -426,11 +428,12 @@ function pinnedResolve(host, addresses) {
 
 function createSourceManagers(
 options = {}) {
-  objectInput(options, ['fetch', 'execFile', 'lookup']);
+  objectInput(options, ['fetch', 'execFile', 'lookup', 'createRepositoryDirectory']);
   for (const value of Object.values(options)) if (value !== undefined && typeof value !== 'function') throw failure('SCM_INVALID_INPUT');
   const lookup = options.lookup || nativeLookup;
   const fetch = options.fetch || ((url, init) => httpsFetch(lookup, url, init));
   const execFile = options.execFile || nativeExecFile;
+  const allocateDirectory = options.createRepositoryDirectory || createRepositoryDirectory;
   const connections = new Map();
   let pendingConnections = 0, activeCheckouts = 0;
 
@@ -706,7 +709,8 @@ options = {}) {
       const addresses = await deadline(connection, API_TIMEOUT_MS, signal => resolveHost(lookup, host, signal));
       const resolve = pinnedResolve(host, addresses);
       assertActive(connection);
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'threatlint-scm-'));
+      try { tempDir = await allocateDirectory('threatlint-scm-'); }
+      catch { throw failure('SCM_STORAGE_UNAVAILABLE'); }
       const repoPath = path.join(tempDir, 'repository');
       const authorization = basicAuthorization(connection.provider === 'github' ? 'x-access-token' : '', connection.token);
       const env = gitEnvironment(tempDir, resolve, repo.cloneUrl, authorization);

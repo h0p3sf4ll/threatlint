@@ -95,7 +95,7 @@ it('lets company administrators assign persistent tenant-scoped roles with last-
   assert.equal((await app.call(`/api/access?_profile=${beta.body.user.id}`, { cookie: actor })).status, 409);
   await app.restart();
   assert.equal((await app.call('/api/access', { cookie: member.cookie })).body.role, 'viewer');
-  assert.equal((await app.call('/api/access', { cookie: actor })).body.members.length, 2);
+  assert.equal((await app.call('/api/access', { cookie: actor })).status, 503, 'an unconfigured Management API must not claim observed profiles are the complete member list');
   const again = await app.login('github|member', 'administrator');
   assert.equal(again.body.role, 'viewer', 'managed role survives a new verified identity claim');
 });

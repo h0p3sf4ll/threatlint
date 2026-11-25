@@ -17,6 +17,7 @@ const catalog = require('../model-catalog.cjs');
 const threatlintConfig = require('../threatlint-config.cjs');
 const { modelPolicy } = require('../model-policy.cjs');
 const { publicAdoStatus } = require('../ado-settings.cjs');
+const { createRepositoryDirectory } = require('../repo-store.cjs');
 
 const execFileAsync = promisify(execFile);
 const CLONE_TIMEOUT_MS = 300_000;
@@ -189,13 +190,15 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     if (url.protocol !== 'https:' || url.username || url.password) throw new HttpError('Use an HTTPS repository URL without embedded credentials');
     const branch = req.body.branch;
     if (branch && (typeof branch !== 'string' || branch.startsWith('-') || !/^[\w./-]{1,200}$/.test(branch))) throw new HttpError('Invalid branch name');
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-'));
+    let tempDir;
+    try { tempDir = createRepositoryDirectory('threatlint-'); }
+    catch { throw new HttpError('Repository storage is unavailable. Check local disk space and folder permissions.', 503); }
     const repoPath = path.join(tempDir, 'repo');
     try {
       await execFileAsync('git', ['-c', 'core.hooksPath=', 'clone', '--depth=20', ...(branch ? ['--branch', branch] : []), '--', url.toString(), repoPath], {
         timeout: CLONE_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' }, windowsHide: true });
     } catch {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* Keep the clone error if its disk disappeared. */ }
       throw new HttpError('Clone failed. Verify the HTTPS URL, network access, and existing Git credentials.');
     }
     return { sessionId: store.create(repoPath, true, tempDir), repoPath };

@@ -21,6 +21,47 @@ _ADO_NAME = re.compile(r"[^/\\:*?\"<>|#%&\x00-\x1f]{1,64}")
 _GH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
 # git check-ref-format restrictions; commands run without a shell.
 _BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)(?!.*\.lock$)[^\x00-\x20\x7f~^:?*\[\\]{1,250}(?<![./])")
+_OWNERSHIP_FILE = "threatlint-checkout-owner.json"
+
+
+def mark_checkout(directory):
+    """Record host ownership inside Git metadata, which a remote repository cannot supply."""
+    root = os.path.abspath(directory)
+    git = os.path.join(root, ".git")
+    if os.path.islink(root) or os.path.islink(git) or not os.path.isdir(git):
+        return False
+    marker = os.path.join(git, _OWNERSHIP_FILE)
+    descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"schemaVersion": 1, "path": os.path.realpath(root)}, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return True
+
+
+def remove_owned_checkout(directory):
+    """Never infer ownership from .git alone or fail completed triage because cleanup failed."""
+    if not directory or os.path.islink(directory):
+        return False
+    root = os.path.abspath(directory)
+    git = os.path.join(root, ".git")
+    marker = os.path.join(git, _OWNERSHIP_FILE)
+    try:
+        if os.path.islink(git) or os.path.islink(marker) or not os.path.isdir(git):
+            return False
+        with open(marker, encoding="utf-8") as handle:
+            claim = json.load(handle)
+        if claim != {"schemaVersion": 1, "path": os.path.realpath(root)}:
+            return False
+        remove_checkout(root)
+        return True
+    except FileNotFoundError:
+        return False
+    except (ValueError, TypeError):
+        return False
+    except OSError:
+        print(f"  ! Checkout cleanup could not finish: {root}; the review result is preserved. Inspect the checkout before removing it manually.", file=sys.stderr)
+        return False
 
 
 def git_prefix(git):
@@ -216,4 +257,5 @@ def checkout_repository(target, directory, file_path="", *, auth_env, sparse_clo
                 return directory
     if result.returncode != 0:
         raise error_type(checkout_failure(result.stderr, target))
+    mark_checkout(directory)
     return directory

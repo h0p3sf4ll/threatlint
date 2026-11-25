@@ -33,7 +33,7 @@
       'Export a detailed report with individual findings. Choose PDF with selectable text, or use a supported XML or JSON export.',
       'Open Test → Triage a scan report and drop the file, or press Choose file.',
       'Leave Report format on Auto-detect unless you know the export format. Select the workspace at the scanned revision, or add sanitized evidence from the matching deployment.',
-      'Choose a model in Settings and authorize remote sharing if needed. Press Triage findings to review the evidence. Without a model, the import extracts findings for later review.',
+      'Choose a model in Settings. Press Triage findings to review the evidence. Without a model, the import extracts findings for later review.',
       'Review the counts and the findings table, then press Open report, or download it as Markdown or Word. It is also listed in Findings.',
       'To post a result, choose a connected tracker and review what will change before confirming.',
     ] }],
@@ -84,7 +84,7 @@
     else $('scanimport-avit').removeAttribute('aria-invalid');
   }
   const reviewSettings = () => state.context?.ready ? state.context.settings : null;
-  const MODEL_REVIEW_HINT = 'Choose a model in Settings and authorize remote sharing if needed.';
+  const MODEL_REVIEW_HINT = 'Choose a model in Settings.';
   function updateControls() {
     const start = $('scanimport-start');
     const settings = reviewSettings();
@@ -151,7 +151,7 @@
     state.submitting = true; updateControls();
     try {
       const content = await readBase64(file);
-      // The shared ready flag includes the user's session consent for remote model review.
+      // Model selection is shared with the other review views.
       const settings = reviewSettings();
       if (supportingEvidence && !settings) throw new Error(`Supporting evidence requires model review. ${MODEL_REVIEW_HINT}`);
       const body = { ...settings, filename: file.name, content, source: $('scanimport-source').value,

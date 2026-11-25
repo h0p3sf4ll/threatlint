@@ -61,21 +61,19 @@ it('normalizes optional defaults and preserves explicit empty default-model choi
   } finally { await fixture.workbench.close(); }
 });
 
-it('persists scoped provider authorization across restarts and supports revocation without saving credentials', async t => {
-  const root = directory(t), first = await start(root);
-  const allowed = { ...PREFERENCES, remoteAuthorizations: ['codex', 'bedrock:us-east-1', 'https://models.example.test/v1'] };
-  try { assert.deepEqual((await first.call('PUT', allowed)).body.preferences, allowed); }
-  finally { await first.workbench.close(); }
-  const second = await start(root);
+it('reads legacy sharing flags without requiring authorization and discards them on the next save', async t => {
+  const root = directory(t), filename = path.join(root, 'model-preferences.json');
+  fs.writeFileSync(filename, JSON.stringify({ ...PREFERENCES, remoteAuthorizations: [] }));
+  const fixture = await start(root);
   try {
-    assert.deepEqual((await second.call()).body.preferences.remoteAuthorizations, allowed.remoteAuthorizations);
-    const revoked = { ...allowed, remoteAuthorizations: [] };
-    assert.deepEqual((await second.call('PUT', revoked)).body.preferences.remoteAuthorizations, []);
-    for (const remoteAuthorizations of [['https://user:secret@example.test/v1'], ['http://remote.example.test/v1'], ['unknown-provider'], 'codex']) {
-      assert.equal((await second.call('PUT', { ...allowed, remoteAuthorizations })).status, 400);
+    assert.deepEqual((await fixture.call()).body.preferences, PREFERENCES);
+    for (const remoteAuthorizations of [false, [], ['codex', 'bedrock:us-east-1', 'https://models.example.test/v1']]) {
+      fs.writeFileSync(filename, JSON.stringify({ ...PREFERENCES, remoteAuthorizations }));
+      assert.deepEqual(await fixture.call(), { status: 200, body: { preferences: PREFERENCES } });
+      assert.deepEqual(await fixture.call('PUT', { ...PREFERENCES, remoteAuthorizations }), { status: 200, body: { preferences: PREFERENCES } });
+      assert.deepEqual(JSON.parse(fs.readFileSync(filename, 'utf8')), PREFERENCES);
     }
-    assert.deepEqual((await second.call()).body.preferences.remoteAuthorizations, []);
-  } finally { await second.workbench.close(); }
+  } finally { await fixture.workbench.close(); }
 });
 
 it('rejects secrets, consent, unknown providers and malformed values without replacing saved choices', async t => {

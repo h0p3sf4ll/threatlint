@@ -28,6 +28,7 @@ const ENV = {
   // Claude model policy (model-policy.cjs): scanning runs and chat/assistance defaults.
   scanModel: 'THREATLINT_SCAN_MODEL',
   generalModel: 'THREATLINT_GENERAL_MODEL',
+  repoStore: 'THREATLINT_REPO_STORE',
 };
 
 function orgPath() { return path.join(process.env.THREATLINT_HOME || path.join(os.homedir(), '.threatlint'), 'org.json'); }
