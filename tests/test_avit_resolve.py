@@ -643,6 +643,45 @@ def test_replacement_failure_prevents_attachment_and_avit_update(monkeypatch, tm
     assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
 
 
+def test_timed_out_delete_that_succeeded_still_uploads_the_replacement(monkeypatch, tmp_path):
+    """ServiceNow can finish a DELETE after the client times out; the re-listing decides, not the request result."""
+    fake = FakeServiceNow()
+    fake.attachments = [_old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32)]
+
+    def request(url, **kwargs):
+        if kwargs.get("method") == "DELETE":
+            fake(url, **kwargs)  # The server removes it...
+            raise sn.ServiceNowError("ServiceNow request failed: The read operation timed out")  # ...but the reply is lost.
+        return fake(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", request)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
+    names = [row["file_name"] for row in fake.attachments]
+    assert names == [f"{AVIT}-threatlint-fp-review.docx", f"[ONE PAGER SUMMARY] {AVIT}-threatlint-fp-review.pdf"]
+    assert all(row["sys_id"] == "b" * 32 for row in fake.attachments), "the new report replaced the old one"
+
+
+def test_unconfirmable_removal_uploads_nothing(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    fake.attachments = [_old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32)]
+    deleted = []
+
+    def request(url, **kwargs):
+        if kwargs.get("method") == "DELETE":
+            deleted.append(url)
+            return fake(url, **kwargs)
+        if url.split("?")[0].endswith("/api/now/attachment") and deleted:
+            raise sn.ServiceNowError("ServiceNow request failed: The read operation timed out")
+        return fake(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", request)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    with pytest.raises(ar.ResolveError, match="Could not confirm removal.*no new report was uploaded"):
+        ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE")))
+    assert not any("/attachment/file" in url or method == "PATCH" for method, url, _data in fake.calls)
+
+
 def test_rejects_unrelated_attachment_name(monkeypatch, tmp_path):
     monkeypatch.setattr(sn, "_request_json", FakeServiceNow())
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))

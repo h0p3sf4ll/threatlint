@@ -798,14 +798,19 @@ async function replaceReports(instance, headers, target, files, fetchImpl, signa
   const { table, sysId, number, label = number } = target;
   const previous = await reportAttachments(instance, headers, target, fetchImpl, signal);
   if (previous.size) {
-    try {
-      for (const id of [...previous].sort()) {
-        await requestJson(fetchImpl, `${instance}/api/now/attachment/${id}`, { method: 'DELETE', headers }, signal);
-      }
-      if ((await reportAttachments(instance, headers, target, fetchImpl, signal)).size) throw new Error('ServiceNow still lists a previous report');
-    } catch (error) {
+    let failure = null;
+    for (const id of [...previous].sort()) {
+      try { await requestJson(fetchImpl, `${instance}/api/now/attachment/${id}`, { method: 'DELETE', headers }, signal); }
+      catch (error) { if (signal?.aborted) throw error; failure = error; }  // A timed-out request may still have deleted it.
+    }
+    let remaining;
+    try { remaining = await reportAttachments(instance, headers, target, fetchImpl, signal); }
+    catch (error) {
       if (signal?.aborted) throw error;
-      throw new HttpError(`Could not remove the previous Threatlint report for ${number} from ${label}; no new report was uploaded. ${error.message}`, 502);
+      throw new HttpError(`Could not confirm removal of the previous Threatlint report for ${number} from ${label}; no new report was uploaded. ${error.message}`, 502);
+    }
+    if (remaining.size) {
+      throw new HttpError(`Could not remove the previous Threatlint report for ${number} from ${label}; no new report was uploaded. ${failure?.message || 'ServiceNow still lists a previous report'}`, 502);
     }
   }
   const attachments = [];

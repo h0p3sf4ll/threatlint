@@ -127,14 +127,21 @@ def replace_reports(instance: str, token: str, sys_id: str, number: str, files: 
     label = label or number
     previous = _report_attachments(instance, token, sys_id, number, table)
     if previous:
-        try:
-            for attachment_id in sorted(previous):
+        failure: Exception | None = None
+        for attachment_id in sorted(previous):
+            try:
                 sn._request_json(f"{instance}/api/now/attachment/{attachment_id}", method="DELETE",
                                  headers={"Authorization": f"Bearer {token}"})
-            if _report_attachments(instance, token, sys_id, number, table):
-                raise ResolveError("ServiceNow still lists a previous report")
+            except sn.ServiceNowError as exc:
+                failure = exc  # A timed-out request may still have deleted it: the listing below decides.
+        try:
+            remaining = _report_attachments(instance, token, sys_id, number, table)
         except (ResolveError, sn.ServiceNowError) as exc:
-            raise ResolveError(f"Could not remove the previous Threatlint report for {number} from {label}; no new report was uploaded. {exc}") from exc
+            raise ResolveError(f"Could not confirm removal of the previous Threatlint report for {number} from {label}; "
+                               f"no new report was uploaded. {exc}") from exc
+        if remaining:
+            raise ResolveError(f"Could not remove the previous Threatlint report for {number} from {label}; no new report was uploaded. "
+                               f"{failure or 'ServiceNow still lists a previous report'}")
         print(f"  ✓ Removed {len(previous)} earlier Threatlint report file{'s' if len(previous) != 1 else ''} for {number}", file=out)
     attached: dict[str, str] = {}
     for index, (file_name, data, content_type) in enumerate(files):

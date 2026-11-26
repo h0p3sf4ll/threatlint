@@ -110,6 +110,21 @@ describe('Closing an AVIT as a false positive', () => {
     assert.ok(!calls.some(call => call.url.includes('/attachment/file') || call.options.method === 'PATCH'));
     assert.equal(attachments.length, 1);
   });
+  it('uploads the replacement when a timed-out delete actually removed the earlier report', async () => {
+    const calls = [];
+    const attachments = [{ sys_id: 'c'.repeat(32), file_name: 'AVIT000000000010001-threatlint-fp-review.docx', table_name: 'sn_vul_app_vulnerable_item', table_sys_id: SYS_ID }];
+    const base = fakeServiceNow(calls, { attachments });
+    const lostReply = async (url, options = {}) => {
+      if (options.method !== 'DELETE') return base(url, options);
+      await base(url, options);  // ServiceNow removes it, but the reply never arrives.
+      throw Object.assign(new Error('The read operation timed out'), { name: 'TimeoutError' });
+    };
+    const name = 'AVIT000000000010001-threatlint-fp-review.docx';
+    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n',
+      files: [{ name, content: Buffer.from('PK'), type: 'application/octet-stream' }] }, { fetchImpl: lostReply });
+    assert.deepEqual(result.attachments, [{ name, sysId: 'b'.repeat(32) }]);
+    assert.deepEqual(attachments.map(row => row.sys_id), ['b'.repeat(32)]);
+  });
   it('reports a closure ServiceNow did not apply instead of claiming success', async () => {
     const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [] }, { fetchImpl: fakeServiceNow([], { storedState: '1' }) });
     assert.equal(result.closed, false); assert.equal(result.state, '1');
