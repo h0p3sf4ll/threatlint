@@ -70,9 +70,9 @@ function status({ env = process.env, execFileImpl = execFile } = {}) {
 }
 
 /** argv for one locked-down headless run. */
-function command(model, systemPromptFile, extraDirs = []) {
+function command(model, systemPromptFile, extraDirs = [], effort = '') {
   return ['-p', '--output-format', 'stream-json', '--verbose', '--restricted', '--tools', READ_ONLY_TOOLS.join(','), '--strict-mcp-config',
-    '--permission-mode', 'dontAsk', '--no-session-persistence', '--system-prompt-file', systemPromptFile, ...extraDirs.flatMap(dir => ['--add-dir', dir]), ...(model ? ['--model', model] : [])];
+    '--permission-mode', 'dontAsk', '--no-session-persistence', '--system-prompt-file', systemPromptFile, ...extraDirs.flatMap(dir => ['--add-dir', dir]), ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])];
 }
 
 /** Earlier chat turns, folded into the prompt (each headless run is a fresh session). */
@@ -95,7 +95,7 @@ function handleEvent(event, onEvent) {
 }
 
 /** Runs one agent and resolves to its final report text. */
-async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
+async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, effort = '', repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
   const file = claudePath;
   if (!file) throw new Error('Claude Code is not installed. Install it (https://claude.com/claude-code), run `claude` once to sign in, then retry.');
   if (signal?.aborted) throw Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
@@ -113,7 +113,7 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
   const prompt = imagePaths.length ? `${userMessage}\n\nImage files (open each with the Read tool):\n${imagePaths.map((file, index) => `${index + 1}. ${file}`).join('\n')}` : userMessage;
   try {
     return await new Promise((resolve, reject) => {
-      const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : []), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : [], effort), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
       let buffer = '', stderr = '', result = null;
       const lifecycle = superviseChild(child, { signal, timeoutMs: RUN_TIMEOUT_MS,
         timeoutMessage: `Claude Code did not finish within ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`,

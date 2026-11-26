@@ -16,6 +16,7 @@ const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
 const { configuredKey, COPILOT_API, COPILOT_HEADERS } = require('./model-catalog.cjs');
 const { defaultModel } = require('./model-policy.cjs');
+const { normalizeEffort } = require('./effort.cjs');
 const { designContext } = require('./design-inputs.cjs');
 const { buildPlan, executePlan } = require('./workflow-plan.cjs');
 const { createLimiter, environmentLimit, checkAbort } = require('./concurrency.cjs');
@@ -90,8 +91,10 @@ function providerRequest(message, purpose = 'review') {
   if (provider === 'daybreak' && model.trim() !== 'gpt-6-sol') throw new HttpError('Daybreak Blue through OpenAI uses gpt-6-sol');
   if (provider === 'daybreak-bedrock' && model.trim() !== 'openai.gpt-daybreak-blue-5.6-sol') throw new HttpError('Choose the Daybreak Blue Bedrock model');
   if (provider === 'bedrock' && /^openai\./.test(model.trim())) throw new HttpError('Choose Daybreak Blue on Bedrock for OpenAI models');
+  const effort = normalizeEffort(provider, message.effort);
+  if (effort === null) throw new HttpError('Choose a supported effort level for this provider in Settings');
   const baseUrl = { claude: credential.baseUrl, bedrock: credential.baseUrl, daybreak: 'https://api.openai.com/v1', 'daybreak-bedrock': credential.baseUrl, openai: 'https://api.openai.com/v1', copilot: COPILOT_API, lmstudio: provider === 'lmstudio' ? validateBaseUrl(message.lmstudioUrl) : null }[provider] || null;
-  return { provider, key: codexDaybreak ? null : key, bearer: !!credential.bearer, model: model.trim(), baseUrl: codexDaybreak ? null : baseUrl,
+  return { provider, key: codexDaybreak ? null : key, bearer: !!credential.bearer, model: model.trim(), ...(effort ? { effort } : {}), baseUrl: codexDaybreak ? null : baseUrl,
     ...(codexDaybreak ? { transport: 'codex' } : {}),
     daybreakBlue: codexDaybreak || (provider === 'codex' && message.codexDaybreak === true),
     headers: provider === 'copilot' ? COPILOT_HEADERS : undefined };
@@ -99,7 +102,7 @@ function providerRequest(message, purpose = 'review') {
 
 /** One model run with read-only repository tools. `override` replaces the provider in tests and recordings. */
 function runModel({ settings, systemPrompt, userMessage, images = [], history = [], repoPath, signal, onEvent, override, purpose, agentId, maxIterations }) {
-  const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, baseUrl: settings.baseUrl, signal, onEvent, daybreakBlue: settings.daybreakBlue,
+  const args = { systemPrompt, userMessage, images, history, maxIterations, repoPath, key: settings.key, bearer: settings.bearer, headers: settings.headers, model: settings.model, effort: settings.effort || '', baseUrl: settings.baseUrl, signal, onEvent, daybreakBlue: settings.daybreakBlue,
     accessProgram: settings.provider === 'daybreak-bedrock' ? '' : 'daybreak_blue',
     execute: (name, input) => executeTool(name, input, repoPath) };
   return admitModel(() => {

@@ -18,13 +18,19 @@
     { id: 'runtime', title: 'Explain a runtime scan', icon: '⌁', description: 'Correlate runtime observations with the source that produced them.', agents: ['appsec-runtime-reviewer', 'appsec-security-test-planner'], label: 'RUNTIME → SOURCE' },
   ];
   const DAYBREAK_MODELS = { daybreak: 'gpt-6-sol', 'daybreak-bedrock': 'openai.gpt-daybreak-blue-5.6-sol' };
-  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', bedrock: '', daybreak: DAYBREAK_MODELS.daybreak, 'daybreak-bedrock': DAYBREAK_MODELS['daybreak-bedrock'], openai: '', codex: '', copilot: '' }, codexDaybreak: false, bedrockRegion: '', lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
+  // Reasoning effort each provider accepts; keep in sync with lib/effort.cjs. Empty means the provider or model default.
+  const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'], OPENAI_EFFORTS = ['low', 'medium', 'high', 'xhigh'], BASIC_EFFORTS = ['low', 'medium', 'high'];
+  const EFFORT_LEVELS = { claude: CLAUDE_EFFORTS, bedrock: CLAUDE_EFFORTS, 'claude-code': CLAUDE_EFFORTS, openai: OPENAI_EFFORTS, codex: OPENAI_EFFORTS, daybreak: OPENAI_EFFORTS, 'daybreak-bedrock': OPENAI_EFFORTS, copilot: BASIC_EFFORTS, lmstudio: BASIC_EFFORTS };
+  const EFFORT_LABELS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+  const DEFAULTS = { provider: 'lmstudio', model: '', models: { lmstudio: '', claude: '', 'claude-code': '', bedrock: '', daybreak: DAYBREAK_MODELS.daybreak, 'daybreak-bedrock': DAYBREAK_MODELS['daybreak-bedrock'], openai: '', codex: '', copilot: '' }, efforts: {}, codexDaybreak: false, bedrockRegion: '', lmstudioUrl: 'http://localhost:1234/v1', snowInstance: '' };
   const FP_REVIEWER = 'appsec-fp-reviewer';
   function modelPreferences(value) {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const models = { ...DEFAULTS.models };
     for (const provider of Object.keys(models)) if (typeof source.models?.[provider] === 'string') models[provider] = source.models[provider];
-    return { provider: Object.hasOwn(models, source.provider) ? source.provider : DEFAULTS.provider, models,
+    const efforts = {};
+    for (const provider of Object.keys(models)) if (EFFORT_LEVELS[provider]?.includes(source.efforts?.[provider])) efforts[provider] = source.efforts[provider];
+    return { provider: Object.hasOwn(models, source.provider) ? source.provider : DEFAULTS.provider, models, efforts,
       codexDaybreak: source.codexDaybreak === true, bedrockRegion: typeof source.bedrockRegion === 'string' ? source.bedrockRegion : '',
       lmstudioUrl: typeof source.lmstudioUrl === 'string' ? source.lmstudioUrl : DEFAULTS.lmstudioUrl };
   }
@@ -515,7 +521,8 @@
       const result = await request('/api/servicenow/close-false-positive', { method: 'POST', body: JSON.stringify({ reportId: state.report.id, findingId: action.finding.id,
         servicenow: { instance: state.preferences.snowInstance, clientId: state.credentials.snowClientId, clientSecret: state.credentials.snowClientSecret } }) });
       const files = result.attachments.map(item => item.name).join(', ');
-      if (result.closed) fpStatus('fp-snow-status', `${result.avit} closed as false positive. Attached ${files}.`, 'ok');
+      if (result.detail) fpStatus('fp-snow-status', result.detail, result.error || result.scannerWarning ? 'warn' : 'ok');
+      else if (result.closed) fpStatus('fp-snow-status', `${result.avit} closed as false positive. Attached ${files}.`, 'ok');
       else { fpStatus('fp-snow-status', `${result.avit}: report attached (${files}) and work note added, but ServiceNow kept state ${result.state} / ${result.substate} (likely pending approval).`, 'warn'); $('fp-close-avit').disabled = false; }
     } catch (error) { fpStatus('fp-snow-status', error.message, 'warn'); $('fp-close-avit').disabled = false; }
   }
@@ -588,7 +595,8 @@
       copilotToken: provider === 'copilot' ? state.credentials.copilot || undefined : undefined,
       bedrockApiKey: ['bedrock', 'daybreak-bedrock'].includes(provider) ? state.credentials[provider] || undefined : undefined,
       bedrockRegion: provider === 'bedrock' ? state.preferences.bedrockRegion || undefined : provider === 'daybreak-bedrock' ? 'us-east-2' : undefined,
-      codexDaybreak: provider === 'codex' ? state.preferences.codexDaybreak === true : undefined };
+      codexDaybreak: provider === 'codex' ? state.preferences.codexDaybreak === true : undefined,
+      effort: state.preferences.efforts?.[provider] || undefined };
   }
   function updateProviderDisplay() {
     $('stat-provider').textContent = { lmstudio: cloudProvider() ? 'Remote' : 'Local', claude: 'Claude', 'claude-code': 'Claude Code', bedrock: 'Claude Bedrock', daybreak: 'Daybreak Blue', 'daybreak-bedrock': 'Daybreak Blue Bedrock', openai: 'OpenAI', codex: 'Codex', copilot: 'Copilot' }[state.preferences.provider] || 'Local';
@@ -617,7 +625,7 @@
     $('model-id').value = selectedModel(); state.modelListProvider = null;
     $('api-key').value = state.credentials[provider] || '';
     $('codex-daybreak').checked = state.preferences.codexDaybreak === true;
-    $('settings-error').textContent = '';
+    $('settings-error').textContent = ''; $('model-effort').dataset.provider = '';
     renderAccessNotes(); fillServiceNowForm(); void loadSemgrepSettings(); void loadAdoSettings(); void loadGithubSettings();
     updateSettingsFields(provider);
   }
@@ -778,6 +786,7 @@
     if (bedrock || codex) document.querySelector('.model-manual').open = true;
     $('model-id').placeholder = codex ? 'Leave empty for your Codex default' : bedrock ? 'Exact Bedrock model or inference profile ID' : 'Exact provider model ID';
     $('codex-daybreak-label').classList.toggle('hidden', !codex);
+    fillEffortSelect(provider);
     // Claude Code signs itself in; there is no key to enter.
     $('api-key').classList.toggle('hidden', login); $('api-key-label').classList.toggle('hidden', login);
     $('api-key-label').firstChild.textContent = provider === 'copilot' ? 'GitHub token ' : (bedrock || daybreakBedrock) ? 'Bedrock API key ' : provider === 'daybreak' ? 'OpenAI project API key ' : 'API key ';
@@ -815,6 +824,18 @@
     // Load even without a known key so the server can explain where to sign in (e.g. a ChatGPT-only Codex login).
     if (!local && !bedrock && !fixedModel && !codex && !$('model-select').dataset.loaded) void discoverModels();
   }
+  function fillEffortSelect(provider) {
+    const select = $('model-effort'), levels = EFFORT_LEVELS[provider] || [];
+    // Keep an unsaved choice while the same provider is shown; otherwise show the saved effort.
+    const current = select.dataset.provider === provider ? select.value : state.preferences.efforts?.[provider] || '';
+    select.replaceChildren(new Option('Provider default', ''), ...levels.map(level => new Option(EFFORT_LABELS[level] || level, level)));
+    select.value = levels.includes(current) ? current : ''; select.dataset.provider = provider;
+    $('effort-picker').classList.toggle('hidden', !levels.length);
+    $('model-effort-note').textContent = `How much the model reasons before answering. Higher effort is more thorough but slower and uses more tokens. ${
+      provider === 'claude-code' ? 'Passed to Claude Code as --effort.' : provider === 'codex' ? 'Passed to Codex as model_reasoning_effort.'
+        : CLAUDE_PROVIDERS.has(provider) || provider === 'bedrock' ? 'Extra high and Max are available on models that support them.'
+          : 'Sent only to models that support reasoning effort; others may reject it.'} Provider default sends nothing.`;
+  }
   async function saveSettings(event) {
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
@@ -835,6 +856,9 @@
     preferences.provider = provider;
     preferences.models[provider] = model;
     if (provider === 'codex') preferences.codexDaybreak = $('codex-daybreak').checked;
+    const effort = $('model-effort').value;
+    preferences.efforts = { ...preferences.efforts };
+    if (EFFORT_LEVELS[provider]?.includes(effort)) preferences.efforts[provider] = effort; else delete preferences.efforts[provider];
     preferences.lmstudioUrl = url.toString().replace(/\/$/, '');
     if (provider === 'bedrock') preferences.bedrockRegion = bedrockRegion;
     const key = $('api-key').value.trim();
@@ -851,8 +875,8 @@
     finally { submit.disabled = false; }
   }
   function cachePreferences() {
-    const { provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
-    try { preferencesStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
+    const { provider, models, efforts, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance } = state.preferences;
+    try { preferencesStorage.setItem('threatlint.preferences.v2', JSON.stringify({ provider, models, efforts, codexDaybreak, bedrockRegion, lmstudioUrl, snowInstance })); } catch { /* in-memory operation remains available */ }
   }
   async function restoreModelPreferences() {
     try {
@@ -961,13 +985,14 @@
   async function updateFpreviewSetup() {
     let items = [];
     try { items = (await request('/api/setup/status')).items || []; } catch { /* shown as unknown below */ }
-    state.setupMissing = items.filter(item => !item.configured && !(SETUP_SECTIONS[item.name] === 'servicenow' && servicenowReady())).map(item => item.name);
+    const configured = item => item.configured || (SETUP_SECTIONS[item.name] === 'servicenow' && servicenowReady());
+    state.setupMissing = items.filter(item => !configured(item) && SETUP_SECTIONS[item.name] !== 'semgrep').map(item => item.name);
     const box = $('fpreview-setup'); box.replaceChildren();
     const heading = document.createElement('strong'); heading.textContent = state.setupMissing.length ? 'Required setup is incomplete' : 'Required setup complete';
     const list = document.createElement('ul'); list.className = 'setup-checklist';
     for (const item of items) {
-      const done = !state.setupMissing.includes(item.name), row = document.createElement('li');
-      row.textContent = `${done ? '✓' : '✗'} ${item.name}${done ? (item.source ? ` · ${item.source}` : '') : ' · '}`;
+      const done = configured(item), row = document.createElement('li');
+      row.textContent = `${done ? '✓' : '✗'} ${item.name}${!done && SETUP_SECTIONS[item.name] === 'semgrep' ? ' (for scanner updates)' : ''}${done ? (item.source ? ` · ${item.source}` : '') : ' · '}`;
       if (!done) { const link = document.createElement('a'); link.href = '#'; link.textContent = 'Set up in Settings'; link.addEventListener('click', event => { event.preventDefault(); showSettingsSection(SETUP_SECTIONS[item.name]); }); row.append(link, document.createTextNode(` or run \`${item.fix.split('  ')[0]}\``)); }
       list.append(row);
     }
@@ -990,7 +1015,6 @@
     if (!modelReady()) { showSettings(); toast('Choose a model before starting a review.', true); return; }
     if (!servicenowReady()) { showSettingsSection('servicenow'); toast('Configure ServiceNow before reviewing AVITs.', true); return; }
     if (!state.connected || state.running || state.fpreviewRunning) { toast('Another review is running, or the Workbench is not connected.', true); return; }
-    if (!await requireSemgrep()) return;
     await updateFpreviewSetup();
     if (state.setupMissing.length) { $('fpreview-error').textContent = `Finish the required setup first: ${state.setupMissing.join(', ')}.`; return; }
     // The Workbench announces the run (fp_run_start) to every open page, so this one does not draw it first.

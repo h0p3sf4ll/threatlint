@@ -6,11 +6,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { HttpError } = require('./http.cjs');
 const { validateBaseUrl } = require('./providers.cjs');
+const { normalizeEffort } = require('./effort.cjs');
 
 const PROVIDERS = new Set(['lmstudio', 'claude', 'claude-code', 'bedrock', 'daybreak', 'daybreak-bedrock', 'openai', 'codex', 'copilot']);
 // Accept the obsolete authorization field from saved files and older clients, but
 // discard it: choosing a provider no longer requires a separate sharing flag.
-const FIELDS = new Set(['provider', 'models', 'codexDaybreak', 'bedrockRegion', 'lmstudioUrl', 'remoteAuthorizations']);
+const FIELDS = new Set(['provider', 'models', 'efforts', 'codexDaybreak', 'bedrockRegion', 'lmstudioUrl', 'remoteAuthorizations']);
 const MAX_FILE_BYTES = 32 * 1024;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -23,6 +24,17 @@ function normalizePreferences(value) {
     if (typeof model !== 'string' || model.length > 200 || /[\x00-\x1f\x7f]/.test(model)) throw new HttpError('Model IDs must be text of at most 200 characters');
     models[provider] = model.trim();
   }
+  // Effort is optional per provider; an empty value means the provider or model default.
+  let efforts;
+  if (value.efforts !== undefined) {
+    if (!object(value.efforts) || Object.keys(value.efforts).some(key => !PROVIDERS.has(key))) throw new HttpError('Model preferences need a valid effort map');
+    efforts = {};
+    for (const [provider, level] of Object.entries(value.efforts)) {
+      const effort = normalizeEffort(provider, level);
+      if (effort === null) throw new HttpError(`Choose a supported effort level for ${provider}`);
+      if (effort) efforts[provider] = effort;
+    }
+  }
   if (value.codexDaybreak !== undefined && typeof value.codexDaybreak !== 'boolean') throw new HttpError('Codex Daybreak preference must be true or false');
   const bedrockRegion = value.bedrockRegion === undefined ? '' : value.bedrockRegion;
   if (typeof bedrockRegion !== 'string' || bedrockRegion.length > 64
@@ -31,7 +43,7 @@ function normalizePreferences(value) {
   let lmstudioUrl;
   try { lmstudioUrl = validateBaseUrl(value.lmstudioUrl); }
   catch { throw new HttpError('Use a model-server URL without credentials, query, or fragment; remote servers require HTTPS'); }
-  return { provider: value.provider, models, codexDaybreak: value.codexDaybreak ?? false, bedrockRegion: bedrockRegion.trim(), lmstudioUrl };
+  return { provider: value.provider, models, ...(efforts ? { efforts } : {}), codexDaybreak: value.codexDaybreak ?? false, bedrockRegion: bedrockRegion.trim(), lmstudioUrl };
 }
 
 function createModelPreferences(directory) {

@@ -612,7 +612,7 @@ output.operations-status,output.field-note,output.toast{display:block}
 .avit-card .stage-info{color:#a9cde6;border-color:#4d6f86;background:#20313d}.fp-history-entry.info .fp-history-stage{color:#a9cde6}
 .avit-card a.avit-id{text-decoration:underline;text-underline-offset:3px}.avit-card a.avit-id:hover{color:var(--text)}
 .avit-card>header .avit-updated{margin-left:auto;font-family:var(--mono);font-size:11px}
-.avit-card .avit-stage.stage-blocked,.avit-card .avit-stage.stage-skipped{color:var(--amber);border-color:#655a3d;background:#332e21}
+.avit-card .avit-stage:is(.stage-blocked,.stage-skipped,.stage-rule-not-tuned,.stage-triage-not-applied){color:var(--amber);border-color:#655a3d;background:#332e21}
 .avit-card[data-result=error]{border-color:#6b4640}.avit-card.active{border-color:#3f5e4b}
 .avit-tasks:empty,.fp-task-progress:empty{display:none}.avit-tasks,.fp-task-progress{margin-top:6px}
 .fp-task-avits{list-style:none;display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0;padding:0!important}.fp-task-avits:empty{display:none}
@@ -717,3 +717,4 @@ output.operations-status,output.field-note,output.toast{display:block}
   .fpreview-form .settings-actions .input-row{margin-left:auto}
   #fpreview-model{overflow-wrap:anywhere}
 }
+#model-effort{width:100%}

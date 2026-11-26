@@ -57,10 +57,10 @@ function status({ env = process.env, execFileImpl = execFile, codexPath = execut
   });
 }
 
-function command({ repoPath, model = '', daybreakBlue = false, images = [] }) {
+function command({ repoPath, model = '', effort = '', daybreakBlue = false, images = [] }) {
   return ['exec', '--json', '--ephemeral', '--sandbox', 'read-only', '--ignore-user-config',
     '--skip-git-repo-check', '-C', repoPath, '-c', `daybreak=${daybreakBlue ? 'true' : 'false'}`,
-    ...(model ? ['--model', model] : []), ...images.flatMap(file => ['--image', file]), '-'];
+    ...(model ? ['--model', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []), ...images.flatMap(file => ['--image', file]), '-'];
 }
 
 function withHistory(history, userMessage) {
@@ -87,7 +87,7 @@ function handleEvent(event, onEvent) {
   return null;
 }
 
-async function runCodex({ systemPrompt, userMessage, images = [], history = [], model = '', repoPath,
+async function runCodex({ systemPrompt, userMessage, images = [], history = [], model = '', effort = '', repoPath,
   onEvent = () => {}, signal, daybreakBlue = false, env = process.env,
   spawnImpl = spawn, codexPath = executable({ env }) }) {
   if (!codexPath) throw new Error('Codex CLI is not installed. Install Codex, run `codex login`, then retry.');
@@ -100,7 +100,7 @@ async function runCodex({ systemPrompt, userMessage, images = [], history = [], 
   });
   try {
     return await new Promise((resolve, reject) => {
-      const child = spawnImpl(codexPath, command({ repoPath, model, daybreakBlue, images: imagePaths }),
+      const child = spawnImpl(codexPath, command({ repoPath, model, effort, daybreakBlue, images: imagePaths }),
         { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       let buffer = '', stderr = '', lastMessage = '', completed = false, failed = false;
       const decoder = new StringDecoder('utf8');

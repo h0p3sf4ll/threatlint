@@ -50,11 +50,11 @@ function validateBaseUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
-async function openAiTurn({ baseUrl, model, messages, key, signal, onEvent, headers = {} }) {
+async function openAiTurn({ baseUrl, model, effort = '', messages, key, signal, onEvent, headers = {} }) {
   checkAbort(signal);
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', ...headers, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
-    body: JSON.stringify({ model, messages, tools: TOOL_SCHEMAS.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })), stream: true, max_tokens: MAX_OUTPUT_TOKENS }),
+    body: JSON.stringify({ model, messages, tools: TOOL_SCHEMAS.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })), stream: true, max_tokens: MAX_OUTPUT_TOKENS, ...(effort ? { reasoning_effort: effort } : {}) }),
   });
   if (response.status === 429) throw new Error('The model provider rate-limited this request or the plan quota is used up (HTTP 429). Wait, or choose another model or provider.');
   if (!response.ok) throw new Error(`Model request failed (HTTP ${response.status}). Check the model, credentials, and provider availability.`);
@@ -102,12 +102,12 @@ const openAiContent = (text, images = []) => (images.length
 const claudeContent = (text, images = []) => (images.length
   ? [{ type: 'text', text }, ...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }))] : text);
 
-async function runOpenAi({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, headers }) {
+async function runOpenAi({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, effort = '', key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, headers }) {
   const messages = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: openAiContent(userMessage, images) }];
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const turn = await openAiTurn({ baseUrl, model, messages, key, signal, onEvent, headers });
+    const turn = await openAiTurn({ baseUrl, model, effort, messages, key, signal, onEvent, headers });
     messages.push({ role: 'assistant', content: turn.text || null, ...(turn.calls.length ? { tool_calls: turn.calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) } : {}) });
     if (!turn.calls.length) return turn.text; // Save only the final report, never investigation chatter.
     const results = await executeInspectionCalls(turn.calls.map(call => ({ ...call, input: parseToolInput(call) })), { execute, onEvent, signal });
@@ -118,12 +118,12 @@ async function runOpenAi({ systemPrompt, userMessage, images = [], history = [],
 
 /** OpenAI's Daybreak access selector is a Responses API field, not a Chat Completions field.
  * Bedrock Daybreak uses the same API shape but must omit the OpenAI selector. */
-async function responsesTurn({ baseUrl, model, input, systemPrompt, key, signal, onEvent, accessProgram = 'daybreak_blue' }) {
+async function responsesTurn({ baseUrl, model, effort = '', input, systemPrompt, key, signal, onEvent, accessProgram = 'daybreak_blue' }) {
   checkAbort(signal);
   const response = await fetch(`${baseUrl}/responses`, {
     method: 'POST', signal, redirect: 'error',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model, instructions: systemPrompt, input, store: false, stream: true,
+    body: JSON.stringify({ model, instructions: systemPrompt, input, store: false, stream: true, ...(effort ? { reasoning: { effort } } : {}),
       ...(accessProgram ? { access_programs: { cyber: accessProgram } } : {}), max_output_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
       tools: TOOL_SCHEMAS.map(tool => ({ type: 'function', name: tool.name, description: tool.description,
         parameters: tool.input_schema, strict: false })) }),
@@ -166,14 +166,14 @@ function responseText(output) {
     .filter(part => part.type === 'output_text').map(part => part.text || '').join('');
 }
 
-async function runResponses({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, accessProgram = 'daybreak_blue' }) {
+async function runResponses({ systemPrompt, userMessage, images = [], history = [], baseUrl, model, effort = '', key, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS, accessProgram = 'daybreak_blue' }) {
   const content = images.length ? [{ type: 'input_text', text: userMessage },
     ...images.map(image => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` }))] : userMessage;
   const input = [...history, { role: 'user', content }];
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const turn = await responsesTurn({ baseUrl, model, input, systemPrompt, key, signal, onEvent, accessProgram });
+    const turn = await responsesTurn({ baseUrl, model, effort, input, systemPrompt, key, signal, onEvent, accessProgram });
     // In stateless mode, replay every output item, including encrypted reasoning state.
     input.push(...turn.output);
     const calls = turn.output.filter(item => item.type === 'function_call');
@@ -190,7 +190,7 @@ async function runResponses({ systemPrompt, userMessage, images = [], history = 
   throw new Error('Inspection budget reached; analysis is incomplete and was not saved as a final report');
 }
 
-async function runClaude({ systemPrompt, userMessage, images = [], history = [], model, key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
+async function runClaude({ systemPrompt, userMessage, images = [], history = [], model, effort = '', key, bearer = false, baseUrl, onEvent, signal, execute, maxIterations = DEFAULT_ITERATIONS }) {
   // ANTHROPIC_AUTH_TOKEN-style credentials are bearer tokens; baseUrl is ANTHROPIC_BASE_URL when a gateway is configured.
   const client = new Anthropic({ ...(bearer ? { apiKey: null, authToken: key } : { apiKey: key, authToken: null }),
     ...(baseUrl ? { baseURL: baseUrl } : {}), fetchOptions: { redirect: 'error' } });
@@ -200,7 +200,9 @@ async function runClaude({ systemPrompt, userMessage, images = [], history = [],
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     checkAbort(signal);
     onEvent({ type: 'iteration', n: iteration });
-    const stream = client.messages.stream({ model, max_tokens: CLAUDE_MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages }, { signal });
+    const stream = client.messages.stream({ model, max_tokens: CLAUDE_MAX_OUTPUT_TOKENS, system: systemPrompt, tools: TOOL_SCHEMAS, messages,
+      // Effort governs thinking depth; adaptive thinking lets the model use it (without thinking, effort is capped at high).
+      ...(effort ? { thinking: { type: 'adaptive' }, output_config: { effort } } : {}) }, { signal });
     let final;
     try {
       for await (const event of stream) {
