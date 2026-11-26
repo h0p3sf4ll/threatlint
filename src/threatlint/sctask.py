@@ -130,28 +130,17 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, lea
         print(f"  {item['avit']} : {item['disposition']}{' · report attached' if item['report'] else ' · no Threatlint report'}", file=out)
     _confirm(f"{number}: attach {sum(bool(item['report']) for item in outcomes)} report(s), add the comment"
              f"{' and close the task' if closing else ' (the task stays open)'}?", yes)
-    from threatlint.avit_resolve import _DOCX  # noqa: PLC0415
-    query = urllib.parse.urlencode({"sysparm_query": f"table_name={TABLE}^table_sys_id={task['sys_id']}", "sysparm_fields": "file_name", "sysparm_limit": "200"})
-    attached = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result")
-    if not isinstance(attached, list) or any(not isinstance(row, dict) for row in attached):
-        raise ResolveError(f"ServiceNow did not return a readable attachment list for {number}")
-    existing = {sn._field_value(row.get("file_name")) for row in attached}
+    from threatlint.avit_resolve import _DOCX, replace_reports  # noqa: PLC0415
     for item in outcomes:
-        name = item.get("report_name") or f"{item['avit']}{REPORT_SUFFIX}"
-        if not item["report"] or name in existing:
+        if not item["report"]:
             continue
-        upload = urllib.parse.urlencode({"table_name": TABLE, "table_sys_id": task["sys_id"], "file_name": name})
-        sn._request_json(f"{instance}/api/now/attachment/file?{upload}", data=_download(instance, token, item["report"]),
-                         headers={**_auth(token), "Content-Type": _DOCX})
-        print(f"  ✓ Attached {name}", file=out)
-    for item in outcomes:
-        name = item.get("summary_name")
-        if not item.get("summary") or not name or name in existing:
-            continue
-        upload = urllib.parse.urlencode({"table_name": TABLE, "table_sys_id": task["sys_id"], "file_name": name})
-        sn._request_json(f"{instance}/api/now/attachment/file?{upload}", data=_download(instance, token, item["summary"]),
-                         headers={**_auth(token), "Content-Type": "application/pdf"})
-        print(f"  ✓ Attached {name}", file=out)
+        # Read the AVIT's current report first; ServiceNow cannot overwrite an attachment, so earlier
+        # Threatlint reports for this AVIT on the task are deleted before the current one is attached.
+        files = [(item.get("report_name") or f"{item['avit']}{REPORT_SUFFIX}", _download(instance, token, item["report"]), _DOCX)]
+        if item.get("summary") and item.get("summary_name"):
+            files.append((item["summary_name"], _download(instance, token, item["summary"]), "application/pdf"))
+        replace_reports(instance, token, task["sys_id"], item["avit"], files, table=TABLE, label=number, out=out,
+                        partial=f"{number} was not changed. Run the SCTASK update again to replace both.")
     comment = closing_comment(outcomes, leave_open)
     values = {"comments": comment, "work_notes": comment}
     if closing:

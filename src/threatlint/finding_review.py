@@ -68,23 +68,64 @@ def report_fields(body: str, name: str) -> list[str]:
             for match in _field_pattern(re.escape(name)).finditer(_structure(body))]
 
 
+# Field labels of the Finding Review report (.claude/agents/appsec-fp-reviewer.md) and the readiness checks.
+# A line labelled with one of these (bulleted or not) starts a separate field; other bold labels such as
+# **Source**: or **Impact.** are sub-points of the section above them.
+_REPORT_LABELS = frozenset(label.casefold() for label in (
+    "Acceptance Criteria", "Acceptance Matrix", "Approval and Rollback", "Assessment and alternative interpretation",
+    "Blocking Evidence", "Confidence", "Coverage and Blast Radius", "Decision basis", "Disposition", "Effort", "Evidence",
+    "Exploit path", "Exposure proof", "Finding Summary", "Finding and impact", "Fix rationale", "Implementation Notes",
+    "Interim Action", "Limitations and Open Questions", "Location", "Original finding", "Original rule ID", "Owner",
+    "Priority Actions", "Proposed Fix", "Proposed Tuning", "Proposed fix patch", "Regression Tests", "Regression assertions",
+    "Remediation Roadmap", "Resolution Plan", "Risk and decision", "Rule Regression Tests", "Semgrep rule", "Severity",
+    "Source-to-sink", "Suppression Impact Assessment", "Systemic Root Causes", "Tuned rule", "Tuned rule fixtures",
+    "Tuning Status", "Validation status", "Verified Safe Behavior",
+))
+_LABEL_LINE = re.compile(r"[ \t]{0,3}(?:(?:[-*+]|\d{1,3}[.)])[ \t]+)?\*\*([^*\r\n]+?)\*\*")
+
+
+def _is_report_field(line: str) -> bool:
+    match = _LABEL_LINE.match(line)
+    if not match:
+        return False
+    label = re.sub(r"[ \t]*\([^()]*\)", "", match.group(1)).strip().rstrip(":").strip()
+    return label.casefold() in _REPORT_LABELS
+
+
 def report_section(body: str, aliases: tuple[str, ...]) -> str:
     """Read a Markdown field or heading, retaining quoted code inside its section."""
     structural = _structure(body)
     names = "|".join(re.escape(name) for name in aliases)
-    ending = r"(?:[ \t]*:[ \t]*\*\*|\*\*[ \t]*:|\*\*(?=[ \t]*\r?$))"
+    # Reviewers often qualify a label, inside or after the bold: **Evidence (checkout abc1234)**:,
+    # **Evidence** (checkout `abc1234`; short excerpts):, **Exploit path** (static; **NOT RUN**): or ## Exploit path (static).
+    qualifier = r"(?:[ \t]*\([^()\r\n]{1,200}\))?"
+    # A trailing note may end with a colon or end the line: **Evidence** (checkout abc1234; paths relative to src/)
+    ending = r"(?:[ \t]*:[ \t]*\*\*|\*\*[ \t]*:|\*\*[ \t]*\([^()\r\n]{1,200}\)[ \t]*(?::|(?=[ \t]*\r?$))|\*\*(?=[ \t]*\r?$))"
     match = re.search(
-        rf"(?im)^{_FIELD_START}(?:\*\*(?:{names}){ending}"
-        rf"|#{{2,6}}[ \t]+(?:{names})[ \t]*:?[ \t]*(?:#+[ \t]*)?\r?$)", structural,
+        rf"(?im)^{_FIELD_START}(?:\*\*(?:{names}){qualifier}{ending}"
+        rf"|#{{2,6}}[ \t]+(?:{names}){qualifier}[ \t]*:?[ \t]*(?:#+[ \t]*)?\r?$)", structural,
     )
     if not match:
         return ""
+    start = match.end()
+    rest = structural[start:]
+    first_break = rest.find("\n")
+    if first_break >= 0 and not rest[:first_break].strip():
+        # A label that ends its line (**Finding and impact**, **Exploit path** (static):) introduces a block:
+        # paragraphs and sub-labelled points (- **Source**: ..., **Impact.** ...). The block runs to the next
+        # report field or heading, so a missing section is never filled by the field that follows it.
+        offset = first_break + 1
+        for line in rest[offset:].splitlines(keepends=True):
+            if re.match(r"[ \t]{0,3}#{1,6}[ \t]", line) or _is_report_field(line):
+                break
+            offset += len(line)
+        return body[start:start + offset].strip()
     next_field = re.search(
         rf"(?m)^{_FIELD_START}(?:\*\*[^*\r\n]+?{ending}|#{{1,6}}[ \t])",
-        structural[match.end():],
+        rest,
     )
-    end = match.end() + next_field.start() if next_field else len(body)
-    return body[match.end():end].strip()
+    end = start + next_field.start() if next_field else len(body)
+    return body[start:end].strip()
 
 
 def _proof_section(body: str, name: str) -> str:

@@ -181,6 +181,7 @@ function resolveOutcome(output) {
   const text = String(output);
   return {
     attached: /^\s*✓ (?:Attached .+|.+ is already attached)\s*$/m.test(text),
+    replaced: Number(text.match(/^\s*✓ Removed (\d+) earlier Threatlint report files? for /m)?.[1] || 0),
     closed: /^\s*✓ Closed as false positive\b/m.test(text) ? true : /ServiceNow kept state/.test(text) ? 'state not applied' : false,
     leftOpen: /AVIT left open/.test(text),
     information: text.match(/^\s*INFO: (AVIT is already closed in ServiceNow; work note added and report attached\.)\s*$/m)?.[1] || '',
@@ -204,7 +205,9 @@ function avitRecordUrl(instance, avit, markdown = '') {
 /** The history entries for what `avit resolve` did: attached, closed / note added, Semgrep ignored, rule tuned. */
 function outcomeActions(outcome, disposition) {
   const actions = [];
-  if (outcome.attached) actions.push({ kind: 'attached', detail: 'Word report attached to the AVIT' });
+  if (outcome.attached) actions.push({ kind: 'attached', detail: outcome.replaced
+    ? `Replaced ${outcome.replaced} earlier Threatlint report file${outcome.replaced > 1 ? 's' : ''}; Word report attached to the AVIT`
+    : 'Word report attached to the AVIT' });
   if (outcome.closed === true) actions.push({ kind: 'closed', detail: 'Closed as false positive with the Threatlint work note' });
   else if (outcome.closed === 'state not applied') actions.push({ kind: 'warning', detail: 'ServiceNow did not keep the closed state/substate' });
   if (outcome.leftOpen) actions.push({ kind: 'noted', detail: `Work note added; left open (${'true positive'})` });
@@ -350,7 +353,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         'In a tuned Semgrep pattern, use a metavariable for a sensitive value and keep the surrounding expression valid in the target language. Use synthetic literals in the fixtures.',
         'Both annotated statements must match the original rule at their marked lines. Model the flagged expression including relevant imports, enclosing calls, and data flow. In a search rule, put a negative pattern beside a positive pattern under patterns. In a taint rule, preserve the source and sink structure and scope any change to the proved safe case.',
         'For a SAST or Secrets FALSE POSITIVE you MUST include a tuned rule: copy the complete "Semgrep rule to tune from" in the attachment (when it is a live tuned rule, keep every exclusion it already has), add the narrowest pattern-not, pattern-not-inside, pattern-not-regex or sanitizer that removes only this false-positive shape, and set the id to the original rule id plus `.tuned`. Put it in one ```yaml block directly after a line reading exactly `**Tuned rule**:`, then a line reading exactly `**Tuned rule fixtures**:` and one fenced block in the target language with at least one `ruleid: <id>.tuned` comment line (a true-positive shape; the line after it must still match) and one `ok: <id>.tuned` comment line (this false-positive shape, which the original rule matches). Never write placeholders. If no rule source is attached, say so in the report.',
-        ...(prepareFix ? ['For a supported TRUE POSITIVE, include quoted Evidence with checkout file:line references and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff in a follow-up after checking the evidence.'] : []),
+        ...(prepareFix ? ['For a supported TRUE POSITIVE, include quoted Evidence with checkout file:line references and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff in a follow-up after checking the evidence. Until then, still put concrete fix code under **Proposed Fix**: fenced before/after code blocks for every affected line, never only a description.'] : []),
       ].join('\n');
       const userMessage = buildUserMessage(repo, `${message.target || ''}\n${guidance}`.trim(), [], attachment, { avits: [avit], semgrep });
       const review = extra => runModel({ settings, systemPrompt: AGENTS[AGENT_ID].systemPrompt, repoPath: repo, signal, override, purpose: 'review', agentId: AGENT_ID,

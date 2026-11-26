@@ -165,7 +165,9 @@ For a **TRUE POSITIVE** with a fix supported by the inspected evidence, include 
 - **Acceptance Criteria**: observable conditions for closure and evidence the owner must supply.
 
 In the automatic draft PR workflow, wait for Threatlint to request a patch after checking the
-confirmation evidence. When it requests the patch, supply a complete unified diff under a line
+confirmation evidence. Until then, **Proposed Fix** still carries the concrete before/after code for
+every affected line, never only a description, and every revision keeps that code unless new
+evidence changes it. When it requests the patch, supply a complete unified diff under a line
 exactly `**Proposed fix patch**:`, followed immediately by one fenced `diff` block against the
 inspected checkout. Keep the reviewer read-only. If the host returns evidence or patch-validation
 gaps, inspect the relevant code and revise the entire report, including its evidence and any supported fix;

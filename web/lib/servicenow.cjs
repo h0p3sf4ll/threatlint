@@ -716,12 +716,9 @@ async function closeAvitAsFalsePositive(credentials, number, { note, files }, { 
   const members = await viewMembers(instance, headers, [avit], fetchImpl, signal);
   record.inView = members ? members.has(avit) : null;
   const choices = await falsePositiveChoices(instance, headers, fetchImpl, signal);
-  const attachments = [];
-  for (const file of files) {
-    const query = new URLSearchParams({ table_name: AVIT_TABLE, table_sys_id: record.sys_id, file_name: file.name });
-    const result = (await requestJson(fetchImpl, `${instance}/api/now/attachment/file?${query}`, { method: 'POST', headers: { ...headers, 'Content-Type': file.type }, body: file.content }, signal)).result;
-    attachments.push({ name: file.name, sysId: result?.sys_id || null });
-  }
+  const { attachments } = files.length
+    ? await replaceReports(instance, headers, { table: AVIT_TABLE, sysId: record.sys_id, number: avit }, files, fetchImpl, signal)
+    : { attachments: [] };
   const update = { state: choices.state, substate: choices.substate, work_notes: note, close_notes: note };
   const updated = (await requestJson(fetchImpl, `${instance}/api/now/table/${AVIT_TABLE}/${record.sys_id}?sysparm_fields=number,state,substate`,
     { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(update) }, signal)).result || {};
@@ -749,15 +746,81 @@ async function avitRecord(instance, headers, avit, fetchImpl, signal) {
   return { sysId, fields: flatten(row) };
 }
 
-async function attachmentNames(instance, headers, sysId, fetchImpl, signal) {
-  const query = new URLSearchParams({ sysparm_query: `table_name=${AVIT_TABLE}^table_sys_id=${sysId}`, sysparm_fields: 'file_name', sysparm_limit: '200' });
-  try { return new Set(((await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result || []).map(row => String(row?.file_name || ''))); }
-  catch (error) { if (signal?.aborted) throw error; return new Set(); }
-}
-
 async function attachFile(instance, headers, sysId, file, fetchImpl, signal, table = AVIT_TABLE) {
   const query = new URLSearchParams({ table_name: table, table_sys_id: sysId, file_name: file.name });
   return (await requestJson(fetchImpl, `${instance}/api/now/attachment/file?${query}`, { method: 'POST', headers: { ...headers, 'Content-Type': file.type }, body: file.content }, signal)).result || {};
+}
+
+const ONE_PAGER_PREFIX = '[ONE PAGER SUMMARY] ';
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Every Threatlint report file for one AVIT or ticket number: AVIT reports ({AVIT}-threatlint-fp-review[-<timestamp>].docx),
+ * Workbench reviews ({number}-threatlint-review-<fingerprint>.docx|.md), and the one-page summary of either.
+ * Matches src/threatlint/avit_resolve.py report_family.
+ */
+function reportFamily(number) {
+  const stem = `${escapeRegExp(number)}-threatlint-(?:fp-review(?:-\\d{8}T\\d{12}Z)?|review-[0-9a-f]{20})`;
+  return new RegExp(`^(?:${stem}\\.(?:docx|md)|${escapeRegExp(ONE_PAGER_PREFIX)}${stem}\\.pdf)$`);
+}
+
+/** IDs of earlier Threatlint reports for `number` on this record. Unrelated attachments are never listed. */
+async function reportAttachments(instance, headers, { table, sysId, number }, fetchImpl, signal) {
+  const family = reportFamily(number);
+  const ids = new Set();
+  const limit = 200;
+  for (let offset = 0; offset < 2000; offset += limit) {
+    const query = new URLSearchParams({ sysparm_query: `table_name=${table}^table_sys_id=${sysId}^file_nameLIKE${number}-threatlint-^ORDERBYsys_id`,
+      sysparm_fields: 'sys_id,file_name,table_name,table_sys_id', sysparm_limit: String(limit), sysparm_offset: String(offset) });
+    const rows = (await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal))?.result;
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || !fieldValue(row.file_name))) {
+      throw new HttpError(`ServiceNow did not return a readable attachment list for ${number}; no new report was uploaded`, 502);
+    }
+    for (const row of rows) {
+      if (!family.test(fieldValue(row.file_name))) continue;
+      const id = fieldValue(row.sys_id?.value ?? row.sys_id);
+      if (!SYS_ID_PATTERN.test(id) || ids.has(id) || fieldValue(row.table_name) !== table || fieldValue(row.table_sys_id?.value ?? row.table_sys_id) !== sysId) {
+        throw new HttpError(`ServiceNow did not identify a previous report for ${number} on this record; no new report was uploaded`, 502);
+      }
+      ids.add(id);
+    }
+    if (rows.length < limit) return ids;
+  }
+  throw new HttpError(`The attachment list for ${number} exceeded the review limit; no new report was uploaded`, 502);
+}
+
+/**
+ * ServiceNow cannot overwrite an attachment. Delete every earlier Threatlint report for `number` on the record,
+ * confirm they are gone, then upload `files`. Nothing is uploaded unless the deletion is confirmed.
+ * Returns { removed, attachments: [{ name, sysId }] }. Matches src/threatlint/avit_resolve.py replace_reports.
+ */
+async function replaceReports(instance, headers, target, files, fetchImpl, signal) {
+  const { table, sysId, number, label = number } = target;
+  const previous = await reportAttachments(instance, headers, target, fetchImpl, signal);
+  if (previous.size) {
+    try {
+      for (const id of [...previous].sort()) {
+        await requestJson(fetchImpl, `${instance}/api/now/attachment/${id}`, { method: 'DELETE', headers }, signal);
+      }
+      if ((await reportAttachments(instance, headers, target, fetchImpl, signal)).size) throw new Error('ServiceNow still lists a previous report');
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw new HttpError(`Could not remove the previous Threatlint report for ${number} from ${label}; no new report was uploaded. ${error.message}`, 502);
+    }
+  }
+  const attachments = [];
+  for (const [index, file] of files.entries()) {
+    let id = '';
+    try { const uploaded = await attachFile(instance, headers, sysId, file, fetchImpl, signal, table); id = fieldValue(uploaded.sys_id?.value ?? uploaded.sys_id); }
+    catch (error) { if (signal?.aborted) throw error; }
+    if (!SYS_ID_PATTERN.test(id)) {
+      throw new HttpError(index ? `The Word report for ${number} was attached to ${label}, but its one-page summary could not be confirmed; the record was not changed further. Run it again to replace both.`
+        : previous.size ? `The previous Threatlint report for ${number} was removed from ${label}, but the replacement ${file.name} could not be confirmed. Check the record before retrying.`
+          : `ServiceNow did not confirm the ${file.name} attachment for ${label}. Check the record before retrying.`, 502);
+    }
+    attachments.push({ name: file.name, sysId: id });
+  }
+  return { removed: previous.size, attachments };
 }
 
 function unreadableRecord(number) {
@@ -838,21 +901,10 @@ async function attachReview(credentials, value, report, { fetchImpl = fetch, sig
   if (pendingReviewAttachments.has(key)) throw new HttpError(`This review is already being attached to ${number}`, 409);
   pendingReviewAttachments.add(key);
   try {
-    const attachments = [];
-    for (const file of files) {
-      const query = new URLSearchParams({ sysparm_query: `table_name=${table}^table_sys_id=${sysId}^file_name=${file.name}`, sysparm_fields: 'file_name', sysparm_limit: '2' });
-      const existing = (await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result;
-      if (!Array.isArray(existing)) throw new HttpError(`ServiceNow did not return a readable attachment list for ${number}`, 502);
-      if (existing.some(row => fieldValue(row?.file_name) === file.name)) { attachments.push({ name: file.name, alreadyAttached: true }); continue; }
-      const uploaded = await attachFile(instance, headers, sysId, file, fetchImpl, signal, table);
-      const attachmentId = fieldValue(uploaded.sys_id?.value ?? uploaded.sys_id);
-      if (!SYS_ID_PATTERN.test(attachmentId)) throw new HttpError(`ServiceNow did not confirm the ${file.name} attachment for ${number}. Check the record before retrying.`, 502);
-      attachments.push({ name: file.name, sysId: attachmentId });
-    }
-    const added = attachments.filter(item => !item.alreadyAttached).map(item => item.name);
-    const already = attachments.filter(item => item.alreadyAttached).map(item => item.name);
-    return { number, action: 'attached', url: `${instance}/nav_to.do?uri=${table}.do?sys_id=${sysId}`, attachments,
-      detail: `${added.length ? `Attached ${added.join(' and ')}. ` : ''}${already.length ? `${already.join(' and ')} ${already.length > 1 ? 'are' : 'is'} already attached. ` : ''}No ticket fields were changed.` };
+    // ServiceNow cannot overwrite an attachment: earlier Threatlint reports for this ticket are deleted first.
+    const { removed, attachments } = await replaceReports(instance, headers, { table, sysId, number }, files, fetchImpl, signal);
+    return { number, action: 'attached', url: `${instance}/nav_to.do?uri=${table}.do?sys_id=${sysId}`, attachments, removed,
+      detail: `${removed ? `Replaced ${removed} earlier Threatlint report file${removed > 1 ? 's' : ''}. ` : ''}Attached ${attachments.map(item => item.name).join(' and ')}. No ticket fields were changed.` };
   } finally {
     pendingReviewAttachments.delete(key);
   }
@@ -864,7 +916,7 @@ async function updateAvit(instance, headers, sysId, values, fetchImpl, signal) {
 }
 
 /**
- * `threatlint avit resolve` for a report the Workbench wrote: attach the files (skipping ones already attached), then
+ * `threatlint avit resolve` for a report the Workbench wrote: replace earlier Threatlint reports with the files, then
  * FALSE POSITIVE -> close (state/substate 3/3) with CLOSING_COMMENT; TRUE POSITIVE (including unverified) -> work note, left open.
  */
 async function resolveAvit(credentials, number, { disposition, unverified = false, files = [] }, { fetchImpl = fetch, signal, reviewSemgrep } = {}) {
@@ -879,13 +931,11 @@ async function resolveAvit(credentials, number, { disposition, unverified = fals
     if (!reviewSemgrep) throw new HttpError('This code-scanner false positive requires the shared Finding Review workflow so Semgrep rule tuning is validated before completion.', 409);
     return reviewSemgrep(avit, fields);
   }
-  const existing = await attachmentNames(instance, headers, sysId, fetchImpl, signal);
-  const attachments = [];
-  // Attach first so an AVIT is never closed without its evidence.
-  for (const file of files) {
-    if (existing.has(file.name)) { attachments.push({ name: file.name, alreadyAttached: true }); continue; }
-    attachments.push({ name: file.name, sysId: (await attachFile(instance, headers, sysId, file, fetchImpl, signal)).sys_id || null });
-  }
+  // Attach first so an AVIT is never closed without its evidence. ServiceNow cannot overwrite an attachment,
+  // so earlier Threatlint reports for this AVIT are deleted before the new ones are uploaded.
+  const { attachments, removed } = files.length
+    ? await replaceReports(instance, headers, { table: AVIT_TABLE, sysId, number: avit }, files, fetchImpl, signal)
+    : { attachments: [], removed: 0 };
   const falsePositive = disposition === 'FALSE POSITIVE';
   const note = falsePositive ? CLOSING_COMMENT : unverified ? CONSERVATIVE_NOTE : TRUE_POSITIVE_COMMENT;
   const values = { work_notes: note };
@@ -895,7 +945,7 @@ async function resolveAvit(credentials, number, { disposition, unverified = fals
   // As in avit_resolve.py: the state decides whether it closed; a cleared substate is reported, not failed.
   const closed = choices ? String(stored.state) === String(choices.state) : false;
   return { avit, disposition, unverified, action: falsePositive ? (closed ? 'closed' : 'close not applied') : 'noted', note, closed, leftOpen: !falsePositive,
-    sysId, url: `${instance}/nav_to.do?uri=${AVIT_TABLE}.do?sys_id=${sysId}`, attachments, state: stored.state ?? null, substate: stored.substate ?? null,
+    sysId, url: `${instance}/nav_to.do?uri=${AVIT_TABLE}.do?sys_id=${sysId}`, attachments, removed, state: stored.state ?? null, substate: stored.substate ?? null,
     ...(choices && closed && String(stored.substate) !== String(choices.substate) ? { substateNote: `ServiceNow stored substate ${stored.substate || 'blank'}, not ${choices.substate}` } : {}) };
 }
 
@@ -908,7 +958,7 @@ async function semgrepVersion() {
   } catch { return null; }
 }
 
-module.exports = { access, AVIT_TABLE, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, parseReviewTicket, validateInstanceUrl, validateCredentials, attachReview,
+module.exports = { access, AVIT_TABLE, reportFamily, AVIT_PATTERN, isCodeSecurity, SEMGREP_AGENTS, SEMGREP_INSTALL, parseAvitNumbers, parseReviewTicket, validateInstanceUrl, validateCredentials, attachReview,
   readParameters, readParameterStore, fetchAvits, closeAvitAsFalsePositive, resolveAvit, avitsMarkdown, loadAvitAttachment, semgrepVersion,
   fetchAvitMetrics, validateMetricsScope, fetchAvitAggregate, fetchAvitPage, fetchAvitContextValues, validateAggregateFilters, aggregateQuery, aggregateColumns,
   METRICS_PAGE_SIZE, AVIT_QUERY_CHUNK,

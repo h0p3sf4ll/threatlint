@@ -44,7 +44,30 @@ def _substantive(value: str) -> bool:
 
 
 def _locations(value: str) -> list[tuple[str, int, int]]:
-    return list(dict.fromkeys((match[1], int(match[2]), int(match[3] or match[2])) for match in _LOCATION.finditer(value)))[:30]
+    # An all-digit "path" is a clock time or ratio (14:03), not a file citation.
+    return list(dict.fromkeys(
+        (match[1], int(match[2]), int(match[3] or match[2])) for match in _LOCATION.finditer(value) if not match[1].isdigit()
+    ))[:30]
+
+
+def _resolve_citation(value: str, tracked: set[bytes]) -> tuple[str, int]:
+    """The tracked repository path a citation names, and how many tracked files it could mean.
+
+    Reviewers often cite a basename (Startup.cs) or a project-relative path (Views/Home/Index.cshtml).
+    Such a citation is accepted only when exactly one tracked file ends with it; otherwise it stays as
+    written and fails validation. The resolved path still passes the same read checks as an exact one.
+    """
+    path = value.removeprefix("./")
+    if path.encode("utf-8") in tracked:
+        return path, 1
+    suffix = ("/" + path).encode("utf-8")
+    matches = [name for name in tracked if name.endswith(suffix)]
+    if len(matches) == 1:
+        try:
+            return matches[0].decode("utf-8"), 1
+        except UnicodeError:
+            pass
+    return value, len(matches)
 
 
 def _read_source(repo: Path, value: str, tracked: set[bytes]) -> list[str] | None:
@@ -165,14 +188,27 @@ def review_evidence(avit: str, report: str, repo: Path, target: dict, verdict: d
         issues.append("The reviewed checkout's tracked files could not be inspected with Git")
     sources = {}
     valid = []
-    for path, start, end in citations:
+    invalid = []
+    for cited, start, end in citations:
+        path, candidates = _resolve_citation(cited, tracked)
         if path not in sources:
             sources[path] = _read_source(repo, path, tracked)
         lines = sources[path]
         if lines is None or start < 1 or end < start or end > len(lines):
-            issues.append("Replace an unavailable or invalid source citation with an inspected repository file and valid line range")
+            span = f"{cited}:{start}" + (f"-{end}" if end != start else "")
+            if candidates > 1:
+                span += f" (matches {candidates} tracked files; cite the full repository-relative path)"
+            elif lines is None:
+                span += " (no readable tracked file)"
+            else:
+                span += f" (the file has {len(lines)} lines)"
+            invalid.append(span)
         else:
             valid.append((path, start, end))
+    if invalid:
+        # Known credential formats only: the generic entropy rule in _redact would hide long real paths.
+        named = "; ".join(_SECRET.sub("[REDACTED]", item)[:200] for item in invalid[:5]) + (f"; and {len(invalid) - 5} more" if len(invalid) > 5 else "")
+        issues.append("Replace an unavailable or invalid source citation with an inspected repository file and valid line range: " + named)
     if not valid:
         issues.append("Cite actual repository-relative file:line evidence for the vulnerable behavior and exposure")
     flagged = str(target.get("file_path") or "").removeprefix("/")
@@ -243,7 +279,10 @@ def _refinement_prompt(avit: str, branch: str, head: str, report: str, evidence:
             "repository-relative file:line citations, and describe the exposed path through controls in **Exploit path**. "
             "If evidence disproves the claim, return FALSE POSITIVE with Verified Safe Behavior and the required complete tuned rule, original rule ID, "
             "and marked TP/FP fixtures. If a necessary fact is unavailable, retain the uncertainty and name the exact fact, the inspected paths, "
-            "and a concrete safe way to obtain it. Leave fix preparation and patch drafting for the separate fix step."
+            "and a concrete safe way to obtain it. For a TRUE POSITIVE, keep concrete fix code under **Proposed Fix**: the corrected source as "
+            "fenced before/after code blocks (or a diff) for every affected line, labelled proposed and not applied. Carry forward any fix code "
+            "or patch from the prior report that is still correct. Never reduce the fix to a description. Threatlint requests and validates the "
+            "complete unified diff in a separate step."
         )
     return (
         f"Continue the review of {avit} on branch {branch} at commit {head}.\n"

@@ -571,6 +571,28 @@ def test_replaces_previous_reports_before_attaching_a_new_review(monkeypatch, tm
     assert fake.attachments == [unrelated, _old_report(args.attachment_name, "b" * 32), _old_report(summary, "b" * 32)]
 
 
+def test_replacement_covers_every_threatlint_report_name_for_the_avit_only(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    kept = [
+        _old_report(f"{AVIT}-threatlint-fp-review-unsafe.docx", "1" * 32),
+        _old_report(f"AVIT000000000000999-threatlint-fp-review.docx", "2" * 32),
+        _old_report(f"[ONE PAGER SUMMARY] AVIT000000000000999-threatlint-fp-review.pdf", "3" * 32),
+        _old_report(f"{AVIT}-threatlint-review-{'a' * 20}.exe", "4" * 32),
+    ]
+    fake.attachments = [
+        _old_report(f"{AVIT}-threatlint-review-{'0123456789abcdef0123'}.docx", "d" * 32),
+        _old_report(f"{AVIT}-threatlint-review-{'fedcba9876543210fedc'}.md", "e" * 32),
+        _old_report(f"[ONE PAGER SUMMARY] {AVIT}-threatlint-review-{'0123456789abcdef0123'}.pdf", "f" * 32),
+        *kept,
+    ]
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    assert ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE"))) == 0
+    deleted = [url.rsplit("/", 1)[1] for method, url, _data in fake.calls if method == "DELETE"]
+    assert deleted == ["d" * 32, "e" * 32, "f" * 32]
+    assert fake.attachments[:len(kept)] == kept and len(fake.attachments) == len(kept) + 2
+
+
 def test_one_pager_failure_leaves_the_avit_unchanged(monkeypatch, tmp_path):
     fake = FakeServiceNow()
     monkeypatch.setattr(sn, "_request_json", fake)
@@ -699,7 +721,7 @@ def test_malformed_attachment_listing_prevents_avit_update(monkeypatch, tmp_path
 
     monkeypatch.setattr(sn, "_request_json", malformed)
     monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
-    with pytest.raises(ar.ResolveError, match="readable AVIT attachment list"):
+    with pytest.raises(ar.ResolveError, match="readable attachment list"):
         ar.cmd_resolve(_args(tmp_path, REPORT.replace("FALSE POSITIVE", "TRUE POSITIVE")))
     assert not any(method == "PATCH" or "/attachment/file" in url for method, url, _data in fake.calls)
 

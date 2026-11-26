@@ -248,15 +248,23 @@ A manual `avit resolve` uses `<AVIT>-threatlint-fp-review.docx` and
 `[ONE PAGER SUMMARY] <AVIT>-threatlint-fp-review.pdf`. Workbench and headless
 reviews add a UTC timestamp suffix to both names to identify the review. The
 summary leads with the verdict and a one-sentence bottom line on a single US
-Letter page; the Word report keeps the full evidence. On reruns, Threatlint
-deletes previous reports and summaries matching either name format for that AVIT
-and verifies their removal before uploading the new pair. If removal fails or cannot be verified,
-Threatlint stops before uploading or updating the AVIT. Other AVIT attachments
-are preserved. Removal and upload are separate ServiceNow requests. If an upload
-fails after deletion, Threatlint reports the failed replacement and stops before
-the state update. The same applies when the summary upload is not confirmed after
-the Word report: the AVIT state is unchanged, and rerunning `resolve` replaces both.
-An SCTASK copies the latest AVIT report and its summary when the AVIT has one.
+Letter page; the Word report keeps the full evidence.
+
+ServiceNow cannot overwrite an attachment, so every Threatlint write replaces
+earlier reports by deleting them first. Before uploading a report for an AVIT,
+Threatlint deletes that record's earlier Threatlint reports for the same AVIT:
+`<AVIT>-threatlint-fp-review[-<timestamp>].docx`, Workbench reviews named
+`<AVIT>-threatlint-review-<fingerprint>.docx` or `.md`, and the one-page summary
+of either. It then checks that ServiceNow no longer lists them. If removal fails or
+cannot be verified, Threatlint stops before uploading or updating the record.
+Other attachments, including other AVITs' reports on a shared ISST or SCTASK, are
+preserved. The same replacement applies to `avit resolve`, the Workbench AVIT and
+ticket posts, ISST summaries, and SCTASK updates. Removal and upload are separate
+ServiceNow requests. If an upload fails after deletion, Threatlint reports the
+failed replacement and stops before the state update. The same applies when the
+summary upload is not confirmed after the Word report: the record state is
+unchanged, and rerunning the step replaces both. An SCTASK copies the latest AVIT
+report and its summary when the AVIT has one.
 
 | Disposition | ServiceNow request | Semgrep |
 | --- | --- | --- |
@@ -570,6 +578,15 @@ publishing.
 and returns JSON with its status, issues, and follow-up instructions. It does not
 invoke the reviewer, change a tracker, or open a PR; the Workbench and headless
 flows use that assessment to drive the investigations described above.
+
+Every `file:line` citation in a report's **Evidence** and **Exploit path** must
+name a readable tracked file in the checkout, with a line range inside that file.
+A short citation such as `Startup.cs:28-66` or `Views/Home/Index.cshtml:12` is
+accepted when exactly one tracked file ends with that path. If a citation is
+ambiguous, missing, or out of range, the assessment names it, for example
+`Startup.cs:1 (matches 2 tracked files; cite the full repository-relative path)`,
+so the follow-up investigation can correct it. Clock times such as `14:03` are
+not treated as citations.
 
 ## Data flows
 

@@ -78,6 +78,65 @@ def test_invalid_source_citation_does_not_confirm_a_finding(checkout, tmp_path, 
     assert "outside-sensitive-evidence" not in result["prompt"]
 
 
+def commit_files(repo, files):
+    for name, text in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_bytes(text.encode("utf-8"))
+        git(repo, "add", name)
+    git(repo, "commit", "-m", "nested fixture")
+
+
+@pytest.mark.parametrize("cited", ["Startup.cs:2", "Web/Startup.cs:1-2", "./svc/Web/Startup.cs:2"])
+def test_unique_short_or_project_relative_citation_resolves_to_the_tracked_file(checkout, cited):
+    commit_files(checkout, {"svc/Web/Startup.cs": "class Startup {\n  // auth disabled\n}\n"})
+    text = confirmed().replace("reaches eval at app.py:2", f"reaches eval at app.py:2 with authentication disabled at {cited}")
+    result = assess(checkout, text)
+    assert result == {"status": "ready", "issues": [], "prompt": ""}
+
+
+def test_resolved_citation_supplies_source_excerpt_under_its_full_path(checkout):
+    commit_files(checkout, {"svc/Web/Startup.cs": "class Startup {\n  // auth disabled\n}\n"})
+    text = confirmed().replace("reaches eval at app.py:2", "reaches eval with authentication disabled at Startup.cs:2")
+    text = text.replace("**Confidence**: CONFIRMED", "**Confidence**: PLAUSIBLE")
+    result = assess(checkout, text, file_path="")
+    assert "File: svc/Web/Startup.cs\n1: class Startup {" in result["prompt"]
+    assert not any("invalid source citation" in issue for issue in result["issues"])
+
+
+@pytest.mark.parametrize(("cited", "detail"), [
+    ("Startup.cs:1", "Startup.cs:1 (matches 2 tracked files; cite the full repository-relative path)"),
+    ("Web/Startup.cs:9", "Web/Startup.cs:9 (matches 2 tracked files"),
+    ("one/Web/Startup.cs:2-9", "one/Web/Startup.cs:2-9 (the file has 3 lines)"),
+    ("Missing.cs:4", "Missing.cs:4 (no readable tracked file)"),
+])
+def test_ambiguous_missing_or_out_of_range_citations_fail_and_are_named(checkout, cited, detail):
+    commit_files(checkout, {"one/Web/Startup.cs": "a\nb\nc\n", "two/Web/Startup.cs": "a\nb\nc\n"})
+    text = confirmed().replace("reaches eval at app.py:2", f"reaches eval at app.py:2 and {cited}")
+    result = assess(checkout, text)
+    assert result["status"] == "refine"
+    issue = next(issue for issue in result["issues"] if "invalid source citation" in issue)
+    assert detail in issue
+    assert detail in result["prompt"]
+
+
+def test_clock_times_are_not_source_citations(checkout):
+    text = confirmed().replace("reaches eval at app.py:2", "reaches eval at app.py:2 (traced 14:03 UTC, scan 08:10)")
+    assert assess(checkout, text) == {"status": "ready", "issues": [], "prompt": ""}
+
+
+def test_short_citation_never_resolves_to_a_symlink(checkout, tmp_path):
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(b"outside-sensitive-evidence\n")
+    (checkout / "pkg").mkdir()
+    (checkout / "pkg" / "linked.py").symlink_to(outside)
+    git(checkout, "add", "pkg/linked.py")
+    git(checkout, "commit", "-m", "symlink fixture")
+    result = assess(checkout, confirmed().replace("app.py:1-2", "linked.py:1"))
+    assert result["status"] == "refine"
+    assert any("linked.py:1 (no readable tracked file)" in issue for issue in result["issues"])
+    assert "outside-sensitive-evidence" not in result["prompt"]
+
+
 @pytest.mark.parametrize("patch", ["", PATCH.replace("return eval(value)", "return not_the_source(value)")])
 def test_missing_or_inapplicable_fix_requests_repair_before_publication(checkout, patch):
     result = assess(checkout, confirmed(patch))
@@ -256,3 +315,103 @@ def test_prepare_fix_command_dispatches_without_tracker_settings(checkout, tmp_p
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["status"] == "ready"
+
+
+@pytest.mark.parametrize("heading", [
+    "**Evidence (checkout abc1234, path prefix svc/)**:",
+    "**Evidence (checkout abc1234):**",
+    "## Evidence (traced statically)",
+    "**Evidence** (checkout `abc1234`; short excerpts, credential values redacted):",
+    "**Evidence** (static analysis; **NOT RUN**):",
+    "**Evidence** (checkout `abc1234`; paths are relative to `svc/Web/`)",
+])
+def test_qualified_section_labels_are_read(heading):
+    from threatlint.finding_review import report_section
+    body = f"{heading}\n`app.py:1-2` passes the caller's value to eval without validation.\n**Exploit path**: caller to eval.\n"
+    assert report_section(body, ("Evidence",)).startswith("`app.py:1-2` passes the caller's value")
+
+
+def test_label_with_extra_words_is_not_mistaken_for_the_section():
+    from threatlint.finding_review import report_section
+    assert report_section("**Evidence for closure**: not the proof.\n", ("Evidence",)) == ""
+    assert report_section("**Evidence (a) (b)**: nested qualifiers are not a label.\n", ("Evidence",)) == ""
+
+
+def test_qualified_evidence_and_exploit_labels_pass_readiness(checkout):
+    text = confirmed().replace("**Evidence**:", "**Evidence (checkout fixture, path prefix ./)**:")
+    text = text.replace("**Exploit path**:", "**Exploit path (traced statically, not executed)**:")
+    assert assess(checkout, text) == {"status": "ready", "issues": [], "prompt": ""}
+
+
+def test_qualifier_after_the_bold_label_passes_readiness(checkout):
+    # The exact shape a reviewer returned for a live AVIT: the note follows the closing ** and may hold bold text.
+    text = confirmed().replace("**Evidence**:", "**Evidence** (checkout `fixture`; short excerpts, credential values redacted):")
+    text = text.replace("**Exploit path**:", "**Exploit path** (static analysis; **NOT RUN**):")
+    assert assess(checkout, text) == {"status": "ready", "issues": [], "prompt": ""}
+
+
+def test_labelled_list_under_a_section_label_stays_in_that_section():
+    from threatlint.finding_review import report_section
+    body = ("**Exploit path** (static analysis; **NOT RUN**):\n"
+            "- **Entry:** An anonymous client sends value to the handler (app.py:1).\n"
+            "- **Execution:** The value reaches eval at app.py:2.\n"
+            "\n"
+            "**Bypass variants considered:**\n- quoting\n"
+            "**Assessment and alternative interpretation**: a separate report field.\n")
+    section = report_section(body, ("Exploit path",))
+    assert section.startswith("- **Entry:** An anonymous client") and "**Execution:** The value reaches eval" in section
+    assert "Bypass variants considered" in section, "an unknown sub-label stays in the section"
+    assert "separate report field" not in section, "a known report field ends the section"
+
+
+def test_paragraph_then_sub_labelled_points_stay_in_a_line_ending_section():
+    from threatlint.finding_review import report_section
+    body = ("**Finding and impact**\n"
+            "The handler formats the request value into SQL.\n"
+            "- **Source**: model binding fills value from the query string.\n"
+            "- **Impact**: an attacker can read and change ledger rows.\n"
+            "**Evidence**: `app.py:2`\n")
+    section = report_section(body, ("Finding and impact",))
+    assert section.startswith("The handler formats") and "an attacker can read and change ledger rows" in section
+    assert "app.py:2" not in section
+
+
+def test_sibling_bullet_fields_still_end_a_bulleted_label():
+    from threatlint.finding_review import report_section
+    body = ("- **Evidence**:\n"
+            "  - `app.py:2` passes the value to eval.\n"
+            "- **Exploit path**: The caller reaches eval.\n")
+    assert report_section(body, ("Evidence",)) == "- `app.py:2` passes the value to eval."
+    assert report_section(body, ("Exploit path",)) == "The caller reaches eval."
+    assert report_section("- **Evidence**:\n- **Exploit path**: x\n", ("Evidence",)) == ""
+
+
+def test_live_report_shape_with_labelled_exploit_list_passes_readiness(checkout):
+    text = confirmed().replace(
+        "**Exploit path**: The caller controls value, which reaches eval at app.py:2 without a guard and can execute an expression.",
+        "**Exploit path** (static analysis; **NOT RUN**):\n"
+        "- **Entry:** The caller supplies value to parse (app.py:1).\n"
+        "- **Execution:** value reaches eval at app.py:2 without a guard and can execute an expression.\n")
+    text = text.replace("**Evidence**:", "**Evidence** (checkout `fixture`; short excerpts):")
+    assert assess(checkout, text) == {"status": "ready", "issues": [], "prompt": ""}
+
+
+@pytest.mark.parametrize(("stated", "expected"), [
+    ("CONFIRMED.", "CONFIRMED"), ("CONFIRMED (static path only; no exploit was run)", "CONFIRMED"),
+    ("CONFIRMED, static proof", "CONFIRMED"), ("PLAUSIBLE.", "PLAUSIBLE"), ("Not confirmed.", "Not"),
+])
+def test_confidence_ignores_trailing_punctuation_and_notes(stated, expected):
+    from threatlint.avit_report import verdict_for
+    text = confirmed().replace("**Confidence**: CONFIRMED", f"**Confidence**: {stated}")
+    assert verdict_for(text, AVIT)["confidence"] == expected
+
+
+def test_confirmed_with_a_full_stop_is_not_treated_as_unverified(checkout):
+    assert assess(checkout, confirmed().replace("**Confidence**: CONFIRMED", "**Confidence**: CONFIRMED.")) == {
+        "status": "ready", "issues": [], "prompt": ""}
+
+
+def test_label_note_without_a_colon_passes_readiness(checkout):
+    # The shape a reviewer returned for a live AVIT: the note ends the line and no colon follows.
+    text = confirmed().replace("**Evidence**: `app.py:1-2`", "**Evidence** (checkout `fixture`; paths are relative to the repository root)\n`app.py:1-2`")
+    assert assess(checkout, text) == {"status": "ready", "issues": [], "prompt": ""}

@@ -84,10 +84,16 @@ def test_latest_repeated_avit_report_is_copied_even_when_task_has_older_report(m
     fake = FakeServiceNow({avit: ar.TRUE_POSITIVE_COMMENT})
     original = fake.__call__
 
+    task_attachments = [{"sys_id": "e" * 32, "file_name": f"{avit}{sctask.REPORT_SUFFIX}", "table_name": "sc_task", "table_sys_id": "a" * 32}]
+
     def request(url, **kwargs):
+        if kwargs.get("method") == "DELETE":
+            fake.calls.append(("DELETE", url, None))
+            task_attachments[:] = [item for item in task_attachments if not url.endswith(item["sys_id"])]
+            return {}
         if "/attachment?" in url:
             if "table_name%3Dsc_task" in url or "table_name=sc_task" in url:
-                return {"result": [{"file_name": f"{avit}{sctask.REPORT_SUFFIX}"}]}
+                return {"result": list(task_attachments)}
             return {"result": [
                 {"sys_id": "b" * 32, "file_name": f"{avit}{sctask.REPORT_SUFFIX}"},
                 {"sys_id": "c" * 32, "file_name": versioned},
@@ -100,13 +106,15 @@ def test_latest_repeated_avit_report_is_copied_even_when_task_has_older_report(m
     outcome = sctask.avit_outcome(INSTANCE, "t", avit)
     assert outcome["report"] == "c" * 32 and outcome["report_name"] == versioned
 
-    # A task whose description names this AVIT should receive the new version,
-    # while the older fixed-name attachment remains as review history.
+    # A task whose description names this AVIT receives the new version. ServiceNow cannot
+    # overwrite an attachment, so the older report for this AVIT is deleted before the upload.
     monkeypatch.setattr(sctask, "avits_in", lambda _text: [avit])
     sctask.close(INSTANCE, "t", "SCTASK14120565", yes=True, out=io.StringIO())
     uploads = [(url, data) for _method, url, data in fake.calls if "/attachment/file" in url]
     assert len(uploads) == 1
     assert versioned in uploads[0][0] and uploads[0][1] == b"new report"
+    assert [url for method, url, _data in fake.calls if method == "DELETE"] == [f"{INSTANCE}/api/now/attachment/{'e' * 32}"]
+    assert task_attachments == []
 
 
 def test_decided_avit_without_readable_report_cannot_close_task(monkeypatch):
@@ -148,6 +156,7 @@ def test_malformed_task_attachment_list_stops_before_comment_or_close(monkeypatc
         return original(url, **kwargs)
 
     monkeypatch.setattr(sn, "_request_json", malformed)
+    monkeypatch.setattr(sctask, "_download", lambda *_a: b"PK-docx")
     monkeypatch.setattr(sctask, "avits_in", lambda _text: [avit])
     with pytest.raises(ar.ResolveError, match="readable attachment list"):
         sctask.close(INSTANCE, "t", "SCTASK14120565", yes=True, out=io.StringIO())

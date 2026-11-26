@@ -280,23 +280,6 @@ def discover(instance: str, token: str, number: str) -> tuple[dict, list[str]]:
     return record, numbers
 
 
-def _existing_attachments(instance: str, token: str, record: dict) -> dict[str, str]:
-    query = urllib.parse.urlencode({"sysparm_query": f"table_name={record['table']}^table_sys_id={record['sys_id']}",
-                                    "sysparm_fields": "sys_id,file_name", "sysparm_limit": "200"})
-    rows = sn._request_json(f"{instance}/api/now/attachment?{query}", headers=_auth(token)).get("result")
-    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        raise ResolveError(f"ServiceNow did not return readable attachments for {record['number']}")
-    found: dict[str, str] = {}
-    for row in rows:
-        name, sys_id = sn._field_value(row.get("file_name")), _value(row.get("sys_id"))
-        if not name or not _SYS_ID.fullmatch(sys_id):
-            raise ResolveError(f"ServiceNow returned an invalid attachment for {record['number']}")
-        if name in found and found[name] != sys_id:
-            raise ResolveError(f"ServiceNow returned duplicate attachment names for {record['number']}")
-        found[name] = sys_id
-    return found
-
-
 def _comment_chunks(lines: list[str], limit: int = 3500) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
@@ -329,26 +312,18 @@ def summarize(instance: str, token: str, record: dict, outcomes: list[dict]) -> 
         match = _REPORT.fullmatch(name)
         if not match or match.group(1) != item["avit"] or not isinstance(content, bytes) or not content.startswith(b"PK"):
             raise ResolveError(f"{item['avit']} has no valid Word report to attach to {record['number']}")
-    existing = _existing_attachments(instance, token, record)
+    from threatlint.avit_resolve import replace_reports  # noqa: PLC0415 - loaded on use, like the SCTASK lookup below
     links: dict[str, str] = {}
-
-    def upload(name: str, content: bytes, content_type: str) -> str:
-        sys_id = existing.get(name)
-        if not sys_id:
-            query = urllib.parse.urlencode({"table_name": record["table"], "table_sys_id": record["sys_id"], "file_name": name})
-            payload = sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=content,
-                                       headers={**_auth(token), "Content-Type": content_type}).get("result", {})
-            sys_id = _value(payload.get("sys_id")) if isinstance(payload, dict) else ""
-            if not _SYS_ID.fullmatch(sys_id):
-                raise ResolveError(f"ServiceNow did not confirm the {name} attachment on {record['number']}")
-        return sys_id
-
     for item in positives:
+        # ServiceNow cannot overwrite an attachment: earlier reports for this AVIT on the ISST are deleted first.
         name = item["attachment_name"]
-        links[item["avit"]] = f"{instance}/sys_attachment.do?sys_id={upload(name, item['report_bytes'], _DOCX)}"
+        files = [(name, item["report_bytes"], _DOCX)]
         summary = item.get("summary_bytes")
         if isinstance(summary, bytes) and summary.startswith(b"%PDF-"):
-            upload(one_pager.attachment_name(name), summary, one_pager.CONTENT_TYPE)
+            files.append((one_pager.attachment_name(name), summary, one_pager.CONTENT_TYPE))
+        attached = replace_reports(instance, token, record["sys_id"], item["avit"], files, table=record["table"],
+                                   label=record["number"], partial="the ISST comment was not added. Run the summary again to replace both.")
+        links[item["avit"]] = f"{instance}/sys_attachment.do?sys_id={attached[name]}"
     complete = len(by_number) == len(expected) and all(item.get("completed") for item in outcomes)
     all_fp = complete and all(item.get("disposition") == "FALSE POSITIVE" for item in outcomes)
     if all_fp:

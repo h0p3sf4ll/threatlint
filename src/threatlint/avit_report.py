@@ -42,12 +42,13 @@ def _verdict(body: str, identifier: str, title: str) -> dict[str, str]:
     dispositions = [item["disposition"] for item in normalized]
     if len(set(dispositions)) > 1:
         raise ResolveError(f"{identifier or title} has conflicting dispositions; resolve it manually")
-    confidence = _field(body, "Confidence").split()
+    # The first word alone, without trailing punctuation: "CONFIRMED." and "CONFIRMED (static path only)" are CONFIRMED.
+    confidence = re.match(r"[^A-Za-z]*([A-Za-z]+)", _field(body, "Confidence"))
     verdict = {
         "id": identifier,
         "title": title,
         "disposition": dispositions[0] if dispositions else "",
-        "confidence": confidence[0] if confidence else "",
+        "confidence": confidence.group(1) if confidence else "",
     }
     legacy = any(item.get("decision_basis") for item in normalized)
     if legacy:

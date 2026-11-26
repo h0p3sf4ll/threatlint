@@ -231,15 +231,39 @@ def test_invalid_true_positive_report_stops_before_writes(monkeypatch):
     assert not any(method in ("POST", "PATCH") for method, _url, _data in fake.calls)
 
 
-def test_existing_true_positive_attachment_is_reused(monkeypatch):
-    name = f"{AVIT}-threatlint-fp-review.docx"
-    fake = FakeServiceNow(attachments=[{"sys_id": "c" * 32, "file_name": name}])
-    monkeypatch.setattr(sn, "_request_json", fake)
+def test_earlier_reports_for_the_avit_are_replaced_on_the_isst(monkeypatch):
+    """ServiceNow cannot overwrite an attachment: earlier reports for this AVIT are deleted, then the new one is attached."""
+    name = f"{AVIT}-threatlint-fp-review-20261126T141040748000Z.docx"
+    row = lambda file_name, sys_id: {"sys_id": sys_id, "file_name": file_name, "table_name": "u_isst_task", "table_sys_id": SYS_ID}
+    unrelated = row("scan-request.xlsx", "e" * 32)
+    other_avit = row("AVIT000000000000999-threatlint-fp-review.docx", "f" * 32)
+    fake = FakeServiceNow(attachments=[
+        row(f"{AVIT}-threatlint-fp-review.docx", "c" * 32),
+        row(f"[ONE PAGER SUMMARY] {AVIT}-threatlint-fp-review-20261120T100000000000Z.pdf", "d" * 32),
+        unrelated, other_avit,
+    ])
+    original = fake.__call__
+
+    def request(url, *, data=None, headers, method=None):
+        if method == "DELETE":
+            fake.calls.append((method, url, data))
+            removed = url.rsplit("/", 1)[1]
+            fake.attachments = [item for item in fake.attachments if item["sys_id"] != removed]
+            return {}
+        return original(url, data=data, headers=headers, method=method)
+
+    monkeypatch.setattr(sn, "_request_json", request)
     record = {"number": ISST, "table": "u_isst_task", "sys_id": SYS_ID, "avits": [AVIT]}
     result = isst.summarize(INSTANCE, "token", record, [{"avit": AVIT, "disposition": "TRUE POSITIVE", "completed": True,
                                                          "attachment_name": name, "report_bytes": b"PKword"}])
-    assert result["attachment_links"][AVIT].endswith("c" * 32)
-    assert not any("/attachment/file?" in url for _method, url, _data in fake.calls)
+    deleted = [url.rsplit("/", 1)[1] for method, url, _data in fake.calls if method == "DELETE"]
+    assert deleted == ["c" * 32, "d" * 32]
+    assert fake.attachments == [unrelated, other_avit]
+    uploads = [url for _method, url, _data in fake.calls if "/attachment/file?" in url]
+    assert len(uploads) == 1 and urllib.parse.quote_plus(name) in uploads[0]
+    assert result["attachment_links"][AVIT].endswith("b" * 32)
+    first_upload = next(index for index, call in enumerate(fake.calls) if "/attachment/file?" in call[1])
+    assert all(index < first_upload for index, call in enumerate(fake.calls) if call[0] == "DELETE")
 
 
 def test_isst_comment_requires_matching_stored_record(monkeypatch):

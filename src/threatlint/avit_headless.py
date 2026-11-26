@@ -245,7 +245,8 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 "\nFor a supported true positive, include quoted Evidence with checkout file:line references "
                 "and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact "
                 "Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff "
-                "in a follow-up after checking the evidence."
+                "in a follow-up after checking the evidence. Until then, still put concrete fix code under **Proposed Fix**: "
+                "fenced before/after code blocks for every affected line, never only a description."
             )
         print(f"  Reviewing {kind.upper()} with {provider}", flush=True)
         output = _run_review_model(provider, system_prompt, prompt, repo, model, args, base_url, api_key)

@@ -51,7 +51,13 @@ def _field(body: str, *names: str) -> str:
 
 
 def _section(body: str, *names: str) -> str:
-    """Text after a bold label or heading, up to the next bold label or heading."""
+    """Text after a bold label or heading, up to the next one. Uses the readiness parser first, which accepts
+    qualified labels (**Proposed Fix** (direction only):) and labelled lists, then the plain label form."""
+    from threatlint.finding_review import report_section  # noqa: PLC0415 - finding_review imports nothing from here
+    for name in names:
+        found = report_section(body, (name,))
+        if found:
+            return found
     for name in names:
         pattern = (rf"^(?:#{{2,6}}[ \t]+{re.escape(name)}[ \t]*$|[ \t]*(?:[-*+][ \t]+)?\*\*{re.escape(name)}\*\*:?[ \t]*)"
                    rf"(.*?){_LABEL_END}")
@@ -66,19 +72,64 @@ def _code_blocks(text: str) -> list[tuple[str, str]]:
             for lang, code in re.findall(r"^[ \t]*```([^\n]*)\n(.*?)^[ \t]*```", text, re.M | re.S)]
 
 
+_ITEM = re.compile(r"[ \t]*(?:[-*+\u2022]|(\d{1,2})[.)])[ \t]+(.*)")
+
+
+def _cut(text: str, limit: int) -> str:
+    """`text` shortened to `limit` characters at a sentence or word boundary, never ending on a list number."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = cut.rfind(". ")
+    cut = cut[: end + 1] if end > limit * 0.5 else cut.rsplit(" ", 1)[0].rstrip(",;:") + "\u2026"
+    return re.sub(r"\s+\(?\d{1,2}[.)]$", "", cut).strip()
+
+
 def _prose(text: str, limit: int = 420) -> str:
-    """Plain prose without code, tables, links, or emphasis, cut at a sentence boundary."""
+    """Plain prose without code, tables, links, or emphasis. List items stay one per line; long text is cut
+    at an item, sentence, or word boundary."""
     text = re.sub(r"^[ \t]*```.*?^[ \t]*```", "", text, flags=re.M | re.S)
     text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("|"))
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"\*\*(?:PROPOSED — NOT APPLIED|NOT RUN)\*\*[,.:]?\s*", "", text)
-    text = re.sub(r"[*_`]{1,2}", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > limit:
-        cut = text[:limit]
-        end = cut.rfind(". ")
-        text = cut[: end + 1] if end > limit * 0.5 else cut.rsplit(" ", 1)[0].rstrip(",;:") + "…"
-    text = re.sub(r";$", ".", text.strip())
+    # A marker that opens the text is a label. Inside a sentence it is part of the wording, so it stays as words.
+    marker = r"\*\*(PROPOSED[ \t]*[\u2014\u2013-][ \t]*NOT APPLIED|NOT RUN)\*\*"
+    text = re.sub(rf"^[ \t]*\(?{marker}\)?[,.:;]?[ \t]*", "", text)
+    text = re.sub(marker, lambda match: "proposed, not applied" if match.group(1).startswith("PROPOSED") else "not run", text)
+    # Remove emphasis and code marks only where they wrap text; identifiers keep their own underscores and asterisks.
+    text = text.replace("`", "")
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    text = re.sub(r"(?<![\w*])\*(?=\S)(.+?)(?<=\S)\*(?![\w*])", r"\1", text)
+    text = re.sub(r"(?<![\w_])_(?=\S)(.+?)(?<=\S)_(?![\w_])", r"\1", text)
+    lines: list[str] = []
+    item_open = False
+    for raw in text.splitlines():
+        item = _ITEM.match(raw)
+        line = re.sub(r"\s+", " ", item.group(2) if item else raw).strip()
+        if not line or (not item and line.endswith(":") and (len(line.split()) <= 12 or re.search(r"(?i)\b(?:before|after)\b[^:]*:$", line))):
+            continue  # A caption such as "Before (vulnerable):" or "`src/a.cs:87` (Index). Before:" whose code was removed.
+        if item:
+            lines.append(("\u2022 " if not item.group(1) else f"{item.group(1)}. ") + line)
+            item_open = True
+        elif lines and (raw[:1].isspace() if item_open else True):
+            lines[-1] += " " + line          # An indented continuation of an item, or the rest of a paragraph.
+        else:
+            lines.append(line)               # A paragraph after a list.
+            item_open = False
+    out: list[str] = []
+    used = 0
+    for line in lines:
+        if used + len(line) <= limit:
+            out.append(line)
+            used += len(line) + 1
+            continue
+        room = limit - used
+        if not out or room >= 80:
+            out.append(_cut(line, room if out else limit))
+        elif out and not out[-1].endswith(("\u2026", ".")):
+            out[-1] += "\u2026"
+        break
+    text = re.sub(r";$", ".", "\n".join(out).strip())
     # A lone caption such as "Excerpt from `path:1-2`:" carries no finding detail.
     return "" if text.endswith(":") and len(text) < 90 else text
 
@@ -90,11 +141,100 @@ def _first_sentence(text: str, limit: int = 240) -> str:
     return sentence if len(sentence) <= limit else sentence[:limit].rsplit(" ", 1)[0] + "…"
 
 
-def _rest(text: str, sentence: str, limit: int) -> str:
-    """The paragraph after its first sentence, so the page does not repeat the bottom line."""
-    body = _prose(text, limit + len(sentence) + 2)
-    lead = sentence.rstrip("…")
-    return _prose(body[len(lead):] if lead and body.startswith(lead) else body, limit)
+_NON_CODE = ("http", "text", "shell", "bash", "console", "log", "yaml", "json")
+
+
+def _sentences(text: str) -> list[str]:
+    flat = re.sub(r"\s+", " ", text.replace("\u2022 ", " ")).strip()
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+(?=[A-Z\"'(\[])", flat) if part.strip()]
+
+
+def _subsection(text: str, name: str) -> str:
+    """The paragraph after a bold lead-in such as **Impact.** or **Impact:**, up to the next unbulleted lead-in."""
+    lead = r"\*\*[A-Z][^*\n]{1,60}?[.:]?\*\*[.:]?"
+    match = re.search(rf"(?ims)^[ \t]*\*\*{re.escape(name)}[.:]?\*\*[.:]?[ \t]*(.*?)"
+                      rf"(?=^[ \t]*{lead}(?:[ \t]|$)|^#{{1,6}}[ \t]|\Z)", text)
+    return match.group(1).strip() if match else ""
+
+
+def _plain_sentence(text: str, min_words: int = 8, limit: int = 200) -> str:
+    """The first complete sentence of `text` with at least `min_words` words, without line references or connectives."""
+    for sentence in _sentences(_prose(text, 2000)):
+        if len(sentence.split()) < min_words or sentence.endswith(":"):
+            continue
+        sentence = re.sub(r"\s*\([^()]*\b(?:lines?|values? not|not inspected|see )[^()]*\)", "", sentence)
+        sentence = re.sub(r"^(?:From there|As a result|Therefore|Thus|In turn|This means(?: that)?|So),?\s+", "", sentence)
+        return _cut(sentence[:1].upper() + sentence[1:], limit)
+    return ""
+
+
+def _lower_first(text: str) -> str:
+    """Lower-case a leading ordinary word ("Use" -> "use") but keep acronyms and identifiers ("SQL", "OrderService")."""
+    return text[:1].lower() + text[1:] if re.match(r"[A-Z][a-z]+\b(?![A-Z])", text) else text
+
+
+def _fix_code(fix: str, line: str = "") -> tuple[str, list[str]]:
+    """("diff", lines) for a unified diff, ("code", lines) for proposed code blocks, or ("", []) when the fix is prose only.
+
+    Blocks introduced as the current code ("Before:") are skipped: the page already shows the code reviewed. Each kept
+    block is labelled with its caption ("\u2014 :93-94 (Index, the flagged sink)"). The block for the flagged `line`
+    comes first, then a new file or helper, then the rest, so the clipped page keeps the code that matters most."""
+    diff = next((code for lang, code in _code_blocks(fix) if lang in ("diff", "patch")), "")
+    if diff:
+        return "diff", [row for row in diff.splitlines() if not row.startswith(("--- ", "+++ ", "diff --git", "index "))]
+    blocks = []
+    caption = ""
+    for match in re.finditer(r"^[ \t]*```([^\n]*)\n(.*?)^[ \t]*```", fix, re.M | re.S):
+        before = [row.strip() for row in fix[: match.start()].splitlines() if row.strip()]
+        label = before[-1] if before else ""
+        context = re.sub(r"(?i)\b(?:before|after)\b\s*(?:\([^)]*\))?\s*:?\s*$", "", label).strip(" .:")
+        if context and not re.fullmatch(r"```.*", context):
+            caption = re.sub(r"[`*]", "", context)
+        if match.group(1).strip().lower() in _NON_CODE:
+            continue
+        if re.search(r"(?i)\b(?:before|current|vulnerable|existing|original)\b", label) and not re.search(r"(?i)\bafter\b", label):
+            continue
+        flagged = bool(line) and re.search(rf"(?<!\d){re.escape(line)}(?!\d)|\bflagged\b", caption)
+        rank = 0 if flagged else 1 if re.search(r"(?i)\bnew file\b|\bhelper\b", caption) else 2
+        blocks.append((rank, caption, match.group(2).rstrip("\n")))
+    lines: list[str] = []
+    for _rank, caption, code in sorted(blocks, key=lambda item: item[0])[:4]:
+        lines += ([""] if lines else []) + ([f"\u2014 {_cut(caption, 70)}"] if caption else []) + code.splitlines()
+    return ("code", lines) if lines else ("", [])
+
+
+# What an attacker can do ranks above what is merely exposed or reachable.
+_STRONG = re.compile(
+    r"(?i)\b(?:attackers?|adversar(?:y|ies)|can (?:read|write|modify|delete|drop|execute|run|exfiltrate|dump|bypass|access|"
+    r"inject|tamper|alter|add|append|change|impersonate|escalate|take over)|reads?|writes?|steal|exfiltrat|compromis|arbitrary)")
+_WEAK = re.compile(r"(?i)\b(?:allows?|lets|exposes?|leads? to|results? in|unauthenticated|reachable)")
+_RULE_MATCH = re.compile(r"(?i)\b(?:the rule|rule's|pattern|derives from|imports?|matches the|meets every condition)\b")
+
+
+def _consequences(*texts: str, count: int = 3) -> list[str]:
+    """Sentences that say what an attacker can do (strongest first), never the scanner's matching conditions."""
+    candidates: list[tuple[int, int, str]] = []
+    for text in texts:
+        for sentence in _sentences(_prose(text, 3000)):
+            sentence = re.sub(r"(?i)\b(can|could|may|will) then\b", r"\1", sentence)
+            sentence = re.sub(r"^(?:[A-Z][\w-]*)(?: [\w-]+){0,2}: (?=[A-Z])", "", sentence)  # "Attack: The attacker..." -> "The attacker..."
+            if (_RULE_MATCH.search(sentence) or len(sentence.split()) < 6 or any(sentence == item[2] for item in candidates)
+                    or re.search(r"\s\d{1,2}\.\s|\u2192|->", sentence)):  # Not a flattened list of steps.
+                continue
+            strength = 0 if _STRONG.search(sentence) else 1 if _WEAK.search(sentence) else None
+            if strength is not None:
+                candidates.append((strength, len(candidates), sentence))
+    ranked = sorted(candidates)
+    best = [item for item in ranked if item[0] == 0] or ranked  # Weaker sentences only when nothing stronger exists.
+    return [sentence for _strength, _order, sentence in best[:count]]
+
+
+def _basis_chip(basis: str) -> str:
+    if re.search(r"\bNOT (?:A )?CONSERVATIVE\b", basis) or re.search(r"EVIDENCE|SUPPORTED|INSPECTED", basis):
+        return "Evidence-supported"
+    if "CONSERVATIVE" in basis:
+        return "Conservative default"
+    return _cut(basis.capitalize(), 32) if basis else ""
 
 
 def _findings(report: str) -> list[dict]:
@@ -138,6 +278,28 @@ def _clip_code(code: str, lines: int) -> list[str]:
     return clipped
 
 
+def _bottom_line(page: dict, title: str, location: str, risk: str, fix_prose: str, has_code: bool) -> str:
+    """Verdict, severity and place; what an attacker can do; and the fix. Each part comes from the report's own fields."""
+    if page["basis"] == "CONSERVATIVE DEFAULT":
+        state = "Unconfirmed"
+    elif page["confidence"] == "CONFIRMED":
+        state = "Confirmed"
+    else:
+        state = "Likely"
+    severity = f"{page['severity'].lower()}-severity " if page["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW") else ""
+    subject = _prose(title, 150).rstrip(".")
+    head = subject.split(": ", 1)[0]
+    subject = head if len(head) >= 12 else subject
+    place = Path(location).name if location else ""
+    first = f"{state} {severity}finding{f' at {place}' if place else ''}: {_lower_first(subject)}."
+    consequence = _plain_sentence(risk, 8, 190)
+    action = _plain_sentence(fix_prose, 4, 160)
+    fix = (f"Fix: {_lower_first(action)}" if action else "") or ("Fix: apply the proposed code change on this page." if has_code else "")
+    if fix and has_code and "below" not in fix and "this page" not in fix:
+        fix = fix.rstrip(".") + " (code below)."
+    return " ".join(part for part in (first, consequence, fix) if part) or "The inspected code supports the reported finding."
+
+
 def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
     """The page model for one finding: what the one-pager says, independent of layout."""
     findings = _findings(report)
@@ -164,7 +326,7 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
         "false_positive": false_positive, "disposition": disposition or "REPORTED FINDING", "id": finding["id"],
         "title": _prose(finding["title"], 150) or finding["id"], "avit": avit,
         "severity": _field(body, "Severity").upper().split()[0] if _field(body, "Severity") else "UNSPECIFIED",
-        "confidence": _field(body, "Confidence").upper().split()[0] if _field(body, "Confidence") else "",
+        "confidence": (re.findall(r"[A-Za-z]+", _field(body, "Confidence")) or [""])[0].upper(),
         "basis": _field(body, "Decision basis").upper(),
         "owner": _prose(re.sub(r"\s*\(suggested\)", "", _field(body, "Owner")), 70),
         "effort": _prose(_field(body, "Effort"), 70),
@@ -175,8 +337,11 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
     }
     if false_positive:
         safe = _section(body, "Verified Safe Behavior")
-        page["bottom_line"] = _first_sentence(safe) or "The inspected code does not support the scanner's claim."
-        page["left"] = [("Why it is not exploitable", _rest(safe, page["bottom_line"], 520)),
+        where = f" at {Path(location).name}" if location else ""
+        reason = _plain_sentence(safe, 6, 230)
+        page["bottom_line"] = (f"False positive{where}: {_lower_first(reason)} No code change is needed." if reason
+                               else _first_sentence(safe) or "The inspected code does not support the scanner's claim.")
+        page["left"] = [("Why it is not exploitable", _prose(safe, 520)),
                         ("Decisive evidence", _prose(_section(body, "Assessment and alternative interpretation"), 360))]
         page["fix"] = []
         page["right"] = [("Scanner follow-up", _prose(_section(body, "Tuning Status") or _section(body, "Proposed Tuning"), 360)),
@@ -185,14 +350,21 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
         page["footer"] = "No vulnerability was confirmed. Any scanner suppression requires validated fixtures and scanner-owner approval."
     else:
         impact = _section(body, "Finding and impact")
+        # **Impact.** may be its own line, which ends the Finding and impact section, so search the whole finding.
+        subsection = _subsection(impact, "Impact") or _subsection(body, "Impact")
+        exploit = _section(body, "Exploit path")
+        consequences = _consequences(subsection, impact, exploit, _field(head, "Risk and decision"))
+        risk = subsection or ("\n".join(f"- {sentence}" for sentence in consequences) if consequences else impact)
         fix = _section(body, "Proposed fix patch") + "\n" + _section(body, "Proposed Fix")
-        diff = next((code for lang, code in _code_blocks(fix) if lang in ("diff", "patch")), "")
-        diff_lines = [line for line in diff.splitlines() if not line.startswith(("--- ", "+++ ", "diff --git", "index "))]
-        page["bottom_line"] = _first_sentence(impact) or "The inspected code supports the reported finding."
-        page["left"] = [("What is at risk", _rest(impact, page["bottom_line"], 460)),
+        fix_kind, fix_lines = _fix_code(fix, location.rsplit(":", 1)[-1].split("-")[0] if ":" in location else "")
+        fix_prose = re.sub(r"^\s*\([^()]*\)\.?\s*", "", _prose(fix, 600))
+        page["bottom_line"] = _bottom_line(page, finding["title"], location, consequences[0] if consequences else risk,
+                                           fix_prose, bool(fix_lines))
+        page["left"] = [("What is at risk", _prose(risk, 460)),
                         ("Why this is a true positive", _prose(_section(body, "Assessment and alternative interpretation"), 340))]
-        page["fix"] = _clip_code("\n".join(diff_lines), 14) if diff_lines else []
-        page["right"] = [("Proposed fix (not applied)", "" if diff_lines else _prose(fix, 320)),
+        page["fix"] = _clip_code("\n".join(fix_lines), 16) if fix_lines else []
+        page["fix_kind"] = fix_kind
+        page["right"] = [("How to apply the fix" if fix_lines else "Proposed fix (not applied)", _prose(fix_prose, 220 if fix_lines else 320)),
                          ("Done when", _prose(_section(body, "Acceptance Criteria"), 320)),
                          ("Tests to add (not run)", _prose(_section(body, "Regression Tests"), 260))]
         if page["basis"] == "CONSERVATIVE DEFAULT":
@@ -266,7 +438,12 @@ def _wrap(text: str, font: str, size: float, width: float) -> list[bytes]:
             if current:
                 lines.append(current)
             while _width(word, font, size) > width:  # Long identifiers and paths break mid-token.
-                cut = max(1, int(len(word) * width / _width(word, font, size)) - 1)
+                cut = max(1, int(len(word) * width / _width(word, font, size)))
+                while cut > 1 and _width(word[:cut], font, size) > width:  # Wide capitals: measure, never estimate.
+                    cut -= 1
+                slash = word.rfind(b"/", 0, cut)
+                if slash >= cut // 3:  # Break a path after a folder rather than inside a name.
+                    cut = slash + 1
                 lines.append(word[:cut])
                 word = word[cut:]
             current = word
@@ -282,10 +459,14 @@ def _wrap_code(lines: list[str], size: float, width: float) -> list[bytes]:
         if not data:
             wrapped.append(b"")
         while data:
-            wrapped.append(data[:columns])
-            data = data[columns:]
+            cut = columns
+            if len(data) > columns:  # Prefer a break after a space or punctuation in the last third of the line.
+                breaks = [index + 1 for index in range(columns * 2 // 3, columns) if data[index:index + 1] in b" ,;(."]
+                cut = breaks[-1] if breaks else columns
+            wrapped.append(data[:cut].rstrip())
+            data = data[cut:]
             if data:
-                data = b"  " + data
+                data = b"  " + data.lstrip()
     return wrapped
 
 
@@ -322,6 +503,25 @@ def _spaced_width(data: bytes, font: str, size: float, spacing: float) -> float:
     return _width(data, font, size) + spacing * max(0, len(data) - 1)
 
 
+def _fact_lines(name: str, value: str, width: float) -> list[bytes]:
+    """At most two lines. A long path loses leading folders, never its file name and line; other text ends with an ellipsis."""
+    lines = _wrap(value or "\u2014", "B", 8.3, width)
+    if len(lines) <= 2:
+        return lines
+    if name == "Location" and "/" in value:
+        parts = value.split("/")
+        name_and_line = _encode(parts[-1])
+        for start in range(1, len(parts)):
+            shorter = _wrap("\u2026/" + "/".join(parts[start:]), "B", 8.3, width)
+            # Accept only a shortening that keeps the file name and line whole on one line.
+            if len(shorter) <= 2 and any(name_and_line in line for line in shorter):
+                return shorter
+    second = lines[1]
+    while second and _width(second + _encode("\u2026"), "B", 8.3) > width:
+        second = second[:-1]
+    return [lines[0], second.rstrip() + _encode("\u2026")]
+
+
 def _header(canvas: _Canvas, page: dict) -> float:
     """Draws everything above the two columns and returns the top of the column area."""
     accent, tint = (_GREEN, _GREEN_TINT) if page["false_positive"] else (_RED, _RED_TINT)
@@ -345,12 +545,14 @@ def _header(canvas: _Canvas, page: dict) -> float:
     badge_width = _spaced_width(badge, "B", 9.4, 0.6) + 22
     canvas.rect(_LEFT, top, badge_width, 20, fill=accent)
     canvas.text(_LEFT + 11, top + 5.6, badge, "B", 9.4, (1, 1, 1), 0.6)
-    x = _LEFT + badge_width + 9
+    x = start = _LEFT + badge_width + 9
     chips = [f"Severity · {page['severity']}"] + ([f"Confidence · {page['confidence']}"] if page["confidence"] else [])
-    chips += [page["basis"].title()] if page["basis"] else []
+    chips += [_basis_chip(page["basis"])] if page["basis"] else []
     for chip in chips:
-        data = _encode(chip)
+        data = _wrap(chip, "R", 7.8, _PAGE_W - _RIGHT - start - 16)[0]
         width = _width(data, "R", 7.8) + 16
+        if x > start and x + width > _PAGE_W - _RIGHT:  # Wrap rather than run past the margin.
+            x, top = start, top + 21
         canvas.rect(x, top + 2, width, 16, fill=(0.965, 0.973, 0.969), stroke=(0.80, 0.85, 0.82))
         canvas.text(x + 8, top + 6.6, data, "R", 7.8, (0.20, 0.26, 0.23))
         x += width + 7
@@ -372,7 +574,7 @@ def _header(canvas: _Canvas, page: dict) -> float:
             name, value = facts[row * 3 + column]
             x = _LEFT + column * (cell + 16)
             canvas.text(x, top, _encode(name.upper()), "R", 6.5, _FAINT, 0.6)
-            values = _wrap(value or "—", "B", 8.3, cell)[:2]
+            values = _fact_lines(name, value, cell)
             for index, line in enumerate(values):
                 canvas.text(x, top + 10 + index * 10.6, line, "B", 8.3)
             row_height = max(row_height, 10 + len(values) * 10.6)
@@ -382,11 +584,11 @@ def _header(canvas: _Canvas, page: dict) -> float:
 
 
 def _blocks(page: dict) -> tuple[list, list]:
-    location = f" · {page['location']}" if page["location"] else ""
+    location = f" · {Path(page['location']).name}" if page["location"] else ""
     left = [("text", title, body) for title, body in page["left"] if body]
     if page["code"]:
         left.append(("code", f"Code reviewed{location}", page["code"]))
-    right = [("diff", "Proposed fix (not applied)", page["fix"])] if page["fix"] else []
+    right = [(page.get("fix_kind") or "diff", "Proposed fix (not applied)", page["fix"])] if page["fix"] else []
     right += [("text", title, body) for title, body in page["right"] if body]
     return left, right
 
@@ -396,6 +598,7 @@ def _measure(blocks: list, width: float, scale: float, keep: dict | None = None)
     laid, height, counts = [], 0.0, {}
     body, code = 8.6 * scale, 7.1 * scale
     for index, (kind, title, content) in enumerate(blocks):
+        heading = _wrap(title.upper(), "B", 7.0 * scale, width)[:2]
         if kind == "text":
             lines, leading = _wrap(content, "R", body, width), body * 1.42
         else:
@@ -407,8 +610,8 @@ def _measure(blocks: list, width: float, scale: float, keep: dict | None = None)
         counts[index] = len(lines)
         if not lines:
             continue
-        height += 7.0 * scale + 4 + len(lines) * leading + (10 if kind != "text" else 0) + 11 * scale
-        laid.append((kind, title, lines, leading, scale))
+        height += len(heading) * 9.0 * scale + 4 + len(lines) * leading + (10 if kind != "text" else 0) + 11 * scale
+        laid.append((kind, heading, lines, leading, scale))
     return height, laid, counts
 
 
@@ -429,9 +632,11 @@ def _fit(blocks: list, width: float, available: float) -> list:
 
 
 def _draw_column(canvas: _Canvas, laid: list, x: float, top: float, width: float, accent) -> None:
-    for kind, title, lines, leading, scale in laid:
-        canvas.text(x, top, _encode(title.upper()), "B", 7.0 * scale, (0.25, 0.31, 0.28), 0.65)
-        top += 7.0 * scale + 4
+    for kind, heading, lines, leading, scale in laid:
+        for line in heading:
+            canvas.text(x, top, line, "B", 7.0 * scale, (0.25, 0.31, 0.28))
+            top += 9.0 * scale
+        top += 4
         if kind == "text":
             for line in lines:
                 canvas.text(x, top, line, "R", 8.6 * scale, (0.15, 0.19, 0.17))
@@ -460,14 +665,14 @@ def render(page: dict) -> bytes:
     canvas = _Canvas()
     accent = _GREEN if page["false_positive"] else _RED
     columns_top = _header(canvas, page)
-    footer_top = _PAGE_H - _BOTTOM - 16
-    available = footer_top - 8 - columns_top
     column = (_WIDTH - _GUTTER) / 2
+    note = _wrap(page["footer"], "R", 6.8, column + 40)[:2]
+    footer_top = _PAGE_H - _BOTTOM - 7 - len(note) * 8.6  # A two-line note still ends above the bottom margin.
+    available = footer_top - 8 - columns_top
     left, right = _blocks(page)
     _draw_column(canvas, _fit(left, column, available), _LEFT, columns_top, column, accent)
     _draw_column(canvas, _fit(right, column, available), _LEFT + column + _GUTTER, columns_top, column, accent)
     canvas.rule(footer_top)
-    note = _wrap(page["footer"], "R", 6.8, column + 40)[:2]
     for index, line in enumerate(note):
         canvas.text(_LEFT, footer_top + 7 + index * 8.6, line, "R", 6.8, _FAINT)
     pointer = _encode(f"Full evidence: Word review attached to {page['avit'] or 'the record'}")

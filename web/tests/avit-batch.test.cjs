@@ -761,5 +761,10 @@ describe('False positive review batch', () => {
     const { markdown, count } = redactSecrets(`value ${SECRET} and some/dir/with-digits-123456789`, dir, 'f.yaml');
     assert.equal(count, 1); assert.ok(!markdown.includes(SECRET)); assert.ok(markdown.includes('some/dir/with-digits-123456789'));
     assert.deepEqual(resolveOutcome('  ✓ Attached a\n  ! ServiceNow kept state 3 / \n').closed, 'state not applied');
+    const replaced = resolveOutcome('  ✓ Removed 2 earlier Threatlint report files for AVIT0000001\n  ✓ Attached a.docx\n');
+    assert.equal(replaced.replaced, 2);
+    assert.deepEqual(replaced.semgrep, []);
+    assert.equal(outcomeActions(replaced, 'TRUE POSITIVE')[0].detail, 'Replaced 2 earlier Threatlint report files; Word report attached to the AVIT');
+    assert.equal(resolveOutcome('  ✓ Attached a.docx\n').replaced, 0);
   });
 });

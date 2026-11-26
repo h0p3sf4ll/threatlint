@@ -26,19 +26,30 @@ const ISST = 'ISST0012345', SCTASK = 'SCTASK14120565', ISST_TABLE = 'x_example_i
 const json = body => ({ ok: true, status: 200, json: async () => body });
 
 function fakeServiceNow(calls, { source = '' } = {}) {
-  const attachments = new Set();
+  // Stateful like ServiceNow: uploads never overwrite, so a replacement must delete the earlier file first.
+  const attachments = [];
+  let uploads = 0;
   return async (url, options = {}) => {
     calls.push({ url, options });
     const target = new URL(url);
     const params = target.searchParams;
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
     if (target.pathname === '/api/now/attachment/file') {
-      attachments.add(params.get('file_name'));
-      return json({ result: { sys_id: 'd'.repeat(32) } });
+      const sysId = (++uploads).toString(16).padStart(32, 'd');
+      attachments.push({ sys_id: sysId, file_name: params.get('file_name'), table_name: params.get('table_name'), table_sys_id: params.get('table_sys_id') });
+      return json({ result: { sys_id: sysId } });
+    }
+    if (options.method === 'DELETE' && target.pathname.startsWith('/api/now/attachment/')) {
+      const sysId = target.pathname.split('/').pop();
+      attachments.splice(0, attachments.length, ...attachments.filter(row => row.sys_id !== sysId));
+      return json({});
     }
     if (target.pathname === '/api/now/attachment') {
-      const fileName = /\^file_name=(.+)$/.exec(params.get('sysparm_query'))?.[1];
-      return json({ result: attachments.has(fileName) ? [{ file_name: fileName }] : [] });
+      const query = params.get('sysparm_query') || '';
+      const table = /table_name=([^^]+)/.exec(query)?.[1];
+      const sysId = /table_sys_id=([^^]+)/.exec(query)?.[1];
+      const like = /file_nameLIKE([^^]+)/.exec(query)?.[1] || '';
+      return json({ result: attachments.filter(row => row.table_name === table && row.table_sys_id === sysId && row.file_name.includes(like)).map(row => ({ ...row })) });
     }
     if (options.method === 'PATCH') { const body = JSON.parse(options.body); return json({ result: { state: body.state || '1', substate: body.substate || '' } }); }
     // The integration account sees no rows for source=Invicti AVITs.
@@ -549,7 +560,7 @@ describe('Scan import routes', () => {
     assert.ok(uploads.every(call => new URL(call.url).searchParams.get('table_sys_id') === SYS_ID));
   });
 
-  it('attaches an existing file-based Finding Review without AVIT state changes and skips duplicates', async () => {
+  it('attaches an existing file-based Finding Review without AVIT state changes and replaces the earlier copy', async () => {
     const report = await instance.generateReport('appsec-fp-reviewer', '# Finding Review: File\n\nNo findings.\n', workspaceId);
     const data = { reportId: report.id, number: AVIT, servicenow: CREDENTIALS };
     const callsBefore = snowCalls.length;
@@ -557,12 +568,21 @@ describe('Scan import routes', () => {
     assert.equal(snowCalls.length, callsBefore);
     const result = await api('/api/servicenow/attach-review', { ...data, confirm: true });
     assert.equal(result.status, 200, JSON.stringify(result.body));
-    assert.match(result.body.actions[0].attachments[0].name, /^AVIT\d+-threatlint-review-[0-9a-f]+\.docx$/);
+    const first = result.body.actions[0].attachments[0];
+    assert.match(first.name, /^AVIT\d+-threatlint-review-[0-9a-f]+\.docx$/);
+    // ServiceNow cannot overwrite an attachment: attaching again deletes the earlier copy, then uploads the new one.
+    const beforeRepeat = snowCalls.length;
     const repeated = await api('/api/servicenow/attach-review', { ...data, confirm: true });
-    assert.equal(repeated.body.actions[0].attachments[0].alreadyAttached, true);
-    const calls = snowCalls.slice(callsBefore);
-    assert.ok(!calls.some(call => call.options.method === 'PATCH'));
-    assert.equal(calls.filter(call => new URL(call.url).pathname === '/api/now/attachment/file').length, 1);
+    assert.equal(repeated.status, 200, JSON.stringify(repeated.body));
+    assert.equal(repeated.body.actions[0].removed, 1);
+    assert.match(repeated.body.actions[0].detail, /^Replaced 1 earlier Threatlint report file\. Attached /);
+    assert.ok(!snowCalls.slice(callsBefore).some(call => call.options.method === 'PATCH'));
+    const calls = snowCalls.slice(beforeRepeat);
+    const deletes = calls.filter(call => call.options.method === 'DELETE');
+    assert.deepEqual(deletes.map(call => new URL(call.url).pathname), [`/api/now/attachment/${first.sysId}`]);
+    const uploads = calls.map((call, index) => [call, index]).filter(([call]) => new URL(call.url).pathname === '/api/now/attachment/file');
+    assert.equal(uploads.length, 1);
+    assert.ok(uploads[0][1] > calls.indexOf(deletes[0]), 'the earlier copy is deleted before the new upload');
   });
 
   it('does not attach a review to an unreadable or mismatched ticket', async () => {

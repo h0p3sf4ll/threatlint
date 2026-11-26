@@ -36,7 +36,8 @@ def test_true_positive_page_leads_with_risk_code_and_fix():
     page = one_pager.summary(EXAMPLE, finding_id="FP-001")
     assert (page["disposition"], page["severity"], page["confidence"]) == ("TRUE POSITIVE", "HIGH", "CONFIRMED")
     assert page["location"] == "example/api/customers.py:41-44" and page["rule"] == "example.sql-query-construction"
-    assert page["bottom_line"].startswith("In this fictional SQLite handler")
+    assert page["bottom_line"].startswith("Confirmed high-severity finding at customers.py:41-44: customer lookup builds SQL")
+    assert "In this fictional SQLite handler" in page["bottom_line"] and "Fix:" in page["bottom_line"]
     assert any(line.startswith("-query = f\"SELECT") for line in page["fix"])
     assert any(line.startswith("+query = \"SELECT") for line in page["fix"])
     pdf = one_pager.render(page)
@@ -49,7 +50,8 @@ def test_true_positive_page_leads_with_risk_code_and_fix():
 def test_false_positive_page_explains_safety_and_never_proposes_a_code_fix():
     page = one_pager.summary(EXAMPLE, finding_id="FP-002")
     assert page["disposition"] == "FALSE POSITIVE" and page["fix"] == []
-    assert page["bottom_line"].startswith("In the illustrated SQLite API, the statement is constant")
+    assert page["bottom_line"].startswith("False positive at orders.py:25-28: in the illustrated SQLite API, the statement is constant")
+    assert page["bottom_line"].endswith("No code change is needed.")
     text = _text(one_pager.render(page))
     assert "WHY IT IS NOT EXPLOITABLE" in text and "BLAST RADIUS OF ANY SUPPRESSION" in text
     assert "PROPOSED FIX" not in text and "No vulnerability was confirmed" in text
@@ -142,3 +144,153 @@ def test_sctask_copies_the_avit_summary_with_its_report(monkeypatch):
     sctask.close("https://example.service-now.com", "t", "SCTASK0000001", yes=True, out=io.StringIO(), leave_open=True)
     uploads = [data for method, url, data in calls if "/attachment/file" in url]
     assert uploads == [b"PK-docx", b"%PDF-summary"]
+
+
+LIVE_SHAPE = (Path(__file__).resolve().parent / "fixtures" / "one-pager-live-shape.md").read_text(encoding="utf-8")
+_FONT = {"F1": "R", "F2": "B", "F3": "C"}
+
+
+def _runs(pdf: bytes) -> list[tuple[float, float, float, float, str]]:
+    """(left, bottom, right, top, text) for every string drawn on the page."""
+    stream = zlib.decompress(re.search(rb"stream\n(.*?)\nendstream", pdf, re.S).group(1))
+    runs = []
+    pattern = rb"BT /(F\d) ([\d.]+) Tf [\d. ]+ rg (-?[\d.]+) Tc ([\d.]+) ([\d.]+) Td \(((?:\\.|[^\\)])*)\) Tj ET"
+    for font, size, spacing, x, y, raw in re.findall(pattern, stream):
+        data = re.sub(rb"\\(.)", rb"\1", raw)
+        size, x, y = float(size), float(x), float(y)
+        width = one_pager._width(data, _FONT[font.decode()], size) + float(spacing) * max(0, len(data) - 1)
+        runs.append((x, y - 0.2 * size, x + width, y + 0.75 * size, data.decode("cp1252")))
+    return runs
+
+
+def _assert_no_overlap(pdf: bytes) -> None:
+    runs = _runs(pdf)
+    assert runs
+    for left, bottom, right, top, text in runs:
+        assert left >= 39.5 and right <= 612 - 39.5, f"outside the margins: {text!r}"
+        assert bottom >= 30 and top <= 792 - 30, f"outside the page: {text!r}"
+    for index, first in enumerate(runs):
+        for second in runs[index + 1:]:
+            if first[0] < second[2] - 0.5 and second[0] < first[2] - 0.5 and first[1] < second[3] - 0.5 and second[1] < first[3] - 0.5:
+                raise AssertionError(f"overlapping text: {first[4]!r} and {second[4]!r}")
+
+
+def test_live_report_shape_gets_a_specific_bottom_line_and_concrete_fix_code():
+    page = one_pager.summary(LIVE_SHAPE, avit=AVIT)
+    bottom = page["bottom_line"]
+    assert bottom.startswith("Confirmed critical-severity finding at LedgerController.cs:96: SQL injection in LedgerController.Index.")
+    assert "An attacker can add predicates, UNION queries or stacked statements" in bottom
+    assert "Fix: use constant SQL with @region bound as SqlDbType.NVarChar" in bottom
+    assert "The rule's claim" not in bottom and "(lines 39" not in bottom
+    assert page["confidence"] == "CONFIRMED"
+    assert page["fix_kind"] == "code"
+    assert any("command.Parameters.Add(\"@region\"" in line for line in page["fix"])
+    assert not any("String.Format" in line for line in page["fix"]), "the vulnerable 'before' block is not the fix"
+    assert page["repository"] == "contoso-ledger (Example_Project)"
+
+
+def test_live_report_shape_keeps_wording_and_lists_intact():
+    page = one_pager.summary(LIVE_SHAPE, avit=AVIT)
+    sections = dict(page["left"] + page["right"])
+    assert sections["How to apply the fix"] == "Use constant SQL with @region bound as SqlDbType.NVarChar at lines 87, 93, 100, 205 and 211."
+    assert "Implementation Notes" not in sections["How to apply the fix"] and "Fix all six" not in sections["How to apply the fix"]
+    assert sections["Done when"].count("\n") == 2 and all(line.startswith("\u2022 ") for line in sections["Done when"].splitlines())
+    assert sections["Tests to add (not run)"].startswith("1. Attack rejection:")
+    assert not re.search(r"\s\d[.)]$", sections["Tests to add (not run)"]), "no dangling list number"
+    assert "Rejected." in sections["Why this is a true positive"] and "Proposed Fix" not in sections["Why this is a true positive"]
+    assert "Regression Tests" not in sections["Done when"]
+    text = _text(one_pager.render(page))
+    assert "Evidence-supported" in text and "Supported By Inspected Evidence" not in text
+    assert "CODE REVIEWED \xb7 LEDGERCONTROLLER.CS:96" in text
+
+
+@pytest.mark.parametrize(("source", "expected"), [
+    ("the complete patch is **PROPOSED \u2014 NOT APPLIED** and belongs to the fix step.", "the complete patch is proposed, not applied and belongs to the fix step."),
+    ("(all **NOT RUN**; they need a new project)", "(all not run; they need a new project)"),
+    ("**PROPOSED \u2014 NOT APPLIED**: Bind the value.", "Bind the value."),
+    ("contoso_ledger (Example_Project) and *emphasis*", "contoso_ledger (Example_Project) and emphasis"),
+    ("Before (vulnerable):\nUse a parameter.", "Use a parameter."),
+])
+def test_prose_keeps_sentences_whole(source, expected):
+    assert one_pager._prose(source) == expected
+
+
+@pytest.mark.parametrize("which", ["FP-001", "FP-002", "live", "stress"])
+def test_nothing_on_the_page_overlaps_or_leaves_the_margins(which):
+    if which == "live":
+        report = LIVE_SHAPE
+    elif which == "stress":
+        report = LIVE_SHAPE.replace(
+            "SQL injection in LedgerController.Index: request region is formatted into SQL text through a static field",
+            "SQL injection in LedgerController.Index and ValidationLedger.Export: request region and validated flags are formatted "
+            "into SQL text through static fields shared across every user's requests") \
+            .replace("webApp/Contoso_Ledger_LATEST_PROD/Controllers/LedgerController.cs:96",
+                     "webApp/CONTOSO_LEDGER_WEBAPPLICATION_LATEST_PRODUCTION_RELEASE/Controllers/Finance/LedgerController.cs:96") \
+            .replace("csharp.dotnet-core.sqli.systemdata-taint.systemdata-taint",
+                     "csharp.dotnet-core.security.audit.sqli.systemdata-taint-with-static-field-propagation.systemdata-taint") \
+            .replace("**Decision basis**: Supported by inspected evidence (not a conservative default)",
+                     "**Decision basis**: An unusually long custom basis statement that no chip could ever hold on one line")
+    else:
+        report = EXAMPLE
+    page = one_pager.summary(report, avit=AVIT if which in ("live", "stress") else "", finding_id="" if which in ("live", "stress") else which)
+    pdf = one_pager.render(page)
+    assert _pages(pdf) == 1
+    _assert_no_overlap(pdf)
+
+
+def test_impact_lead_in_on_its_own_line_still_drives_the_bottom_line():
+    report = LIVE_SHAPE.replace("**Impact.** A single quote ends the literal.", "**Impact.**\nA single quote ends the literal.")
+    page = one_pager.summary(report, avit=AVIT)
+    assert "An attacker can add predicates, UNION queries or stacked statements" in page["bottom_line"]
+    assert "non-numeric parameter" not in page["bottom_line"], "the rule's claim is not the bottom line"
+    assert dict(page["left"])["What is at risk"].startswith("A single quote ends the literal.")
+
+
+def test_long_location_keeps_its_file_name_and_line():
+    path = "webApp/CONTOSO_LEDGER_WEBAPPLICATION_LATEST_PRODUCTION_RELEASE/Controllers/Finance/LedgerController.cs:96"
+    report = LIVE_SHAPE.replace("webApp/Contoso_Ledger_LATEST_PROD/Controllers/LedgerController.cs:96", path)
+    text = _text(one_pager.render(one_pager.summary(report, avit=AVIT)))
+    assert "LedgerController.cs:96" in text, "the file name and line stay whole on one line"
+    assert "\u2026/" in text, "leading folders are elided, not the file name or line"
+
+
+STEPWISE = LIVE_SHAPE.replace(
+    "**Finding and impact**:\n\n**The rule's claim.**",
+    "**Finding and impact**\nLedgerController derives from Controller and imports the SQL client, which matches the rule's pattern.\n"
+    "- **Reachability**: The action is public and the route exposes it for any HTTP method.\n"
+    "- **Attack**: The attacker can append UNION predicates or stacked batches to the query.\n"
+    "- **Effect**: That gives reads across all regions and writes up to the login's rights.\n\n**Ignored.**",
+).replace("**Impact.** A single quote ends the literal.", "**Notes.** A single quote ends the literal.").replace(
+    "Before (vulnerable):", "`LedgerController.cs:87` (main query). Before:").replace(
+    "After:\n```csharp\nconst string",
+    "After:\n```csharp\nusing (SqlCommand command = LedgerSql.Create(LedgerSql.Main, conn, region))\n```\n\n"
+    "`:96` (the flagged sink). Before:\n```csharp\nnew SqlCommand(String.Format(query, region), conn)\n```\n\nAfter:\n"
+    "```csharp\nusing (SqlCommand command = LedgerSql.Create(LedgerSql.Mapping, conn, region))\n```\n\n"
+    "New file Controllers/LedgerSql.cs:\n```csharp\nconst string")
+
+
+def test_bottom_line_uses_what_an_attacker_can_do_not_the_rule_match():
+    page = one_pager.summary(STEPWISE, avit=AVIT)
+    assert "The attacker can append UNION predicates or stacked batches to the query." in page["bottom_line"]
+    assert "derives from Controller" not in page["bottom_line"] and "route exposes" not in page["bottom_line"]
+    risk = dict(page["left"])["What is at risk"]
+    assert risk.startswith("\u2022 The attacker can append UNION") and "reads across all regions" in risk
+    assert "matches the rule" not in risk
+
+
+def test_fix_code_leads_with_the_flagged_line_then_the_new_helper():
+    page = one_pager.summary(STEPWISE, avit=AVIT)
+    labels = [line for line in page["fix"] if line.startswith("\u2014 ")]
+    assert labels[:2] == ["\u2014 :96 (the flagged sink)", "\u2014 New file Controllers/LedgerSql.cs"]
+    assert not any("String.Format" in line for line in page["fix"]), "'Before' blocks are not fix code"
+    how = dict(page["right"])["How to apply the fix"]
+    assert "Before" not in how and "After" not in how and "LedgerController.cs:87" not in how
+    _assert_no_overlap(one_pager.render(page))
+
+
+def test_long_paths_wrap_after_a_folder():
+    lines = one_pager._wrap("webApp/Contoso_Ledger/Controllers/Finance/LedgerController.cs:96", "B", 8.3, 160)
+    assert all(line.endswith(b"/") for line in lines[:-1]) and lines[-1].endswith(b"/LedgerController.cs:96")
+    # A folder wider than the column must break inside, but the file name and line still stay whole.
+    lines = one_pager._wrap("webApp/CONTOSO_LEDGER_LATEST_PROD/Controllers/LedgerController.cs:96", "B", 8.3, 160)
+    assert lines[-1].endswith(b"LedgerController.cs:96") and b"LedgerController" not in b"".join(lines[:-1])

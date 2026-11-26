@@ -23,12 +23,22 @@ const CHOICES = [
   { name: 'sn_vul_app_vulnerable_item', element: 'substate', value: '6', label: 'False Positive' },
 ];
 
-function fakeServiceNow(calls, { storedState = '3', inView = true } = {}) {
+function fakeServiceNow(calls, { storedState = '3', inView = true, attachments = [] } = {}) {
   return async (url, options = {}) => {
     calls.push({ url, options });
     if (url.endsWith('/oauth_token.do')) return json({ access_token: 'snow-token' });
     if (url.includes('/api/now/table/sys_choice')) return json({ result: CHOICES });
-    if (url.includes('/api/now/attachment/file')) return json({ result: { sys_id: 'b'.repeat(32) } });
+    if (url.includes('/api/now/attachment/file')) {
+      const name = new URL(url).searchParams.get('file_name');
+      attachments.push({ sys_id: 'b'.repeat(32), file_name: name, table_name: 'sn_vul_app_vulnerable_item', table_sys_id: SYS_ID });
+      return json({ result: { sys_id: 'b'.repeat(32) } });
+    }
+    if (options.method === 'DELETE' && url.includes('/api/now/attachment/')) {
+      const id = url.split('/').pop();
+      attachments.splice(0, attachments.length, ...attachments.filter(row => row.sys_id !== id));
+      return json({});
+    }
+    if (url.includes('/api/now/attachment?')) return json({ result: attachments.map(row => ({ ...row })) });
     if (options.method === 'PATCH') return json({ result: { number: 'AVIT000000000010001', state: storedState, substate: '3' } });
     if (url.includes('/sysrule_view')) return json({ result: [{ condition: 'u_scm_toolISNOTEMPTY' }] });
     if (url.includes('u_scm_toolISNOTEMPTY')) return json({ result: inView ? [{ number: 'AVIT000000000010001' }] : [] });
@@ -69,6 +79,36 @@ describe('Closing an AVIT as a false positive', () => {
     assert.deepEqual({ state: update.state, substate: update.substate }, { state: '3', substate: '3' });
     assert.match(update.work_notes, /Closed by Threatlint/);
     assert.ok(calls.every(call => call.options.redirect === 'error'));
+  });
+  it('deletes earlier Threatlint reports for the AVIT before attaching the new one, keeping unrelated files', async () => {
+    const calls = [];
+    const row = (file_name, id) => ({ sys_id: id.repeat(32), file_name, table_name: 'sn_vul_app_vulnerable_item', table_sys_id: SYS_ID });
+    const unrelated = row('scanner-export.csv', '1');
+    const otherAvit = row('AVIT000000000099999-threatlint-fp-review.docx', '2');
+    const attachments = [row('AVIT000000000010001-threatlint-fp-review.docx', 'c'),
+      row('AVIT000000000010001-threatlint-fp-review-20261120T100000000000Z.docx', 'd'),
+      row('[ONE PAGER SUMMARY] AVIT000000000010001-threatlint-fp-review-20261120T100000000000Z.pdf', 'e'), unrelated, otherAvit];
+    const name = 'AVIT000000000010001-threatlint-fp-review.docx';
+    const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n',
+      files: [{ name, content: Buffer.from('PK-new'), type: 'application/octet-stream' }] }, { fetchImpl: fakeServiceNow(calls, { attachments }) });
+    const deletes = calls.filter(call => call.options.method === 'DELETE').map(call => call.url.split('/').pop());
+    assert.deepEqual(deletes, ['c'.repeat(32), 'd'.repeat(32), 'e'.repeat(32)]);
+    const lastDelete = calls.findLastIndex(call => call.options.method === 'DELETE');
+    const upload = calls.findIndex(call => call.url.includes('/api/now/attachment/file'));
+    assert.ok(upload > lastDelete, 'earlier reports are removed before the new upload');
+    assert.deepEqual(attachments.map(item => item.file_name), ['scanner-export.csv', 'AVIT000000000099999-threatlint-fp-review.docx', name]);
+    assert.deepEqual(result.attachments, [{ name, sysId: 'b'.repeat(32) }]);
+  });
+  it('uploads nothing and leaves the AVIT open when an earlier report cannot be deleted', async () => {
+    const calls = [];
+    const attachments = [{ sys_id: 'c'.repeat(32), file_name: 'AVIT000000000010001-threatlint-fp-review.docx', table_name: 'sn_vul_app_vulnerable_item', table_sys_id: SYS_ID }];
+    const base = fakeServiceNow(calls, { attachments });
+    const denied = async (url, options = {}) => options.method === 'DELETE' ? (calls.push({ url, options }), { ok: false, status: 403, json: async () => ({}) }) : base(url, options);
+    await assert.rejects(closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n',
+      files: [{ name: 'AVIT000000000010001-threatlint-fp-review.docx', content: Buffer.from('PK'), type: 'application/octet-stream' }] }, { fetchImpl: denied }),
+    /Could not remove the previous Threatlint report.*no new report was uploaded/);
+    assert.ok(!calls.some(call => call.url.includes('/attachment/file') || call.options.method === 'PATCH'));
+    assert.equal(attachments.length, 1);
   });
   it('reports a closure ServiceNow did not apply instead of claiming success', async () => {
     const result = await closeAvitAsFalsePositive(CREDENTIALS, 'AVIT000000000010001', { note: 'n', files: [] }, { fetchImpl: fakeServiceNow([], { storedState: '1' }) });
