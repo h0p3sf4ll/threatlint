@@ -38,6 +38,9 @@ STRIPPED_ENV = (
     "AWS_BEARER_TOKEN_BEDROCK", "BEDROCK_API_KEY", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL_BEDROCK_MANTLE",
 )
 STATUS_TIMEOUT_S = 15
+# Credit/billing errors come from API (Console) billing: the CLI is not on the user's Claude subscription login.
+BILLING_ERROR = re.compile(r"credit balance|billing|purchase credits|insufficient credits", re.IGNORECASE)
+SUBSCRIPTION_HINT = ("Claude Code is signed in to an API-billed Anthropic Console account, not your Claude subscription. Run `claude` in a terminal, use /logout, then /login and choose your Claude account (Pro/Max/Team/Enterprise), then retry.")
 RUN_TIMEOUT_S = int(os.environ.get("THREATLINT_CLAUDE_CODE_TIMEOUT_S", str(60 * 60)))
 
 
@@ -154,4 +157,6 @@ def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str 
         return str(result.get("result") or "")
     reason = str(result.get("result") or (stderr.strip().splitlines() or [f"exit code {process.returncode}"])[-1])[:300]
     hint = " Run `claude` in a terminal to sign in, then retry." if any(word in reason.lower() for word in ("login", "log in", "auth", "credential", "unauthorized")) else ""
+    if BILLING_ERROR.search(reason):
+        hint = " " + SUBSCRIPTION_HINT
     raise ClaudeCodeError(f"Claude Code run failed: {reason}.{hint}")

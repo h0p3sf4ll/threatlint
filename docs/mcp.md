@@ -27,7 +27,7 @@ queues work: read the terminal job status and coverage before treating it as suc
 
 ## Install and connect over stdio
 
-From a source checkout, use Node.js 22.12 or newer and Python 3.9 or newer:
+From a source checkout, use Node.js 22.12 or newer and Python 3.12 or newer:
 
 ```bash
 python -m pip install -e .

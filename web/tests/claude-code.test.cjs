@@ -121,6 +121,7 @@ describe('Claude Code provider', () => {
     const env = fakeInstall();
     await assert.rejects(() => claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'u', repoPath: os.tmpdir(), env, spawnImpl: fakeSpawn([{ type: 'result', subtype: 'error_max_turns', is_error: true, result: 'Reached max turns' }], { code: 1 }).spawnImpl }), /Reached max turns/);
     await assert.rejects(() => claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'u', repoPath: os.tmpdir(), env, spawnImpl: fakeSpawn([], { code: 1, stderr: 'Invalid API key · Please run /login' }).spawnImpl }), /run `claude` in a terminal to sign in/i);
+    await assert.rejects(() => claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'u', repoPath: os.tmpdir(), env, spawnImpl: fakeSpawn([{ type: 'result', subtype: 'success', is_error: true, result: 'Credit balance is too low' }], { code: 1 }).spawnImpl }), /API-billed Anthropic Console account.*\/login/);
   });
 
   it('cancels the child process when the run is aborted', async () => {

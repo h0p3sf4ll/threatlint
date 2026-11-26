@@ -66,6 +66,7 @@ def test_run_is_read_only_keyless_and_returns_the_report(monkeypatch, tmp_path):
 @pytest.mark.parametrize("events, stderr, message", [
     ([{"type": "result", "subtype": "error_max_turns", "is_error": True, "result": "Reached max turns"}], "", "Reached max turns"),
     ([], "Not logged in · Please run /login", "sign in"),
+    ([{"type": "result", "subtype": "success", "is_error": True, "result": "Credit balance is too low"}], "", "API-billed Anthropic Console account"),
 ])
 def test_failures_are_explained(events, stderr, message, tmp_path):
     with pytest.raises(claude_code.ClaudeCodeError, match=message):

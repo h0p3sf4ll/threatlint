@@ -26,6 +26,9 @@ const { superviseChild } = require('./child-lifecycle.cjs');
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const STATUS_TIMEOUT_MS = 15_000;
 const RUN_TIMEOUT_MS = Number(process.env.THREATLINT_CLAUDE_CODE_TIMEOUT_MS) || 60 * 60_000;
+// Credit/billing errors come from API (Console) billing: the CLI is not on the user's Claude subscription login.
+const BILLING_ERROR = /credit balance|billing|purchase credits|insufficient credits/i;
+const SUBSCRIPTION_HINT = 'Claude Code is signed in to an API-billed Anthropic Console account, not your Claude subscription. Run `claude` in a terminal, use /logout, then /login and choose your Claude account (Pro/Max/Team/Enterprise), then retry.';
 const STRIPPED_ENV = [
   'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_ANTHROPIC_AWS',
@@ -121,7 +124,8 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
         onClose(code, finish) {
           if (result && !result.is_error && result.subtype === 'success' && code === 0) return finish(null, String(result.result || ''));
           const reason = result?.result || stderr.trim().split('\n').pop() || `exit code ${code}`;
-          const login = /log ?in|auth|credential|unauthori[sz]ed/i.test(reason) ? ' Run `claude` in a terminal to sign in, then retry.' : '';
+          const login = BILLING_ERROR.test(reason) ? ` ${SUBSCRIPTION_HINT}`
+            : /log ?in|auth|credential|unauthori[sz]ed/i.test(reason) ? ' Run `claude` in a terminal to sign in, then retry.' : '';
           finish(new Error(`Claude Code run failed: ${String(reason).slice(0, 300)}.${login}`));
         },
       });

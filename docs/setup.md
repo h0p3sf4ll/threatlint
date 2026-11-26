@@ -11,8 +11,8 @@ Use the interface that fits your work. You can inspect a sample report or run th
 | --- | --- |
 | Hosted web app | A permitted sign-in account; organization membership for a company profile |
 | Installed desktop app | The app and access to the repository you want to inspect |
-| CLI from source | Git and Python 3.9 or later |
-| Workbench from source | Node.js 22.12 or later and npm; Python for CLI workflows and Word export |
+| CLI from source | Git and Python 3.12 or later |
+| Workbench from source | Node.js 22.12 or later and npm; Python 3.12 or later for CLI workflows and Word export |
 
 Desktop and the local Workbench do not require a Threatlint sign-in. Model-provider and integration credentials are needed only for the services you choose.
 
