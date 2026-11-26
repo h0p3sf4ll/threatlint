@@ -88,7 +88,7 @@
   function repoName(repoPath) { return repoPath.split(/[\\/]/).findLast(Boolean) || repoPath; }
   function formatTime(value) { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function selectedModel() { return state.preferences.models[state.preferences.provider] || ''; }
-  // Model policy (from /api/config): with Claude and no model picked, the runner uses Sonnet for scanning and Opus for chat.
+  // Model policy (from /api/config): with Claude and no model picked, the runner uses Opus for scanning and chat.
   const POLICY_FALLBACK = { scan: 'claude-opus-5-5', general: 'claude-opus-5-5' };
   // Providers that follow the Claude model policy when no model is picked.
   const CLAUDE_PROVIDERS = new Set(['claude', 'claude-code']);
@@ -840,7 +840,7 @@
     event.preventDefault();
     const provider = document.querySelector('input[name=provider]:checked').value;
     const model = DAYBREAK_MODELS[provider] || $('model-id').value.trim();
-    // Empty means "Threatlint default" for Claude (Sonnet for scanning, Opus for chat); other providers need a model.
+    // Empty means "Threatlint default" for Claude (Opus for scanning and chat); other providers need a model.
     if (!model && !CLAUDE_PROVIDERS.has(provider) && provider !== 'codex') { $('settings-error').textContent = provider === 'bedrock' ? 'Enter a Bedrock model or inference profile ID.' : 'Load models and choose one, or enter a model ID.'; return; }
     const bedrockRegion = $('bedrock-region').value.trim();
     if (provider === 'bedrock' && bedrockRegion && !/^[a-z]{2,5}(?:-[a-z0-9]+)+-\d{1,2}$/.test(bedrockRegion)) { $('settings-error').textContent = 'Enter an AWS region such as us-east-1, or leave it empty to use the configured region.'; return; }
