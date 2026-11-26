@@ -69,6 +69,9 @@ def add_avit_parser(sub, *, add_arguments):
 
 
 def cmd_avit(args, *, requested_avits, collect_avits, error_type):
+    if args.avit_command == "tuning-backlog":
+        from threatlint.tuning_backlog import cmd_backlog
+        return cmd_backlog(args)
     if args.avit_command in ("fix-pr", "prepare-fix", "prepare-tuning"):
         from threatlint import avit_cli, avit_resolve
         handler = {"fix-pr": avit_cli.cmd_fix_pr, "prepare-fix": avit_cli.cmd_prepare_fix,

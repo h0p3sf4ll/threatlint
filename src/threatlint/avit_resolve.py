@@ -24,7 +24,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from threatlint import one_pager, servicenow as sn
+from threatlint import one_pager, servicenow as sn, tuning_backlog
 from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_triage
 from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
 from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
@@ -475,30 +475,49 @@ def cmd_resolve(args) -> int:
         print("  ✓ Work note added; AVIT left open")
     if false_positive and not code_security:
         print("  Semgrep not applicable: this AVIT is not a CodeSecurity finding")
+    followup = lambda stage, reason, triage="": tuning_backlog.record(
+        avit, stage, reason, context=record["context"], markdown=markdown, report_attachment=name, triage_reason=triage)
+    if false_positive and getattr(args, "tuning_reason", ""):
+        followup("tuning", args.tuning_reason)  # Tuning failed before write-back; the AVIT closed without it.
     if false_positive and code_security and not args.skip_semgrep:
         try:
-            if kind in ("sast", "secrets"):
-                _locate_scanner_snippet(record, args)
-            sg_token, target, dep, matches = _semgrep_resolution(args, avit, record["context"], kind, markdown)
+            return _closed_semgrep(args, avit, markdown, record, kind, verdict)
+        except RuleNotTuned as exc:
+            followup("tuning", str(exc), exc.triage_reason)
+            raise
         except avit_semgrep_triage.TriageScopeBlocked as exc:
-            if kind in ("sast", "secrets") and not args.skip_rule_tuning:
-                raise RuleNotTuned("The scanner finding could not be identified for this AVIT.", str(exc)) from exc
+            followup("triage", str(exc))
             raise
-        except (ResolveError, sn.ServiceNowError, OSError) as exc:
-            hint = " The token's deployment may not scan this repository; pass --semgrep-deployment." if "HTTP 404" in str(exc) else ""
-            raise ClosedAvitSemgrepError(f"Semgrep lookup failed: {exc}.{hint}") from exc
-        kind = dep.get("product", kind)
-        try:
-            return _apply_semgrep_review(
-                args, avit, markdown, record["context"], sg_token, dep, target, kind, matches,
-                note=f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}",
-                tune=kind in ("sast", "secrets") and not args.skip_rule_tuning, avit_closed=True,
-            )
-        except (RuleNotTuned, avit_semgrep_triage.TriageScopeBlocked):
+        except ClosedAvitSemgrepError as exc:
+            followup("semgrep", str(exc))
             raise
-        except (ResolveError, sn.ServiceNowError, OSError) as exc:
-            raise ClosedAvitSemgrepError(str(exc)) from exc
     return 0
+
+
+def _closed_semgrep(args, avit: str, markdown: str, record: dict, kind: str, verdict: dict) -> int:
+    """Semgrep triage and rule tuning for a false positive whose AVIT is already closed with its report."""
+    try:
+        if kind in ("sast", "secrets"):
+            _locate_scanner_snippet(record, args)
+        sg_token, target, dep, matches = _semgrep_resolution(args, avit, record["context"], kind, markdown)
+    except avit_semgrep_triage.TriageScopeBlocked as exc:
+        if kind in ("sast", "secrets") and not args.skip_rule_tuning:
+            raise RuleNotTuned("The scanner finding could not be identified for this AVIT.", str(exc)) from exc
+        raise
+    except (ResolveError, sn.ServiceNowError, OSError) as exc:
+        hint = " The token's deployment may not scan this repository; pass --semgrep-deployment." if "HTTP 404" in str(exc) else ""
+        raise ClosedAvitSemgrepError(f"Semgrep lookup failed: {exc}.{hint}") from exc
+    kind = dep.get("product", kind)
+    try:
+        return _apply_semgrep_review(
+            args, avit, markdown, record["context"], sg_token, dep, target, kind, matches,
+            note=f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}",
+            tune=kind in ("sast", "secrets") and not args.skip_rule_tuning, avit_closed=True,
+        )
+    except (RuleNotTuned, avit_semgrep_triage.TriageScopeBlocked):
+        raise
+    except (ResolveError, sn.ServiceNowError, OSError) as exc:
+        raise ClosedAvitSemgrepError(str(exc)) from exc
 
 
 def remove_checkout(path: str | None) -> bool:

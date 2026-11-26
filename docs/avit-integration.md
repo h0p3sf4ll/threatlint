@@ -344,6 +344,27 @@ Word report, requests closure of the evidence-backed FP, and reports **Rule not
 tuned** with the remaining reason. Failed report replacement, unconfirmed
 closure, and an explicitly conflicting verdict still require attention.
 
+### Semgrep follow-ups logged for repair later
+
+A Semgrep problem never fails an AVIT review once its report is attached and its
+verdict applied. This covers a tuned rule that does not pass its fixtures, a
+tuning check that cannot run, triage blocked by findings that share the
+fingerprint, and a Semgrep lookup or write that fails after the AVIT closed. The
+review completes with a warning, and each case is appended to
+`~/.threatlint/semgrep-tuning-backlog.jsonl` (`THREATLINT_HOME` relocates it).
+An entry records the AVIT, stage (`tuning`, `triage`, or `semgrep`), reason,
+rule, repository, branch, file and line, report attachment name, and any proposed
+tuned rule. It never records credentials. List the follow-ups with:
+
+```bash
+threatlint avit tuning-backlog          # readable list
+threatlint avit tuning-backlog --json   # one JSON object per follow-up
+```
+
+Repair a logged rule with the Semgrep step below once its cause is fixed.
+`threatlint avit resolve` exits with code 5 when the AVIT closed but a Semgrep
+step was logged for repair later.
+
 ## Re-running the Semgrep step
 
 If Semgrep acknowledged extra IDs, use the named triage audit to compare the

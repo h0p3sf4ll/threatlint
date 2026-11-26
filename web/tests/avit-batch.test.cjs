@@ -493,6 +493,32 @@ describe('False positive review batch', () => {
     assert.equal(calls.some(args => args[1] === 'resolve'), false);
   });
 
+  it('closes an evidence-backed FP without tuning and logs the follow-up when the first tuning check cannot run', async t => {
+    setupRefinement(t, '');
+    tuningResults = [{ code: 1, stdout: '', stderr: 'ERROR: Semgrep CLI crashed' }];
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.notEqual(final.stage, 'error', 'a tuning problem never fails the review');
+    assert.equal(final.stage, 'rule-not-tuned');
+    assert.ok(final.outcome.attached && final.outcome.closed);
+    const resolve = calls.find(args => args[1] === 'resolve');
+    assert.ok(resolve.includes('--skip-rule-tuning'));
+    assert.match(resolve[resolve.indexOf('--tuning-reason') + 1], /Semgrep could not validate the proposal/);
+    assert.match(resolvedReports[0], /Rule tuning status.*Rule not tuned/);
+  });
+
+  it('finishes a closed FP as a logged Semgrep follow-up, not an error, when the scanner step is uncertain', async t => {
+    setupRefinement(t, '');
+    resolveResult = { code: 5, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ! Semgrep follow-up needed (logged for repair later): Policy readback failed\n', stderr: '' };
+    t.after(() => { resolveResult = null; });
+    tuningResults = [{ status: 'blocked', disposition: 'FALSE POSITIVE', reason: 'Rule source unavailable' }];
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.notEqual(final.stage, 'error');
+    assert.ok(final.outcome.attached && final.outcome.closed);
+    assert.match(final.detail, /Rule source unavailable|Semgrep follow-up logged for repair later: Policy readback failed/);
+  });
+
   it('attaches and closes an evidence-backed FP when the Semgrep token is missing', async t => {
     setupRefinement(t, '');
     semgrepTokenMissing = true;

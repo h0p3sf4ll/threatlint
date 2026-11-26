@@ -925,9 +925,11 @@ async function reviewSemgrepAvit(avit, { job = {}, body = {}, credentials, integ
   }
   const triage = actual.triage_reason || (actual.status === 'triage_blocked' && actual.reason) || outcome.triageReason;
   if (triage) details.push(triage);
+  const followUp = actual.status === 'semgrep_followup' && typeof actual.reason === 'string' ? actual.reason : '';
+  if (followUp) details.push(`Semgrep follow-up logged for repair later: ${followUp}`);
   return { avit, disposition: actual.disposition, unverified: actual.unverified || false, closed: actual.disposition === 'FALSE POSITIVE',
     leftOpen: actual.disposition === 'TRUE POSITIVE', action: actual.disposition === 'FALSE POSITIVE' ? 'closed' : 'noted', attachments: [],
-    detail: details.join(' '), tuned: outcome.tuned, scannerWarning: Boolean(triage || (fp && actual.kind !== 'sca' && !outcome.tuned)) };
+    detail: details.join(' '), tuned: outcome.tuned, scannerWarning: Boolean(triage || followUp || (fp && actual.kind !== 'sca' && !outcome.tuned)) };
 }
 
 

@@ -375,7 +375,8 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
             snow_instance=args.snow_instance, aws_profile=args.aws_profile,
             semgrep_deployment=getattr(args, "semgrep_deployment", None),
             semgrep_rule_hash_id=getattr(args, "semgrep_rule_hash_id", None),
-            skip_semgrep=False, skip_rule_tuning=bool(tuning_reason), require_complete_semgrep=True, yes=True,
+            skip_semgrep=False, skip_rule_tuning=bool(tuning_reason), tuning_reason=tuning_reason,
+            require_complete_semgrep=True, yes=True,
         )
         triage_reason = ""
         scanner_error = ""
@@ -387,8 +388,9 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
         except TriageScopeBlocked as exc:
             completed, triage_reason = True, _safe_error(exc)
         except ClosedAvitSemgrepError as exc:
-            completed, scanner_error = False, _safe_error(exc)
-            print(f"ERROR: {avit} closed with its report. {scanner_error}", file=sys.stderr)
+            # The AVIT is closed with its report; the Semgrep step was logged for repair later, so the review completed.
+            completed, scanner_error = True, _safe_error(exc)
+            print(f"  ! {avit} closed with its report. Semgrep follow-up logged for repair later: {scanner_error}", flush=True)
         if triage_reason:
             print(f"  ! {triage_reason}", flush=True)
         pull_request = None
@@ -415,7 +417,7 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 print(f"  ! Report attached, but draft fix PR failed: {_safe_error(exc)}", flush=True)
         scanner_status = {}
         if scanner_error:
-            scanner_status = {"status": "semgrep_error", "reason": scanner_error}
+            scanner_status = {"status": "semgrep_followup", "reason": scanner_error}
         elif completed and tuning_reason:
             scanner_status = {"status": "rule_not_tuned", "reason": tuning_reason}
         elif triage_reason:

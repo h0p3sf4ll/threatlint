@@ -92,6 +92,11 @@ function runCli(args, { env = {}, signal, input, spawnImpl = spawn } = {}) {
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
 
 // Keep the fixture visible to the repair model even when a long YAML proposal fills the report excerpt.
+/** The report's own binary disposition, read when Semgrep cannot classify the draft. */
+function reportDisposition(markdown) {
+  return /\*\*Disposition\*\*\s*:\s*(FALSE POSITIVE|TRUE POSITIVE)/i.exec(markdown || '')?.[1]?.toUpperCase() || '';
+}
+
 // Matches src/threatlint/avit_headless.py OVERTURNED_NOTE.
 const OVERTURNED_NOTE = '\n\n**Disposition history**: The first review proposed FALSE POSITIVE, but its Semgrep tuning did not pass '
   + 'validation. Re-examining the code to repair the rule established a TRUE POSITIVE, so Threatlint reports a true positive and leaves the AVIT open.\n';
@@ -193,6 +198,7 @@ function resolveOutcome(output) {
     tuningReason: text.match(/^\s*! Rule not tuned: (.+)$/m)?.[1] || '',
     triageReason: text.match(/^(?:BLOCKED: |\s*! )(Semgrep triage blocked: .+)$/m)?.[1] || '',
     tuned: /^\s*✓ Rule tuning verified:/m.test(text),
+    followUp: text.match(/^\s*! Semgrep follow-up needed \(logged for repair later\): (.+)$/m)?.[1] || '',
   };
 }
 
@@ -398,19 +404,21 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         try {
           checked = await cli(['avit', 'prepare-tuning', ...draftArgs, ...(ruleBase ? ['--rule-base', basePath] : []), ...profile], { env, signal });
         } catch (error) {
-          if (!confirmedDraft || signal.aborted) throw error;
-          tuningReason = 'Semgrep could not check the revised proposal.';
+          if (signal.aborted) throw error;
+          // Tuning problems never fail the review: a false positive closes without tuning and is logged for repair.
+          if (!confirmedDraft && reportDisposition(markdown) !== 'FALSE POSITIVE') break;
+          confirmedDraft ??= { markdown, count };
+          tuningReason = `Semgrep could not check the proposal. ${error.message || ''}`.trim();
           break;
         }
         if (signal.aborted) throw new Error('Cancelled');
         try { tuning = JSON.parse(lastLine(checked.stdout)); } catch { tuning = null; }
         if (checked.code !== 0 || !['ready', 'refine', 'skipped', 'blocked'].includes(tuning?.status)
             || !['TRUE POSITIVE', 'FALSE POSITIVE'].includes(tuning.disposition)) {
-          if (confirmedDraft) {
-            tuningReason = 'Semgrep could not validate the revised proposal.';
-            break;
-          }
-          throw new Error(`The Semgrep tuning proof could not be checked before AVIT write-back: ${errorOf(checked)}`);
+          if (!confirmedDraft && reportDisposition(markdown) !== 'FALSE POSITIVE') break;
+          confirmedDraft ??= { markdown, count };
+          tuningReason = `Semgrep could not validate the proposal. ${errorOf(checked)}`.trim();
+          break;
         }
         const { status, disposition } = tuning;
         if (followups.tuning && disposition === 'TRUE POSITIVE') {
@@ -471,18 +479,22 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         // Not cancellable: once ServiceNow writes start, they finish so an AVIT is never left half-updated.
         const createFixPr = prepareFix && preparation?.status === 'ready' && disposition === 'TRUE POSITIVE';
         const resolved = await cli(['avit', 'resolve', avit, '--report', report.mdPath, '--docx', report.docxPath,
-          '--attachment-name', reviewAttachmentName(avit), '--checkout', repo, ...(missingSemgrepToken ? ['--skip-semgrep'] : tuningReason ? ['--skip-rule-tuning'] : []), ...(createFixPr ? ['--keep-checkout'] : []), '--yes', ...profile], { env });
+          '--attachment-name', reviewAttachmentName(avit), '--checkout', repo, ...(missingSemgrepToken ? ['--skip-semgrep'] : tuningReason ? ['--skip-rule-tuning', '--tuning-reason', tuningReason.slice(0, 1500)] : []), ...(createFixPr ? ['--keep-checkout'] : []), '--yes', ...profile], { env });
         const outcome = resolveOutcome(`${resolved.stdout}\n${resolved.stderr}`);
         if (tuningReason) outcome.tuningReason = tuningReason;
         if (missingSemgrepToken && disposition === 'FALSE POSITIVE' && target.code_security !== false) outcome.triageReason = 'Semgrep triage requires a configured API token.';
         // Each ServiceNow / Semgrep action is its own history entry before the final status.
         for (const action of outcomeActions(outcome, disposition)) step('resolving', action.detail, { action: action.kind });
-        if (disposition === 'FALSE POSITIVE' && [0, 3, 4].includes(resolved.code)) {
+        if (disposition === 'FALSE POSITIVE' && resolved.code === 5) {
+          // Closed with its report; the Semgrep step was logged for repair later (threatlint avit tuning-backlog).
+          outcome.triageReason = `Semgrep follow-up logged for repair later: ${outcome.followUp || 'Semgrep did not confirm the scanner update.'}`;
+        }
+        if (disposition === 'FALSE POSITIVE' && [0, 3, 4, 5].includes(resolved.code)) {
           if (!outcome.attached || outcome.closed !== true) {
             return step('error', 'ServiceNow did not confirm both Word report attachment and false-positive closure.', { disposition, outcome, done: true });
           }
           if (outcome.tuningReason || resolved.code === 4 || (tuning?.status === 'ready' && !outcome.tuned)) {
-            return step('rule-not-tuned', outcome.tuningReason || 'Semgrep did not confirm that tuning was applied.', { disposition, outcome, done: true });
+            return step('rule-not-tuned', outcome.tuningReason || (resolved.code === 5 && outcome.triageReason) || 'Semgrep did not confirm that tuning was applied.', { disposition, outcome, done: true });
           }
           if (outcome.triageReason) return step('triage-not-applied', outcome.triageReason, { disposition, outcome, done: true });
         }

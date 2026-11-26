@@ -41,6 +41,7 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--semgrep-rule-hash-id", help="Authoritative ruleHashId for Secrets-product correlation")
     resolve.add_argument("--skip-semgrep", action="store_true", help="Do not change Semgrep triage or rules")
     resolve.add_argument("--skip-rule-tuning", action="store_true", help="Ignore the Semgrep finding but do not replace the rule")
+    resolve.add_argument("--tuning-reason", default="", help="Why tuning was skipped; logged with the AVIT for Semgrep triage and repair later")
     resolve.add_argument("--checkout", help="The AVIT checkout (from `avit checkout`); used to validate the tuned rule, then deleted")
     resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
@@ -58,6 +59,8 @@ def add_resolve_parsers(actions) -> None:
     prepare.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
     prepare.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
     prepare.add_argument("--aws-profile", help="Accepted for workflow compatibility; evidence preparation uses no AWS credentials")
+    backlog = actions.add_parser("tuning-backlog", help="List Semgrep tuning, triage, and scanner follow-ups logged for repair later")
+    backlog.add_argument("--json", action="store_true", help="Print one JSON object per follow-up")
     tuning = actions.add_parser("prepare-tuning", help="Check a proposed Semgrep tuning before AVIT write-back")
     tuning.add_argument("number", metavar="AVIT")
     tuning.add_argument("--report", required=True, help="Reviewed Markdown report to assess")
@@ -127,11 +130,15 @@ def cmd_fix_pr(args) -> int:
 
 
 def run(handler, args, *, remove_checkout) -> int:
-    from threatlint.avit_report import RuleNotTuned  # noqa: PLC0415
+    from threatlint.avit_report import ClosedAvitSemgrepError, RuleNotTuned  # noqa: PLC0415
     from threatlint.avit_semgrep import TriageScopeBlocked  # noqa: PLC0415
 
     try:
         return handler(args)
+    except ClosedAvitSemgrepError as exc:
+        # The AVIT is closed with its report; the Semgrep step is logged for repair later and does not fail the run.
+        print(f"  ! Semgrep follow-up needed (logged for repair later): {exc}")
+        return 5
     except RuleNotTuned as exc:
         if exc.triage_reason:
             print(f"  ! {exc.triage_reason}")

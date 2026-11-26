@@ -389,7 +389,11 @@ def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeyp
     args = _args(tmp_path, _with_tuning(REPORT, "generic.secrets.aws-access-key"))
     args.skip_rule_tuning = False
     code = ar.run(ar.cmd_resolve, args)
-    assert code == {"scope": 3, "write": 1, "scope-and-tuning": 4, "uncertain-rule-write": 1}[failure]
+    # An uncertain Semgrep step after closure is logged for repair later (exit 5), not a failed resolve.
+    assert code == {"scope": 3, "write": 5, "scope-and-tuning": 4, "uncertain-rule-write": 5}[failure]
+    from threatlint import tuning_backlog
+    assert [item["stage"] for item in tuning_backlog.entries()] == [
+        {"scope": "triage", "write": "semgrep", "scope-and-tuning": "tuning", "uncertain-rule-write": "semgrep"}[failure]]
     assert len(tuned) == int(failure != "write")
     output = capsys.readouterr()
     assert "✓ Closed as false positive" in output.out
@@ -399,7 +403,7 @@ def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeyp
     elif failure == "scope":
         assert "BLOCKED: Semgrep triage blocked:" in output.err
     elif failure == "uncertain-rule-write":
-        assert "could not verify the rule update" in output.err
+        assert "could not verify the rule update" in output.out
         assert "Rule not tuned:" not in output.out
 
 

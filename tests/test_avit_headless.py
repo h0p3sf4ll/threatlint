@@ -339,20 +339,16 @@ def test_headless_reports_fp_closure_independently_from_semgrep(monkeypatch, cap
     monkeypatch.setattr(avit_headless, "_prove_tuned_rule", prove)
     monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
     monkeypatch.setattr(avit_resolve, "cmd_resolve", resolve)
-    assert avit_headless.run(args, "reviewer", "", "1.99") == int(case == "uncertain")
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 0, "Semgrep follow-ups never fail the review"
     assert len(prompts) == reviews
     captured = capsys.readouterr()
     result = json.loads(captured.out.splitlines()[-1])
     [outcome] = result["outcomes"]
-    if case == "changed-verdict":
-        assert resolved == []
-        assert (result["failed"], result["blocked"]) == (1, 0)
-        assert reason in captured.err and not outcome["completed"]
-    elif case == "uncertain":
+    if case == "uncertain":
         assert resolved == [AVIT_FP]
-        assert (result["completed"], result["failed"]) == (0, 1)
-        assert outcome["closed"] and not outcome["completed"] and outcome["disposition"] == "FALSE POSITIVE"
-        assert outcome["status"] == "semgrep_error" and reason in outcome["reason"]
+        assert (result["completed"], result["failed"]) == (1, 0)
+        assert outcome["closed"] and outcome["completed"] and outcome["disposition"] == "FALSE POSITIVE"
+        assert outcome["status"] == "semgrep_followup" and reason in outcome["reason"]
     else:
         assert resolved == [AVIT_FP]
         assert (result["completed"], result["failed"], result["blocked"]) == (1, 0, 0)
