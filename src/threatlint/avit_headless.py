@@ -445,6 +445,14 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
 def run(args, system_prompt: str, model: str, semgrep_version: str, *,
         provider: str = "codex", base_url: str = "", api_key: str = "") -> int:
     """Review each requested AVIT, attach its report, and apply its verdict headlessly."""
+    from .keep_awake import keep_awake  # noqa: PLC0415
+
+    with keep_awake():  # A long run must not be frozen by the Mac idle-sleeping.
+        return _run(args, system_prompt, model, semgrep_version, provider=provider, base_url=base_url, api_key=api_key)
+
+
+def _run(args, system_prompt: str, model: str, semgrep_version: str, *,
+         provider: str = "codex", base_url: str = "", api_key: str = "") -> int:
     isst_records: list[dict] = []
     try:
         args.semgrep_version = semgrep_version

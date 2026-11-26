@@ -159,8 +159,15 @@ def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str 
         done = threading.Event()
 
         def watchdog() -> None:
+            nonlocal started, last
+            checked = time.monotonic()
             while not done.wait(_WATCHDOG_POLL_S):
                 now = time.monotonic()
+                if now - checked > _WATCHDOG_POLL_S * 6:  # The computer slept: time asleep counts toward neither limit.
+                    asleep = now - checked - _WATCHDOG_POLL_S
+                    started += asleep
+                    last += asleep
+                checked = now
                 why = "timeout" if now - started > RUN_TIMEOUT_S else "stall" if now - last > IDLE_TIMEOUT_S else ""
                 if why:
                     expired["why"] = why

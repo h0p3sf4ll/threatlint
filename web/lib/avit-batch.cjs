@@ -559,7 +559,13 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
     }
   }
 
+  // A queue can run for hours: keep the Mac from idle-sleeping until it finishes, succeeds or fails.
   async function run(message, rawSend, controller) {
+    const release = (integrations.keepAwake || require('./keep-awake.cjs').keepAwake)();
+    try { return await runQueue(message, rawSend, controller); } finally { release(); }
+  }
+
+  async function runQueue(message, rawSend, controller) {
     // Every event carries the time it happened, so the page can keep a timestamped history per card and per run.
     const send = event => rawSend({ at: new Date().toISOString(), ...event });
     const { numbers, sctasks, issts, order, settings, execution } = validate(message);

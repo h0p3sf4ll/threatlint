@@ -5,7 +5,7 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
-const { superviseChild } = require('../lib/child-lifecycle.cjs');
+const { superviseChild, awakeTimer } = require('../lib/child-lifecycle.cjs');
 const { runCodex } = require('../lib/codex.cjs');
 const { runClaudeCode } = require('../lib/claude-code.cjs');
 const avit = require('../lib/avit-batch.cjs');
@@ -43,7 +43,7 @@ test('Python scanner subprocess cancellation waits for close before cleanup can 
 });
 
 test('timeout escalates TERM to KILL but does not claim exit until close', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const process = child(); let settled = false;
   const pending = new Promise((resolve, reject) => superviseChild(process, { timeoutMs: 10, killGraceMs: 5, timeoutMessage: 'fixture timeout',
     startMessage: 'fixture start error', resolve, reject, onClose: (_code, finish) => finish(null, 'done') }));
@@ -60,4 +60,28 @@ test('spawn failure without a pid rejects promptly and removes timers', async ()
     startMessage: 'fixture failed to start', resolve, reject, onClose: () => assert.fail('no child') }));
   process.emit('error', new Error('credentials must not be echoed'));
   await assert.rejects(pending, /fixture failed to start/);
+});
+
+// Advances mocked time the way real time passes: one interval tick at a time.
+function awake(t, ms, step) { for (let done = 0; done < ms; done += step) t.mock.timers.tick(step); }
+
+test('time asleep does not count toward a limit, so waking does not expire it', t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000_000 });
+  let expired = 0;
+  awakeTimer(60_000, () => { expired++; });  // ticks every 5 s
+  awake(t, 30_000, 5_000);                    // 30 s awake
+  t.mock.timers.setTime(Date.now() + 3_600_000);  // the laptop sleeps for an hour
+  t.mock.timers.tick(5_000);                  // first tick after waking
+  assert.equal(expired, 0, 'the hour asleep was not counted');
+  awake(t, 25_000, 5_000);                    // 30 more seconds awake reach the 60 s limit
+  assert.equal(expired, 1);
+});
+
+test('an awake limit still expires on time', t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000_000 });
+  let expired = 0;
+  const cancel = awakeTimer(1_000, () => { expired++; });  // ticks every 100 ms
+  awake(t, 900, 100); assert.equal(expired, 0);
+  awake(t, 100, 100); assert.equal(expired, 1);
+  cancel();
 });

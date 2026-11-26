@@ -125,9 +125,13 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
   try {
     return await new Promise((resolve, reject) => {
       const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : [], effort), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
-      let buffer = '', stderr = '', result = null, lastOutput = Date.now();
+      let buffer = '', stderr = '', result = null, lastOutput = Date.now(), lastCheck = Date.now();
       const idle = setInterval(() => {
-        if (Date.now() - lastOutput < idleMs) return;
+        const now = Date.now();
+        // A gap far longer than the check interval means the computer slept: time asleep is not a stall.
+        if (now - lastCheck > idleCheckMs * 6) lastOutput += now - lastCheck - idleCheckMs;
+        lastCheck = now;
+        if (now - lastOutput < idleMs) return;
         lifecycle.stop(new Error(`Claude Code stalled: no output for ${Math.round(idleMs / 60000)} minutes, so the run was stopped (often API rate limiting or overload).${lastErrorLine(stderr)}`));
       }, idleCheckMs);
       const settle = done => value => { clearInterval(idle); done(value); };
