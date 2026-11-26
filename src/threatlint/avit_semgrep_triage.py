@@ -197,7 +197,7 @@ def ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *, repos
             audit.record("scope_blocked", error=scope_reason, peers=peers)
             raise TriageScopeBlocked(f"Semgrep triage blocked: {scope_reason} "
                                      f"({len(peers)} outside the requested write). No Semgrep triage write was sent. "
-                                     f"Review the peer finding IDs and refs in triage audit {audit}")
+                                     f"Review the peer finding IDs and refs in triage audit {audit}", peers=peers)
         body = {"issue_type": kind, "issue_ids": pending, "repos": [repository], "ref": ref, "status": "open",
                 "new_triage_state": "ignored", "new_triage_reason": "false_positive", "new_note": note[:_NOTE_LIMIT],
                 **({"include_historical": False} if kind == "secrets" else {})}

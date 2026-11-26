@@ -361,6 +361,14 @@ threatlint avit tuning-backlog          # readable list
 threatlint avit tuning-backlog --json   # one JSON object per follow-up
 ```
 
+When a finding's fingerprint is shared with findings on other branches, Threatlint
+never sends the triage write, because Semgrep would also ignore those branches'
+findings without evidence about them. If the tuned rule was verified in the same
+run, that write is not needed: the review completes normally with **Semgrep
+triage not needed**, nothing is logged, and each other branch's finding clears on
+its next scan wherever the code is the same. Without a verified tuned rule, the
+blocked triage is logged as a `triage` follow-up.
+
 Repair a logged rule with the Semgrep step below once its cause is fixed.
 `threatlint avit resolve` exits with code 5 when the AVIT closed but a Semgrep
 step was logged for repair later.

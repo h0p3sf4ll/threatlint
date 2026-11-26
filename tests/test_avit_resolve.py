@@ -407,6 +407,43 @@ def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeyp
         assert "Rule not tuned:" not in output.out
 
 
+@pytest.mark.parametrize("tuning", ["verified", "failed"])
+def test_peer_fingerprint_block_needs_no_triage_once_tuning_is_verified(monkeypatch, tmp_path, capsys, tuning):
+    """A fingerprint shared with other branches blocks triage. A verified tuned rule makes that write unnecessary."""
+    from threatlint import tuning_backlog
+
+    monkeypatch.setattr(sn, "_request_json", FakeServiceNow())
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
+    match = {"id": 7, "path": "file.py", "line": 2, "ref": "test/feature", "rule": "fixture"}
+    monkeypatch.setattr(ar, "semgrep_matches", lambda *_a: ({"id": 1, "slug": "fixture"}, [match]))
+    peers = [{"id": 8, "ref": "release", "status": "open"}, {"id": 9, "ref": "prod", "status": "open"}]
+
+    def ignore(*_args):
+        raise ar.avit_semgrep_triage.TriageScopeBlocked("Semgrep triage blocked: shared fingerprint (2 outside)", peers=peers)
+
+    def tune(*_args):
+        if tuning == "failed":
+            raise ar.ResolveError("fixture check failed")
+        print("  ✓ Rule tuning verified: fixture.tuned selected in the detection policy")
+
+    monkeypatch.setattr(ar, "ignore_matches", ignore)
+    monkeypatch.setattr(ar, "_tune_verified_rule", tune)
+    args = _args(tmp_path, _with_tuning(REPORT, "generic.secrets.aws-access-key"))
+    args.skip_rule_tuning = False
+    code = ar.run(ar.cmd_resolve, args)
+    output = capsys.readouterr()
+    if tuning == "verified":
+        assert code == 0
+        assert "✓ Semgrep triage not needed: the verified tuned rule no longer reports this code" in output.out
+        assert "2 finding(s) on other branches (prod, release)" in output.out
+        assert "BLOCKED" not in output.err and tuning_backlog.entries() == [], "nothing to repair later"
+    else:
+        assert code == 4
+        assert [item["stage"] for item in tuning_backlog.entries()] == ["tuning"]
+        assert "Semgrep triage not needed" not in output.out
+
+
 @pytest.mark.parametrize("phase,expected", [
     ("attachment", ["attach"]),
     ("closure", ["attach", "close"]),

@@ -12,7 +12,14 @@ from threatlint.avit_report import ResolveError
 
 
 class TriageScopeBlocked(ResolveError):
-    """The requested finding identity or write scope could not be isolated before triage."""
+    """The requested finding identity or write scope could not be isolated before triage.
+
+    `peers` lists the findings on other refs that a triage write would also have changed ({"id", "ref", "status"}).
+    """
+
+    def __init__(self, message: str, peers: list | None = None):
+        super().__init__(message)
+        self.peers = list(peers or [])
 
 
 def request(path, token, *, body=None, api):

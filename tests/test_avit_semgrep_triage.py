@@ -86,6 +86,7 @@ def test_same_fingerprint_peers_across_pages_are_audited_before_write(home, kind
     assert audit["status"] == "scope_blocked" and "submitted_ids" not in audit
     assert audit["peers"] == [{"id": 2, "ref": "main", "status": "open"},
                               {"id": 3, "ref": "feature", "status": "ignored"}]
+    assert failure.value.peers == audit["peers"], "the block carries the peers for the tuned-rule decision"
 
 
 @pytest.mark.parametrize("preflight,reason", [

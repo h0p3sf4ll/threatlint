@@ -254,6 +254,14 @@ def _apply_semgrep_review(args, avit, markdown, context, token, dep, target, kin
                 print(f"  ! {scope_block}")
             print(f"  ! Rule not tuned: {exc}")
             return 1
+        if scope_block and getattr(scope_block, "peers", None):
+            # The verified tuned rule no longer reports this code, so the triage write is not needed. The other refs'
+            # findings were left untouched: each clears on that branch's next scan wherever its code is the same.
+            refs = sorted({str(peer.get("ref") or "?") for peer in scope_block.peers})
+            print(f"  ✓ Semgrep triage not needed: the verified tuned rule no longer reports this code. Its fingerprint is "
+                  f"shared with {len(scope_block.peers)} finding(s) on other branches ({', '.join(refs)}), so no triage write "
+                  "was sent; each clears on its branch's next scan where the code is the same.")
+            return 0
     if scope_block:
         raise scope_block
     return int(not matches and getattr(args, "require_complete_semgrep", False))
