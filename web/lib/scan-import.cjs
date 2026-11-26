@@ -897,7 +897,13 @@ async function reviewSemgrepAvit(avit, { job = {}, body = {}, credentials, integ
   let summary;
   try { summary = JSON.parse(String(result.stdout).trim().split(/\r?\n/).at(-1)); } catch { /* verified below */ }
   const actual = Array.isArray(summary?.outcomes) && summary.outcomes.length === 1 && summary.outcomes[0]?.avit === avit ? summary.outcomes[0] : null;
+  const outcome = resolveOutcome(result.stdout);
   if (result.code !== 0) {
+    if (result.code === 1 && summary?.type === 'finding_review_result' && actual?.status === 'semgrep_error' && actual.closed === true
+        && actual.disposition === 'FALSE POSITIVE' && outcome.attached && outcome.closed === true && typeof actual.reason === 'string') {
+      return { avit, disposition: actual.disposition, closed: true, leftOpen: false, action: 'closed', attachments: [],
+        error: actual.reason, detail: `Word report attached. Closed as false positive. ${actual.reason}`, tuned: outcome.tuned };
+    }
     if (result.code === 1 && summary?.type === 'finding_review_result' && summary.completed === 0 && summary.blocked === 1 && summary.failed === 0
       && actual?.completed === false && actual.status === 'blocked' && actual.disposition === 'FALSE POSITIVE'
       && typeof actual.reason === 'string' && actual.reason.trim()) {
@@ -909,11 +915,18 @@ async function reviewSemgrepAvit(avit, { job = {}, body = {}, credentials, integ
     throw new HttpError(`Shared Finding Review did not complete: ${errorOf(result)}. No additional ServiceNow update was attempted.`, 502);
   }
   if (!actual?.completed || !['TRUE POSITIVE', 'FALSE POSITIVE'].includes(actual.disposition)) throw new HttpError('Shared Finding Review returned no complete binary outcome; inspect its ServiceNow and Semgrep results before retrying.', 502);
-  const outcome = resolveOutcome(result.stdout);
-  if (actual.disposition === 'FALSE POSITIVE' && (!outcome.closed || (actual.kind !== 'sca' && !outcome.tuned))) throw new HttpError('The shared review did not confirm both false-positive closure and Semgrep rule tuning; inspect the partial outcome before retrying.', 502);
+  const fp = actual.disposition === 'FALSE POSITIVE';
+  if (fp && (!outcome.attached || outcome.closed !== true)) throw new HttpError('The shared review did not confirm both Word attachment and false-positive closure. Inspect the tracker receipt before retrying.', 502);
+  const details = fp ? ['Word report attached. Closed as false positive.'] : ['Report attached. True positive left open.'];
+  if (fp && actual.kind !== 'sca') {
+    const reason = actual.status === 'rule_not_tuned' && actual.reason || outcome.tuningReason;
+    details.push(outcome.tuned ? 'Semgrep rule tuning verified.' : `Rule not tuned. ${reason || 'Semgrep did not confirm that tuning was applied.'}`);
+  }
+  const triage = actual.triage_reason || (actual.status === 'triage_blocked' && actual.reason) || outcome.triageReason;
+  if (triage) details.push(triage);
   return { avit, disposition: actual.disposition, unverified: actual.unverified || false, closed: actual.disposition === 'FALSE POSITIVE',
     leftOpen: actual.disposition === 'TRUE POSITIVE', action: actual.disposition === 'FALSE POSITIVE' ? 'closed' : 'noted', attachments: [],
-    detail: `Shared review of the AVIT revision completed: ${actual.disposition}; ${actual.disposition === 'FALSE POSITIVE' ? (actual.kind === 'sca' ? 'Semgrep Supply Chain triage completed (no code rule)' : 'Semgrep rule tuning validated and applied') : 'left open; no rule suppressed'}. The shared review report is attached to the AVIT.`, tuned: outcome.tuned };
+    detail: details.join(' '), tuned: outcome.tuned, scannerWarning: Boolean(triage || (fp && actual.kind !== 'sca' && !outcome.tuned)) };
 }
 
 
@@ -1035,7 +1048,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     const job = { id, execution, status: 'queued', source: detected.source, format: detected.format, filename: name, title: `${SOURCES[detected.source]} import — ${name}`, target: '',
       counts: { total: 0, tp: 0, fp: 0, unverified: 0 }, findings: [], reportId: null, sessionId: workspace?.id || null, workspaceId: workspace?.id || null, avit,
       ...(number && !avit ? { number } : {}),
-      model: settings ? { provider: settings.provider, model: settings.model } : null, warning, detail: 'Queued', servicenow: null, scanners: {}, createdAt: Date.now(), updatedAt: Date.now() };
+      model: settings ? { provider: settings.provider, model: settings.model, ...(settings.effort ? { effort: settings.effort } : {}) } : null, warning, detail: 'Queued', servicenow: null, scanners: {}, createdAt: Date.now(), updatedAt: Date.now() };
     jobs.set(id, job);
     while (jobs.size > MAX_JOBS) jobs.delete(jobs.keys().next().value);
     persist();

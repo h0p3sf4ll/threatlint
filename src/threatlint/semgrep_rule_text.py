@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from textwrap import dedent
 
 EXCLUSION = re.compile(r"^\s*-?\s*(pattern-not(?:-inside|-regex)?|metavariable-regex|pattern-sanitizers|regex):")
 
@@ -23,7 +24,7 @@ def fixture_lines(fixtures: str, rule_id: str) -> tuple[list[int], list[int]]:
     """Expected matching and nonmatching lines using Semgrep's marker convention."""
     expect, avoid = [], []
     for number, line in enumerate(fixtures.splitlines(), start=1):
-        marker = re.search(r"(ruleid|ok):\s*([\w.,\s-]+?)\s*(?:-->|\*/)?\s*$", line) or re.search(r"(ruleid|ok):\s*([\w.,\s-]+)", line)
+        marker = re.search(r"\b(ruleid|ok):\s*([\w.,\s-]+?)\s*(?:-->|\*/)?\s*$", line) or re.search(r"\b(ruleid|ok):\s*([\w.,\s-]+)", line)
         if marker and rule_id in [part.strip() for part in marker.group(2).split(",")]:
             # A standalone marker annotates the next line; a trailing marker annotates its own line.
             own_line = bool(line[:marker.start()].strip(" \t/#*-<!"))
@@ -46,8 +47,32 @@ def needs_named_fixture(rule_yaml: str, target_file: str) -> bool:
 
 
 def exclusions(rule_yaml: str, pattern: re.Pattern = EXCLUSION) -> list[str]:
-    """Exclusion and sanitizer lines, compared without indentation."""
-    return [line.strip() for line in rule_yaml.splitlines() if pattern.match(line)]
+    """Include multiline operands when comparing live and proposed constraints."""
+    lines, constraints = rule_yaml.splitlines(), []
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        header = line.strip()
+        value = line[match.end():].split("#", 1)[0].strip()
+        if value and not re.fullmatch(r"[>|][+\d-]{0,2}", value):
+            constraints.append(header)
+            continue
+        indent = match.start(1)
+        end = index + 1
+        while end < len(lines):
+            stripped = lines[end].lstrip()
+            depth = len(lines[end]) - len(stripped)
+            if stripped and depth <= indent and not (depth == indent and not value and stripped.startswith("- ")):
+                break
+            end += 1
+        body = dedent("\n".join(lines[index + 1:end])).rstrip()
+        # Extra sanitizer alternatives may extend the rule while keeping every prior alternative.
+        items = re.split(r"(?m)^(?=- )", body) if match[1] == "pattern-sanitizers" else [body]
+        constraints.extend(header + "\n" + item.rstrip() for item in items if item.strip())
+        if not body:
+            constraints.append(header)
+    return constraints
 
 
 def normalize_for_merge(text: str) -> str:

@@ -187,7 +187,7 @@ def test_tuning_commands_pass_the_exact_project_name(monkeypatch, tmp_path, comm
 @pytest.mark.parametrize("command", ["resolve", "semgrep"])
 @pytest.mark.parametrize("finding_source", ["SAST", "Secrets"])
 @pytest.mark.parametrize("live", ["absent", "still-matches", "covers-line"])
-def test_incomplete_tuning_never_changes_trackers_unless_live_rule_covers_the_line(
+def test_incomplete_proposal_can_close_an_avit_but_cannot_publish_a_rule(
     monkeypatch, tmp_path, capsys, command, finding_source, live,
 ):
     from threatlint import semgrep_platform as sp
@@ -211,6 +211,7 @@ def test_incomplete_tuning_never_changes_trackers_unless_live_rule_covers_the_li
     monkeypatch.setattr(ar, "semgrep_matches", lambda *_args: ({"id": 7, "slug": "fixture"}, matches))
     monkeypatch.setattr(ar, "ignore_matches", lambda *_args: steps.append("triage") or 1)
     monkeypatch.setattr(sp, "existing_tuning", lambda *_args, **_kwargs: [] if live == "absent" else active)
+    monkeypatch.setattr(sp, "policy_reads", lambda *_args: [])
     monkeypatch.setattr(sp, "original_rule_yaml", lambda *_args: f"rules:\n- id: fixture.{rule}.tuned\n")
     monkeypatch.setattr(sp, "disable_originals", lambda *_args, **_kwargs: steps.append("policy check") or [])
     monkeypatch.setattr(sp, "validate_tuned_rule", lambda *_args: pytest.fail("An incomplete proposal cannot be validated"))
@@ -224,14 +225,15 @@ def test_incomplete_tuning_never_changes_trackers_unless_live_rule_covers_the_li
     monkeypatch.setattr(sp, "_matches", scan)
     args = _args(tmp_path, _with_tuning(REPORT, rule, fixtures=False))
     args.checkout, args.skip_rule_tuning, args.line = str(tmp_path), False, None
-    result = (ar.cmd_resolve if command == "resolve" else ar.cmd_semgrep)(args)
+    result = ar.run(ar.cmd_resolve if command == "resolve" else ar.cmd_semgrep, args)
+    initial = ["attach", "close", "triage"] if command == "resolve" else []
     if live == "covers-line":
         assert result == 0
-        tracker_writes = ["attach", "close"] if command == "resolve" else []
-        assert steps == ["live scan", *tracker_writes, "triage", "live scan", "policy check"]
+        standalone_triage = ["triage"] if command == "semgrep" else []
+        assert steps == [*initial, "live scan", *standalone_triage, "live scan", "policy check"]
     else:
-        assert result == 1
-        assert steps == (["live scan"] if live == "still-matches" else [])
+        assert result == (4 if command == "resolve" else 1)
+        assert steps == initial + (["live scan"] if live == "still-matches" else [])
         assert "fixtures" in capsys.readouterr().out
 
 
@@ -356,7 +358,7 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     assert "Closed as false positive" in out.getvalue()
 
 
-@pytest.mark.parametrize("failure", ["scope", "write", "scope-and-tuning"])
+@pytest.mark.parametrize("failure", ["scope", "write", "scope-and-tuning", "uncertain-rule-write"])
 def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeypatch, tmp_path, capsys, failure):
     fake = FakeServiceNow()
     monkeypatch.setattr(sn, "_request_json", fake)
@@ -373,12 +375,17 @@ def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeyp
         tuned.append(True)
         if failure == "scope-and-tuning":
             raise ar.ResolveError("fixture check failed")
+        if failure == "uncertain-rule-write":
+            from threatlint.semgrep_platform import SemgrepError
+            error = SemgrepError("Policy readback failed after submission")
+            error.tuning_write_uncertain = True
+            raise error
     monkeypatch.setattr(ar, "ignore_matches", ignore)
     monkeypatch.setattr(ar, "_tune_verified_rule", tune)
     args = _args(tmp_path, _with_tuning(REPORT, "generic.secrets.aws-access-key"))
     args.skip_rule_tuning = False
     code = ar.run(ar.cmd_resolve, args)
-    assert code == (3 if failure == "scope" else 1)
+    assert code == {"scope": 3, "write": 1, "scope-and-tuning": 4, "uncertain-rule-write": 1}[failure]
     assert len(tuned) == int(failure != "write")
     output = capsys.readouterr()
     assert "✓ Closed as false positive" in output.out
@@ -387,6 +394,39 @@ def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeyp
         assert "shared fingerprint" in output.out and "fixture check failed" in output.out
     elif failure == "scope":
         assert "BLOCKED: Semgrep triage blocked:" in output.err
+    elif failure == "uncertain-rule-write":
+        assert "could not verify the rule update" in output.err
+        assert "Rule not tuned:" not in output.out
+
+
+@pytest.mark.parametrize("phase,expected", [
+    ("attachment", ["attach"]),
+    ("closure", ["attach", "close"]),
+    ("ambiguous-location", ["attach", "close", "locate"]),
+])
+def test_semgrep_location_work_requires_acknowledged_fp_attachment_and_closure(monkeypatch, tmp_path, phase, expected):
+    steps = []
+    def attach(*_args):
+        steps.append("attach")
+        if phase == "attachment":
+            raise ar.ResolveError("ServiceNow did not confirm the attachment")
+    def close(*_args):
+        steps.append("close")
+        return {"state": "1" if phase == "closure" else "3", "substate": "3"}
+    def locate(*_args):
+        steps.append("locate")
+        raise ar.avit_semgrep.TriageScopeBlocked("Semgrep triage blocked: Multiple snippet locations")
+    monkeypatch.setattr(ar, "_session", lambda *_: (INSTANCE, "test"))
+    monkeypatch.setattr(ar, "_record", lambda *_: {"sys_id": SYS_ID, "in_view": True, "fields": {},
+                                                   "context": {"finding_source": "SAST"}})
+    monkeypatch.setattr(ar, "_replace_report", attach)
+    monkeypatch.setattr(ar, "update", close)
+    monkeypatch.setattr(ar, "_locate_scanner_snippet", locate)
+    monkeypatch.setattr(ar, "_semgrep_resolution", lambda *_: pytest.fail("Ambiguous finding must remain untouched"))
+    args = _args(tmp_path, REPORT)
+    args.skip_rule_tuning = False
+    assert ar.run(ar.cmd_resolve, args) == (4 if phase == "ambiguous-location" else 1)
+    assert steps == expected
 
 
 def test_headless_false_positive_still_tunes_rule_without_semgrep_match_and_reports_partial_completion(monkeypatch, tmp_path):
@@ -405,7 +445,7 @@ def test_headless_false_positive_still_tunes_rule_without_semgrep_match_and_repo
     flagged.parent.mkdir(parents=True)
     flagged.write_text("flagged\n", encoding="utf-8")
     args.checkout = str(tmp_path)
-    assert ar.cmd_resolve(args) == 1
+    assert ar.run(ar.cmd_resolve, args) == 3
     assert tuned == [True], "missing triage match must not suppress a proven rule update"
     assert any(method == "PATCH" for method, _url, _data in fake.calls)
     assert any("/attachment/file" in url for _method, url, _data in fake.calls)

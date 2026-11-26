@@ -127,10 +127,16 @@ def cmd_fix_pr(args) -> int:
 
 
 def run(handler, args, *, remove_checkout) -> int:
+    from threatlint.avit_report import RuleNotTuned  # noqa: PLC0415
     from threatlint.avit_semgrep import TriageScopeBlocked  # noqa: PLC0415
 
     try:
         return handler(args)
+    except RuleNotTuned as exc:
+        if exc.triage_reason:
+            print(f"  ! {exc.triage_reason}")
+        print(f"  ! Rule not tuned: {exc}")
+        return 4
     except TriageScopeBlocked as exc:
         # Workbench distinguishes a confirmed pre-write scope block from an uncertain write.
         print(f"BLOCKED: {exc}", file=sys.stderr)

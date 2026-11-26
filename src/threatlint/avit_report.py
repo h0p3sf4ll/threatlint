@@ -16,6 +16,18 @@ class ResolveError(RuntimeError):
     """A user-actionable resolution failure; messages never contain credentials."""
 
 
+class RuleNotTuned(ResolveError):
+    """The AVIT closed with its report but rule tuning did not complete."""
+
+    def __init__(self, reason: str, triage_reason: str = ""):
+        super().__init__(reason)
+        self.triage_reason = triage_reason
+
+
+class ClosedAvitSemgrepError(ResolveError):
+    """An operational Semgrep failure after ServiceNow confirmed the attachment and closure."""
+
+
 def _field(body: str, name: str) -> str:
     values = report_fields(body, name)
     return values[0] if values else ""

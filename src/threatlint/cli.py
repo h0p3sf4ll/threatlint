@@ -112,7 +112,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if agent_name in _SEMGREP_AGENTS:
         args.semgrep_version = _semgrep_version()
-        if not args.semgrep_version:
+        if not args.semgrep_version and not getattr(args, "resolve_avits", False):
             print(_red("ERROR: Semgrep CLI is not installed."))
             print(_SEMGREP_INSTALL)
             return 1
@@ -122,7 +122,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         model = _default_run_model(provider, getattr(args, "model", ""))
         if getattr(args, "daybreak_blue", False) and not model:
             model = "gpt-6-sol"
-        return run_avit_headless(args, system_prompt, model, args.semgrep_version,
+        return run_avit_headless(args, system_prompt, model, args.semgrep_version or "",
                                  provider=provider, base_url=base_url, api_key=api_key)
 
     repo_root = _git_output("rev-parse", "--show-toplevel") or str(Path.cwd())

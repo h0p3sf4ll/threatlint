@@ -106,10 +106,12 @@ def _canonical(bundle: dict) -> dict:
     return result
 
 
-def _propose(bundle: dict, project: str, original: str, tuned: str, error_type: type[Exception]) -> dict:
-    """A copy of the bundle that excludes `original` and includes `tuned` for this project only."""
+def _propose(bundle: dict, project: str, excluded: list[str], tuned: str, error_type: type[Exception]) -> dict:
+    """Switch this project's original and any live predecessor to the proven version in one bundle."""
     candidate = deepcopy(bundle)
-    for rule, exception_type in ((original, "exclude"), (tuned, "include")):
+    selections = dict.fromkeys(excluded, "exclude")
+    selections[tuned] = "include"
+    for rule, exception_type in selections.items():
         entries = [item for item in candidate["exceptions"]
                    if item.get("project") == project and item.get("rule_type") == "rule" and item.get("rule") == rule]
         if len(entries) > 1:
@@ -124,6 +126,8 @@ def _propose(bundle: dict, project: str, original: str, tuned: str, error_type: 
 def _dry_run(endpoint: str, token: str, body: dict, state_version: str, *, call: Callable, error_type: type[Exception]) -> str:
     """The state_version to write against, once the server validates the proposal without changes underneath it."""
     preview = call(endpoint + ":dryRun", token, method="POST", body=deepcopy(body))
+    if not isinstance(preview, dict):
+        raise error_type("Unified detection policy dry run returned an incomplete validation result")
     if preview.get("validation_errors"):
         raise error_type("Unified detection policy dry run rejected the proposal; no policy was changed")
     if preview.get("state_version") != state_version:
@@ -135,7 +139,7 @@ def _write_and_verify(endpoint: str, token: str, body: dict, if_match: str, prod
                       call: Callable, error_type: type[Exception]) -> str:
     """PUT once with If-Match, then read back; returns the persisted state_version. Fills rollback['if_match']."""
     applied = call(endpoint, token, method="PUT", body=deepcopy(body), headers={"If-Match": if_match})
-    if not isinstance(applied.get("state_version"), str) or not applied["state_version"]:
+    if not isinstance(applied, dict) or not isinstance(applied.get("state_version"), str) or not applied["state_version"]:
         raise error_type("Unified detection policy apply response is missing state_version; verify before rollback")
     rollback["if_match"] = applied["state_version"]
     persisted = snapshot(call(endpoint, token), product, error_type)
@@ -147,12 +151,13 @@ def _write_and_verify(endpoint: str, token: str, body: dict, if_match: str, prod
 
 
 def apply(token: str, dep: dict, policy: dict, original: str, tuned: str, project: str, *,
-          call: Callable, same_rule: SameRule, error_type: type[Exception]) -> list[dict]:
+          call: Callable, same_rule: SameRule, error_type: type[Exception], previous: str = "") -> list[dict]:
     """Exclude `original` and include `tuned` for `project`; [] when the bundle already says so, else one change record."""
     before = policy["snapshot"]
     bundle = before["bundle"]
-    check_scope(bundle, project, [original, tuned], same_rule=same_rule, error_type=error_type)
-    candidate = _propose(bundle, project, original, tuned, error_type)
+    excluded = [original, previous] if previous else [original]
+    check_scope(bundle, project, [*excluded, tuned], same_rule=same_rule, error_type=error_type)
+    candidate = _propose(bundle, project, excluded, tuned, error_type)
     if candidate == bundle:
         return []
     endpoint = path(dep["id"], policy["id"])
@@ -163,7 +168,9 @@ def apply(token: str, dep: dict, policy: dict, original: str, tuned: str, projec
         state_version = _write_and_verify(endpoint, token, body, if_match, policy["id"], rollback, call=call, error_type=error_type)
     except error_type as exc:
         exc.rollback = rollback
+        status = getattr(exc, "status", None)
+        exc.tuning_write_uncertain = "if_match" in rollback or status is None or status >= 500
         raise
     return [{"policy": policy["name"], "policy_id": policy["id"], "original": original, "tuned": tuned,
              "project": project, "mode": "include", "original_mode": "detection",
-             "state_version": state_version, "rollback": rollback}]
+             "state_version": state_version, "rollback": rollback, **({"previous": previous} if previous else {})}]

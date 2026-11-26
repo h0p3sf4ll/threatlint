@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from threatlint import semgrep_unified as unified
@@ -32,11 +33,16 @@ def products(kind: str) -> list[str]:
 
 def tunes(path: str, original_rule: str) -> bool:
     """Compare the complete rule ID, never only its last segment."""
-    path, rule = path.lower(), original_rule.lower().removesuffix(".tuned")
+    path = path.lower()
     if not path.endswith(".tuned"):
         return False
-    stem = path[:-len(".tuned")]
+    stem, rule = original_id(path), original_id(original_rule.lower())
     return stem == rule or stem.endswith("." + rule)
+
+
+def original_id(rule: str) -> str:
+    """Remove only a complete Threatlint tuning suffix, including a private publication's version."""
+    return re.sub(r"(?:\.tl-[0-9a-f]{32})?\.tuned$", "", rule)
 
 
 def policy_reads(token, dep, *, call, error_type):
@@ -145,10 +151,13 @@ def existing_tuning(token, dep, kind, original_rule, *, call, policy_rules, proj
                     if project:
                         unified.check_scope(bundle, project, [rule], same_rule=same_rule, error_type=error_type)
                     found.append({"policy": policy["name"], "policy_id": policy["id"], "tuned": rule,
-                                  "mode": "include", "project": project, "unified": True})
+                                  "mode": "include", "project": project, "unified": True,
+                                  "state_version": policy["snapshot"]["state_version"]})
             continue
         for rule in policy_rules(str(dep["id"]), str(policy["id"]), token):
             path = str(rule.get("path", ""))
             if tunes(path, original_rule) and rule.get("policyMode") != "MODE_DISABLED":
                 found.append({"policy": policy.get("name"), "tuned": path, "mode": rule.get("policyMode")})
+    if project and len(found) > 1 and any(item.get("unified") for item in found):
+        raise error_type("Several active Unified rules or products match this tuning for the project")
     return found

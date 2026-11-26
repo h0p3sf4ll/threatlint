@@ -268,18 +268,30 @@ def _check_fixture_result(result, rule_path, fixture_path, expect, avoid, *, err
             raise ValueError
     except (AttributeError, KeyError, StopIteration, TypeError, ValueError):
         raise error_type("Semgrep did not return fixture results for the proposed rule and its paired file.") from None
+    if check.get("errors") or result.returncode not in (0, 1):
+        raise error_type("Semgrep could not complete the fixture check. Partial matches cannot establish rule behavior.")
     if set(expected) != set(expect):
-        raise error_type("Tuned rule fixtures did not pass: Semgrep did not recognize all ruleid markers. "
-                         "Use a standalone target-language comment immediately before each expected match.")
-    missed = set(expected) - set(reported)
-    extra = (set(reported) - set(expected)) | set(avoid).intersection(reported)
-    if missed or extra:
         raise error_type(
-            f"Tuned rule fixtures did not pass: missed true-positive lines {_line_list(missed)}. "
-            f"Unexpected matches on fixture lines {_line_list(extra)}. "
-            "Keep the ruleid cases detectable and compare each extra match with the proved safe context."
+            f"Tuned rule fixtures did not pass: ruleid markers target lines {_line_list(expect)} "
+            f"but Semgrep recognized {_line_list(expected)}. Put a standalone target-language "
+            "comment immediately above each match start."
         )
-    if result.returncode or check.get("passed") is not True or check.get("errors"):
+    missed = set(expected) - set(reported)
+    still_flagged = set(avoid).intersection(reported)
+    unmarked = set(reported) - set(expected) - set(avoid)
+    if missed or still_flagged or unmarked:
+        # The report already contains the fixture. Give the reviewer its exact coordinates
+        # without echoing literals, credentials, or source into the audit log.
+        issues = []
+        if missed:
+            issues.append(f"Missed ruleid lines {_line_list(missed)}. Check the original match start and retain these positive controls.")
+        if still_flagged:
+            issues.append(f"Matched ok lines {_line_list(still_flagged)}. Trace which rule alternative still matches the proved safe case.")
+        if unmarked:
+            issues.append(f"Matched unmarked lines {_line_list(unmarked)} (ruleid {_line_list(expect)}, ok {_line_list(avoid)}). "
+                          "Check for an offset marker or an incidental setup call. Mark a genuine positive at its start or isolate the setup.")
+        raise error_type("Tuned rule fixtures did not pass: " + " ".join(issues))
+    if result.returncode or check.get("passed") is not True:
         raise error_type("Semgrep did not complete a passing fixture check for the proposed rule.")
 
 
@@ -298,6 +310,11 @@ def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures=""
         raise error_type(_rule_validation_error(check))
     if not fixtures:
         raise error_type("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
+    deferred = [number for number, source in enumerate(fixtures.splitlines(), 1)
+                if re.search(r"(?:#|//|/\*|<!--|\(\*)\s*todo(?:ruleid|ok):", source)]
+    if deferred:
+        raise error_type(f"Tuned rule fixtures did not pass: deferred test annotations on lines {_line_list(deferred)}. "
+                         "Replace each deferred case with an asserted ruleid or ok control and correct its matching behavior.")
     scan_path = _write_fixture(work, rule_id, target_file, rule_yaml, fixtures)
     expect, avoid = fixture_lines(fixtures, rule_id)
     if not expect or not avoid:

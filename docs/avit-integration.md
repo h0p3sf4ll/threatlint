@@ -58,9 +58,9 @@ checks out its recorded repository and branch, reviews the evidence, attaches
 its Word report, and applies the disposition. It prints each result and removes
 the temporary checkout and report files. An AVIT with a true-positive verdict
 gets the report and a work note while staying open. A false positive gets the
-report, a closure request, and scoped Semgrep triage; SAST and Secrets also get
-proof-gated rule tuning. Before write-back, the runner asks the selected model
-to repair a missing or invalid rule proposal and validates the result. The CLI
+report, a closure request, and scoped Semgrep triage. For SAST and Secrets, the
+runner also asks the selected model to repair a missing or invalid rule proposal.
+If the proposal fails validation, the AVIT can still close with its Word report. The CLI
 does this without Dia or UI actions. Omit `--resolve-avits --yes` for a
 report-only AVIT review.
 
@@ -97,19 +97,24 @@ Use `--snow-instance URL` or saved instance settings, and `--aws-profile PROFILE
 when credentials come from a named AWS profile. Fetch also accepts repeated
 `--avit` values or `--avit-file` containing a list of numbers.
 
-**Check the output, not just the exit code.** ServiceNow can override requested
-state values, and some Semgrep gaps are warnings even when `resolve` exits 0.
-Attachment, closure, finding triage, and rule deployment are separate operations,
-not one transaction.
-The headless runner exits nonzero when an AVIT or a required Semgrep/ISST step
-cannot be completed. The AVIT report and closure may already be stored when a
-later ServiceNow or Semgrep operation fails.
+**Read the operation receipts.** ServiceNow can override requested state values.
+Threatlint records attachment, closure, finding triage, and rule deployment separately.
+After verified FP attachment and closure, `avit resolve` exits `3` when the Semgrep
+triage scope cannot be isolated and `4` when rule tuning could not complete.
+A combined scope and tuning refusal returns `4` with both reasons. Operational
+failures, including uncertain writes, return `1`.
+
+The headless runner emits a `finding_review_result` JSON summary. A closed FP with
+`status: "rule_not_tuned"` or `"triage_blocked"` counts as a completed AVIT.
+An operational scanner failure after closure sets `closed: true`,
+`status: "semgrep_error"` and makes the batch exit nonzero.
 
 ## One-time setup
 
-Setup checks for ServiceNow OAuth credentials, an Azure DevOps PAT, and a Semgrep
-API token. The Workbench gates batches on these checks and local Semgrep
-availability. Individual CLI stages use the credentials their operation needs.
+Setup checks for ServiceNow OAuth credentials, an Azure DevOps PAT, a Semgrep
+API token, and the local Semgrep executable. Model review and ServiceNow write-back
+can proceed when Semgrep is unavailable. Cloud triage requires the API token.
+Validating new rule proposals also requires the local engine.
 In the app, service credentials are under **Settings → Scanning & triage**.
 
 | Need | Configure / verify |
@@ -276,13 +281,13 @@ matched and its own `ruleHashId` is used. If findings with different rules share
 nothing is changed and you choose one with `--semgrep-rule-hash-id`.
 When the AVIT lacks a line, Threatlint looks for an exact, unique single-line
 scanner excerpt in the named checkout. The original rule or one exact Semgrep
-finding must corroborate that location before write-back. Supply the original
+finding must corroborate that location before any scanner write. Supply the original
 scanner line and revision when the excerpt is ambiguous or the checkout has moved.
 A Semgrep ignore can immediately affect
 other refs with the same fingerprint. Threatlint checks the project's findings
 across refs before submitting IDs and stops when it cannot establish the requested
-scope. A fingerprint collision produces a blocked result with the peer finding
-IDs, refs, and statuses in the local audit. Independently requested rule tuning
+scope. A fingerprint collision leaves the Semgrep findings in place and records
+the peer finding IDs, refs, and statuses in the local audit. Independently requested rule tuning
 can still proceed through its proof and policy checks. If a write was attempted,
 Threatlint checks the affected IDs in the response and reads back their stored
 status. An unverified write stops further Semgrep updates.
@@ -304,9 +309,11 @@ fixtures:
    cannot reproduce the finding locally.
 4. After proof, publish `org_private`. Legacy policy replacements enable the
    tuned rule in `MODE_MONITOR` before disabling the original. Unified policies
-   use project-scoped inclusion and exclusion when the original rule selection
-   is direct or an exact open finding proves the ruleset association. Inspect
-   the printed policy changes and rollback instructions.
+   select a versioned private rule for the exact project. A direct rule selection
+   or an exact open finding must establish the original rule's association.
+   Threatlint dry-runs the project exceptions, applies them against the observed
+   policy version, and reads the policy back before reporting deployment.
+   [Semgrep policy tuning and rollback](semgrep-policies.md)
 
 An existing tuning is checked against the flagged location. If it still reports
 the line, the proposed extension must preserve its existing exclusions; conflicting
@@ -314,11 +321,11 @@ proposals are rejected. Pro/interfile findings may rely on fixture proof when th
 local checkout cannot reproduce the line.
 
 Workbench and the headless runner check the proposed rule and fixtures against
-the flagged file **before** AVIT write-back. The configured model gets up to two
-attempts to repair a proposal that fails validation. If the required proof
-remains unavailable, the result is **Blocked** with the false-positive verdict and
-the outstanding proof requirement. This happens before report attachment and AVIT
-closure. A later triage block preserves completed ServiceNow actions on the card.
+the flagged file. The configured model gets up to two attempts to repair an
+invalid proposal. When proof is still missing, Threatlint attaches the reviewed
+Word report, requests closure of the evidence-backed FP, and reports **Rule not
+tuned** with the remaining reason. Failed report replacement, unconfirmed
+closure, and an explicitly conflicting verdict still require attention.
 
 ## Re-running the Semgrep step
 
@@ -379,9 +386,8 @@ threatlint isst summarize ISST0012345 --yes
 each **true-positive** AVIT's Word report to the ISST and adds a comment that lists
 the attached reports (and, when every reviewed AVIT was a false positive, notes the
 ISST and SCAN request can be closed). **Threatlint never closes an ISST**: true
-positives need remediation, so closure stays with the owner. False-positive reports
-are not attached to the ISST — they stay on their own AVIT, which is closed and whose
-Semgrep rule is tuned. The ISST's concrete task table is resolved through
+positives need remediation, so closure stays with the owner. Each false-positive
+report stays on its closed AVIT. The ISST's concrete task table is resolved through
 `task.sys_class_name` (override with `THREATLINT_SNOW_ISST_TABLE`); OAuth access must
 include that table and its attachments.
 

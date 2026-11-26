@@ -125,7 +125,7 @@ describe('False-positive action routes', () => {
     instance = createWorkbench({ storageDir: storage, runProvider: async args => { args.onEvent({ type: 'text_chunk', text: report }); return report; },
       integrations: { convertToWord, threatlintCli: async (args, options) => {
         cliCalls.push({ args, options });
-        return sharedFailure ? { code: 1, stdout: '', stderr: 'Synthetic tuning proof failed' } : { code: 0, stderr: '', stdout: '  ✓ Attached report\n  ✓ Closed as false positive\n  ✓ Published org-private rule acme.xss.tuned\n' + JSON.stringify({ type: 'finding_review_result', outcomes: [{ avit: 'AVIT000000000010001', completed: true, disposition: 'FALSE POSITIVE', kind: 'sast' }] }) + '\n' };
+        return sharedFailure ? { code: 1, stdout: '', stderr: 'Synthetic tuning proof failed' } : { code: 0, stderr: '', stdout: '  ✓ Attached report\n  ✓ Closed as false positive\n  ✓ Rule tuning verified: acme.xss.tuned\n' + JSON.stringify({ type: 'finding_review_result', outcomes: [{ avit: 'AVIT000000000010001', completed: true, disposition: 'FALSE POSITIVE', kind: 'sast' }] }) + '\n' };
       }, semgrepVersion: async () => '1.99.0', semgrepToken: async () => 'sg-token',
         fetchImpl: (url, options) => (url.startsWith('https://semgrep.dev') ? sg : snow)(url, options) } });
     await new Promise(resolve => instance.server.listen(0, '127.0.0.1', resolve));
@@ -161,7 +161,7 @@ describe('False-positive action routes', () => {
     const result = await post('/api/servicenow/close-false-positive', { reportId, findingId: 'FP-001', servicenow: CREDENTIALS, provider: 'claude-code' });
     assert.equal(result.closed, true); assert.equal(result.tuned, true);
     assert.deepEqual(cliCalls.at(-1).args.slice(0, 8), ['run', 'fp-review', '--provider', 'claude-code', '--avit', 'AVIT000000000010001', '--resolve-avits', '--yes']);
-    assert.match(result.detail, /tuning validated and applied/);
+    assert.match(result.detail, /tuning verified/);
     assert.equal(snowCalls.filter(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')).length, 0, 'no direct mutation bypasses the shared executor');
   });
   it('does not attempt extra closure after a shared tuning failure', async () => {

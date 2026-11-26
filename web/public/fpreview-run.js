@@ -16,7 +16,8 @@
   const MAX_STORED = 4000;
   const MAX_LOG = 3000;
   const AVIT_STAGES = { queued: 'Queued', fetching: 'Fetching', checkout: 'Cloning', triage: 'Reviewing', reported: 'Report saved', resolving: 'Updating ServiceNow',
-    'fix-pr': 'Opening draft PR', done: 'Done', info: 'Info', blocked: 'Blocked', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
+    'fix-pr': 'Opening draft PR', 'rule-not-tuned': 'Rule not tuned', 'triage-not-applied': 'Triage not applied',
+    done: 'Done', info: 'Info', blocked: 'Blocked', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
   const TASK_STAGES = { queued: 'Queued', expanding: 'Reading task', reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error', cancelled: 'Cancelled' };
   const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'pull-request': 'Draft PR', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
   const RESULTS = ['closed', 'noted', 'blocked', 'error', 'skipped'];
@@ -278,7 +279,7 @@
           if (event.detail !== undefined && !event.action) item.node.querySelector('.avit-detail').textContent = event.detail;
           if (event.disposition) { const badge = item.node.querySelector('.avit-disposition'); badge.className = 'avit-disposition disposition-badge'; badge.textContent = event.disposition; }
           const label = event.action ? ACTIONS[event.action] || 'Updated' : AVIT_STAGES[event.stage] || event.stage;
-          const kind = event.stage === 'error' ? 'error' : event.stage === 'info' ? 'info' : event.stage === 'blocked' || event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
+          const kind = event.stage === 'error' ? 'error' : event.stage === 'info' ? 'info' : ['blocked', 'rule-not-tuned', 'triage-not-applied'].includes(event.stage) || event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
           const detail = `${event.detail || ''}${event.disposition && event.stage === 'reported' ? ` · ${event.disposition}` : ''}`;
           addHistory(item, at, label, detail, kind);
           runLog(at, event.avit, label, detail, kind);
@@ -320,14 +321,14 @@
       if (o.closed === true) list.append(el('li', '', 'Closed as false positive with the Threatlint work note'));
       if (/Semgrep affected IDs\/count differ from the requested branch scope/i.test(diagnostics)) {
         list.append(el('li', 'fp-status-warn', 'Review the triage audit and reconcile the affected findings before making any further Semgrep updates.'));
-      } else if (!o.tuned && /(?:no .*Tuned rule fixtures|fixtures.*required|Tuned rule fixtures did not pass|complete tuned rule and its fixtures|needs true-positive and false-positive fixtures)/i.test(diagnostics)) {
-        list.append(el('li', 'fp-status-warn', 'Rule tuning requires a complete proposal with passing fixtures. Correct the proposal before publishing tuning.'));
-      } else if (event.disposition === 'FALSE POSITIVE' && o.closed && !o.tuned && /Rule not tuned/i.test(diagnostics)) {
-        list.append(el('li', 'fp-status-warn', 'Review the Semgrep tuning failure before making any further updates.'));
       }
       if (o.closed === 'state not applied') list.append(el('li', '', 'ServiceNow did not keep the closed state/substate (check its business rules)'));
       if (o.leftOpen) list.append(el('li', '', 'Left open with the Threatlint work note and the report attached.'));
-      for (const line of semgrep) list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
+      for (const line of semgrep) {
+        if (line.replace(/^[✓!]\s*/, '') === event.detail || (event.stage === 'rule-not-tuned' && line.startsWith('! Rule not tuned:'))) continue;
+        list.append(el('li', '', line.replace(/^[✓!]\s*/, 'Semgrep: ')));
+      }
+      if (o.triageReason && o.triageReason !== event.detail && !semgrep.some(line => line.includes(o.triageReason))) list.append(el('li', 'fp-status-warn', o.triageReason));
     }
     function renderPullRequest(item, result) {
       const actions = item.node.querySelector('.avit-actions');

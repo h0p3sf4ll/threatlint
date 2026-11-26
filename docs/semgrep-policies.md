@@ -35,10 +35,17 @@ selected for one exact project when the original is directly selected in that
 project's detection policy. A current, exact Semgrep finding for the same
 project, branch, rule, file, line, and product can also establish a ruleset
 original. The policy change excludes the original and includes the tuned rule
-for that project only. Shared-rule republishing remains unsupported:
-changing its body would affect other projects. Existing live tuning can still
-supply the rule base and satisfy the no-op path without republishing. A shared
-rule is never republished as a project-scoped change.
+for that project only.
+
+For both new tuning and extensions, Threatlint gives the candidate a fresh
+private rule ID and updates its fixture markers before running the proof.
+Each project can extend a shared rule independently. One version-checked
+policy update excludes the original and any previous tuned rule for that
+project and includes the proved version. Other projects continue using their
+selected rule bodies. The publishing token must select the same deployment as
+the policy. If a policy conflict occurs after the registry upload, the private
+rule can exist without the requested project selection.
+
 If the live tuning already covers the false positive but the original still
 runs, `tune_rule` can repair the project exception and returns that change with
 its rollback data; an already-correct policy produces no writes.
@@ -66,7 +73,7 @@ Unified mutations without an explicit project name fail closed.
 
 The adapter reads the complete bundle and state version, preserves unrelated
 rulesets, rules, disabled entries, and all existing exceptions, and changes only
-the target project's original exclusion and tuned inclusion. It submits that
+the target project's original and predecessor exclusions and tuned inclusion. It submits that
 exact bundle to `:dryRun`, rejects validation errors or a changed preview version,
 then PUTs with `If-Match` using the previewed version. Conditional writes are
 never automatically retried, including after timeouts or server failures.

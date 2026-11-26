@@ -143,18 +143,7 @@ def test_no_resolve_when_word_report_fails_but_later_avit_continues(monkeypatch)
     assert all(not Path(path).exists() for path in converted)
 
 
-def test_codesecurity_token_is_checked_before_any_review_or_write(monkeypatch):
-    args = _args(AVIT_FP)
-    item = {**_item(AVIT_FP), "in_view": True}
-    monkeypatch.setattr(sn, "requested_avits", lambda _args: [AVIT_FP])
-    monkeypatch.setattr(avit_resolve, "_session", lambda _args: ("https://test.service-now.com", "token"))
-    monkeypatch.setattr(sn, "fetch_avits", lambda *_args: ([item], [], []))
-    monkeypatch.setattr(avit_resolve, "semgrep_token", lambda _profile: (_ for _ in ()).throw(avit_headless.ResolveError("Run `threatlint semgrep login`")))
-    monkeypatch.setattr(avit_headless, "_review_one", lambda *_args: pytest.fail("model and resolver must not run"))
-    assert avit_headless.run(args, "reviewer", "", "1.99") == 1
-
-
-def test_codesecurity_setup_failure_does_not_block_other_avit(monkeypatch):
+def test_review_does_not_require_an_upfront_semgrep_connection(monkeypatch):
     args = _args(AVIT_FP, AVIT_TP)
     monkeypatch.setattr(sn, "requested_avits", lambda _args: [AVIT_FP, AVIT_TP])
     monkeypatch.setattr(avit_resolve, "_session", lambda _args: ("https://test.service-now.com", "token"))
@@ -162,8 +151,8 @@ def test_codesecurity_setup_failure_does_not_block_other_avit(monkeypatch):
     monkeypatch.setattr(avit_resolve, "semgrep_token", lambda _profile: (_ for _ in ()).throw(avit_headless.ResolveError("missing token")))
     reviewed = []
     monkeypatch.setattr(avit_headless, "_review_one", lambda _args, item, *_rest, **_kwargs: reviewed.append(item["fields"]["number"]) or True)
-    assert avit_headless.run(args, "reviewer", "", "1.99") == 1
-    assert reviewed == [AVIT_TP]
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 0
+    assert reviewed == [AVIT_FP, AVIT_TP]
 
 
 def test_report_redacts_credential_assignments_from_flagged_directory(tmp_path):
@@ -186,6 +175,20 @@ def test_signing_template_remains_intact_in_rule_and_fixtures(tmp_path):
     report = (f"**Tuned rule**:\n```yaml\npattern: |\n  const signature = {signing};\n```\n"
               f"**Tuned rule fixtures**:\n```typescript\nconst signature = {signing};\n```\n")
     assert avit_headless.redact_secrets(report, tmp_path, "webhook.ts", header) == (report, 0)
+
+
+def test_python_computed_value_survives_redaction_in_tuning_and_fixtures(tmp_path):
+    expression = "uuid.uuid4().hex[:8]"
+    direct, nested = "Synthet1c-private-value", "Nested-Synthet1c-Value"
+    pattern = "account_number_[0-9]+"
+    source = (f"suffix = {expression}\npassword = '{direct}'\n"
+              f"api_token = wrapper(decode(value='{nested}'))\npattern = re.compile('{pattern}')\n")
+    flagged = tmp_path / "database.py"
+    flagged.write_text(source)
+    report = (f"**Tuned rule**:\n```yaml\npattern: |\n  suffix = {expression}\n```\n"
+              f"**Tuned rule fixtures**:\n```python\n{source}```\n")
+    result, count = avit_headless.redact_secrets(report, tmp_path, flagged.name, source)
+    assert (result, count) == (report.replace(direct, "[REDACTED]").replace(nested, "[REDACTED]"), 2)
 
 
 def test_redacts_static_credentials_in_js_templates_and_quoted_values(tmp_path):
@@ -282,9 +285,12 @@ def test_tuned_rule_is_proven_against_flagged_file_before_writeback(monkeypatch,
     ("changed-verdict", 2, "changed the reviewed FALSE POSITIVE"),
     ("missing-verdict", 2, "lost the reviewed AVIT verdict"),
     ("scope", 1, "Semgrep triage blocked"),
-    ("unexpected", 1, None),
+    ("provider-error", 2, "tuning revision failed"),
+    ("publication", 1, "project policy cannot activate the rule"),
+    ("uncertain", 1, "unverified scanner write"),
+    ("unexpected", 1, "Local rule validation failed (TypeError)"),
 ])
-def test_headless_incomplete_tuning_preserves_the_review_and_returns_nonzero(monkeypatch, capsys, case, reviews, reason):
+def test_headless_reports_fp_closure_independently_from_semgrep(monkeypatch, capsys, case, reviews, reason):
     from threatlint import semgrep_platform as sp
 
     args = _args(AVIT_FP)
@@ -300,6 +306,8 @@ def test_headless_incomplete_tuning_preserves_the_review_and_returns_nonzero(mon
         prompts.append(prompt)
         if case == "missing-verdict" and len(prompts) > 1:
             return "# Revised tuning without AVIT identity"
+        if case == "provider-error" and len(prompts) > 1:
+            raise RuntimeError("Synthetic provider unavailable")
         disposition = "TRUE POSITIVE" if case == "changed-verdict" and len(prompts) > 1 else "FALSE POSITIVE"
         return (f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; js.rule; Semgrep; src/flagged.js:2\n"
                 f"**Disposition**: {disposition}\n**Evidence**: `src/flagged.js:2` uses a literal.\n"
@@ -310,30 +318,50 @@ def test_headless_incomplete_tuning_preserves_the_review_and_returns_nonzero(mon
             raise avit_headless.ResolveError("The flagged source line is unavailable")
         if case == "unexpected":
             raise TypeError("Unexpected implementation error")
-        if case != "scope":
+        if case not in ("scope", "publication", "uncertain"):
             raise sp.SemgrepError("The tuned rule still reports the false-positive location")
 
-    def resolve(_args):
-        assert case == "scope", "An unproven rule must never reach write-back"
-        raise avit_headless.TriageScopeBlocked("Semgrep triage blocked: Peer findings outside the requested write")
+    resolved = []
+    def resolve(call):
+        resolved.append(call.number)
+        assert Path(call.docx).read_bytes() == b"PKword"
+        assert avit_headless.verdict_for(Path(call.report).read_text(), AVIT_FP)["disposition"] == "FALSE POSITIVE"
+        assert call.skip_rule_tuning == (case not in ("scope", "publication", "uncertain"))
+        if case == "scope":
+            raise avit_headless.TriageScopeBlocked("Semgrep triage blocked: Peer findings outside the requested write")
+        if case == "publication":
+            raise avit_headless.RuleNotTuned("The project policy cannot activate the rule", "shared fingerprint")
+        if case == "uncertain":
+            raise avit_headless.ClosedAvitSemgrepError("An unverified scanner write requires inspection")
+        assert "Rule not tuned." in Path(call.report).read_text()
+        return 0
 
     monkeypatch.setattr(avit_headless, "_run_review_model", model)
     monkeypatch.setattr(avit_headless, "_prove_tuned_rule", prove)
     monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
     monkeypatch.setattr(avit_resolve, "cmd_resolve", resolve)
-    assert avit_headless.run(args, "reviewer", "", "1.99") == 1
+    assert avit_headless.run(args, "reviewer", "", "1.99") == int(case in ("changed-verdict", "uncertain"))
     assert len(prompts) == reviews
-    result = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert result["completed"] == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out.splitlines()[-1])
     [outcome] = result["outcomes"]
-    assert outcome["completed"] is False
-    if reason is None:
+    if case == "changed-verdict":
+        assert resolved == []
         assert (result["failed"], result["blocked"]) == (1, 0)
-        assert outcome["disposition"] == "NOT REVIEWED"
+        assert reason in captured.err and not outcome["completed"]
+    elif case == "uncertain":
+        assert resolved == [AVIT_FP]
+        assert (result["completed"], result["failed"]) == (0, 1)
+        assert outcome["closed"] and not outcome["completed"] and outcome["disposition"] == "FALSE POSITIVE"
+        assert outcome["status"] == "semgrep_error" and reason in outcome["reason"]
     else:
-        assert (result["failed"], result["blocked"]) == (0, 1)
-        assert outcome["disposition"] == "FALSE POSITIVE" and outcome["status"] == "blocked"
+        assert resolved == [AVIT_FP]
+        assert (result["completed"], result["failed"], result["blocked"]) == (1, 0, 0)
+        assert outcome["completed"] and outcome["disposition"] == "FALSE POSITIVE"
+        assert outcome["status"] == ("triage_blocked" if case == "scope" else "rule_not_tuned")
         assert reason in outcome["reason"]
+        if case == "publication":
+            assert outcome["triage_reason"] == "shared fingerprint"
 
 
 def test_isst_discovery_drives_same_avit_review_and_summary(monkeypatch):
@@ -453,15 +481,16 @@ def test_plain_avit_review_remains_report_only(monkeypatch, tmp_path):
     assert cli.cmd_run(args) == 0
 
 
-def test_cli_routes_explicit_headless_run_to_per_avit_orchestrator(monkeypatch):
+@pytest.mark.parametrize("version", ["1.99", None])
+def test_cli_routes_explicit_headless_run_to_per_avit_orchestrator(monkeypatch, version):
     args = _args(AVIT_FP)
     from threatlint import run_context
 
     monkeypatch.setattr(run_context, "_resolve_provider", lambda _args, **_kwargs: ("codex", "", ""))
-    monkeypatch.setattr(cli, "_semgrep_version", lambda: "1.99")
+    monkeypatch.setattr(cli, "_semgrep_version", lambda: version)
     seen = []
     monkeypatch.setattr(avit_headless, "run", lambda *values, **kwargs: seen.append((values, kwargs)) or 0)
     monkeypatch.setattr(cli, "_load_requested_avits", lambda *_args: pytest.fail("combined AVIT loading must not run"))
     assert cli.cmd_run(args) == 0
-    assert seen[0][0][0] is args and seen[0][0][3] == "1.99"
+    assert seen[0][0][0] is args and seen[0][0][3] == (version or "")
     assert seen[0][1] == {"provider": "codex", "base_url": "", "api_key": ""}

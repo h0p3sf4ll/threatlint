@@ -151,17 +151,17 @@ def semgrep_matches(token, kind, target, context, deployment=None, report_text="
         raise ResolveError(str(exc)) from exc
     path, line, rule = context.get("file_path", ""), context.get("line", ""), context.get("rule", "")
     if not path:
-        raise ResolveError("The AVIT has no File Path, so its Semgrep finding cannot be matched narrowly")
+        raise TriageScopeBlocked("Semgrep triage blocked: The AVIT has no File Path to identify the finding")
     if not line.isdigit():
         line = report_line(report_text, context.get("avit", ""), path) if report_text else None
         line = str(line) if line else ""
     if not line.isdigit():
-        raise ResolveError("Neither the AVIT nor the report records the flagged line, so the Semgrep finding cannot be matched narrowly; pass --line")
+        raise TriageScopeBlocked("Semgrep triage blocked: Neither the AVIT nor the report records the flagged line; pass --line")
     if int(line) <= 0:
-        raise ResolveError("The flagged line must be positive")
+        raise TriageScopeBlocked("Semgrep triage blocked: The flagged line must be positive")
     branch = context.get("branch") or target.get("branch", "")
     if not branch or not rule:
-        raise ResolveError("Semgrep matching requires the exact branch and rule")
+        raise TriageScopeBlocked("Semgrep triage blocked: Matching requires the exact branch and rule")
     repository = project_names(target)[0]
     product = "sast" if kind == "secrets" else kind
     exact_only = context.get("line_source") == "scanner_snippet"

@@ -82,11 +82,27 @@ it('retains masking for data files and ambiguous JavaScript template assignments
   assert.equal(result.markdown, '[REDACTED]\n[REDACTED]');
 });
 
+it('preserves a computed Python UUID suffix in rule and fixture, and redacts literal credentials', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-python-redaction-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const expression = 'uuid.uuid4().hex[:8]';
+  const credential = 'syntheticCredential012345';
+  const argument = 'syntheticArgument12345678';
+  const field = `run = ${expression}`;
+  fs.writeFileSync(path.join(repo, 'app.py'), [`    ${field}  # per-request suffix`, `key = "${credential}"`, `api_token = client.load("${argument}")`].join('\n'));
+  const proposal = ['**Tuned rule**:', '```yaml', 'pattern-not-inside: |', `  ${field}`, '```',
+    '**Tuned rule fixtures**:', '```python', field, '```'].join('\n');
+  assert.deepEqual(redactSecrets(`${proposal}\n${credential}\n${argument}`, repo, 'app.py'),
+    { markdown: proposal + '\n[REDACTED]\n[REDACTED]', count: 2 });
+  fs.writeFileSync(path.join(repo, 'config.yaml'), `token: ${expression}`);
+  assert.equal(redactSecrets(expression, repo, 'config.yaml').markdown, '[REDACTED]');
+});
+
 describe('False positive review batch', () => {
   let wb, base;
   const calls = [], modelCalls = [];
   const attachmentNames = new Set();
-  let adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, prScm = '', prResult = null;
+  let semgrepTokenMissing = false, adoMissing = false, omitTuning = false, resolveResult = null, avitMarkdown = null, prScm = '', prResult = null;
   let preparationResults = [], tuningResults = [], modelReports = [], modelHook = null, checkoutOverride = {};
   const preparedReports = [], tuningDrafts = [], resolvedReports = [];
   const taskAvits = {};
@@ -94,7 +110,7 @@ describe('False positive review batch', () => {
     const threatlintCli = async args => {
       calls.push(args);
       if (args[1] === 'fetch' && args[2] === SLOW) await gate.promise;
-      if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true }, { name: 'Azure DevOps PAT', configured: !adoMissing, fix: 'threatlint ado login --organization <org>' }, { name: 'Semgrep API token', configured: true }]), stderr: '' };
+      if (args[0] === 'setup') return { code: 0, stdout: JSON.stringify([{ name: 'ServiceNow OAuth client', configured: true }, { name: 'Azure DevOps PAT', configured: !adoMissing, fix: 'threatlint ado login --organization <org>' }, { name: 'Semgrep API token', configured: !semgrepTokenMissing }]), stderr: '' };
       if (args[0] === 'sctask' && args[1] === 'avits') {
         if (taskAvits[args[2]] === null) return { code: 1, stdout: '', stderr: `ERROR: ${args[2]} was not found` };
         const avits = taskAvits[args[2]] || [FP, TP];
@@ -150,7 +166,7 @@ describe('False positive review batch', () => {
         assert.ok(!md.includes(SECRET), 'the secret is redacted before the report is saved or uploaded');
         assert.ok(fs.existsSync(args[args.indexOf('--docx') + 1]));
         if (resolveResult) return resolveResult;
-        return /\*\*Disposition\*\*: FALSE POSITIVE/.test(md) ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning ? '' : '  ✓ Published org-private rule synthetic.rule.tuned\n'), stderr: '' }
+        return /\*\*Disposition\*\*: FALSE POSITIVE/.test(md) ? { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s)\n' + (omitTuning || args.includes('--skip-rule-tuning') ? '' : '  ✓ Rule tuning verified: synthetic.rule.tuned\n'), stderr: '' }
           : { code: 0, stdout: '  ✓ Attached x.docx\n  ✓ Work note added; AVIT left open\n', stderr: '' };
       }
       throw new Error(`unexpected ${args.join(' ')}`);
@@ -421,10 +437,14 @@ describe('False positive review batch', () => {
     assert.deepEqual(events.filter(event => event.attempt).map(({ phase, attempt }) => [phase, attempt]), [['evidence', 1], ['tuning', 1]]);
   });
 
-  for (const failure of ['missing fixtures', 'changed disposition', 'deleted branch']) it(`keeps an FP unwritten when tuning preflight reports ${failure}`, async t => {
+  for (const failure of ['missing fixtures', 'provider unavailable', 'changed disposition', 'deleted branch']) it(`reports the tracker outcome when tuning preflight encounters ${failure}`, async t => {
     setupRefinement(t, '');
     const firstModel = modelCalls.length;
     if (failure === 'missing fixtures') tuningResults = [missingFixtures, missingFixtures, missingFixtures];
+    if (failure === 'provider unavailable') {
+      tuningResults = [missingFixtures];
+      modelReports = [report(FP, 'FALSE POSITIVE'), new Error('provider unavailable')];
+    }
     if (failure === 'changed disposition') {
       tuningResults = [missingFixtures, { status: 'skipped', disposition: 'TRUE POSITIVE' }];
       modelReports = [report(FP, 'FALSE POSITIVE'), report(FP, 'TRUE POSITIVE')];
@@ -435,25 +455,66 @@ describe('False positive review batch', () => {
     }
     const events = await runBatch(FP, { createFixPr: false });
     const final = events.find(event => event.done && event.avit === FP);
-    assert.equal(final.stage, failure === 'changed disposition' ? 'error' : 'blocked');
-    assert.equal(final.result, final.stage);
-    assert.equal(modelCalls.length - firstModel, { 'missing fixtures': 3, 'changed disposition': 2, 'deleted branch': 1 }[failure]);
-    assert.equal(calls.some(args => args[1] === 'resolve' || args[1] === 'fix-pr'), false);
-    assert.equal(events.some(event => event.stage === 'reported'), false);
+    assert.equal(modelCalls.length - firstModel, { 'missing fixtures': 3, 'provider unavailable': 2, 'changed disposition': 2, 'deleted branch': 1 }[failure]);
+    if (['missing fixtures', 'provider unavailable'].includes(failure)) {
+      assert.equal(final.stage, 'rule-not-tuned');
+      assert.equal(final.result, 'closed');
+      assert.ok(final.outcome.attached && final.outcome.closed && !final.outcome.tuned);
+      assert.match(final.detail, /fixtures/);
+      assert.equal(resolvedReports.length, 1);
+      assert.ok(resolvedReports[0].startsWith(tuningDrafts[0]));
+      assert.match(resolvedReports[0], /Rule tuning status.*Rule not tuned/);
+      assert.ok(calls.find(args => args[1] === 'resolve').includes('--skip-rule-tuning'));
+    } else {
+      assert.equal(final.stage, failure === 'changed disposition' ? 'error' : 'blocked');
+      assert.equal(calls.some(args => args[1] === 'resolve'), false);
+    }
+  });
+
+  it('attaches and closes an evidence-backed FP when the Semgrep token is missing', async t => {
+    setupRefinement(t, '');
+    semgrepTokenMissing = true;
+    t.after(() => { semgrepTokenMissing = false; });
+    tuningResults = [{ status: 'blocked', disposition: 'FALSE POSITIVE', reason: 'Rule source unavailable' }];
+    resolveResult = { code: 0, stdout: '  ✓ Attached report.docx\n  ✓ Closed as false positive\n', stderr: '' };
+    t.after(() => { resolveResult = null; });
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.avit === FP && event.done);
+    assert.equal(final.stage, 'rule-not-tuned');
+    assert.equal(final.result, 'closed');
+    assert.match(final.detail, /token/);
+    assert.ok(calls.find(args => args[1] === 'resolve').includes('--skip-semgrep'));
   });
 
   it('preserves completed ServiceNow and rule actions when the CLI blocks finding triage', async t => {
     setupRefinement(t, '');
     const reason = 'Semgrep triage blocked: another finding shares the fingerprint. No Semgrep triage write was sent.';
-    resolveResult = { code: 3, stdout: '  ✓ Attached report.docx\n  ✓ Closed as false positive\n  ✓ Published org-private rule fixture.tuned\n', stderr: `BLOCKED: ${reason}\n` };
+    resolveResult = { code: 3, stdout: '  ✓ Attached report.docx\n  ✓ Closed as false positive\n  ✓ Rule tuning verified: fixture.tuned\n', stderr: `BLOCKED: ${reason}\n` };
     t.after(() => { resolveResult = null; });
     const events = await runBatch(FP, { createFixPr: false });
     const final = events.find(event => event.avit === FP && event.done);
-    assert.equal(final.stage, 'blocked');
-    assert.equal(final.result, 'blocked');
+    assert.equal(final.stage, 'triage-not-applied');
+    assert.equal(final.result, 'closed');
     assert.equal(final.detail, reason);
     assert.ok(final.outcome.attached && final.outcome.closed && final.outcome.tuned);
     assert.deepEqual(events.filter(event => event.action).map(event => event.action), ['attached', 'closed', 'tuned']);
+  });
+
+  it('shows one tuning warning for a closed FP and retains the separate fingerprint decision', async t => {
+    setupRefinement(t, '');
+    const reason = 'The project policy changed during validation.';
+    const triage = 'Semgrep triage blocked: 5 peers outside the requested write.';
+    resolveResult = { code: 4, stdout: `  ✓ Attached report.docx\n  ✓ Closed as false positive\n  ✓ Published org-private rule x.tuned\n  ! ${triage}\n  ! Rule not tuned: ${reason}\n`, stderr: '' };
+    t.after(() => { resolveResult = null; });
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.avit === FP && event.done);
+    assert.equal(final.stage, 'rule-not-tuned');
+    assert.equal(final.result, 'closed');
+    assert.equal(final.detail, reason);
+    assert.equal(final.outcome.triageReason, triage);
+    assert.equal(final.outcome.tuned, false);
+    assert.equal(events.filter(event => event.detail?.includes(reason)).length, 1);
+    assert.ok(!events.some(event => event.action === 'tuned'));
   });
 
   for (const target of [{ kind: 'sca' }, { code_security: false }]) it(`does not require rule tuning for ${target.kind || 'non-CodeSecurity'} FPs`, async t => {
@@ -586,10 +647,9 @@ describe('False positive review batch', () => {
     try {
       const events = await runBatch(FP);
       const result = events.find(event => event.avit === FP && event.done);
-      assert.equal(result.stage, 'error'); assert.equal(result.result, 'error');
+      assert.equal(result.stage, 'rule-not-tuned'); assert.equal(result.result, 'closed');
       assert.equal(result.outcome.closed, true); assert.equal(result.outcome.tuned, false);
-      assert.match(result.detail, /rule tuning did not complete/);
-      assert.match(result.detail, /tracker may already have changed/);
+      assert.match(result.detail, /did not confirm that tuning was applied/);
     } finally { omitTuning = false; }
   });
   it('reviews every AVIT with no batch limit', async () => {
@@ -682,7 +742,7 @@ describe('False positive review batch', () => {
     assert.equal(terminalResult('done', { outcome: { closed: true } }), 'closed');
     assert.equal(terminalResult('done', { outcome: { leftOpen: true } }), 'noted');
     assert.equal(terminalResult('out-of-scope'), 'skipped'); assert.equal(terminalResult('error'), 'error');
-    assert.deepEqual(outcomeActions({ attached: true, closed: true, semgrep: ['✓ Published org-private rule x.tuned'] }, 'FALSE POSITIVE').map(item => item.kind), ['attached', 'closed', 'tuned']);
+    assert.deepEqual(outcomeActions({ attached: true, closed: true, semgrep: ['✓ Rule tuning verified: x.tuned'] }, 'FALSE POSITIVE').map(item => item.kind), ['attached', 'closed', 'tuned']);
   });
   it('refuses to start until every required credential is configured', async () => {
     adoMissing = true;

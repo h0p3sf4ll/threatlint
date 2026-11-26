@@ -274,9 +274,18 @@ describe('ServiceNow resolve for imported reports', () => {
     assert.ok(calls[0].args.includes('--resolve-avits') && calls[0].args.includes('--yes'));
     assert.ok(!calls[0].args.includes('--skip-rule-tuning') && !calls[0].args.includes('--skip-semgrep'));
   });
-  it('refuses to report an ignored Semgrep finding as successful rule tuning', async () => {
+  it('requires the Word attachment receipt for a closed false positive', async () => {
     await assert.rejects(scan.reviewSemgrepAvit(AVIT, { body: { provider: 'claude-code' }, credentials: CREDENTIALS,
-      integrations: { threatlintCli: async () => ({ code: 0, stderr: '', stdout: '  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s) as false_positive\n' + JSON.stringify({ outcomes: [{ avit: AVIT, completed: true, kind: 'sast', disposition: 'FALSE POSITIVE' }] }) }) } }), /both false-positive closure and Semgrep rule tuning/);
+      integrations: { threatlintCli: async () => ({ code: 0, stderr: '', stdout: '  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s) as false_positive\n' + JSON.stringify({ outcomes: [{ avit: AVIT, completed: true, kind: 'sast', disposition: 'FALSE POSITIVE' }] }) }) } }), /both Word attachment and false-positive closure/);
+  });
+  it('retains a verified closure with independent tuning and triage decisions', async () => {
+    const outcome = { avit: AVIT, completed: true, kind: 'sast', disposition: 'FALSE POSITIVE', status: 'rule_not_tuned',
+      reason: 'Unexpected match on the safe fixture.', triage_reason: 'Five peers were outside scope.' };
+    const result = await scan.reviewSemgrepAvit(AVIT, { body: { provider: 'codex' }, credentials: CREDENTIALS,
+      integrations: { threatlintCli: async () => ({ code: 0, stderr: '', stdout: '  ✓ Attached report.docx\n  ✓ Closed as false positive\n  ✓ Published org-private rule x.tuned\n'
+        + JSON.stringify({ type: 'finding_review_result', outcomes: [outcome] }) }) } });
+    assert.ok(result.closed && !result.tuned);
+    assert.match(result.detail, /Word report attached.*Closed as false positive.*Rule not tuned.*safe fixture.*Five peers/);
   });
   it('reports a blocked review for this AVIT without sending another tracker write', async () => {
     const calls = [];

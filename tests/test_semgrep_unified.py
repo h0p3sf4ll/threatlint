@@ -3,6 +3,7 @@
 from copy import deepcopy
 import io
 from pathlib import Path
+import re
 import urllib.error
 
 import pytest
@@ -28,9 +29,12 @@ class Platform:
         self.preview = None
         self.put_error = None
         self.corrupt = False
+        self.current_deployment = 7
 
     def call(self, path, token, *, method="GET", body=None, headers=None):
         self.calls.append((path, method, deepcopy(body), headers))
+        if path == "/api/agent/deployments/current":
+            return {"deployment": {"id": self.current_deployment}}
         if "/v1/" in path:
             raise sp.SemgrepError("legacy retired", status=410)
         product = path.rsplit("/", 1)[-1].removesuffix(":dryRun")
@@ -286,35 +290,131 @@ def test_tuning_noop_returns_rollback_data_when_project_original_needs_repair(pl
     assert len(platform.writes) == 1
 
 
-def test_shared_unified_rule_extension_fails_before_publication(platform, monkeypatch):
-    platform.state["code"]["bundle"]["rules"].append("org.r.tuned")
-    monkeypatch.setattr(sp, "original_rule_yaml", lambda *args: "synthetic live YAML")
+REPORT = """**Tuned rule**:
+
+```yaml
+rules:
+  - id: r.tuned
+    message: flag
+    severity: WARNING
+    languages: [python]
+    pattern: check($X)
+```
+**Tuned rule fixtures**:
+
+```python
+# ruleid: r.tuned
+check(x)
+# ok: r.tuned
+print("r.tuned")
+```
+"""
+
+
+@pytest.fixture
+def publications(monkeypatch, tmp_path):
+    paths = []
+
+    def prove(yaml, original, target, line, fixtures, token):
+        version = re.search(r"- id: (r\.tl-[0-9a-f]{32}\.tuned)\n", yaml)[1]
+        assert sp._fixture_lines(fixtures, version) == ([2], [4])
+        assert 'print("r.tuned")' in fixtures
+        path = tmp_path / f"{version}.yaml"
+        path.write_text(yaml, encoding="utf-8")
+        return {"id": version, "path": str(path), "dropped": True, "original_checked": True}
+
+    def publish(path, token):
+        registry = "synthetic." + Path(path).stem
+        assert f"- id: {Path(path).stem}\n" in Path(path).read_text()
+        assert registry not in paths
+        paths.append(registry)
+        return registry
+
+    monkeypatch.setattr(sp, "validate_tuned_rule", prove)
+    monkeypatch.setattr(sp, "publish", publish)
+    return paths
+
+
+def test_shared_unified_rule_extension_switches_only_this_project(platform, publications, monkeypatch):
+    bundle = platform.state["code"]["bundle"]
+    bundle["rules"].append("org.r.tuned")
+    before = deepcopy(bundle)
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *_: "rules:\n  - id: org.r.tuned\n")
     monkeypatch.setattr(sp, "_matches", lambda *args, **kwargs: [1])
-    monkeypatch.setattr(sp, "publish", lambda *args: pytest.fail("must not republish a shared Unified rule"))
-    with pytest.raises(sp.SemgrepError, match="not project-scoped"):
-        sp.tune_rule("unused", "sast", "r", __file__, 1, "synthetic", {"id": 7},
+    out = io.StringIO()
+    changes = sp.tune_rule(REPORT, "sast", "r", __file__, 1, "synthetic", {"id": 7},
+                           out=out, project="org/repo")
+    assert "✓ Rule tuning verified:" in out.getvalue()
+    assert len(platform.writes) == len(publications) == len(changes) == 1
+    assert changes[0]["previous"] == "org.r.tuned"
+    assert changes[0]["rollback"]["body"]["bundle"] == before
+    after = platform.state["code"]["bundle"]
+    assert unified.enabled(after, "org/repo", same_rule=sp._same_rule) == {"unrelated", publications[0]}
+    assert unified.enabled(after, "other/repo", same_rule=sp._same_rule) == {"unrelated", "org.r.tuned", "r"}
+    assert sp.existing_tuning("synthetic", {"id": 7}, "sast", "r", project="org/repo")[0]["tuned"] == publications[0]
+    monkeypatch.setattr(sp, "_matches", lambda *args, **kwargs: [])
+    assert sp.tune_rule(REPORT, "sast", "r", __file__, 1, "synthetic", {"id": 7},
+                        out=io.StringIO(), project="org/repo") == []
+    assert len(platform.writes) == len(publications) == 1
+
+
+def test_new_unified_tunings_do_not_overwrite_another_projects_version(platform, publications):
+    for project in ("org/first", "org/second"):
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7}, out=io.StringIO(), project=project)
+    assert len(publications) == len(platform.writes) == 2
+    for project, expected in zip(("org/first", "org/second"), publications):
+        assert unified.enabled(platform.state["code"]["bundle"], project, same_rule=sp._same_rule) == {"unrelated", expected}
+
+
+def test_wrong_registry_path_never_activates_shared_rule(platform, publications, monkeypatch):
+    monkeypatch.setattr(sp, "publish", lambda *args: "synthetic.r.tuned")
+    with pytest.raises(sp.SemgrepError, match="different private rule or deployment"):
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7},
                      out=io.StringIO(), project="org/repo")
     assert platform.writes == []
 
 
-def test_new_unified_tuning_publishes_after_proof_and_selects_only_target_project(platform, monkeypatch):
-    monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
-    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
-        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
-    })
-    published = []
-    monkeypatch.setattr(sp, "publish", lambda *args: published.append(args) or "org.r.tuned")
-    before = deepcopy(platform.state["code"]["bundle"])
-    changes = sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
-                           out=io.StringIO(), project="org/repo")
-    assert len(published) == len(platform.writes) == len(changes) == 1
-    after = platform.state["code"]["bundle"]
-    assert {key: value for key, value in after.items() if key != "exceptions"} == {
-        key: value for key, value in before.items() if key != "exceptions"}
-    assert after["exceptions"][-2:] == [
-        {"project": "org/repo", "rule": "r", "rule_type": "rule", "exception_type": "exclude"},
-        {"project": "org/repo", "rule": "org.r.tuned", "rule_type": "rule", "exception_type": "include"},
-    ]
+def test_token_default_deployment_must_match_policy_before_upload(platform, publications):
+    platform.current_deployment = 8
+    with pytest.raises(sp.SemgrepError, match="different Semgrep deployment"):
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7}, project="org/repo")
+    assert not publications and not platform.writes
+
+
+def test_publication_timeout_preserves_uncertainty_and_active_policy(platform, publications, monkeypatch):
+    def timeout(*args):
+        raise TimeoutError
+
+    monkeypatch.setattr(sp, "publish", timeout)
+    with pytest.raises(sp.SemgrepError, match="did not return a receipt") as error:
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7}, project="org/repo")
+    assert error.value.tuning_write_uncertain and not platform.writes
+
+
+def test_updated_live_rule_cannot_be_replaced_with_stale_proof(platform, publications, monkeypatch):
+    platform.state["code"]["bundle"]["rules"].append("org.r.tuned")
+    live = iter(["rules:\n  - id: org.r.tuned\n", "revised live body"])
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *_: next(live))
+    with pytest.raises(sp.SemgrepError, match="changed during proof") as error:
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7}, project="org/repo")
+    assert len(publications) == 1 and not platform.writes and not error.value.tuning_write_uncertain
+
+
+def test_policy_change_during_publication_cannot_replay_a_stale_extension(platform, publications, monkeypatch):
+    platform.state["code"]["bundle"]["rules"].append("org.r.tuned")
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *_: "rules:\n  - id: org.r.tuned\n")
+    publish = sp.publish
+
+    def concurrent(path, token):
+        platform.state["code"]["state_version"] = "concurrent"
+        return publish(path, token)
+
+    monkeypatch.setattr(sp, "publish", concurrent)
+    out = io.StringIO()
+    with pytest.raises(sp.SemgrepError, match="changed during dry run"):
+        sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7}, out=out, project="org/repo")
+    assert len(publications) == 1 and not platform.writes
+    assert "✓ Rule tuning verified:" not in out.getvalue()
 
 
 def test_unified_tuning_without_direct_original_fails_before_publication(platform, monkeypatch):
@@ -331,17 +431,12 @@ def test_unified_tuning_without_direct_original_fails_before_publication(platfor
     assert platform.writes == []
 
 
-def test_verified_ruleset_finding_can_tune_only_its_project(platform, monkeypatch):
+def test_verified_ruleset_finding_can_tune_only_its_project(platform, publications):
     data = platform.state["code"]["bundle"]
     data["rules"] = []
     data["rulesets"] = ["p/synthetic"]
     before = deepcopy(data)
-    monkeypatch.setattr(sp, "tuned_rule_from_report", lambda *args: "synthetic YAML")
-    monkeypatch.setattr(sp, "validate_tuned_rule", lambda *args: {
-        "path": "validated.yaml", "id": "r.tuned", "dropped": True, "original_checked": True,
-    })
-    monkeypatch.setattr(sp, "publish", lambda *args: "org.r.tuned")
-    changes = sp.tune_rule("unused", "sast", "r", "", None, "synthetic", {"id": 7},
+    changes = sp.tune_rule(REPORT, "sast", "r", "", None, "synthetic", {"id": 7},
                            out=io.StringIO(), project="org/repo", verified_finding=True)
     assert len(changes) == len(platform.writes) == 1
     after = platform.state["code"]["bundle"]
@@ -349,7 +444,7 @@ def test_verified_ruleset_finding_can_tune_only_its_project(platform, monkeypatc
         key: value for key, value in before.items() if key != "exceptions"}
     assert after["exceptions"][-2:] == [
         {"project": "org/repo", "rule": "r", "rule_type": "rule", "exception_type": "exclude"},
-        {"project": "org/repo", "rule": "org.r.tuned", "rule_type": "rule", "exception_type": "include"},
+        {"project": "org/repo", "rule": publications[0], "rule_type": "rule", "exception_type": "include"},
     ]
 
 

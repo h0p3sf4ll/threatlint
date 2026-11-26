@@ -85,7 +85,7 @@ test('distinguishes an unverified Semgrep triage write from an incomplete rule p
   const missingFixtures = 'Rule not tuned: The report has no `**Tuned rule fixtures**:` block.';
   const closed = { attached: true, closed: true, tuned: false };
   item(f.run, avits[0], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: mismatch, outcome: closed });
-  item(f.run, avits[1], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: 'The tuning proof is incomplete.', outcome: { ...closed, semgrep: [`! ${missingFixtures}`] } });
+  item(f.run, avits[1], 'rule-not-tuned', { done: true, disposition: 'FALSE POSITIVE', detail: missingFixtures, outcome: { ...closed, semgrep: [`! ${missingFixtures}`] } });
   item(f.run, avits[2], 'error', { done: true, disposition: 'FALSE POSITIVE', detail: 'Rule tuning proof failed before AVIT write-back: The report needs one complete tuned rule and its fixtures' });
   f.run.handle({ type: 'avit_batch_complete' });
 
@@ -94,8 +94,10 @@ test('distinguishes an unverified Semgrep triage write from an incomplete rule p
   assert.match(outcomes(avits[0]), /Word report attached.*Closed as false positive.*Review the triage audit and reconcile the affected findings/);
   assert.equal(card(avits[0]).querySelector('.avit-detail').textContent, mismatch);
   assert.doesNotMatch(outcomes(avits[0]), /Correct the proposal|Re-run this AVIT/);
-  assert.match(outcomes(avits[1]), /Word report attached.*Closed as false positive.*requires a complete proposal with passing fixtures/);
-  assert.match(outcomes(avits[2]), /requires a complete proposal with passing fixtures/);
+  assert.equal(card(avits[1]).querySelector('.avit-stage').textContent, 'Rule not tuned');
+  assert.equal(card(avits[1]).dataset.result, 'closed');
+  assert.equal(card(avits[1]).querySelector('.avit-detail').textContent, missingFixtures);
+  assert.match(outcomes(avits[1]), /Word report attached.*Closed as false positive/);
   assert.doesNotMatch(outcomes(avits[2]), /attached|Closed as false positive/);
   assert.doesNotMatch(f.root.textContent, /Re-run this AVIT/);
 });

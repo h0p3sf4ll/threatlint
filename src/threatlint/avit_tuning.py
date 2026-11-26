@@ -1,4 +1,4 @@
-"""Validate the source location and Semgrep proposal before AVIT write-back."""
+"""Validate the source location and Semgrep proposal before publishing a tuned rule."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from .avit_report import ResolveError, report_line, safe_error, verdict_for
 
 
 def guard_fp_rule(item: dict, repo: Path, rule_base: str, report: str, avit: str) -> None:
-    """Reject known missing tuning prerequisites before attaching or closing an FP."""
+    """Check whether this finding has the prerequisites to tune its rule."""
     if not sn.in_code_security_view(item) or sn.finding_kind(item) not in ("sast", "secrets"):
         return
     if not rule_base:
-        raise ResolveError("The Semgrep rule source is unavailable; the false-positive AVIT was not changed")
+        raise ResolveError("The Semgrep rule source is unavailable for tuning")
     flagged_location(repo, item["context"], report, avit)
     require_proposal(item["context"], report)
 
@@ -42,21 +42,21 @@ def flagged_location(repo: Path, context: dict, report: str, avit: str) -> tuple
     root = repo.resolve()
     flagged = (root / file_path).resolve() if file_path else root
     if not file_path or Path(file_path).is_absolute() or not flagged.is_relative_to(root) or not flagged.is_file():
-        raise ResolveError("The flagged checkout file is unavailable; the false-positive AVIT was not changed")
+        raise ResolveError("The flagged checkout file is unavailable for rule validation")
     if context.get("line_blocker"):
         raise ResolveError(context["line_blocker"])
     line_text = str(context.get("line", ""))
     line = int(line_text) if line_text.isdigit() else report_line(report, avit, file_path)
     if not line or line < 1:
-        raise ResolveError("The flagged source line is unavailable; the false-positive AVIT was not changed")
+        raise ResolveError("The flagged source line is unavailable for rule validation")
     with flagged.open(encoding="utf-8", errors="replace") as source:
         if sum(1 for _ in source) < line:
-            raise ResolveError("The flagged line is beyond the checkout file; the false-positive AVIT was not changed")
+            raise ResolveError("The flagged line is beyond the checkout file")
     return flagged, line
 
 
 def prove_tuned_rule(item: dict, repo: Path, report: str, avit: str, args) -> None:
-    """Run Semgrep's local rule proof before ServiceNow can be changed."""
+    """Run Semgrep's local rule proof before a proposal can be published."""
     if not sn.in_code_security_view(item) or sn.finding_kind(item) not in ("sast", "secrets"):
         return
     from . import semgrep_platform as sp, semgrep_rule_text  # noqa: PLC0415
@@ -100,8 +100,9 @@ def confirm_snippet_match(context: dict, flagged: Path, line: int, token: str, d
                 and match.get("rule") == rule and match.get("status") in ("open", "ignored")
                 and avit_semgrep.same_path(match.get("path"), context["file_path"]) and str(match.get("line")) == str(line)):
             return "semgrep"
-    raise ResolveError(f"The original rule did not reproduce at checkout line {line}, and Semgrep did not identify one exact "
-                       "finding for the project, branch, rule, file and line. Verify the original scanner location and scan revision.")
+    raise avit_semgrep.TriageScopeBlocked(f"Semgrep triage blocked: The original rule did not reproduce at checkout line {line}, "
+                                         "and Semgrep did not identify one exact finding for the project, branch, rule, file and line. "
+                                         "Verify the original scanner location and scan revision.")
 
 
 def repairable_rule_error(error: Exception) -> bool:

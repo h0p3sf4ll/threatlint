@@ -49,6 +49,11 @@ def test_markers_distinguish_own_lines_next_lines_and_other_rule_ids():
     assert sp._fixture_lines is text.fixture_lines
 
 
+def test_deferred_semgrep_markers_do_not_count_as_proof_controls():
+    fixtures = "# todoruleid: r.tuned\nfirst()\n# todook: r.tuned\nsecond()\n"
+    assert text.fixture_lines(fixtures, "r.tuned") == ([], [])
+
+
 def test_merge_normalization_only_removes_registry_metadata_and_rule_id():
     rule = (
         "rules:\n  - id: org.rule.tuned\n    metadata:\n"
@@ -70,3 +75,13 @@ def test_exclusions_preserve_exact_payloads_but_ignore_indentation():
     rule = "patterns:\n  - pattern: $X\n  - pattern-not: safe($X)\n    regex: ^safe$\n"
     assert text.exclusions(rule) == ["- pattern-not: safe($X)", "regex: ^safe$"]
     assert sp._exclusions(rule) == text.exclusions(rule)
+
+
+def test_multiline_constraints_and_each_prior_sanitizer_survive_an_extension():
+    live = ("    pattern-sanitizers:\n      - pattern: safe_a(...)\n      - pattern: safe_b(...)\n"
+            "    patterns:\n      - pattern-not-inside: |\n          with validated():\n              ...\n")
+    proposed = live.replace("    patterns:", "      - pattern: safe_c(...)\n    patterns:")
+    assert set(text.exclusions(live)).issubset(text.exclusions(proposed))
+    changed = proposed.replace("with validated()", "with differently_validated()")
+    assert not set(text.exclusions(live)).issubset(text.exclusions(changed))
+    assert not set(text.exclusions(live)).issubset(text.exclusions(proposed.replace("safe_b(...)", "safe_c(...)")))

@@ -1,6 +1,8 @@
 """Local engine boundaries retain original scanner and environment seams."""
 
 import json
+import os
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -73,13 +75,51 @@ def test_invalid_rule_structure_produces_repairable_guidance(message, advice):
 def test_failed_fixture_proof_reports_exact_lines_without_source_or_temp_paths(tmp_path):
     from threatlint.avit_tuning import repairable_rule_error
     rule, fixture = tmp_path / "access-token.tuned.yaml", tmp_path / "access-token.tuned.py"
-    checks = {rule.stem: {"passed": False, "matches": {str(fixture): {"expected_lines": [2, 8], "reported_lines": [4, 8]}}}}
+    checks = {rule.stem: {"passed": False, "matches": {str(fixture): {"expected_lines": [2, 8], "reported_lines": [4, 8, 20]}}}}
     result = SimpleNamespace(returncode=1, stdout=json.dumps({"results": {str(rule): {"checks": checks}}}))
     with pytest.raises(sp.SemgrepError) as failure:
         engine._check_fixture_result(result, rule, fixture, [2, 8], [4], error_type=sp.SemgrepError)
-    assert "missed true-positive lines 2" in str(failure.value)
-    assert "Unexpected matches on fixture lines 4" in str(failure.value)
+    assert "Missed ruleid lines 2." in str(failure.value)
+    assert "Matched ok lines 4." in str(failure.value)
+    assert "Matched unmarked lines 20 (ruleid 2, 8, ok 4)." in str(failure.value)
     assert str(tmp_path) not in str(failure.value) and repairable_rule_error(failure.value)
+
+
+@pytest.mark.skipif(shutil.which("semgrep") is None, reason="requires the Semgrep CLI")
+def test_real_semgrep_proves_fixture_repair_keeps_positive_control(tmp_path):
+    rule = tmp_path / "fixture-proof.yaml"
+    fixture = tmp_path / "fixture-proof.py"
+    fixture.write_text("# ruleid: fixture-proof\nrecord(sample(1))\n"
+                       "# ok: fixture-proof\nrecord(preview(1))\nrecord(preview(2))\n")
+
+    def prove(pattern):
+        rule.write_text("rules:\n  - id: fixture-proof\n    languages: [python]\n    message: Synthetic check\n"
+                        f"    severity: INFO\n    pattern: {pattern}\n")
+        result = engine.run(["--test", "--json", "--metrics", "off", str(tmp_path)],
+                            environment=lambda: {"PATH": os.environ["PATH"],
+                                                 "SEMGREP_SETTINGS_FILE": str(tmp_path / ".settings")},
+                            error_type=sp.SemgrepError)
+        engine._check_fixture_result(result, rule, fixture, [2], [4], error_type=sp.SemgrepError)
+
+    with pytest.raises(sp.SemgrepError) as failure:
+        prove("record(preview(...))")
+    assert "Missed ruleid lines 2." in str(failure.value)
+    assert "Matched ok lines 4." in str(failure.value)
+    assert "Matched unmarked lines 5 " in str(failure.value)
+    prove("record(sample(...))")
+
+
+@pytest.mark.parametrize("deferred", ["todook", "todoruleid"])
+def test_deferring_an_extra_fixture_match_cannot_make_a_proposal_pass(monkeypatch, tmp_path, deferred):
+    def validate(args):
+        assert "--validate" in args
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(sp, "_semgrep", validate)
+    fixtures = ("# ruleid: r.tuned\nsample(1)\n# ok: r.tuned\npreview(1)\n"
+                f"# {deferred}: r.tuned\nsample(2)\n")
+    with pytest.raises(sp.SemgrepError, match="deferred test annotations on lines 5"):
+        sp.validate_tuned_rule("rules:\n  - id: r.tuned\n", "r", "fixture.py", 1, fixtures, work=tmp_path)
 
 
 @pytest.mark.parametrize("payload", [
@@ -91,6 +131,17 @@ def test_missing_executed_fixture_check_blocks_even_with_zero_exit(tmp_path, pay
     result = SimpleNamespace(returncode=0, stdout=json.dumps(payload))
     with pytest.raises(sp.SemgrepError) as failure:
         engine._check_fixture_result(result, tmp_path / "r.yaml", tmp_path / "r.py", [2], [4], error_type=sp.SemgrepError)
+    assert not repairable_rule_error(failure.value) and "private diagnostic" not in str(failure.value)
+
+
+@pytest.mark.parametrize(("errors", "code"), [(["private diagnostic"], 1), ([], 2)])
+def test_partial_fixture_result_does_not_trigger_model_repair(tmp_path, errors, code):
+    from threatlint.avit_tuning import repairable_rule_error
+    rule, fixture = tmp_path / "r.yaml", tmp_path / "r.py"
+    check = {"passed": False, "errors": errors, "matches": {str(fixture): {"expected_lines": [2], "reported_lines": [20]}}}
+    result = SimpleNamespace(returncode=code, stdout=json.dumps({"results": {str(rule): {"checks": {"r": check}}}}))
+    with pytest.raises(sp.SemgrepError) as failure:
+        engine._check_fixture_result(result, rule, fixture, [2], [20], error_type=sp.SemgrepError)
     assert not repairable_rule_error(failure.value) and "private diagnostic" not in str(failure.value)
 
 
