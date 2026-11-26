@@ -894,10 +894,20 @@ async function reviewSemgrepAvit(avit, { job = {}, body = {}, credentials, integ
     args.push('--aws-profile', body.awsProfile);
   }
   const result = await (integrations.threatlintCli || runCli)(args, { env });
-  if (result.code !== 0) throw new HttpError(`Shared Finding Review did not complete: ${errorOf(result)}. No additional ServiceNow update was attempted.`, 502);
   let summary;
   try { summary = JSON.parse(String(result.stdout).trim().split(/\r?\n/).at(-1)); } catch { /* verified below */ }
-  const actual = summary?.outcomes?.find(item => item.avit === avit);
+  const actual = Array.isArray(summary?.outcomes) && summary.outcomes.length === 1 && summary.outcomes[0]?.avit === avit ? summary.outcomes[0] : null;
+  if (result.code !== 0) {
+    if (result.code === 1 && summary?.type === 'finding_review_result' && summary.completed === 0 && summary.blocked === 1 && summary.failed === 0
+      && actual?.completed === false && actual.status === 'blocked' && actual.disposition === 'FALSE POSITIVE'
+      && typeof actual.reason === 'string' && actual.reason.trim()) {
+      const error = new HttpError(`${avit} · FALSE POSITIVE · ${actual.reason}`, 409);
+      error.code = 'avit_review_blocked';
+      throw error;
+    }
+    if (summary?.type === 'finding_review_result' && !actual) throw new HttpError(`Shared Finding Review returned inconsistent outcomes for ${avit}.`, 502);
+    throw new HttpError(`Shared Finding Review did not complete: ${errorOf(result)}. No additional ServiceNow update was attempted.`, 502);
+  }
   if (!actual?.completed || !['TRUE POSITIVE', 'FALSE POSITIVE'].includes(actual.disposition)) throw new HttpError('Shared Finding Review returned no complete binary outcome; inspect its ServiceNow and Semgrep results before retrying.', 502);
   const outcome = resolveOutcome(result.stdout);
   if (actual.disposition === 'FALSE POSITIVE' && (!outcome.closed || (actual.kind !== 'sca' && !outcome.tuned))) throw new HttpError('The shared review did not confirm both false-positive closure and Semgrep rule tuning; inspect the partial outcome before retrying.', 502);
@@ -1079,7 +1089,7 @@ function createScanImports({ store, reports, override, integrations = {} }) {
       } catch (error) {
         // One AVIT: its error is the response. Several: each outcome is reported, so a partial post is never hidden.
         if (targets.length === 1) throw error;
-        actions.push({ avit: target.avit, number: target.avit, action: 'error', disposition: target.disposition, findings: target.findings, detail: error.message, error: error.message, ...(error.code ? { code: error.code } : {}) });
+        actions.push({ avit: target.avit, number: target.avit, action: error.code === 'avit_review_blocked' ? 'blocked' : 'error', disposition: target.disposition, findings: target.findings, detail: error.message, error: error.message, ...(error.code ? { code: error.code } : {}) });
       }
     }
     const ok = actions.every(action => !action.error && (action.disposition !== 'FALSE POSITIVE' || action.closed));

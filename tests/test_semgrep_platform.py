@@ -1,6 +1,7 @@
 """Semgrep token setup and rule tuning: nothing is published unless the tuned rule is proven."""
 
 import contextlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -113,8 +114,20 @@ def test_the_tuned_rule_block_is_read_from_the_report():
 FIXTURES = "**Tuned rule fixtures**:\n\n```javascript\n// ruleid: js.rule.tuned\neval(req.body.x)\n// ok: js.rule.tuned\neval('1')\n```\n"
 
 
+def passing_semgrep(args, **_kwargs):
+    payload = {}
+    if "--test" in args:
+        root = Path(args[-1])
+        rule = root / "js.rule.tuned.yaml"
+        fixture = root / "js.rule.tuned.js"
+        payload["results"] = {str(rule): {"checks": {rule.stem: {"passed": True, "matches": {
+            str(fixture): {"expected_lines": [2], "reported_lines": [2]},
+        }}}}}
+    return types.SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+
 def test_nothing_is_published_when_the_tuned_rule_still_matches(monkeypatch, tmp_path):
-    monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
+    monkeypatch.setattr(sp, "_semgrep", passing_semgrep)
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
     (tmp_path / "a.js").write_text("x", encoding="utf-8")
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [2, 4] if target.endswith("tuned.js") else [10])
@@ -126,7 +139,7 @@ def test_nothing_is_published_when_the_tuned_rule_still_matches(monkeypatch, tmp
 
 
 def test_tuned_rule_replaces_the_original_in_monitor_mode_only(monkeypatch, tmp_path):
-    monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
+    monkeypatch.setattr(sp, "_semgrep", passing_semgrep)
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
     (tmp_path / "a.js").write_text("x", encoding="utf-8")
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [2, 4] if target.endswith("tuned.js") else ([] if config.endswith("tuned.yaml") else [10]))
@@ -148,11 +161,11 @@ def test_tuned_rule_replaces_the_original_in_monitor_mode_only(monkeypatch, tmp_
 
 
 def test_tuning_is_rejected_when_the_fixtures_do_not_model_the_original(monkeypatch, tmp_path):
-    monkeypatch.setattr(sp, "_semgrep", lambda args, **kw: types.SimpleNamespace(returncode=0, stdout="All tests passed", stderr=""))
+    monkeypatch.setattr(sp, "_semgrep", passing_semgrep)
     monkeypatch.setattr(sp, "original_rule_yaml", lambda rule, token: "rules:\n  - id: js.rule\n")
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [2])  # original misses the ok line
     monkeypatch.setattr(sp, "publish", lambda *a: pytest.fail("must not publish an unproven tuning"))
-    with pytest.raises(sp.SemgrepError, match="do not model this false positive"):
+    with pytest.raises(sp.SemgrepError, match="misses `ok` fixture lines 4. Original fixture matches: 2"):
         sp.tune_rule(REPORT + FIXTURES, "sast", "js.rule", str(tmp_path / "a.js"), 10, "t", {"id": 1})
 
 
@@ -278,7 +291,7 @@ def test_a_yaml_fixture_does_not_overwrite_the_rule_file(monkeypatch, tmp_path):
     monkeypatch.setattr(sp, "_semgrep", semgrep)
     monkeypatch.setattr(sp, "_matches", lambda config, target, line, exact=False: [])
     rule = "rules:\n  - id: yaml.rule.tuned\n    languages: [yaml]\n"
-    fixtures = "# ruleid: yaml.rule.tuned\nkey: x\n"
+    fixtures = "# ruleid: yaml.rule.tuned\nkey: x\n# ok: yaml.rule.tuned\nkey: y\n"
     with contextlib.suppress(sp.SemgrepError):
         sp.validate_tuned_rule(rule, "", str(tmp_path / "values.yaml"), 2, fixtures)
     assert seen == {"yaml.rule.tuned.yaml": rule, "yaml.rule.tuned.test.yaml": fixtures}

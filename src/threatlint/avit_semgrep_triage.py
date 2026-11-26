@@ -9,8 +9,8 @@
   5. only the still-open IDs are submitted, and Semgrep's affected IDs and count must equal what was submitted;
   6. the scope is read back and every requested ID must now be ignored.
 
-Each step updates the audit record (attempt → write_attempt → response_received → verified, or already_ignored /
-unverified), so an interrupted or partially applied triage can be inspected instead of blindly retried.
+Each step updates the audit record. A scope_blocked record identifies the peer findings that
+prevented a write. A write_attempt, response_received, or unverified write needs reconciliation.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from threatlint.avit_report import ResolveError
-from threatlint.avit_semgrep import scoped_findings
+from threatlint.avit_semgrep import TriageScopeBlocked, scoped_findings
 
 PRODUCTS = ("sast", "sca", "secrets")
 TRIAGE_STATES = ("open", "ignored")
@@ -132,11 +132,16 @@ def _match_fingerprint(row: dict) -> str:
     return fingerprint
 
 
-def _check_fanout(before: dict[int, dict], pending: list[int], rows: Iterable[dict], ref: str) -> None:
-    """Semgrep also triages identical fingerprints on other refs."""
+def _peer(row: dict) -> dict:
+    return {key: row[key] for key in ("id", "ref", "status")}
+
+
+def _fingerprint_peers(before: dict[int, dict], pending: list[int], rows: Iterable[dict], ref: str) -> list[dict]:
+    """Find other records that Semgrep could triage with the requested fingerprints."""
     expected = {identifier: _match_fingerprint(before[identifier]) for identifier in pending}
     fingerprints = set(expected.values())
     confirmed = set()
+    peers = []
     for row in rows:
         fingerprint = _match_fingerprint(row)
         identifier = row["id"]
@@ -145,9 +150,10 @@ def _check_fanout(before: dict[int, dict], pending: list[int], rows: Iterable[di
                 raise ResolveError("Semgrep finding identity or state changed during triage preflight")
             confirmed.add(identifier)
         elif fingerprint in fingerprints:
-            raise ResolveError("Semgrep triage could include additional findings with the same fingerprint")
+            peers.append(_peer(row))
     if confirmed != set(expected):
         raise ResolveError("Semgrep did not return every requested finding in the all-ref triage preflight")
+    return peers
 
 
 def ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *, repository: str, ref: str, rule: str,
@@ -169,10 +175,10 @@ def ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *, repos
 
     try:
         before = {}
-        has_secret_peer = False
+        peers = []
         for row in findings(None if kind == "secrets" else ref):
             if row["ref"] != ref:
-                has_secret_peer = True
+                peers.append(_peer(row))
             elif row["id"] in requested:
                 before[row["id"]] = row
         if set(before) != set(requested) or any(row["status"] not in TRIAGE_STATES for row in before.values()):
@@ -182,10 +188,16 @@ def ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *, repos
             audit.record("already_ignored", verified_ids=requested)
             print(f"  Triage audit: {audit}")
             return 0
-        if has_secret_peer:
-            raise ResolveError("Semgrep found Secrets findings under the same rule on another ref and does not expose their match fingerprints")
-        if kind != "secrets":
-            _check_fanout(before, pending, findings(None), ref)
+        if kind == "secrets":
+            scope_reason = "Semgrep found Secrets findings under the same rule on another ref and does not expose their match fingerprints"
+        else:
+            peers = _fingerprint_peers(before, pending, findings(None), ref)
+            scope_reason = "Semgrep triage could include additional findings with the same fingerprint"
+        if peers:
+            audit.record("scope_blocked", error=scope_reason, peers=peers)
+            raise TriageScopeBlocked(f"Semgrep triage blocked: {scope_reason} "
+                                     f"({len(peers)} outside the requested write). No Semgrep triage write was sent. "
+                                     f"Review the peer finding IDs and refs in triage audit {audit}")
         body = {"issue_type": kind, "issue_ids": pending, "repos": [repository], "ref": ref, "status": "open",
                 "new_triage_state": "ignored", "new_triage_reason": "false_positive", "new_note": note[:_NOTE_LIMIT],
                 **({"include_historical": False} if kind == "secrets" else {})}
@@ -199,6 +211,8 @@ def ignore(token: str, slug: str, kind: str, ids: list[int], note: str, *, repos
         if set(after) != set(requested):
             raise ResolveError("Semgrep read-back could not verify every requested finding")
         audit.record("verified", verified_ids=sorted(after))
+    except TriageScopeBlocked:
+        raise
     except ResolveError as exc:
         audit.record("unverified", error=str(exc))
         write_status = " No Semgrep triage write was sent." if "submitted_ids" not in audit.evidence else ""

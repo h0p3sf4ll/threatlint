@@ -179,20 +179,36 @@ def _write_fixture(work, rule_id, target_file, rule_yaml, fixtures):
 
 def _check_original(original_path, scan_path, expect, avoid, *, matches, error_type):
     hits = set(matches(str(original_path), str(scan_path), None))
-    if not set(avoid) <= hits:
-        raise error_type("The original rule does not fire on the `ok` fixture lines, so they do not model this false positive")
-    if not set(expect) <= hits:
-        raise error_type("The original rule misses a `ruleid` fixture line; the fixtures do not reflect the original rule")
+    for marker, annotated in (("ok", avoid), ("ruleid", expect)):
+        missed = set(annotated) - hits
+        if missed:
+            raise error_type(
+                f"The original rule misses `{marker}` fixture lines {_line_list(missed)}. "
+                f"Original fixture matches: {_line_list(hits)}. "
+                "Recreate the flagged expression and its required enclosing context using synthetic values. "
+                "Place the marker immediately before the line where the original match starts."
+            )
+
+
+def _line_list(lines):
+    ordered = sorted(lines)
+    if not ordered:
+        return "none"
+    return ", ".join(str(line) for line in ordered[:8]) + (", …" if len(ordered) > 8 else "")
 
 
 def _check_location(original_path, rule_path, target_file, line, *, matches, error_type):
     local = {"reproduced": False, "dropped": None}
-    if target_file and Path(target_file).exists() and original_path and line:
-        if matches(str(original_path), target_file, line, exact=True):
-            local["reproduced"] = True
-            local["dropped"] = not matches(str(rule_path), target_file, line, exact=True)
-            if not local["dropped"]:
-                raise error_type("The tuned rule still reports the false-positive location; not deploying it")
+    if not target_file or not line or not Path(target_file).is_file():
+        return local
+    if matches(str(rule_path), target_file, line, exact=True):
+        raise error_type(
+            f"The tuned rule still reports the false-positive location at checkout line {line}. "
+            "Compare the actual expression and its enclosing context with the passing ok fixture. "
+            "Make the fixture represent this occurrence and narrow the matching rule branch to exclude it."
+        )
+    if original_path and matches(str(original_path), target_file, line, exact=True):
+        local.update(reproduced=True, dropped=True)
     return local
 
 
@@ -223,11 +239,48 @@ def _rule_validation_error(result) -> str:
         message = error.get("short_msg") or error.get("message")
         if isinstance(message, str) and message.strip():
             detail = message
+            if message.startswith("Invalid YAML file"):
+                positions = re.findall(r"line (\d{1,7}), column (\d{1,7})", message)
+                where = " at " + " and ".join(f"line {line}, column {col}" for line, col in positions[:2]) if positions else ""
+                return f"Tuned rule is not valid: malformed YAML{where}. Restore the base rule's mapping and sequence indentation around the edit."
+            if "must occur directly under a patterns:" in message.lower() or "you cannot negate in an or" in message.lower():
+                return ("Tuned rule is not valid: place the constraint directly under patterns beside a positive pattern. "
+                        "Within a pattern-either alternative, group its positive pattern and its exclusion "
+                        "under the same patterns list. Preserve the other alternatives.")
     if pattern_error or re.search(r"(?im)^\s*(?:\[ERROR\]\s*)?Pattern parse error in rule\b", detail):
         return (f"Semgrep could not parse the tuned rule pattern{location}. Use a complete expression or statement "
                 "in the target language. Use a metavariable such as $VALUE for a sensitive operand and "
                 "preserve the enclosing call, quotes, and template delimiters.")
     return f"Tuned rule is not valid: {detail.strip()[-300:]}"
+
+
+def _check_fixture_result(result, rule_path, fixture_path, expect, avoid, *, error_type):
+    """Require Semgrep to report a completed check for this exact rule and fixture."""
+    try:
+        payload = json.loads(result.stdout)
+        if payload.get("config_with_errors"):
+            raise error_type("Semgrep could not execute the fixture check. Check the configured engine and its access.")
+        checked = next(value for path, value in payload["results"].items() if Path(path).resolve() == rule_path.resolve())
+        check = checked["checks"][rule_path.stem]
+        fixture = next(value for path, value in check["matches"].items() if Path(path).resolve() == fixture_path.resolve())
+        expected, reported = fixture["expected_lines"], fixture["reported_lines"]
+        if not all(isinstance(lines, list) and all(type(n) is int and n > 0 for n in lines) for lines in (expected, reported)):
+            raise ValueError
+    except (AttributeError, KeyError, StopIteration, TypeError, ValueError):
+        raise error_type("Semgrep did not return fixture results for the proposed rule and its paired file.") from None
+    if set(expected) != set(expect):
+        raise error_type("Tuned rule fixtures did not pass: Semgrep did not recognize all ruleid markers. "
+                         "Use a standalone target-language comment immediately before each expected match.")
+    missed = set(expected) - set(reported)
+    extra = (set(reported) - set(expected)) | set(avoid).intersection(reported)
+    if missed or extra:
+        raise error_type(
+            f"Tuned rule fixtures did not pass: missed true-positive lines {_line_list(missed)}. "
+            f"Unexpected matches on fixture lines {_line_list(extra)}. "
+            "Keep the ruleid cases detectable and compare each extra match with the proved safe context."
+        )
+    if result.returncode or check.get("passed") is not True or check.get("errors"):
+        raise error_type("Semgrep did not complete a passing fixture check for the proposed rule.")
 
 
 def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures="", token=None, *,
@@ -246,12 +299,12 @@ def validate_tuned_rule(rule_yaml, original_rule, target_file, line, fixtures=""
     if not fixtures:
         raise error_type("The report has no `**Tuned rule fixtures**:` block; a tuning is deployed only when fixtures prove it")
     scan_path = _write_fixture(work, rule_id, target_file, rule_yaml, fixtures)
-    test = run(["--test", *pro_flags(), "--metrics", "off", str(work)])
-    if test.returncode != 0 or "All tests passed" not in test.stdout:
-        raise error_type(f"Tuned rule fixtures did not pass: {(test.stdout or test.stderr).strip()[-400:]}")
     expect, avoid = fixture_lines(fixtures, rule_id)
     if not expect or not avoid:
         raise error_type("Fixtures need at least one `ruleid` (true positive kept) and one `ok` (the false positive) line")
+    test = run(["--test", "--json", *pro_flags(), "--metrics", "off", str(work)])
+    paired = work / semgrep_rule_text.fixture_name(rule_id, target_file)
+    _check_fixture_result(test, rule_path, paired, expect, avoid, error_type=error_type)
     original_text = original_rule_yaml(original_rule, token) if token else ""
     original_path = None
     if original_text:

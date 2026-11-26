@@ -56,6 +56,58 @@ def test_invalid_tuning_pattern_returns_its_yaml_location_without_echoing_source
     assert repairable_rule_error(failed.value)
 
 
+@pytest.mark.parametrize(("message", "advice"), [
+    ('Invalid YAML file /temp/synthetic-token.yaml:\nwhile parsing a block mapping\n  in "<file>", line 395, column 9'
+     '\nexpected <block end>, but found an item\n  in "<file>", line 398, column 9', "line 395, column 9 and line 398, column 9"),
+    ("Rule parse error in rule synthetic-token:\n Must occur directly under a patterns:", "under the same patterns list"),
+    ("Rule parse error in rule synthetic-token:\n you cannot negate in an Or; you can only negate inside an And", "under the same patterns list"),
+])
+def test_invalid_rule_structure_produces_repairable_guidance(message, advice):
+    from threatlint.avit_tuning import repairable_rule_error
+    result = SimpleNamespace(stdout=json.dumps({"errors": [{"message": message}]}), stderr="")
+    diagnostic = engine._rule_validation_error(result)
+    assert advice in diagnostic and "synthetic-token" not in diagnostic
+    assert repairable_rule_error(sp.SemgrepError(diagnostic))
+
+
+def test_failed_fixture_proof_reports_exact_lines_without_source_or_temp_paths(tmp_path):
+    from threatlint.avit_tuning import repairable_rule_error
+    rule, fixture = tmp_path / "access-token.tuned.yaml", tmp_path / "access-token.tuned.py"
+    checks = {rule.stem: {"passed": False, "matches": {str(fixture): {"expected_lines": [2, 8], "reported_lines": [4, 8]}}}}
+    result = SimpleNamespace(returncode=1, stdout=json.dumps({"results": {str(rule): {"checks": checks}}}))
+    with pytest.raises(sp.SemgrepError) as failure:
+        engine._check_fixture_result(result, rule, fixture, [2, 8], [4], error_type=sp.SemgrepError)
+    assert "missed true-positive lines 2" in str(failure.value)
+    assert "Unexpected matches on fixture lines 4" in str(failure.value)
+    assert str(tmp_path) not in str(failure.value) and repairable_rule_error(failure.value)
+
+
+@pytest.mark.parametrize("payload", [
+    {"results": {}}, {"config_with_errors": [{"error": "private diagnostic"}], "results": {}},
+    {"results": {"unexpected.yaml": {"checks": {}}}},
+])
+def test_missing_executed_fixture_check_blocks_even_with_zero_exit(tmp_path, payload):
+    from threatlint.avit_tuning import repairable_rule_error
+    result = SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    with pytest.raises(sp.SemgrepError) as failure:
+        engine._check_fixture_result(result, tmp_path / "r.yaml", tmp_path / "r.py", [2], [4], error_type=sp.SemgrepError)
+    assert not repairable_rule_error(failure.value) and "private diagnostic" not in str(failure.value)
+
+
+def test_tuned_match_blocks_even_when_the_original_misses_the_flagged_line(tmp_path):
+    target = tmp_path / "target.py"
+    target.write_text("observe('fixture')\n")
+    original, tuned = tmp_path / "original.yaml", tmp_path / "tuned.yaml"
+    def only_tuned_matches(config, path, line, *, exact):
+        assert path == target and line == 1 and exact
+        return [1] if config == str(tuned) else []
+
+    with pytest.raises(sp.SemgrepError, match="false-positive location at checkout line 1"):
+        engine._check_location(original, tuned, target, 1, matches=only_tuned_matches, error_type=sp.SemgrepError)
+    result = engine._check_location(original, tuned, target, 1, matches=lambda *a, **kw: [], error_type=sp.SemgrepError)
+    assert result == {"reproduced": False, "dropped": None}
+
+
 def test_invalid_scan_json_uses_the_original_public_error_class(monkeypatch):
     monkeypatch.setattr(sp, "_pro_flags", lambda: [])
     monkeypatch.setattr(sp, "_semgrep", lambda args: SimpleNamespace(returncode=0, stdout="invalid", stderr="synthetic failure"))

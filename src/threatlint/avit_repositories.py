@@ -11,10 +11,45 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from threatlint import servicenow as sn
 from threatlint.avit_report import ResolveError
 from threatlint import tls
+from threatlint.servicenow_records import MAX_FIELD_CHARS
+
+
+def scanner_snippet_location(record: dict, checkout: Path, target: dict) -> dict[str, str]:
+    """Locate a scanner excerpt in the named file without exporting its contents."""
+    context = record["context"]
+    snippet = record.get("fields", {}).get("u_code_snippet", "")
+    if (not snippet or str(context.get("line", "")).isdigit() or not target.get("branch")
+            or target.get("branch_deleted") or not context.get("file_path")):
+        return {}
+    if len(snippet) >= MAX_FIELD_CHARS:
+        return {"line_blocker": "The scanner snippet may be truncated. Supply the original scanner line for this AVIT."}
+    path = Path(context["file_path"])
+    root = checkout.resolve()
+    flagged = (root / path).resolve()
+    if path.is_absolute() or not flagged.is_relative_to(root) or not flagged.is_file():
+        return {"line_blocker": "The scanner snippet's file is unavailable in the named checkout."}
+
+    # A multi-line context excerpt need not begin on the scanner's match.
+    if len(snippet.splitlines()) != 1:
+        return {"line_blocker": "The scanner supplied a multi-line excerpt without a start line. Supply the original scanner line for this AVIT."}
+    matched = None
+    try:
+        with flagged.open(encoding="utf-8-sig") as source:
+            for number, text in enumerate(source, 1):
+                if text.rstrip("\n") == snippet:
+                    if matched is not None:
+                        return {"line_blocker": "The scanner snippet occurs more than once in the flagged file. Supply the original scanner line for this AVIT."}
+                    matched = number
+    except (OSError, UnicodeError):
+        return {"line_blocker": "The flagged file could not be read as source to locate the scanner snippet."}
+    if matched is None:
+        return {"line_blocker": "The scanner snippet does not match the flagged file on this branch. Check the scan revision and original source line."}
+    return {"line": str(matched), "line_source": "scanner_snippet"}
 
 
 def cmd_checkout(args, *, session, read_record, checkout_branch, renamed_repository) -> int:
@@ -48,7 +83,8 @@ def cmd_checkout(args, *, session, read_record, checkout_branch, renamed_reposit
     print(f"✓ Checked out to {args.dir}")
     print(json.dumps({"avit": avit, "kind": kind, "code_security": sn.in_code_security_view(record),
                       "checkout": os.path.abspath(args.dir), **target,
-                      **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")}}))
+                      **{k: v for k, v in record["context"].items() if k in ("file_path", "line", "rule", "finding_source")},
+                      **scanner_snippet_location(record, Path(args.dir), target)}))
     return 0
 
 

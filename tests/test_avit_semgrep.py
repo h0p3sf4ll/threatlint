@@ -74,13 +74,13 @@ def test_original_report_line_and_path_collaborators_are_used(monkeypatch):
     assert [row["id"] for row in matches] == [1]
 
 
-def test_report_line_with_terminal_period_keeps_exact_path_rule_and_three_line_window(monkeypatch):
+def test_report_line_with_terminal_period_prefers_exact_line_over_neighboring_findings(monkeypatch):
     rows = [finding(line, location={"file_path": "app/utils/auth.py", "line": line})
             for line in (93, 94, 97, 100, 101)]
     rows.extend([
         finding(201, rule_name="other.r", location={"file_path": "app/utils/auth.py", "line": 97}),
         finding(202, location={"file_path": "other/app/utils/auth.py", "line": 97}),
-        finding(203, location={"file_path": "app/utils/auth.py", "line": 97}, status="ignored"),
+        finding(203, location={"file_path": "app/utils/auth.py", "line": 96}, status="ignored"),
     ])
     calls = []
 
@@ -89,10 +89,30 @@ def test_report_line_with_terminal_period_keeps_exact_path_rule_and_three_line_w
         return paged(rows)(path, token, **kwargs)
 
     _, matches = match(monkeypatch, query, context=REPORT_CONTEXT, report_text=PUNCTUATED_REPORT)
-    assert [row["id"] for row in matches] == [94, 97, 100]
+    assert [row["id"] for row in matches] == [97]
     assert all(call["repos"] == [REPOSITORY] and call["ref"] == ["feature"] for call in calls)
     assert all(row["project"] == REPOSITORY and row["ref"] == "feature" and row["rule"] == "r"
                and row["path"] == "app/utils/auth.py" for row in matches)
+
+
+@pytest.mark.parametrize("lines", [(42, 42), (41, 43)])
+def test_multiple_plausible_ids_block_even_across_statuses(monkeypatch, lines):
+    rows = [finding(n, location={"file_path": "file.py", "line": line}, status=status)
+            for n, (line, status) in enumerate(zip(lines, ("ignored", "open")), 1)]
+    with pytest.raises(matching.TriageScopeBlocked, match="2 findings.*No Semgrep triage write"):
+        match(monkeypatch, paged(rows))
+
+
+def test_exact_ignored_match_takes_precedence_over_a_nearby_open_finding(monkeypatch):
+    rows = [finding(1, status="ignored"), finding(2, location={"file_path": "file.py", "line": 43})]
+    _, matches = match(monkeypatch, paged(rows))
+    assert [(row["id"], row["status"]) for row in matches] == [(1, "ignored")]
+
+
+def test_scanner_snippet_cannot_select_a_neighboring_finding(monkeypatch):
+    rows = [finding(1, location={"file_path": "file.py", "line": 43})]
+    _, matches = match(monkeypatch, paged(rows), context={**CONTEXT, "line_source": "scanner_snippet"})
+    assert matches == []
 
 
 @pytest.mark.parametrize("overrides", [{"repository": {"name": "other-org/Project Name/repo"}}, {"ref": "another-branch"}])

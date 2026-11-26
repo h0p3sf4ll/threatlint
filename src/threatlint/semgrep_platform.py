@@ -405,7 +405,8 @@ def live_rule_matches(rule_yaml: str, target_file: str, line: int | None) -> lis
 
 
 def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line: int | None, token: str, dep: dict,
-              out=sys.stdout, *, project: str | None = None, verified_finding: bool = False) -> list[dict]:
+              out=sys.stdout, *, project: str | None = None, verified_finding: bool = False,
+              allow_live_shortcut: bool = True) -> list[dict]:
     """Make sure the scanner stops reporting this false positive, without human approval but only with proof.
 
     - Not yet tuned: the reviewer's tuned rule (a clone of the original plus the narrowest exclusion) is proven,
@@ -419,7 +420,7 @@ def tune_rule(report: str, kind: str, original_rule: str, target_file: str, line
     if already:
         live_path = already[0]["tuned"]
         live_yaml = original_rule_yaml(live_path, token)
-        still = live_rule_matches(live_yaml, target_file, line)
+        still = live_rule_matches(live_yaml, target_file, line) if allow_live_shortcut else None
         if still == []:
             for item in already:
                 print(f"  ✓ {item['policy']} already runs {item['tuned']} ({item['mode']}), which no longer reports this line; no change needed", file=out)

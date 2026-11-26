@@ -356,6 +356,39 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     assert "Closed as false positive" in out.getvalue()
 
 
+@pytest.mark.parametrize("failure", ["scope", "write", "scope-and-tuning"])
+def test_scope_block_allows_proven_tuning_only_after_a_verified_no_write(monkeypatch, tmp_path, capsys, failure):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar, "semgrep_token", lambda _p: "sg")
+    match = {"id": 7, "path": "file.py", "line": 2, "ref": "main", "rule": "fixture"}
+    monkeypatch.setattr(ar, "semgrep_matches", lambda *_a: ({"id": 1, "slug": "fixture"}, [match]))
+    def ignore(*_args):
+        if failure == "write":
+            raise ar.ResolveError("Unverified Semgrep write")
+        raise ar.avit_semgrep_triage.TriageScopeBlocked("Semgrep triage blocked: shared fingerprint")
+    tuned = []
+    def tune(*_args):
+        tuned.append(True)
+        if failure == "scope-and-tuning":
+            raise ar.ResolveError("fixture check failed")
+    monkeypatch.setattr(ar, "ignore_matches", ignore)
+    monkeypatch.setattr(ar, "_tune_verified_rule", tune)
+    args = _args(tmp_path, _with_tuning(REPORT, "generic.secrets.aws-access-key"))
+    args.skip_rule_tuning = False
+    code = ar.run(ar.cmd_resolve, args)
+    assert code == (3 if failure == "scope" else 1)
+    assert len(tuned) == int(failure != "write")
+    output = capsys.readouterr()
+    assert "✓ Closed as false positive" in output.out
+    assert "✓ Semgrep ignored" not in output.out
+    if failure == "scope-and-tuning":
+        assert "shared fingerprint" in output.out and "fixture check failed" in output.out
+    elif failure == "scope":
+        assert "BLOCKED: Semgrep triage blocked:" in output.err
+
+
 def test_headless_false_positive_still_tunes_rule_without_semgrep_match_and_reports_partial_completion(monkeypatch, tmp_path):
     fake = FakeServiceNow()
     monkeypatch.setattr(sn, "_request_json", fake)

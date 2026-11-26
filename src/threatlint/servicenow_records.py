@@ -35,6 +35,12 @@ def flatten(record: dict, value_of: Callable = field_value, skipped=SKIPPED_FIEL
             name.startswith("sys_") and name not in ("sys_id", "sys_created_on", "sys_updated_on")
         )
     }
+    # Indentation can be the only difference between two scanner occurrences
+    # in the same file. Preserve it before attempting checkout correlation.
+    raw = record.get("u_code_snippet")
+    snippet = (raw.get("display_value") or raw.get("value")) if isinstance(raw, dict) else raw
+    if "u_code_snippet" in fields and isinstance(snippet, str) and snippet.strip():
+        fields["u_code_snippet"] = snippet.rstrip("\r\n")[:MAX_FIELD_CHARS]
     return {name: value for name, value in fields.items() if value}
 
 

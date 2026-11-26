@@ -278,6 +278,20 @@ describe('ServiceNow resolve for imported reports', () => {
     await assert.rejects(scan.reviewSemgrepAvit(AVIT, { body: { provider: 'claude-code' }, credentials: CREDENTIALS,
       integrations: { threatlintCli: async () => ({ code: 0, stderr: '', stdout: '  ✓ Closed as false positive\n  ✓ Semgrep ignored 1 finding(s) as false_positive\n' + JSON.stringify({ outcomes: [{ avit: AVIT, completed: true, kind: 'sast', disposition: 'FALSE POSITIVE' }] }) }) } }), /both false-positive closure and Semgrep rule tuning/);
   });
+  it('reports a blocked review for this AVIT without sending another tracker write', async () => {
+    const calls = [];
+    const reason = 'Semgrep triage blocked. Peer findings share the fingerprint.';
+    const outcome = { avit: AVIT, status: 'blocked', reason, completed: false, disposition: 'FALSE POSITIVE' };
+    const review = (avit, row) => scan.reviewSemgrepAvit(avit, { body: { provider: 'codex' }, credentials: CREDENTIALS,
+      integrations: { threatlintCli: async () => ({ code: 1, stderr: '', stdout: JSON.stringify({
+        type: 'finding_review_result', completed: 0, blocked: 1, failed: 0, outcomes: [row],
+      }) }) } });
+    await assert.rejects(servicenow.resolveAvit(CREDENTIALS, AVIT, { disposition: 'FALSE POSITIVE', files: [file] },
+      { fetchImpl: fakeServiceNow(calls, { source: 'Semgrep SAST' }), reviewSemgrep: avit => review(avit, outcome) }),
+    error => error.status === 409 && error.code === 'avit_review_blocked' && error.message.includes(reason));
+    assert.ok(!calls.some(call => call.options.method === 'PATCH' || call.url.includes('/attachment/file')));
+    await assert.rejects(review(AVIT, { ...outcome, avit: AVIT2 }), error => error.status === 502 && !error.code && !error.message.includes(reason));
+  });
   it('reports an AVIT the integration account cannot read as a clear error', async () => {
     await assert.rejects(servicenow.resolveAvit(CREDENTIALS, HIDDEN, { disposition: 'FALSE POSITIVE', files: [file] }, { fetchImpl: fakeServiceNow([]) }),
       error => /AVIT not readable by the integration account/.test(error.message) && error.code === 'avit_unreadable');
