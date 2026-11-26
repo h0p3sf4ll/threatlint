@@ -205,7 +205,7 @@ def test_live_report_shape_keeps_wording_and_lists_intact():
 
 
 @pytest.mark.parametrize(("source", "expected"), [
-    ("the complete patch is **PROPOSED \u2014 NOT APPLIED** and belongs to the fix step.", "the complete patch is proposed, not applied and belongs to the fix step."),
+    ("the complete patch is **PROPOSED \u2014 NOT APPLIED** and belongs to the fix step.", "The complete patch is proposed, not applied and belongs to the fix step."),
     ("(all **NOT RUN**; they need a new project)", "(all not run; they need a new project)"),
     ("**PROPOSED \u2014 NOT APPLIED**: Bind the value.", "Bind the value."),
     ("contoso_ledger (Example_Project) and *emphasis*", "contoso_ledger (Example_Project) and emphasis"),
@@ -370,3 +370,27 @@ def test_bulleted_impact_and_punctuated_severity_are_understood():
     assert page["bottom_line"].startswith("Confirmed high-severity finding at LedgerController.cs:96")
     assert "An attacker can close the literal and append UNION queries or stacked T-SQL." in page["bottom_line"]
     assert "Severity \xb7 HIGH." not in _text(one_pager.render(page))
+
+
+def test_bottom_line_skips_labelled_structure_and_names_the_fix_action():
+    report = LIVE_SHAPE.replace(
+        "**Finding and impact**:\n\n**The rule's claim.** A non-numeric parameter of a public action reaches a System.Data.SqlClient "
+        "sink without passing through any of the rule's sanitisers. The inspected code meets every condition:",
+        "**Finding and impact**:\n- Entry point: Index is a public action on LedgerController reached through the default route.\n"
+        "- Path to SQL: the region is stored in a static field and formatted into three SQL strings.")
+    report = report.replace("**Impact.** A single quote ends the literal. From there an attacker can add predicates, UNION queries or stacked "
+                            "statements to the batch, which runs as the SQL login loaded from Key Vault (lines 39\u201354; values not inspected).",
+                            "**Notes.** Nothing else.")
+    report = report.replace("Use constant SQL with `@region` bound as `SqlDbType.NVarChar` at lines 87, 93, 100, 205 and 211.",
+                            "The fix moves the SQL templates into a small helper that binds the region as a parameter.")
+    report = report.replace("**Acceptance Criteria**:\n- No SQL", "**Acceptance Criteria**:\nall six queries use parameters.\n- No SQL")
+    page = one_pager.summary(report, avit=AVIT)
+    assert "Entry point" not in page["bottom_line"] and "Path to SQL" not in page["bottom_line"]
+    assert "Fix: move the SQL templates into a small helper that binds the region as a parameter" in page["bottom_line"]
+    assert dict(page["right"])["Done when"].startswith("All six queries use parameters.")
+
+
+@pytest.mark.parametrize(("word", "base"), [("moves", "move"), ("binds", "bind"), ("replaces", "replace"), ("passes", "pass"),
+                                            ("fixes", "fix"), ("adds", "add"), ("uses", "use")])
+def test_base_verb(word, base):
+    assert one_pager._base_verb(word) == base

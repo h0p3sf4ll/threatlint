@@ -85,6 +85,10 @@ def _cut(text: str, limit: int) -> str:
     return re.sub(r"\s+\(?\d{1,2}[.)]$", "", cut).strip()
 
 
+# Ordinary words that may open a section in lower case; identifiers such as "market" are left as written.
+_COMMON_STARTS = "all|any|both|each|every|no|none|the|a|an|when|if|once|after|before|this|these|it|there|only|tests?|we"
+
+
 def _prose(text: str, limit: int = 420) -> str:
     """Plain prose without code, tables, links, or emphasis. List items stay one per line; long text is cut
     at an item, sentence, or word boundary."""
@@ -130,6 +134,8 @@ def _prose(text: str, limit: int = 420) -> str:
         if not out or (room >= 80 and not partial.endswith("\u2026")):
             out.append(partial)
         break
+    if out and re.match(rf"(?:{_COMMON_STARTS})\b", out[0]):
+        out[0] = out[0][:1].upper() + out[0][1:]
     text = re.sub(r";$", ".", "\n".join(out).strip())
     # A lone caption such as "Excerpt from `path:1-2`:" carries no finding detail.
     return "" if text.endswith(":") and len(text) < 90 else text
@@ -159,11 +165,24 @@ def _subsection(text: str, name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+_LABELLED = re.compile(r"[A-Z][\w-]*(?: [\w-]+){0,3}: ")
+
+
+def _unlabelled(text: str) -> str:
+    """`text` without its labelled sub-points ("- Entry point: ...", "- **Path to SQL**: ..."), which describe structure."""
+    kept = []
+    for line in text.splitlines():
+        content = re.sub(r"^[ \t]*(?:[-*+]|\d{1,2}[.)])[ \t]+", "", line).replace("**", "")
+        if not _LABELLED.match(content):
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def _plain_sentence(text: str, min_words: int = 8, limit: int = 200) -> str:
     """The first complete sentence of `text` with at least `min_words` words, without line references or connectives."""
     for sentence in _sentences(_prose(text, 2000)):
-        if len(sentence.split()) < min_words or sentence.endswith(":"):
-            continue
+        if len(sentence.split()) < min_words or sentence.endswith(":") or _LABELLED.match(sentence):
+            continue  # A labelled sub-point ("Entry point: ...") describes structure, not the finding's impact.
         sentence = re.sub(r"\s*\([^()]*\b(?:lines?|values? not|not inspected|see )[^()]*\)", "", sentence)
         sentence = re.sub(r"^(?:From there|As a result|Therefore|Thus|In turn|This means(?: that)?|So),?\s+", "", sentence)
         return _cut(sentence[:1].upper() + sentence[1:], limit)
@@ -294,6 +313,16 @@ def _bottom_lines(text: str) -> list[bytes]:
     return lines[: _BOTTOM_LINES - 1] + [last.rstrip(b" ,;:") + _encode("\u2026")]
 
 
+def _base_verb(word: str) -> str:
+    """moves -> move, binds -> bind, replaces -> replace, passes -> pass, fixes -> fix; other words are unchanged."""
+    lower = word.lower()
+    if re.search(r"(?:ss|sh|ch|x|z)es$", lower):
+        return lower[:-2]
+    if lower.endswith("s") and not lower.endswith("ss"):
+        return lower[:-1]
+    return lower
+
+
 def _fix_sentence(text: str, limit: int = 170) -> str:
     """The first sentence that says what to change. A sentence that opens with a pronoun ("It holds constant SQL...")
     is joined to the short sentence it refers to ("New helper Data/Queries.cs: it holds constant SQL...")."""
@@ -301,7 +330,10 @@ def _fix_sentence(text: str, limit: int = 170) -> str:
     for index, sentence in enumerate(sentences):
         if len(sentence.split()) < 4:
             continue
-        if index and re.match(r"(?:It|This|These|They|That)\b", sentence):
+        subject = re.match(r"(?i)(?:the|this) (?:fix|patch|change|proposed fix|proposal) (\w+)\b", sentence)
+        if subject:  # "The fix moves the SQL..." -> "Move the SQL..."
+            sentence = _base_verb(subject.group(1)).capitalize() + sentence[subject.end():]
+        elif index and re.match(r"(?:It|This|These|They|That)\b", sentence):
             sentence = f"{sentences[index - 1].rstrip('.')}: {_lower_first(sentence)}"
         return _cut(sentence, limit)
     return _cut(sentences[0], limit) if sentences else ""
@@ -402,7 +434,8 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
         fix = _section(body, "Proposed fix patch") + "\n" + _section(body, "Proposed Fix")
         fix_kind, fix_lines = _fix_code(fix, location.rsplit(":", 1)[-1].split("-")[0] if ":" in location else "")
         fix_prose = re.sub(r"^\s*\([^()]*\)\.?\s*", "", _prose(fix, 600))
-        page["bottom_line"] = _bottom_line(page, finding["title"], location, consequences[0] if consequences else risk,
+        page["bottom_line"] = _bottom_line(page, finding["title"], location,
+                                           consequences[0] if consequences else subsection or _unlabelled(impact),
                                            fix_prose, bool(fix_lines))
         page["left"] = [("What is at risk", _prose(risk, 460)),
                         ("Why this is a true positive", _prose(_section(body, "Assessment and alternative interpretation"), 340))]
