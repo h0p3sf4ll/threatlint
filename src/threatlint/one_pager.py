@@ -81,7 +81,7 @@ def _cut(text: str, limit: int) -> str:
         return text
     cut = text[:limit]
     end = cut.rfind(". ")
-    cut = cut[: end + 1] if end > limit * 0.5 else cut.rsplit(" ", 1)[0].rstrip(",;:") + "\u2026"
+    cut = cut[: end + 1] if end > limit * 0.25 else cut.rsplit(" ", 1)[0].rstrip(",;:") + "\u2026"
     return re.sub(r"\s+\(?\d{1,2}[.)]$", "", cut).strip()
 
 
@@ -93,7 +93,8 @@ def _prose(text: str, limit: int = 420) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
     # A marker that opens the text is a label. Inside a sentence it is part of the wording, so it stays as words.
     marker = r"\*\*(PROPOSED[ \t]*[\u2014\u2013-][ \t]*NOT APPLIED|NOT RUN)\*\*"
-    text = re.sub(rf"^[ \t]*\(?{marker}\)?[,.:;]?[ \t]*", "", text)
+    text = re.sub(r"(?m)^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$", "", text)  # Markdown dividers carry no words.
+    text = re.sub(rf"^\s*[\u2014\u2013-]*[ \t]*\(?{marker}\)?[,.:;]?[ \t]*", "", text)
     text = re.sub(marker, lambda match: "proposed, not applied" if match.group(1).startswith("PROPOSED") else "not run", text)
     # Remove emphasis and code marks only where they wrap text; identifiers keep their own underscores and asterisks.
     text = text.replace("`", "")
@@ -124,10 +125,10 @@ def _prose(text: str, limit: int = 420) -> str:
             used += len(line) + 1
             continue
         room = limit - used
-        if not out or room >= 80:
-            out.append(_cut(line, room if out else limit))
-        elif out and not out[-1].endswith(("\u2026", ".")):
-            out[-1] += "\u2026"
+        partial = _cut(line, room if out else limit)
+        # Keep whole items: after the first line, a partial item is shown only when it ends on a full sentence.
+        if not out or (room >= 80 and not partial.endswith("\u2026")):
+            out.append(partial)
         break
     text = re.sub(r";$", ".", "\n".join(out).strip())
     # A lone caption such as "Excerpt from `path:1-2`:" carries no finding detail.
@@ -278,6 +279,33 @@ def _clip_code(code: str, lines: int) -> list[str]:
     return clipped
 
 
+_BOTTOM_LINES = 6  # Room for the verdict, the consequence and the fix without cutting a sentence.
+
+
+def _bottom_lines(text: str) -> list[bytes]:
+    """The bottom line as drawn: at most _BOTTOM_LINES lines, the last ending in an ellipsis if anything was left out."""
+    lines = _wrap(text, "R", 10.2, _WIDTH - 30)
+    if len(lines) <= _BOTTOM_LINES:
+        return lines
+    last = lines[_BOTTOM_LINES - 1]
+    while last and _width(last + _encode(" \u2026"), "R", 10.2) > _WIDTH - 30:
+        last = last.rsplit(b" ", 1)[0] if b" " in last else last[:-1]
+    return lines[: _BOTTOM_LINES - 1] + [last.rstrip(b" ,;:") + _encode("\u2026")]
+
+
+def _fix_sentence(text: str, limit: int = 170) -> str:
+    """The first sentence that says what to change. A sentence that opens with a pronoun ("It holds constant SQL...")
+    is joined to the short sentence it refers to ("New helper Data/Queries.cs: it holds constant SQL...")."""
+    sentences = _sentences(_prose(text, 1200))
+    for index, sentence in enumerate(sentences):
+        if len(sentence.split()) < 4:
+            continue
+        if index and re.match(r"(?:It|This|These|They|That)\b", sentence):
+            sentence = f"{sentences[index - 1].rstrip('.')}: {_lower_first(sentence)}"
+        return _cut(sentence, limit)
+    return _cut(sentences[0], limit) if sentences else ""
+
+
 def _bottom_line(page: dict, title: str, location: str, risk: str, fix_prose: str, has_code: bool) -> str:
     """Verdict, severity and place; what an attacker can do; and the fix. Each part comes from the report's own fields."""
     if page["basis"] == "CONSERVATIVE DEFAULT":
@@ -293,11 +321,24 @@ def _bottom_line(page: dict, title: str, location: str, risk: str, fix_prose: st
     place = Path(location).name if location else ""
     first = f"{state} {severity}finding{f' at {place}' if place else ''}: {_lower_first(subject)}."
     consequence = _plain_sentence(risk, 8, 190)
-    action = _plain_sentence(fix_prose, 4, 160)
-    fix = (f"Fix: {_lower_first(action)}" if action else "") or ("Fix: apply the proposed code change on this page." if has_code else "")
-    if fix and has_code and "below" not in fix and "this page" not in fix:
-        fix = fix.rstrip(".") + " (code below)."
-    return " ".join(part for part in (first, consequence, fix) if part) or "The inspected code supports the reported finding."
+    action = _fix_sentence(fix_prose)
+    note = " (code below)." if has_code and action else ""
+
+    def fix_text() -> str:
+        if action:
+            return f"Fix: {_lower_first(action)}".rstrip(".") + (note or ".")
+        return "Fix: apply the proposed code change on this page." if has_code else ""
+
+    def compose() -> str:
+        return " ".join(part for part in (first, consequence, fix_text()) if part)
+
+    # The box holds _BOTTOM_LINES lines: shorten the longer of the consequence and the fix action until all three parts fit.
+    while len(_wrap(compose(), "R", 10.2, _WIDTH - 30)) > _BOTTOM_LINES and max(len(consequence), len(action)) > 60:
+        if len(consequence) >= len(action):
+            consequence = _cut(consequence, len(consequence) - 25)
+        else:
+            action = _cut(action, len(action) - 25).rstrip("\u2026").rstrip(" ,;:") + "\u2026"
+    return compose() or "The inspected code supports the reported finding."
 
 
 def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
@@ -328,8 +369,8 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
         "severity": _field(body, "Severity").upper().split()[0] if _field(body, "Severity") else "UNSPECIFIED",
         "confidence": (re.findall(r"[A-Za-z]+", _field(body, "Confidence")) or [""])[0].upper(),
         "basis": _field(body, "Decision basis").upper(),
-        "owner": _prose(re.sub(r"\s*\(suggested\)", "", _field(body, "Owner")), 70),
-        "effort": _prose(_field(body, "Effort"), 70),
+        "owner": _prose(re.sub(r"\s*\(suggested\)", "", _field(body, "Owner")), 180),
+        "effort": _prose(_field(body, "Effort"), 180),
         "repository": _prose(repository.group(1), 80) if repository else "",
         "location": location, "rule": rule,
         "reviewed": _field(head, "Date") or date.today().isoformat(),
@@ -503,10 +544,15 @@ def _spaced_width(data: bytes, font: str, size: float, spacing: float) -> float:
     return _width(data, font, size) + spacing * max(0, len(data) - 1)
 
 
+_FACT_LINES = {"Suggested owner": 4, "Effort": 4}  # Sentences get room to finish; identifiers stay compact.
+
+
 def _fact_lines(name: str, value: str, width: float) -> list[bytes]:
-    """At most two lines. A long path loses leading folders, never its file name and line; other text ends with an ellipsis."""
+    """Two lines (four for owner and effort). A long path loses leading folders, never its file name and line;
+    other text that still does not fit ends with an ellipsis."""
+    limit = _FACT_LINES.get(name, 2)
     lines = _wrap(value or "\u2014", "B", 8.3, width)
-    if len(lines) <= 2:
+    if len(lines) <= limit:
         return lines
     if name == "Location" and "/" in value:
         parts = value.split("/")
@@ -514,12 +560,12 @@ def _fact_lines(name: str, value: str, width: float) -> list[bytes]:
         for start in range(1, len(parts)):
             shorter = _wrap("\u2026/" + "/".join(parts[start:]), "B", 8.3, width)
             # Accept only a shortening that keeps the file name and line whole on one line.
-            if len(shorter) <= 2 and any(name_and_line in line for line in shorter):
+            if len(shorter) <= limit and any(name_and_line in line for line in shorter):
                 return shorter
-    second = lines[1]
-    while second and _width(second + _encode("\u2026"), "B", 8.3) > width:
-        second = second[:-1]
-    return [lines[0], second.rstrip() + _encode("\u2026")]
+    last = lines[limit - 1]
+    while last and _width(last + _encode("\u2026"), "B", 8.3) > width:
+        last = last[:-1]
+    return lines[: limit - 1] + [last.rstrip() + _encode("\u2026")]
 
 
 def _header(canvas: _Canvas, page: dict) -> float:
@@ -557,7 +603,7 @@ def _header(canvas: _Canvas, page: dict) -> float:
         canvas.text(x + 8, top + 6.6, data, "R", 7.8, (0.20, 0.26, 0.23))
         x += width + 7
     top += 31
-    lines = _wrap(page["bottom_line"], "R", 10.2, _WIDTH - 30)[:4]
+    lines = _bottom_lines(page["bottom_line"])
     height = 24 + len(lines) * 10.2 * 1.38
     canvas.rect(_LEFT, top, _WIDTH, height, fill=tint)
     canvas.rect(_LEFT, top, 3.2, height, fill=accent)

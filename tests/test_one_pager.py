@@ -294,3 +294,66 @@ def test_long_paths_wrap_after_a_folder():
     # A folder wider than the column must break inside, but the file name and line still stay whole.
     lines = one_pager._wrap("webApp/CONTOSO_LEDGER_LATEST_PROD/Controllers/LedgerController.cs:96", "B", 8.3, 160)
     assert lines[-1].endswith(b"LedgerController.cs:96") and b"LedgerController" not in b"".join(lines[:-1])
+
+
+def test_owner_and_effort_sentences_are_not_cut_short():
+    effort = ("About 0.5 day. That covers one helper class, six call-site edits and a new xUnit test project, "
+              "because none exists today.")
+    report = LIVE_SHAPE.replace("**Effort**: About 0.5 engineer-day. The fix touches six call sites in one controller.",
+                                f"**Effort**: {effort}")
+    page = one_pager.summary(report, avit=AVIT)
+    assert page["effort"] == effort and page["owner"].endswith("(suggested, not an agreed owner)")
+    pdf = one_pager.render(page)
+    text = _text(pdf)
+    assert "because none exists today." in text and "not an agreed owner)" in text
+    _assert_no_overlap(pdf)
+
+
+def test_shortened_text_ends_on_a_complete_sentence_when_one_exists():
+    text = ("All six statements move to fixed SQL text with typed parameters. Lines 95 to 98 stay as they are, because they "
+            "now receive a parameterised command and nothing else in the data access path changes at all.")
+    assert one_pager._prose(text, 150) == "All six statements move to fixed SQL text with typed parameters."
+
+
+def test_fix_text_drops_dividers_and_dash_led_markers_and_resolves_pronouns():
+    fix = ("---\n\u2014 **PROPOSED \u2014 NOT APPLIED** New helper Data/LedgerQueries.cs. It holds constant SQL with "
+           "@region placeholders and binds the values as typed parameters.")
+    assert one_pager._prose(fix).startswith("New helper Data/LedgerQueries.cs. It holds")
+    assert one_pager._fix_sentence(fix) == ("New helper Data/LedgerQueries.cs: it holds constant SQL with @region placeholders "
+                                            "and binds the values as typed parameters.")
+    report = LIVE_SHAPE.replace("**Proposed Fix** (direction only; the complete patch is **PROPOSED \u2014 NOT APPLIED** and belongs "
+                                "to the separate fix step): Use constant SQL with `@region` bound as `SqlDbType.NVarChar` at lines "
+                                "87, 93, 100, 205 and 211.", "**Proposed Fix**:\n" + fix)
+    bottom = one_pager.summary(report, avit=AVIT)["bottom_line"]
+    assert "Fix: new helper Data/LedgerQueries.cs: it holds constant SQL" in bottom and "---" not in bottom
+
+
+def test_bottom_line_keeps_all_three_parts_inside_its_box():
+    long_fix = ("New helper Data/LedgerQueries.cs. It holds constant SQL with @region and @validated placeholders and binds "
+                "the values as SqlDbType.NVarChar parameters through one command factory shared by every call site.")
+    report = LIVE_SHAPE.replace("**Proposed Fix** (direction only; the complete patch is **PROPOSED \u2014 NOT APPLIED** and belongs "
+                                "to the separate fix step): Use constant SQL with `@region` bound as `SqlDbType.NVarChar` at lines "
+                                "87, 93, 100, 205 and 211.", "**Proposed Fix**:\n" + long_fix)
+    page = one_pager.summary(report, avit=AVIT)
+    drawn = one_pager._bottom_lines(page["bottom_line"])
+    assert len(drawn) <= one_pager._BOTTOM_LINES and not drawn[-1].endswith(_encode_ellipsis())
+    assert page["bottom_line"].startswith("Confirmed critical-severity finding") and "Fix: new helper Data/LedgerQueries.cs" in page["bottom_line"]
+    assert "An attacker can add predicates" in page["bottom_line"]
+
+
+def test_overflowing_bottom_line_ends_with_an_ellipsis_never_a_silent_cut():
+    drawn = one_pager._bottom_lines("word " * 200)
+    assert len(drawn) == one_pager._BOTTOM_LINES and drawn[-1].endswith(_encode_ellipsis())
+
+
+def _encode_ellipsis() -> bytes:
+    return "\u2026".encode("cp1252")
+
+
+def test_lists_keep_whole_items_rather_than_ending_mid_sentence():
+    text = ("- No String.Format builds SQL from the region anywhere in the controller.\n"
+            "- Regression assertions 1 to 5 pass in CI and the owner attaches the run output.\n"
+            "- A Semgrep rescan of the fixed commit no longer reports the fingerprint or any sibling finding at the other lines.")
+    shortened = one_pager._prose(text, 200)
+    assert shortened.splitlines() == ["\u2022 No String.Format builds SQL from the region anywhere in the controller.",
+                                      "\u2022 Regression assertions 1 to 5 pass in CI and the owner attaches the run output."]
