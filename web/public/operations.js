@@ -93,7 +93,7 @@
   const scm = {
     connections: [], connectionId: '', repositories: [], repository: null, branches: [],
     repositoryPage: 0, repositoryHasMore: false, branchPage: 0, branchHasMore: false,
-    search: '', initialized: false, connecting: false, refreshing: false, checkout: false,
+    search: '', initialized: false, addingConnection: false, connecting: false, refreshing: false, checkout: false,
     repositoryBusy: false, branchBusy: false, connectionBusy: false, repositoryVersion: 0, branchVersion: 0,
     repositoryController: null, branchController: null,
   };
@@ -220,7 +220,15 @@
   function sourceLocked() { return scm.checkout || scm.connecting || scm.connectionBusy; }
   function syncSourceControls() {
     const locked = sourceLocked();
-    $('scm-connection-fields').disabled = locked;
+    const firstConnection = scm.initialized && !scm.connections.length;
+    const showForm = firstConnection || scm.addingConnection;
+    $('scm-connection-form').hidden = !showForm;
+    $('scm-connection-fields').disabled = locked || scm.refreshing || !showForm;
+    const add = $('scm-add-connection');
+    add.hidden = firstConnection;
+    add.disabled = locked || scm.refreshing;
+    add.setAttribute('aria-expanded', String(showForm));
+    add.textContent = showForm ? 'Cancel' : 'Add new source';
     $('scm-refresh-connections').disabled = locked || scm.refreshing;
     $('scm-repository-search').disabled = locked || !scm.connectionId;
     $('scm-search').disabled = locked || !scm.connectionId;
@@ -231,8 +239,7 @@
     $('scm-branch').disabled = locked || scm.branchBusy || !scm.branches.length;
     $('scm-checkout').disabled = locked || scm.branchBusy || !scm.repository || !$('scm-branch').value;
     $('scm-checkout').textContent = scm.checkout ? 'Preparing checkout…' : 'Check out & open workspace →';
-    const liveCount = scm.connections.filter(item => item.connected !== false).length;
-    $('scm-connect').textContent = scm.connecting ? 'Connecting…' : (liveCount ? 'Add another connection ↗' : 'Connect source ↗');
+    $('scm-connect').textContent = scm.connecting ? 'Connecting…' : 'Connect source';
     const countPill = $('scm-repository-count');
     countPill.classList.toggle('is-running', scm.repositoryBusy);
     countPill.textContent = scm.repositoryBusy ? 'LOADING…' : (scm.connectionId ? `${scm.repositories.length} LOADED` : 'NO CONNECTION');
@@ -248,9 +255,21 @@
     $('scm-organization').required = azure;
     $('scm-token').value = '';
   }
+  function closeConnectionEntry() {
+    scm.addingConnection = false;
+    $('scm-organization').value = '';
+    $('scm-token').value = '';
+  }
+  function openConnectionEntry(provider, organization = '') {
+    scm.addingConnection = true;
+    $('scm-provider').value = provider || 'github';
+    providerChanged();
+    $('scm-organization').value = organization;
+    syncSourceControls();
+  }
   function liveConnectionRow(item) {
     const row = el('li', `scm-connection${item.id === scm.connectionId ? ' selected' : ''}`);
-    const select = button('', 'scm-connection-select', () => selectConnection(item.id));
+    const select = button('', 'scm-connection-select', () => selectConnection(item.id, true));
     select.setAttribute('aria-pressed', String(item.id === scm.connectionId));
     const azure = item.provider !== 'github';
     const copy = el('span', 'scm-connection-copy');
@@ -288,19 +307,15 @@
       return;
     }
     const azure = item.provider !== 'github';
-    $('scm-provider').value = azure ? 'azure-devops' : 'github';
-    providerChanged();
-    if (azure) $('scm-organization').value = item.account || '';
+    openConnectionEntry(azure ? 'azure-devops' : 'github', azure ? item.account : '');
     $('scm-token').focus();
-    status('scm-status', item.source === 'GitHub App'
-      ? 'Reconnect the GitHub App in Settings → GitHub, or paste a repository-read token above to connect it now.'
-      : `Re-enter a token for ${item.label || item.account} above to reconnect it. The saved credential could not be used.`);
+    status('scm-status', `Enter a new token to reconnect ${item.label || item.account}.`);
   }
   function renderConnections() {
     const list = $('scm-connections');
     list.replaceChildren();
     for (const item of scm.connections) list.append(item.connected === false ? savedConnectionRow(item) : liveConnectionRow(item));
-    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts. Add a repository-read token above, save an Azure DevOps PAT in Settings → Azure DevOps, or a GitHub App in Settings → GitHub.'));
+    if (!scm.connections.length) list.append(el('li', 'operations-empty-note', 'No connected accounts yet.'));
     const liveCount = scm.connections.filter(item => item.connected !== false).length;
     const state = $('scm-connect-state');
     state.hidden = !liveCount;
@@ -345,7 +360,7 @@
         || (item.connected === false && saved.provider === item.provider
           && saved.account.toLowerCase() === item.account.toLowerCase())))];
       scm.initialized = true;
-      const selected = scm.connections.some(item => item.id === scm.connectionId);
+      const selected = scm.connections.some(item => item.id === scm.connectionId && item.connected !== false);
       renderConnections();
       const preferred = scm.connections.find(item => item.id === scm.preferredConnectionId && item.connected !== false);
       const liveId = preferred?.id || scm.connections.find(item => item.isDefault && item.connected !== false)?.id || firstLiveId();
@@ -353,7 +368,7 @@
       const unconnected = scm.connections.filter(item => item.connected === false).length;
       if (!selected || preferred) selectConnection(liveId);
       else status('scm-status', 'Session connections refreshed. Select a repository to continue.');
-      if (!scm.connections.length) status('scm-status', 'No source connections yet. Connect an account above, or save an Azure DevOps PAT in Settings to connect it automatically.');
+      if (!scm.connections.length) status('scm-status', 'Connect a source to browse repositories.');
       // Without a live connection nothing else replaces the busy "Loading…" status, so always settle it here.
       else if (!liveId) status('scm-status', `${unconnected} saved source${unconnected === 1 ? '' : 's'} could not connect. Check the saved token and permissions in Settings, then use Reconnect under Connected accounts.`, 'error');
     } catch {
@@ -362,7 +377,7 @@
   }
   async function connectSource(event) {
     event.preventDefault();
-    if (sourceLocked()) return;
+    if ($('scm-connection-fields').disabled) return;
     const provider = $('scm-provider').value;
     const token = $('scm-token').value.trim();
     const organization = $('scm-organization').value.trim();
@@ -383,8 +398,7 @@
         && !(existing.connected === false && existing.provider === item.provider && existing.account.toLowerCase() === item.account.toLowerCase())), item];
       scm.initialized = true;
       scm.connecting = false;
-      renderConnections();
-      selectConnection(item.id);
+      selectConnection(item.id, true);
     } catch {
       status('scm-status', 'The source connection was not accepted. Check the provider, organization, token permissions, and runner availability before retrying.', 'error');
     } finally { $('scm-token').value = ''; scm.connecting = false; syncSourceControls(); }
@@ -412,14 +426,16 @@
     $('scm-branch').replaceChildren(option);
     $('scm-selection').textContent = 'Select a repository to load its branches.';
   }
-  function selectConnection(id) {
+  function selectConnection(id, focus = false) {
     if (sourceLocked()) return;
+    if (id) closeConnectionEntry();
     scm.repositoryController?.abort();
     scm.repositoryVersion += 1;
     scm.repositoryBusy = false; scm.connectionId = id; scm.repositories = []; scm.repository = null;
     scm.repositoryPage = 0; scm.repositoryHasMore = false; scm.search = '';
     $('scm-repository-search').value = '';
     clearBranches(); renderConnections(); renderRepositories();
+    if (focus) $('scm-connections').querySelector('.selected .scm-connection-select')?.focus();
     if (id) void loadRepositories(false);
     else syncSourceControls();
   }
@@ -1369,6 +1385,15 @@
 
   function wireSources() {
     document.addEventListener('threatlint:source-activated', event => { void refreshConnections(event.detail?.connectionId); });
+    $('scm-add-connection').addEventListener('click', () => {
+      if (scm.addingConnection) {
+        closeConnectionEntry();
+        syncSourceControls();
+      } else {
+        openConnectionEntry(scm.connections.find(item => item.id === scm.connectionId)?.provider);
+        $('scm-provider').focus();
+      }
+    });
     $('scm-github-app-settings').addEventListener('click', () => {
       document.dispatchEvent(new CustomEvent('threatlint:settings-open', { detail: { section: 'github' } }));
     });

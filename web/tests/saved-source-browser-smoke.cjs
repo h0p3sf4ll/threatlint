@@ -14,14 +14,20 @@ const { createWorkbench } = require('../server.js');
 
 (async () => {
   const live = [{ id: 'legacy', provider: 'azure-devops', account: 'acmeit2', host: 'dev.azure.com' }];
+  const savedAzureOrgs = [{ name: 'acmeit', source: 'file' }];
   let attempts = 0, rejectSaved = false;
   const wb = createWorkbench({ storageDir: path.join(directory, 'state'),
     integrations: { threatlintCli: async args => args[1] === 'status'
-      ? { code: 0, stdout: JSON.stringify({ organizations: [{ name: 'acmeit', source: 'file' }] }) }
+      ? { code: 0, stdout: JSON.stringify({ organizations: savedAzureOrgs }) }
       : { code: 1, stdout: '' } },
     sourceManagers: {
       list: () => live.slice(),
       connect: async input => {
+        if (input.organization === 'acmeit2') {
+          assert.deepEqual(input, { provider: 'azure-devops', organization: 'acmeit2', token: 'synthetic-session-pat' });
+          const value = { id: 'legacy', provider: input.provider, account: input.organization, host: 'dev.azure.com' };
+          live.push(value); return value;
+        }
         attempts++;
         if (rejectSaved) throw new Error('Synthetic rejected credential');
         assert.equal(input.organization, 'AcmeIT');
@@ -37,26 +43,48 @@ const { createWorkbench } = require('../server.js');
   try {
     await new Promise(resolve => wb.server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${wb.server.address().port}`;
-    const response = await fetch(`${base}/api/management/connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: 'azure-devops', kind: 'scm', name: 'ADO-AcmeIT', organization: 'AcmeIT', token: 'synthetic-saved-pat', isDefault: true }) });
-    assert.equal(response.status, 200);
-    assert.equal((await response.text()).includes('synthetic-saved-pat'), false);
     browser = await chromium.launch({ headless: true, ...(process.env.THREATLINT_BROWSER_EXECUTABLE ? { executablePath: process.env.THREATLINT_BROWSER_EXECUTABLE } : {}) });
     const page = await browser.newPage(); const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-    await page.goto(base); await page.locator('#connection-status.online').waitFor();
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view: 'sources' } })));
+    const openSources = async () => {
+      await page.goto(base); await page.locator('#connection-status.online').waitFor();
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent('threatlint:navigate', { detail: { view: 'sources' } })));
+    };
+    const form = page.locator('#scm-connection-form'), add = page.locator('#scm-add-connection');
+    const provider = page.locator('#scm-provider'), org = page.locator('#scm-organization'), token = page.locator('#scm-token');
+    const expectCollapsed = async () => {
+      await token.waitFor({ state: 'hidden' });
+      assert.equal(await org.isVisible(), false);
+      assert.equal(await token.isDisabled(), true);
+      assert.equal(await token.inputValue(), '');
+    };
+
+    const response = await fetch(`${base}/api/management/connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'azure-devops', kind: 'scm', name: 'ADO-AcmeIT', organization: 'AcmeIT', token: 'synthetic-saved-pat', isDefault: true }) });
+    assert.equal(response.status, 200);
+    const record = await response.json();
+    assert.equal(JSON.stringify(record).includes('synthetic-saved-pat'), false);
+    await openSources();
     await page.locator('#scm-repositories', { hasText: 'saved-account' }).waitFor();
     assert.match(await page.locator('#scm-connections .selected').innerText(), /ADO-AcmeIT/);
     assert.equal(await page.locator('#scm-connections .saved').count(), 0, 'working named source replaces the stale CLI placeholder');
-    assert.equal(await page.locator('#scm-token').inputValue(), '');
+    await expectCollapsed();
     await page.locator('#scm-refresh-connections').click();
     await page.waitForFunction(() => !document.querySelector('#scm-refresh-connections').disabled);
     assert.equal(attempts, 1, 'refresh reuses the saved account');
 
+    await add.click();
+    await provider.selectOption('azure-devops');
+    await org.fill('another-org');
+    await token.fill('synthetic-discarded-pat');
+    await add.click();
+    await expectCollapsed();
+    await add.click();
+    await token.fill('synthetic-unsubmitted-pat');
     await page.locator('#scm-connections .scm-connection-select', { hasText: 'acmeit2' }).click();
     await page.locator('#scm-repositories', { hasText: 'other-account' }).waitFor();
+    await expectCollapsed();
     await page.locator('[data-view="settings"]').click();
     await page.locator('.settings-nav [data-settings-category="integrations"]').click();
     await page.locator('.management-connection', { hasText: 'ADO-AcmeIT' }).getByRole('button', { name: 'Use in Connect source' }).click();
@@ -116,8 +144,24 @@ const { createWorkbench } = require('../server.js');
     assert.equal(await page.locator('#management-avits .management-finding').count(), 2);
     await filterForm.locator('[name=scm]').selectOption('github');
     assert.equal(await filterForm.locator('[name=project]').inputValue(), '');
+    // A fresh Workbench visit with no saved or live sources opens the manual form.
+    const removed = await fetch(`${base}/api/management/connections/${record.connection.id}`, { method: 'DELETE' });
+    assert.equal(removed.status, 200);
+    savedAzureOrgs.length = 0;
+    live.length = 0;
+    await openSources();
+    await token.waitFor({ state: 'visible' });
+    assert.equal(await form.evaluate(node => Boolean(document.querySelector('#scm-connections').compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    assert.equal(await org.isVisible(), false, 'GitHub only needs the token');
+    await provider.selectOption('azure-devops');
+    await org.fill('acmeit2');
+    await token.fill('synthetic-session-pat');
+    await page.locator('#scm-connect').click();
+    await page.locator('#scm-repositories', { hasText: 'other-account' }).waitFor();
+    await expectCollapsed();
+
     assert.deepEqual(errors, []);
-    console.log('PASS: saved Azure source auto-connect/default selection, Settings handoff, cached refresh, retry, GitHub App setup without a PAT, and paginated AVIT filters with failed-refresh preservation.');
+    console.log('PASS: manual source entry and cancellation, connected-source selection, saved Azure auto-connect and retry, GitHub App settings, and paginated AVIT filters.');
   } finally {
     await browser?.close(); await wb.close(); fs.rmSync(directory, { recursive: true, force: true });
   }
