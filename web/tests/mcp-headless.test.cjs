@@ -12,7 +12,6 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { StdioClientTransport, getDefaultEnvironment } = require('@modelcontextprotocol/sdk/client/stdio.js');
 const { createWorkbench } = require('../server.js');
 const { convertToWord } = require('./helpers/docx.cjs');
-const { entries, readMatching } = require('../lib/zip.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
@@ -172,7 +171,7 @@ test('real scanner host forwards engine selection and binds proposal/application
   assert.equal((await call(client, 'get_scan', { sessionId, scanId: applied.scanId })).parentScanId, scanId);
 });
 
-test('concurrent PowerPoint exports share stable bytes and continue across protocol instances', async t => {
+test('concurrent one-page PDF exports share stable bytes and continue across protocol instances', async t => {
   const { workbench, repo } = fixture(t), first = await connect(workbench);
   t.after(first.close);
   const { sessionId } = await call(first.client, 'open_workspace', { repoPath: repo, confirm: true });
@@ -180,7 +179,7 @@ test('concurrent PowerPoint exports share stable bytes and continue across proto
     + '**Evidence**: `app.py:2`\n**Impact**: Synthetic clients need verified transport.\n**Remediation**: Preserve TLS verification.\n'
     + '**Original code**:\n```python\nrequests.get(url, verify=False)\n```\n**Proposed fix**:\n```python\nrequests.get(url, verify=True)\n```\n';
   const saved = await call(first.client, 'save_report', { sessionId, agentId, markdown, confirm: true });
-  const input = { sessionId, reportId: saved.id, findingId: 'CR-001', format: 'pptx', offset: 0, limit: 1024 };
+  const input = { sessionId, reportId: saved.id, findingId: 'CR-001', format: 'pdf', offset: 0, limit: 1024 };
   const [one, two] = await Promise.all([call(first.client, 'export_report', input), call(first.client, 'export_report', input)]);
   assert.deepEqual(one, two, 'simultaneous offset-zero requests must use the same generated archive');
   assert.equal(Buffer.from(one.content, 'base64').length, 1024); assert.ok(one.nextOffset > 0);
@@ -191,11 +190,11 @@ test('concurrent PowerPoint exports share stable bytes and continue across proto
     const part = await call(second.client, 'export_report', { ...input, offset, limit: 256 * 1024 });
     assert.equal(part.totalBytes, one.totalBytes); chunks.push(Buffer.from(part.content, 'base64')); offset = part.nextOffset;
   } while (offset !== null);
-  const archive = Buffer.concat(chunks);
-  assert.equal(archive.length, one.totalBytes);
-  assert.ok(entries(archive).some(entry => entry.name === '[Content_Types].xml'));
-  const slides = readMatching(archive, /^ppt\/slides\/slide\d+\.xml$/);
-  assert.equal(slides.length, 1); assert.match(slides[0].text, /Synthetic transport boundary/);
+  const pdf = Buffer.concat(chunks);
+  assert.equal(pdf.length, one.totalBytes);
+  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+  assert.equal(pdf.toString('latin1').split('/Type /Page ').length - 1, 1);
+  assert.equal(one.mimeType, 'application/pdf');
 });
 
 test('the real stdio entrypoint uses an isolated fresh profile and works while its HTTP port is unavailable', { timeout: 15000 }, async t => {

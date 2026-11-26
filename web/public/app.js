@@ -354,9 +354,9 @@
   }
   async function openReportUrl(url) { const report = await request(url); openReport(report); }
   async function openExample() { try { openReport(await request('/api/examples/fp-review')); } catch (error) { toast(error.message, true); } }
-  function powerPointUrl(report, findingId) {
+  function onePagerUrl(report, findingId) {
     if (report?.example || !report?.findings?.length || !report.previewUrl?.endsWith('/json')) return '';
-    const download = report.previewUrl.replace(/\/json$/, '/pptx');
+    const download = report.previewUrl.replace(/\/json$/, '/onepager');
     return findingId ? `${download}?finding=${encodeURIComponent(findingId)}` : download;
   }
   function openReport(report) {
@@ -377,7 +377,7 @@
     }
     $('report-ask').hidden = !!report.example || !report.id;
     $('report-attach-review').hidden = !!report.example || !report.id || report.agentId !== FP_REVIEWER;
-    for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl], ['download-pptx', powerPointUrl(report)]]) {
+    for (const [id, url] of [['download-md', report.mdUrl], ['download-docx', report.docxUrl], ['download-onepager', onePagerUrl(report)]]) {
       $(id).classList.toggle('hidden', !url || report.example); if (url) $(id).href = profile?.url?.(url) || url; else $(id).removeAttribute('href');
     }
     $('reader-finding-count').textContent = report.findings?.length || 0;
@@ -454,13 +454,13 @@
         document.dispatchEvent(new CustomEvent('threatlint:ticket-create', { detail: { reportId: state.report.id, sessionId: state.report.sessionId || state.session?.id, findingId: finding.id } }));
       }));
       if (!state.report.example && state.report.id) actions.append(button('✦ Ask how to fix this', 'button secondary small-button', () => askAbout({ type: 'finding', reportId: state.report.id, findingId: finding.id, label: `${finding.id} · ${finding.title}` }, `How do I fix ${finding.id} in this codebase? Show the change and a regression test.`)));
-      const slideUrl = powerPointUrl(state.report, finding.id);
-      if (slideUrl) {
-        const slide = el('a', 'button secondary small-button', '↓ PowerPoint');
-        slide.href = profile?.url?.(slideUrl) || slideUrl;
-        slide.download = '';
-        slide.setAttribute('aria-label', `Download one-slide PowerPoint for ${finding.id}`);
-        actions.append(slide);
+      const summaryUrl = onePagerUrl(state.report, finding.id);
+      if (summaryUrl) {
+        const summary = el('a', 'button secondary small-button', '↓ One pager (PDF)');
+        summary.href = profile?.url?.(summaryUrl) || summaryUrl;
+        summary.download = '';
+        summary.setAttribute('aria-label', `Download the one-page PDF summary for ${finding.id}`);
+        actions.append(summary);
       }
       card.append(header, body, actions); list.append(card);
     }

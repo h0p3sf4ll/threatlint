@@ -410,7 +410,7 @@ def test_resolve_uses_the_sast_path_without_semgrep(monkeypatch, tmp_path, dispo
     body = json.loads(next(d for m, _u, d in fake.calls if m == "PATCH"))
     assert body["work_notes"] == note and (body.get("state") == "3") is closed
     uploads = [u for m, u, _d in fake.calls if u.endswith("/attachment/file")]
-    assert len(uploads) == 1
+    assert len(uploads) == 2  # Word report and one-page summary
     assert hook == ([("synthetic-issue-0001", "FALSE POSITIVE")] if closed else [])
     assert ("Semgrep not applicable" in out.getvalue()) is closed
     assert (work / "repo").exists() is not managed, "only the run-owned checkout is deleted after resolving"

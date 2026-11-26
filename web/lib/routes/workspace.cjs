@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { AGENTS, SKILLS, publicAgent } = require('../agents.cjs');
 const { parseReport } = require('../reports.cjs');
-const { onePageFinding, primaryFinding } = require('../report-one-page.cjs');
+const { primaryFinding } = require('../report-one-page.cjs');
 const { listConfiguredModels } = require('../model-discovery.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
@@ -152,7 +152,7 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     return { id: report.id };
   }));
 
-  app.get('/api/report/:sessionId/:agentId/:ts/pptx', handle(async (req, res) => {
+  app.get('/api/report/:sessionId/:agentId/:ts/onepager', handle(async (req, res) => {
     const { sessionId, agentId, ts } = req.params;
     const report = sessions.get(sessionId)?.reports.find(item => item.agentId === agentId && String(item.timestamp) === ts);
     if (!report) throw new HttpError('Report not found', 404);
@@ -164,9 +164,8 @@ function registerWorkspaceRoutes(app, { store, reports, build, integrations = {}
     try { parsed = reports.read(report); } catch { throw new HttpError('The report file is no longer available', 404); }
     const finding = findingId ? parsed.findings.find(item => item.id === findingId) : primaryFinding(parsed.findings);
     if (!finding) throw new HttpError(findingId ? 'Finding not found in this report' : 'This report has no findings to export', 404);
-    const { createFindingPptx } = require('../report-pptx.cjs');
-    const deck = await createFindingPptx(onePageFinding(finding));
-    res.attachment(`${finding.id}-threatlint-one-page.pptx`).send(deck);
+    const pdf = await require('../one-pager.cjs').render(report.mdPath, { findingId: finding.id });
+    res.type('application/pdf').attachment(`${require('../one-pager.cjs').PREFIX}${finding.id}-threatlint-review.pdf`).send(pdf);
   }));
 
   app.get('/api/report/:sessionId/:agentId/:ts/:fmt', (req, res) => {

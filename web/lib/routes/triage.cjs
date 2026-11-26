@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const { field } = require('../reports.cjs');
 const { handle, HttpError } = require('../http.cjs');
 const servicenow = require('../servicenow.cjs');
+const onePager = require('../one-pager.cjs');
 const semgrep = require('../semgrep-cloud.cjs');
 const scanners = require('../scanners.cjs');
 const { reviewSemgrepAvit } = require('../scan-import.cjs');
@@ -89,9 +90,11 @@ function registerTriageRoutes(app, { reports, scannerPolicies, integrations = {}
     const { report, finding } = falsePositive(req.body?.reportId, req.body?.findingId);
     const avit = avitFor(finding);
     const credentials = servicenow.validateCredentials(req.body?.servicenow);
-    // The Word report is the one attachment.
+    // The Word report and its one-page summary are attached together.
     if (!report.docxPath || !fs.existsSync(report.docxPath)) throw new HttpError('The Word report is unavailable; install python-docx so the report can be attached', 409);
-    const files = [{ name: `${avit}-threatlint-fp-review.docx`, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }];
+    const name = `${avit}-threatlint-fp-review.docx`;
+    const files = [{ name, content: fs.readFileSync(report.docxPath), type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      await onePager.attachment(report.mdPath, name, { avit, findingId: finding.id })];
     return servicenow.resolveAvit(credentials, avit, { disposition: 'FALSE POSITIVE', files }, { fetchImpl,
       reviewSemgrep: number => reviewSemgrepAvit(number, { body: req.body || {}, credentials, integrations }) });
   }));

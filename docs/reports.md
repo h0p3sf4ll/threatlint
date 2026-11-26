@@ -60,12 +60,14 @@ Connected DefectDojo and SonarQube reviews use one model run per finding, with a
 1. Finish a review that saves to Findings, such as [scan-report triage](workbench.md#triaging-a-scan-report). ServiceNow AVIT batches have the separate destination described below.
 2. Open **Findings**, then choose **Read report** on its card.
 3. Check the finding ID, inspected file/line, impact, proposed correction, and validation status.
-4. Download **Markdown** or **Word** where available. Choose **PowerPoint** for an editable one-slide summary of the top finding; the report's **Findings** tab can export a specific finding.
+4. Download **Markdown** or **Word** where available. Choose **One pager (PDF)** for a one-page summary of the top finding; the report's **Findings** tab can export a specific finding.
 5. Keep the original Markdown when you need a diffable review history.
 
-PowerPoint is a **single-finding summary**, not a conversion of every report into a slide deck. It is available when the report has a structured finding. It includes reported and proposed code when supplied; missing code is labelled rather than invented, and remediation prose may be used instead.
+The one pager is a **single-finding summary**, not a conversion of the whole report. It is available when the report has a structured finding. It leads with the verdict and a one-sentence bottom line. A true positive shows the risk, the code reviewed, the proposed fix (not applied), and acceptance criteria. A false positive shows why the finding is not exploitable and what any scanner change requires. Long content is shrunk and shortened so the summary always fits one US Letter page; the Word report keeps the full evidence.
 
-The report API also exposes its structured JSON view. Markdown, Word, and PowerPoint are the report reader's download formats; uploading a PDF does not create a PDF report-download option.
+The report API also exposes its structured JSON view. Markdown, Word, and the one-page PDF summary are the report reader's download formats.
+
+Wherever Threatlint attaches a Finding Review Word report to a tracker record (AVIT, ISST, SCTASK, or DefectDojo finding), it attaches the one-page summary beside it as `[ONE PAGER SUMMARY] <Word report name>.pdf`. Threatlint renders the summary before any write; if it cannot, nothing is posted. A narrative-only review with no structured finding is attached without a summary.
 
 To remove a saved report and its files, choose **Delete…** on its card and confirm. Scan run history, downloaded copies, and tracker attachments remain.
 
@@ -81,7 +83,7 @@ A proposed test is **NOT RUN** unless execution and its result are recorded. Rea
 
 | Workflow | Report or export destination |
 | --- | --- |
-| Workbench specialist review | Saved in **Findings** for its workspace; Markdown, Word when conversion succeeds, and eligible single-finding PowerPoint |
+| Workbench specialist review | Saved in **Findings** for its workspace; Markdown, Word when conversion succeeds, and a single-finding one-page PDF |
 | Uploaded report or Jira / Azure Boards / GitHub ticket triage | A consolidated Finding Review in **Findings**, under the selected workspace or **Scan imports**; Markdown and available Word |
 | DefectDojo / SonarQube connected review | A separate report per reference in the corresponding review workspace in **Findings**; posting back is a later confirmed action |
 | ServiceNow AVIT batch | The Word report is attached to the AVIT; SCTASKs receive their AVIT reports, and ISSTs receive true-positive reports. The batch attempts to remove temporary local reports, workspace entries, and checkouts, including on failure; check any cleanup warnings |

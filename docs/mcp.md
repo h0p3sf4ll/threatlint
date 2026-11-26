@@ -471,7 +471,7 @@ by `tools/list` describe the connected server's supported options.
 
 Use `list_reports` and `get_report` for structured reports. `list_reports` supports `offset` and
 `limit`; omitting both retains the original array response. `export_report` returns base64
-byte chunks for `md`, `json`, `docx`, or one-finding `pptx` output:
+byte chunks for `md`, `json`, `docx`, or a one-finding `pdf` summary:
 
 ```json
 {

@@ -4015,7 +4015,7 @@ Export a saved report as base64 byte chunks. Decode and concatenate chunks local
 | --- | --- | --- | --- |
 | `sessionId` | string | **Yes** | Min length: 1; Max length: 200 |
 | `reportId` | any JSON value | **Yes** | — |
-| `format` | string | No | Allowed: `"md"`, `"json"`, `"docx"`, `"pptx"`; Default: `"md"` |
+| `format` | string | No | Allowed: `"md"`, `"json"`, `"docx"`, `"pdf"`; Default: `"md"` |
 | `findingId` | string | No | Max length: 40; Pattern: `^[A-Z][A-Z0-9]*-\d+$` |
 | `offset` | integer | No | Minimum: 0 |
 | `limit` | integer | No | Minimum: 1; Maximum: 262144 |
@@ -4041,7 +4041,7 @@ Export a saved report as base64 byte chunks. Decode and concatenate chunks local
         "md",
         "json",
         "docx",
-        "pptx"
+        "pdf"
       ],
       "default": "md"
     },

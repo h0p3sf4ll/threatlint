@@ -352,7 +352,11 @@ def test_false_positive_attaches_then_closes_with_the_threatlint_comment_and_ign
     assert (body["state"], body["substate"]) == ("3", "3")
     assert body["work_notes"] == "Closed by Threatlint as a false positive, see attached report."
     uploads = [u for m, u, _d in fake.calls if u.endswith("/attachment/file")]
-    assert len(uploads) == 1, "only the Word report is attached"
+    assert len(uploads) == 2, "the Word report and its one-page summary are attached"
+    names = [row["file_name"] for row in fake.attachments]
+    assert names == [f"{AVIT}-threatlint-fp-review.docx", f"[ONE PAGER SUMMARY] {AVIT}-threatlint-fp-review.pdf"]
+    pdf = [d for m, u, d in fake.calls if u.endswith("/attachment/file")][1]
+    assert pdf.startswith(b"%PDF-") and pdf.count(b"/Type /Page ") == 1
     triage = next(body for _path, body in semgrep_calls if body is not None)
     assert triage["issue_type"] == "secrets" and triage["issue_ids"] == [55] and triage["new_triage_reason"] == "false_positive"
     assert "Closed as false positive" in out.getvalue()
@@ -551,6 +555,7 @@ def test_replaces_previous_reports_before_attaching_a_new_review(monkeypatch, tm
     fake.attachments = [
         _old_report(f"{AVIT}-threatlint-fp-review.docx", "d" * 32),
         _old_report(f"{AVIT}-threatlint-fp-review-20261103T180000123456Z.docx", "e" * 32),
+        _old_report(f"[ONE PAGER SUMMARY] {AVIT}-threatlint-fp-review-20261103T180000123456Z.pdf", "f" * 32),
         unrelated,
     ]
     monkeypatch.setattr(sn, "_request_json", fake)
@@ -560,9 +565,35 @@ def test_replaces_previous_reports_before_attaching_a_new_review(monkeypatch, tm
     assert ar.cmd_resolve(args) == 0
     writes = [(method, url.split("/api/now/")[-1]) for method, url, _data in fake.calls
               if "/api/now/" in url and method in ("POST", "DELETE", "PATCH")]
-    assert writes == [("DELETE", f"attachment/{'d' * 32}"), ("DELETE", f"attachment/{'e' * 32}"),
-                      ("POST", "attachment/file"), ("PATCH", f"table/{sn.AVIT_TABLE}/{SYS_ID}")]
-    assert fake.attachments == [unrelated, _old_report(args.attachment_name, "b" * 32)]
+    assert writes == [("DELETE", f"attachment/{'d' * 32}"), ("DELETE", f"attachment/{'e' * 32}"), ("DELETE", f"attachment/{'f' * 32}"),
+                      ("POST", "attachment/file"), ("POST", "attachment/file"), ("PATCH", f"table/{sn.AVIT_TABLE}/{SYS_ID}")]
+    summary = f"[ONE PAGER SUMMARY] {args.attachment_name[:-5]}.pdf"
+    assert fake.attachments == [unrelated, _old_report(args.attachment_name, "b" * 32), _old_report(summary, "b" * 32)]
+
+
+def test_one_pager_failure_leaves_the_avit_unchanged(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+    monkeypatch.setattr(sn, "_request_json", fake)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    monkeypatch.setattr(ar.one_pager, "build", lambda *_a, **_k: (_ for _ in ()).throw(ValueError("no finding")))
+    with pytest.raises(ar.ResolveError, match="one-page summary could not be generated; the AVIT was not changed"):
+        ar.cmd_resolve(_args(tmp_path, REPORT))
+    assert not any(method in ("POST", "PATCH", "DELETE") and "/oauth_token.do" not in url for method, url, _data in fake.calls)
+
+
+def test_unconfirmed_summary_attachment_stops_before_the_state_change(monkeypatch, tmp_path):
+    fake = FakeServiceNow()
+
+    def request(url, **kwargs):
+        if "/attachment/file" in url and "ONE+PAGER+SUMMARY" in url:
+            return {"result": {}}
+        return fake(url, **kwargs)
+
+    monkeypatch.setattr(sn, "_request_json", request)
+    monkeypatch.setattr(sn, "resolve_credentials", lambda _p: ("id", "secret"))
+    with pytest.raises(ar.ResolveError, match="one-page summary could not be confirmed; the AVIT state was not changed"):
+        ar.cmd_resolve(_args(tmp_path, REPORT))
+    assert not any(method == "PATCH" for method, _url, _data in fake.calls)
 
 
 @pytest.mark.parametrize("failure", ["denied", "still listed", "missing id", "wrong record"])

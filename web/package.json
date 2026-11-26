@@ -48,7 +48,6 @@
     "marked": "17.0.6",
     "minimatch": "11.0.1",
     "pdfjs-dist": "6.4.299",
-    "pptxgenjs": "4.0.1",
     "shell-quote": "1.12.0",
     "ws": "^8.14.2",
     "zod": "3.25.76"

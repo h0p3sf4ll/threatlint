@@ -6,8 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 const { parseReport } = require('../lib/reports.cjs');
-const { onePageFinding, primaryFinding } = require('../lib/report-one-page.cjs');
-const { readMatching } = require('../lib/zip.cjs');
+const { primaryFinding } = require('../lib/report-one-page.cjs');
 const { createWorkbench } = require('../server.js');
 
 const REVIEW = [
@@ -25,24 +24,14 @@ const REVIEW = [
   '**Resolution plan**: Check the deployed configuration.', '',
 ].join('\n');
 
-test('one-page summaries use finding-scoped source and proposed changes', () => {
+test('the default one-page summary covers the most severe genuine finding', () => {
   const { findings } = parseReport(REVIEW, 'appsec-fp-reviewer');
-  const selected = primaryFinding(findings);
-  assert.equal(selected.id, 'FP-001');
-  const page = onePageFinding(selected);
-  assert.equal(page.originalCode, 'DEBUG = True');
-  assert.equal(page.fixedCode, 'DEBUG = False');
-  assert.equal(page.originalCodeSource, 'server/settings.py:12');
-  assert.equal(page.impact, 'Error details can reveal internal configuration.');
-  assert.equal(page.status, 'TRUE POSITIVE · CONFIRMED');
-  const unverified = onePageFinding(findings[1]);
-  assert.equal(unverified.status, 'Unverified finding');
-  assert.equal(unverified.originalCode, '');
-  assert.equal(unverified.fixedCode, '');
+  assert.equal(primaryFinding(findings).id, 'FP-001');
+  assert.equal(primaryFinding([{ id: 'A-1', disposition: 'FALSE POSITIVE', severity: 'CRITICAL' }, { id: 'A-2', severity: 'LOW' }]).id, 'A-2');
 });
 
-test('a saved report exports a single slide for the default or selected finding', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-test-slide-'));
+test('a saved report downloads a one-page PDF for the default or selected finding', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'threatlint-test-onepager-'));
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(repo);
   const workbench = createWorkbench({ storageDir: dir, integrations: { convertToWord: async () => {} } });
@@ -51,23 +40,19 @@ test('a saved report exports a single slide for the default or selected finding'
     const report = await workbench.generateReport('appsec-fp-reviewer', REVIEW, sessionId);
     await new Promise(resolve => workbench.server.listen(0, '127.0.0.1', resolve));
     const { port } = workbench.server.address();
-    const url = `http://127.0.0.1:${port}/api/report/${sessionId}/${report.agentId}/${report.timestamp}/pptx`;
+    const url = `http://127.0.0.1:${port}/api/report/${sessionId}/${report.agentId}/${report.timestamp}/onepager`;
     const response = await fetch(url);
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-type'), /presentationml\.presentation/);
-    assert.match(response.headers.get('content-disposition'), /FP-001-threatlint-one-page\.pptx/);
-    const slides = readMatching(Buffer.from(await response.arrayBuffer()), /^ppt\/slides\/slide\d+\.xml$/);
-    assert.equal(slides.length, 1);
-    assert.match(slides[0].text, /Vulnerable code/);
-    assert.match(slides[0].text, /DEBUG = True/);
-    assert.match(slides[0].text, /DEBUG = False/);
-    assert.match(slides[0].text, /Error details can reveal internal configuration\./);
+    assert.match(response.headers.get('content-type'), /application\/pdf/);
+    assert.match(response.headers.get('content-disposition'), /ONE PAGER SUMMARY\] FP-001-threatlint-review\.pdf/);
+    const pdf = Buffer.from(await response.arrayBuffer());
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+    assert.equal(pdf.toString('latin1').split('/Type /Page ').length - 1, 1);
     const other = await fetch(url + '?finding=FP-002');
     assert.equal(other.status, 200);
-    const [otherSlide] = readMatching(Buffer.from(await other.arrayBuffer()), /^ppt\/slides\/slide\d+\.xml$/);
-    assert.match(otherSlide.text, /Candidate missing deployment evidence/);
-    assert.doesNotMatch(otherSlide.text, /DEBUG =|HTTP\/1\.1/);
+    assert.match(other.headers.get('content-disposition'), /FP-002-threatlint-review\.pdf/);
     assert.equal((await fetch(url + '?finding=FP-999')).status, 404);
+    assert.equal((await fetch(url.replace('/onepager', '/pptx'))).status, 404, 'the PowerPoint export was removed');
   } finally {
     await workbench.close();
     fs.rmSync(dir, { recursive: true, force: true });

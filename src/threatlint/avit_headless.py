@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import avit_repositories, avit_resolve, servicenow as sn
+from . import avit_repositories, avit_resolve, one_pager, servicenow as sn
 from .avit_report import ClosedAvitSemgrepError, ResolveError, RuleNotTuned, safe_error as _safe_error, verdict_for
 from .avit_semgrep import TriageScopeBlocked
 from .avit_tuning import guard_fp_rule as _guard_fp_rule, prove_tuned_rule as _prove_tuned_rule, repairable_rule_error as _repairable_rule_error
@@ -400,7 +400,9 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 "unverified": bool(verdict.get("unverified") or (readiness and readiness.get("unverified"))),
                 "decision_basis": verdict.get("decision_basis", ""),
                 "attachment_name": resolve_args.attachment_name,
-                "report_bytes": docx.read_bytes() if verdict["disposition"] == "TRUE POSITIVE" else b""}
+                "report_bytes": docx.read_bytes() if verdict["disposition"] == "TRUE POSITIVE" else b"",
+                "summary_bytes": (one_pager.build(markdown.read_text(encoding="utf-8"), avit, verdict["id"])
+                                  if verdict["disposition"] == "TRUE POSITIVE" else b"")}
 
 
 def run(args, system_prompt: str, model: str, semgrep_version: str, *,

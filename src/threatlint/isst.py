@@ -13,7 +13,7 @@ import re
 import sys
 import urllib.parse
 
-from threatlint import servicenow as sn
+from threatlint import one_pager, servicenow as sn
 from threatlint.avit_report import ResolveError
 
 
@@ -331,17 +331,24 @@ def summarize(instance: str, token: str, record: dict, outcomes: list[dict]) -> 
             raise ResolveError(f"{item['avit']} has no valid Word report to attach to {record['number']}")
     existing = _existing_attachments(instance, token, record)
     links: dict[str, str] = {}
-    for item in positives:
-        name = item["attachment_name"]
+
+    def upload(name: str, content: bytes, content_type: str) -> str:
         sys_id = existing.get(name)
         if not sys_id:
             query = urllib.parse.urlencode({"table_name": record["table"], "table_sys_id": record["sys_id"], "file_name": name})
-            payload = sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=item["report_bytes"],
-                                       headers={**_auth(token), "Content-Type": _DOCX}).get("result", {})
+            payload = sn._request_json(f"{instance}/api/now/attachment/file?{query}", data=content,
+                                       headers={**_auth(token), "Content-Type": content_type}).get("result", {})
             sys_id = _value(payload.get("sys_id")) if isinstance(payload, dict) else ""
             if not _SYS_ID.fullmatch(sys_id):
                 raise ResolveError(f"ServiceNow did not confirm the {name} attachment on {record['number']}")
-        links[item["avit"]] = f"{instance}/sys_attachment.do?sys_id={sys_id}"
+        return sys_id
+
+    for item in positives:
+        name = item["attachment_name"]
+        links[item["avit"]] = f"{instance}/sys_attachment.do?sys_id={upload(name, item['report_bytes'], _DOCX)}"
+        summary = item.get("summary_bytes")
+        if isinstance(summary, bytes) and summary.startswith(b"%PDF-"):
+            upload(one_pager.attachment_name(name), summary, one_pager.CONTENT_TYPE)
     complete = len(by_number) == len(expected) and all(item.get("completed") for item in outcomes)
     all_fp = complete and all(item.get("disposition") == "FALSE POSITIVE" for item in outcomes)
     if all_fp:

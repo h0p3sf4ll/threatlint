@@ -285,6 +285,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Authoritative Secrets ruleHashId for Semgrep correlation (with --resolve-avits)")
     add_avit_arguments(p_run)
 
+    # one-pager
+    p_one = sub.add_parser("one-pager", help="Write the one-page PDF summary of a Finding Review report")
+    p_one.add_argument("report", help="Finding Review Markdown report")
+    p_one.add_argument("out", help="PDF to write")
+    p_one.add_argument("--avit", default="", help="Summarize the finding that names this AVIT")
+    p_one.add_argument("--finding", default="", help="Summarize this finding ID (for example FP-001)")
+
     # list
     sub.add_parser("list", help="List bundled agents and commands")
 
@@ -349,6 +356,11 @@ def _cmd_sidekick(args: argparse.Namespace) -> int:
     return cmd_sidekick(args)
 
 
+def _cmd_one_pager(args: argparse.Namespace) -> int:
+    from threatlint.one_pager import main as one_pager  # noqa: PLC0415
+    return one_pager([args.report, args.out, "--avit", args.avit, "--finding", args.finding])
+
+
 def _cmd_sctask(args: argparse.Namespace) -> int:
     from threatlint.sctask import cmd_sctask
     return cmd_sctask(args)
@@ -410,7 +422,7 @@ def main() -> None:
         # lookups must use the same selected profile as ServiceNow and Semgrep.
         os.environ["THREATLINT_AWS_PROFILE"] = args.aws_profile
     commands = {"guard": cmd_guard, "ide": cmd_ide, "run": cmd_run, "install": cmd_install,
-                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "isst": _cmd_isst, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam, "assure": _cmd_assure}
+                "list": cmd_list, "uninstall": cmd_uninstall, "avit": cmd_avit, "aws": _cmd_aws, "ado": _cmd_ado, "github": _cmd_github, "semgrep": _cmd_semgrep, "setup": _cmd_setup, "sctask": _cmd_sctask, "isst": _cmd_isst, "one-pager": _cmd_one_pager, "sidekick": _cmd_sidekick, "orchestrator": _cmd_orchestrator, "redteam": _cmd_redteam, "assure": _cmd_assure}
     # Integration commands (built-in and plugin) register their own handler.
     handler = commands.get(args.command) or getattr(args, "integration_handler", None)
     if handler is None:

@@ -17,6 +17,7 @@ const { runModel, providerRequest, redact } = require('./pipeline.cjs');
 const { analyzeResponse } = require('./runtime.cjs');
 const { HttpError } = require('./http.cjs');
 const servicenow = require('./servicenow.cjs');
+const onePager = require('./one-pager.cjs');
 const scanners = require('./scanners.cjs');
 const { pdfLines } = require('./pdf-text.cjs');
 const { detectPdf, parseInvictiPdf, parseMobsfPdf, parseGenericPdf } = require('./scan-import-pdf.cjs');
@@ -1091,8 +1092,10 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     const content = fs.readFileSync(report.docxPath);
     const actions = [];
     for (const target of targets) {
-      const files = [{ name: `${target.avit}-threatlint-fp-review.docx`, content, type: DOCX_TYPE }];
+      const name = `${target.avit}-threatlint-fp-review.docx`;
       try {
+        const files = [{ name, content, type: DOCX_TYPE },
+          await onePager.attachment(report.mdPath, name, { avit: target.avit, findingId: target.findings[0] })];
         const result = await servicenow.resolveAvit(credentials, target.avit, { disposition: target.disposition, unverified: target.unverified, files }, { fetchImpl: integrations.fetchImpl, reviewSemgrep: avit => reviewSemgrepAvit(avit, { job, body, credentials, integrations }) });
         const attached = result.attachments.map(item => `${item.name}${item.alreadyAttached ? ' (already attached)' : ''}`).join(', ');
         const detail = result.detail || (result.action === 'closed' ? `Attached ${attached}; closed as false positive${result.substateNote ? ` (${result.substateNote})` : ''}`
@@ -1143,7 +1146,8 @@ function createScanImports({ store, reports, override, integrations = {} }) {
     for (const target of targets) {
       try {
         const result = spec.id === 'dojo'
-          ? await scanners.resolveDojo(connection, target.reference, { disposition: target.disposition, unverified: target.unverified, files: [{ name: `${target.reference}-threatlint-fp-review.docx`, content, type: DOCX_TYPE }] }, { fetchImpl: integrations.fetchImpl })
+          ? await scanners.resolveDojo(connection, target.reference, { disposition: target.disposition, unverified: target.unverified, files: [{ name: `${target.reference}-threatlint-fp-review.docx`, content, type: DOCX_TYPE },
+            await onePager.attachment(report.mdPath, `${target.reference}-threatlint-fp-review.docx`, { findingId: target.findings[0] })] }, { fetchImpl: integrations.fetchImpl })
           : await scanners.resolveSonar(connection, target.reference, { disposition: target.disposition, unverified: target.unverified, summary: `${target.findings.join(', ')} ${target.disposition} in ${String(job.title).slice(0, 200)}`, where }, { fetchImpl: integrations.fetchImpl });
         const attached = result.attachments.map(item => `${item.name}${item.alreadyAttached ? ' (already attached)' : ''}`).join(', ');
         const detail = { closed: spec.id === 'dojo' ? 'marked false positive (inactive)' : 'marked false positive / safe', 'close not applied': 'false positive not applied', verified: 'marked verified; left active',

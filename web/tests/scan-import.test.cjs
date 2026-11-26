@@ -509,7 +509,11 @@ describe('Scan import routes', () => {
     const patches = snowCalls.filter(call => call.options.method === 'PATCH').map(call => JSON.parse(call.options.body));
     assert.equal(patches[0].work_notes, 'Closed by Threatlint as a false positive, see attached report.'); assert.equal(patches[0].state, '3'); assert.equal(patches[0].substate, '3');
     assert.deepEqual(patches[1], { work_notes: 'True positive, see attached report.' });
-    assert.ok(snowCalls.filter(call => call.url.includes('/attachment/file')).every(call => /file_name=AVIT\d+-threatlint-fp-review\.docx/.test(call.url)));
+    const attached = snowCalls.filter(call => call.url.includes('/attachment/file')).map(call => [new URL(call.url).searchParams.get('file_name'), call.options.headers['Content-Type']]);
+    assert.deepEqual(attached.map(([name]) => name), [`${AVIT}-threatlint-fp-review.docx`, `[ONE PAGER SUMMARY] ${AVIT}-threatlint-fp-review.pdf`,
+      `${AVIT2}-threatlint-fp-review.docx`, `[ONE PAGER SUMMARY] ${AVIT2}-threatlint-fp-review.pdf`], 'each AVIT gets its Word report and one-page summary');
+    assert.deepEqual(attached.filter(([name]) => name.endsWith('.pdf')).map(([, type]) => type), ['application/pdf', 'application/pdf']);
+    assert.ok(snowCalls.filter(call => call.url.includes('/attachment/file') && call.url.includes('.pdf')).every(call => Buffer.from(call.options.body).subarray(0, 5).toString() === '%PDF-'));
     assert.ok(snowCalls.every(call => call.options.redirect === 'error'));
     const after = (await api(`/api/scan-import/${job.id}`)).body;
     assert.equal(after.servicenow.ok, true);
@@ -539,7 +543,9 @@ describe('Scan import routes', () => {
     assert.ok(calls.some(call => new URL(call.url).pathname === `/api/now/table/${ISST_TABLE}`));
     assert.ok(!calls.some(call => call.options.method === 'PATCH'));
     const uploads = calls.filter(call => new URL(call.url).pathname === '/api/now/attachment/file');
-    assert.deepEqual(uploads.map(call => new URL(call.url).searchParams.get('table_name')), [ISST_TABLE, 'sc_task']);
+    assert.deepEqual(uploads.map(call => new URL(call.url).searchParams.get('table_name')), [ISST_TABLE, ISST_TABLE, 'sc_task', 'sc_task']);
+    assert.deepEqual(uploads.map(call => /^\[ONE PAGER SUMMARY\] .+\.pdf$/.test(new URL(call.url).searchParams.get('file_name'))), [false, true, false, true],
+      'the Word review is followed by its one-page summary');
     assert.ok(uploads.every(call => new URL(call.url).searchParams.get('table_sys_id') === SYS_ID));
   });
 

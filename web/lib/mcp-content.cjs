@@ -71,26 +71,24 @@ function registerContent({ server, tool, z, id, workspace, reportFor, reports, s
   }, ({ sessionId, reportId }) => ({ removed: reports.remove(reportFor(sessionId, reportId)) }), { readOnly: false, destructive: true });
 
   tool('export_report', 'Export a saved report as base64 byte chunks. Decode and concatenate chunks locally; no HTTP/UI or server path is needed.', {
-    sessionId: id, reportId: id, format: z.enum(['md', 'json', 'docx', 'pptx']).default('md'),
+    sessionId: id, reportId: id, format: z.enum(['md', 'json', 'docx', 'pdf']).default('md'),
     findingId: z.string().regex(/^[A-Z][A-Z0-9]*-\d+$/).max(40).optional(),
     offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(256 * 1024).optional(),
   }, async ({ sessionId, reportId, format, findingId, offset = 0, limit = 256 * 1024 }) => {
     const report = reportFor(sessionId, reportId);
-    const mime = { md: 'text/markdown', json: 'application/json', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+    const mime = { md: 'text/markdown', json: 'application/json', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pdf: 'application/pdf' };
     let buffer;
-    if (format === 'pptx') {
+    if (format === 'pdf') {
       const cacheKey = JSON.stringify([sessionId, reportId, findingId || null]);
       let pending = artifacts.get(cacheKey);
       if (!pending) {
-        if (offset > 0) throw new Error('Presentation export expired; restart from offset 0');
+        if (offset > 0) throw new Error('One-page summary export expired; restart from offset 0');
         pending = (async () => {
-          const { onePageFinding, primaryFinding } = require('./report-one-page.cjs');
+          const { primaryFinding } = require('./report-one-page.cjs');
           const parsed = reports.read(report);
           const finding = findingId ? parsed.findings.find(item => item.id === findingId) : primaryFinding(parsed.findings);
           if (!finding) throw new Error('Finding not found in this report');
-          const data = Buffer.from(await require('./report-pptx.cjs').createFindingPptx(onePageFinding(finding)));
-          if (data.length > 8 * 1024 * 1024) throw new Error('Presentation exceeds the 8 MB export limit');
-          return data;
+          return Buffer.from(await require('./one-pager.cjs').render(report.mdPath, { findingId: finding.id }));
         })();
         artifacts.set(cacheKey, pending);
         while (artifacts.size > 8) artifacts.delete(artifacts.keys().next().value);

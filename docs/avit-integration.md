@@ -55,7 +55,7 @@ a linked scan assessment when the task stores those fields there), then
 reviews the AVITs matching that exact identity. Do not combine `--isst` with
 an explicit AVIT list. This command fetches each AVIT,
 checks out its recorded repository and branch, reviews the evidence, attaches
-its Word report, and applies the disposition. It prints each result and removes
+its Word report and one-page PDF summary, and applies the disposition. It prints each result and removes
 the temporary checkout and report files. An AVIT with a true-positive verdict
 gets the report and a work note while staying open. A false positive gets the
 report, a closure request, and scoped Semgrep triage. For SAST and Secrets, the
@@ -64,8 +64,8 @@ If the proposal fails validation, the AVIT can still close with its Word report.
 does this without Dia or UI actions. Omit `--resolve-avits --yes` for a
 report-only AVIT review.
 
-For an ISST, Threatlint also attaches each true-positive Word report to the
-ISST and comments with direct links to those attachments. If every associated
+For an ISST, Threatlint also attaches each true-positive Word report and its
+one-page summary to the ISST and comments with direct links to those attachments. If every associated
 AVIT completes as a false positive, it comments that the ISST and SCAN request
 can be closed; it does not change the ISST state. A partial review or any true
 positive keeps that closure suggestion out of the comment.
@@ -93,6 +93,10 @@ If the evidence cannot establish either claim, use **TRUE POSITIVE** with
 `**Decision basis**: CONSERVATIVE DEFAULT` and name the gaps. Legacy `AMBIGUOUS`
 reports are normalized to this unverified decision without discarding their uncertainty.
 `resolve` reads Markdown and attaches Word; it does not generate either report.
+It renders the one-page PDF summary from the Markdown and attaches it beside the Word
+report as `[ONE PAGER SUMMARY] <Word report name>.pdf`. If the summary cannot be
+rendered, `resolve` stops before changing the AVIT. To preview the summary first, run
+`threatlint one-pager review.md summary.pdf --avit AVIT...`.
 Use `--snow-instance URL` or saved instance settings, and `--aws-profile PROFILE`
 when credentials come from a named AWS profile. Fetch also accepts repeated
 `--avit` values or `--avit-file` containing a list of numbers.
@@ -193,7 +197,7 @@ effort on normal process exit. Fix certificate trust rather than disabling TLS.
 flowchart TD
     A["Fetch AVIT evidence"] --> B["Checkout source when available"]
     B --> C["Review; write Markdown and Word reports"]
-    C --> D["Confirm write-back; attach Word report"]
+    C --> D["Confirm write-back; attach Word report and one-page summary"]
     D --> E{"Disposition"}
     E -- "TRUE POSITIVE" --> F["Add work note with evidence gaps; leave state unchanged"]
     E -- "FALSE POSITIVE" --> G["Request closure; report stored state"]
@@ -239,15 +243,20 @@ plausibility without printing the value: cite path, line, and key name instead.
 
 ### Write-back
 
-Threatlint attaches one Word report to the AVIT. A manual `avit resolve` uses
-`<AVIT>-threatlint-fp-review.docx`. Workbench and headless reviews use a UTC
-timestamp suffix to identify the review. On reruns, Threatlint deletes previous
-reports matching either name format for that AVIT and verifies their removal
-before uploading the new report. If removal fails or cannot be verified,
+Threatlint attaches one Word report and its one-page PDF summary to the AVIT.
+A manual `avit resolve` uses `<AVIT>-threatlint-fp-review.docx` and
+`[ONE PAGER SUMMARY] <AVIT>-threatlint-fp-review.pdf`. Workbench and headless
+reviews add a UTC timestamp suffix to both names to identify the review. The
+summary leads with the verdict and a one-sentence bottom line on a single US
+Letter page; the Word report keeps the full evidence. On reruns, Threatlint
+deletes previous reports and summaries matching either name format for that AVIT
+and verifies their removal before uploading the new pair. If removal fails or cannot be verified,
 Threatlint stops before uploading or updating the AVIT. Other AVIT attachments
 are preserved. Removal and upload are separate ServiceNow requests. If an upload
 fails after deletion, Threatlint reports the failed replacement and stops before
-the state update. An SCTASK copies the latest AVIT report.
+the state update. The same applies when the summary upload is not confirmed after
+the Word report: the AVIT state is unchanged, and rerunning `resolve` replaces both.
+An SCTASK copies the latest AVIT report and its summary when the AVIT has one.
 
 | Disposition | ServiceNow request | Semgrep |
 | --- | --- | --- |

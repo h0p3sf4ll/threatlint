@@ -24,7 +24,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from threatlint import servicenow as sn
+from threatlint import one_pager, servicenow as sn
 from threatlint import avit_cli, avit_repositories, avit_semgrep, avit_semgrep_triage
 from threatlint.avit_cli import add_resolve_parsers, confirm as _confirm, session as _session
 from threatlint.avit_repositories import checkout_branch as _checkout_branch, renamed_ado_repository, repository_removed
@@ -76,12 +76,13 @@ def attach(instance: str, token: str, sys_id: str, name: str, content: bytes, co
         raise ResolveError("ServiceNow did not confirm the new AVIT report attachment")
 
 
-def _report_attachments(instance: str, token: str, sys_id: str, avit: str, report_name: re.Pattern[str]) -> set[str]:
+def _report_attachments(instance: str, token: str, sys_id: str, avit: str, report_name: re.Pattern[str],
+                        prefix: str = "") -> set[str]:
     reports: set[str] = set()
     limit = 200
     for offset in range(0, 2000, limit):
         query = urllib.parse.urlencode({
-            "sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}^file_nameSTARTSWITH{avit}-threatlint-fp-review^ORDERBYsys_id",
+            "sysparm_query": f"table_name={sn.AVIT_TABLE}^table_sys_id={sys_id}^file_nameSTARTSWITH{prefix}{avit}-threatlint-fp-review^ORDERBYsys_id",
             "sysparm_fields": "sys_id,file_name,table_name,table_sys_id", "sysparm_limit": str(limit), "sysparm_offset": str(offset),
         })
         response = sn._request_json(f"{instance}/api/now/attachment?{query}", headers={"Authorization": f"Bearer {token}"})
@@ -102,25 +103,37 @@ def _report_attachments(instance: str, token: str, sys_id: str, avit: str, repor
     raise ResolveError("The AVIT attachment list exceeded the review limit; no new report was uploaded")
 
 
+def _summary_name(avit: str) -> re.Pattern[str]:
+    return re.compile(rf"{re.escape(one_pager.PREFIX)}{re.escape(avit)}-threatlint-fp-review(?:-\d{{8}}T\d{{12}}Z)?\.pdf")
+
+
 def _replace_report(instance: str, token: str, sys_id: str, avit: str, report_name: re.Pattern[str],
-                    name: str, content: bytes) -> None:
-    previous = _report_attachments(instance, token, sys_id, avit, report_name)
+                    name: str, content: bytes, summary: bytes | None = None) -> None:
+    """Replace earlier Threatlint reports and one-page summaries, then attach the Word report and its summary."""
+    kinds = [(report_name, "")] + ([(_summary_name(avit), one_pager.PREFIX)] if summary is not None else [])
+    listed = lambda: set().union(*(_report_attachments(instance, token, sys_id, avit, pattern, prefix) for pattern, prefix in kinds))
+    previous = listed()
     if previous:
         try:
             for attachment_id in sorted(previous):
                 sn._request_json(f"{instance}/api/now/attachment/{attachment_id}", method="DELETE",
                                  headers={"Authorization": f"Bearer {token}"})
-            if _report_attachments(instance, token, sys_id, avit, report_name):
+            if listed():
                 raise ResolveError("ServiceNow still lists a previous report")
         except (ResolveError, sn.ServiceNowError) as exc:
             raise ResolveError(f"Could not remove the previous Threatlint report from {avit}; no new report was uploaded. {exc}") from exc
-    try:
-        attach(instance, token, sys_id, name, content, _DOCX)
-    except (ResolveError, sn.ServiceNowError) as exc:
-        if previous:
-            raise ResolveError(f"The previous Threatlint report was removed from {avit}, but the replacement attachment could not be confirmed. {exc}") from exc
-        raise
-    print(f"  ✓ Attached {name}")
+    files = [(name, content, _DOCX)] + ([(one_pager.attachment_name(name), summary, one_pager.CONTENT_TYPE)] if summary is not None else [])
+    for index, (file_name, data, content_type) in enumerate(files):
+        try:
+            attach(instance, token, sys_id, file_name, data, content_type)
+        except (ResolveError, sn.ServiceNowError) as exc:
+            if index:
+                raise ResolveError(f"The Word report was attached to {avit}, but its one-page summary could not be confirmed; "
+                                   f"the AVIT state was not changed. Run resolve again to replace both. {exc}") from exc
+            if previous:
+                raise ResolveError(f"The previous Threatlint report was removed from {avit}, but the replacement attachment could not be confirmed. {exc}") from exc
+            raise
+        print(f"  ✓ Attached {file_name}")
 
 
 def update(instance: str, token: str, sys_id: str, values: dict[str, str]) -> dict:
@@ -392,10 +405,14 @@ def cmd_resolve(args) -> int:
         content = handle.read()
     if not content.startswith(b"PK"):
         raise ResolveError("The new AVIT report is not a Word document")
+    try:
+        summary = one_pager.build(markdown, avit, verdict["id"])
+    except Exception as exc:  # noqa: BLE001 - nothing is written without both attachments
+        raise ResolveError(f"The one-page summary could not be generated; the AVIT was not changed. {exc}") from exc
     action = ("close it as Closed / False Positive" if false_positive
               else "add a TRUE POSITIVE work note (state unchanged)")
-    _confirm(f"{avit}: replace any previous Threatlint report, attach this report, and {action}?", args.yes)
-    _replace_report(instance, token, record["sys_id"], avit, report_name, name, content)
+    _confirm(f"{avit}: replace any previous Threatlint report, attach this report and its one-page summary, and {action}?", args.yes)
+    _replace_report(instance, token, record["sys_id"], avit, report_name, name, content, summary)
     note = CLOSING_COMMENT if false_positive else TRUE_POSITIVE_COMMENT
     if is_conservative(verdict):
         note += " " + CONSERVATIVE_REASON

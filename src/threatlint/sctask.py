@@ -80,9 +80,15 @@ def avit_outcome(instance: str, token: str, avit: str) -> dict:
                if (match := valid_name.fullmatch(str(item.get("file_name", ""))))
                and re.fullmatch(r"[0-9a-f]{32}", str(item.get("sys_id", "")))]
     latest = max(reports, key=lambda pair: pair[0])[1] if reports else None
+    # The one-page summary attached with that report, when the AVIT has one (reviews before it existed do not).
+    from threatlint.one_pager import attachment_name as summary_name  # noqa: PLC0415
+    summary = next((item for item in attachments if isinstance(item, dict) and latest
+                    and str(item.get("file_name", "")) == summary_name(latest["file_name"])
+                    and re.fullmatch(r"[0-9a-f]{32}", str(item.get("sys_id", "")))), None)
     result = normalize_verdict({"avit": avit, "disposition": disposition, "state": row.get("state", ""),
                                 "report": latest["sys_id"] if latest else None,
-                                "report_name": latest["file_name"] if latest else None})
+                                "report_name": latest["file_name"] if latest else None,
+                                **({"summary": summary["sys_id"], "summary_name": summary["file_name"]} if summary else {})})
     if not result["disposition"]:  # Workflow states are not finding decisions.
         result["disposition"] = disposition
     if disposition == "TRUE POSITIVE":
@@ -137,6 +143,14 @@ def close(instance: str, token: str, number: str, yes: bool, out=sys.stdout, lea
         upload = urllib.parse.urlencode({"table_name": TABLE, "table_sys_id": task["sys_id"], "file_name": name})
         sn._request_json(f"{instance}/api/now/attachment/file?{upload}", data=_download(instance, token, item["report"]),
                          headers={**_auth(token), "Content-Type": _DOCX})
+        print(f"  ✓ Attached {name}", file=out)
+    for item in outcomes:
+        name = item.get("summary_name")
+        if not item.get("summary") or not name or name in existing:
+            continue
+        upload = urllib.parse.urlencode({"table_name": TABLE, "table_sys_id": task["sys_id"], "file_name": name})
+        sn._request_json(f"{instance}/api/now/attachment/file?{upload}", data=_download(instance, token, item["summary"]),
+                         headers={**_auth(token), "Content-Type": "application/pdf"})
         print(f"  ✓ Attached {name}", file=out)
     comment = closing_comment(outcomes, leave_open)
     values = {"comments": comment, "work_notes": comment}

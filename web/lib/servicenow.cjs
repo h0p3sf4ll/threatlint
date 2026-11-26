@@ -827,6 +827,10 @@ async function attachReview(credentials, value, report, { fetchImpl = fetch, sig
   const fingerprint = createHash('sha256').update(content).digest('hex').slice(0, 20);
   const name = `${number}-threatlint-review-${fingerprint}.${document ? 'docx' : 'md'}`;
   const type = document ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'text/markdown; charset=utf-8';
+  // A Word review always travels with its one-page summary; render it before any write.
+  // A narrative-only review (no structured finding) has nothing to summarize and goes alone.
+  const summary = document ? await require('./one-pager.cjs').optionalAttachment(report.mdPath, name, { signal }) : null;
+  const files = [{ name, content, type }, ...(summary ? [summary] : [])];
   const { instance } = credentials;
   const headers = { Authorization: `Bearer ${await accessToken(credentials, fetchImpl, signal)}` };
   const { table, sysId } = await reviewTicketTarget(instance, headers, number, fetchImpl, signal);
@@ -834,19 +838,21 @@ async function attachReview(credentials, value, report, { fetchImpl = fetch, sig
   if (pendingReviewAttachments.has(key)) throw new HttpError(`This review is already being attached to ${number}`, 409);
   pendingReviewAttachments.add(key);
   try {
-    const query = new URLSearchParams({ sysparm_query: `table_name=${table}^table_sys_id=${sysId}^file_name=${name}`, sysparm_fields: 'file_name', sysparm_limit: '2' });
-    const existing = (await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result;
-    if (!Array.isArray(existing)) throw new HttpError(`ServiceNow did not return a readable attachment list for ${number}`, 502);
-    let attachment;
-    if (existing.some(row => fieldValue(row?.file_name) === name)) attachment = { name, alreadyAttached: true };
-    else {
-      const uploaded = await attachFile(instance, headers, sysId, { name, content, type }, fetchImpl, signal, table);
+    const attachments = [];
+    for (const file of files) {
+      const query = new URLSearchParams({ sysparm_query: `table_name=${table}^table_sys_id=${sysId}^file_name=${file.name}`, sysparm_fields: 'file_name', sysparm_limit: '2' });
+      const existing = (await requestJson(fetchImpl, `${instance}/api/now/attachment?${query}`, { headers }, signal)).result;
+      if (!Array.isArray(existing)) throw new HttpError(`ServiceNow did not return a readable attachment list for ${number}`, 502);
+      if (existing.some(row => fieldValue(row?.file_name) === file.name)) { attachments.push({ name: file.name, alreadyAttached: true }); continue; }
+      const uploaded = await attachFile(instance, headers, sysId, file, fetchImpl, signal, table);
       const attachmentId = fieldValue(uploaded.sys_id?.value ?? uploaded.sys_id);
-      if (!SYS_ID_PATTERN.test(attachmentId)) throw new HttpError(`ServiceNow did not confirm the attachment for ${number}. Check the record before retrying.`, 502);
-      attachment = { name, sysId: attachmentId };
+      if (!SYS_ID_PATTERN.test(attachmentId)) throw new HttpError(`ServiceNow did not confirm the ${file.name} attachment for ${number}. Check the record before retrying.`, 502);
+      attachments.push({ name: file.name, sysId: attachmentId });
     }
-    return { number, action: 'attached', url: `${instance}/nav_to.do?uri=${table}.do?sys_id=${sysId}`, attachments: [attachment],
-      detail: attachment.alreadyAttached ? `${name} is already attached. No ticket fields were changed.` : `Attached ${name}. No ticket fields were changed.` };
+    const added = attachments.filter(item => !item.alreadyAttached).map(item => item.name);
+    const already = attachments.filter(item => item.alreadyAttached).map(item => item.name);
+    return { number, action: 'attached', url: `${instance}/nav_to.do?uri=${table}.do?sys_id=${sysId}`, attachments,
+      detail: `${added.length ? `Attached ${added.join(' and ')}. ` : ''}${already.length ? `${already.join(' and ')} ${already.length > 1 ? 'are' : 'is'} already attached. ` : ''}No ticket fields were changed.` };
   } finally {
     pendingReviewAttachments.delete(key);
   }
