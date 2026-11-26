@@ -27,6 +27,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +44,9 @@ STATUS_TIMEOUT_S = 15
 BILLING_ERROR = re.compile(r"credit balance|billing|purchase credits|insufficient credits", re.IGNORECASE)
 SUBSCRIPTION_HINT = ("Claude Code is signed in to an API-billed Anthropic Console account, not your Claude subscription. Run `claude` in a terminal, use /logout, then /login and choose your Claude account (Pro/Max/Team/Enterprise), then retry.")
 RUN_TIMEOUT_S = int(os.environ.get("THREATLINT_CLAUDE_CODE_TIMEOUT_S", str(60 * 60)))
+# No output for this long means the run is stuck (typically API rate limiting or overload retries); stop it early.
+IDLE_TIMEOUT_S = int(os.environ.get("THREATLINT_CLAUDE_CODE_IDLE_S", str(15 * 60)))
+_WATCHDOG_POLL_S = 5.0
 
 
 class ClaudeCodeError(RuntimeError):
@@ -109,6 +114,16 @@ def _events(lines: Iterable[str]):
             continue
 
 
+def _expired_message(why: str, stderr: str) -> str:
+    """Why a run was stopped, with Claude Code's last error line (often a rate-limit or overload message)."""
+    last = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
+    detail = f" Last message from Claude Code: {last[:240]}" if last else ""
+    if why == "stall":
+        return (f"Claude Code stalled: no output for {IDLE_TIMEOUT_S // 60} minutes, so the run was stopped "
+                f"(often API rate limiting or overload).{detail}")
+    return f"Claude Code did not finish within {RUN_TIMEOUT_S // 60} minutes.{detail}"
+
+
 def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str = "", *, images=(),
               claude: str | None = None, progress: Callable[[str], None] = lambda line: print(line, flush=True),
               popen: Callable[..., subprocess.Popen] = subprocess.Popen) -> str:
@@ -138,21 +153,41 @@ def run_agent(system_prompt: str, user_message: str, repo_root: str, model: str 
         process.stdin.write(user_message)
         process.stdin.close()
         result: dict = {}
+        # The stdout loop blocks until Claude Code writes or exits, so a watchdog enforces both limits by killing it.
+        started = last = time.monotonic()
+        expired = {"why": ""}
+        done = threading.Event()
+
+        def watchdog() -> None:
+            while not done.wait(_WATCHDOG_POLL_S):
+                now = time.monotonic()
+                why = "timeout" if now - started > RUN_TIMEOUT_S else "stall" if now - last > IDLE_TIMEOUT_S else ""
+                if why:
+                    expired["why"] = why
+                    process.kill()
+                    return
+
+        threading.Thread(target=watchdog, name="claude-code-watchdog", daemon=True).start()
         try:
             for event in _events(process.stdout):
+                last = time.monotonic()
                 if event.get("type") == "assistant":
                     for block in (event.get("message") or {}).get("content") or []:
                         if block.get("type") == "tool_use":
                             progress(f"  → {_describe(block)}")
                 elif event.get("type") == "result":
                     result = event
-            process.wait(timeout=RUN_TIMEOUT_S)
-        except subprocess.TimeoutExpired as exc:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
             process.kill()
-            raise ClaudeCodeError(f"Claude Code did not finish within {RUN_TIMEOUT_S // 60} minutes") from exc
+            expired["why"] = expired["why"] or "timeout"
+        finally:
+            done.set()
         errors.seek(0)
         stderr = errors.read()
         errors.close()
+        if expired["why"]:
+            raise ClaudeCodeError(_expired_message(expired["why"], stderr))
     if result.get("subtype") == "success" and not result.get("is_error"):
         return str(result.get("result") or "")
     reason = str(result.get("result") or (stderr.strip().splitlines() or [f"exit code {process.returncode}"])[-1])[:300]

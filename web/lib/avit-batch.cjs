@@ -92,6 +92,8 @@ function runCli(args, { env = {}, signal, input, spawnImpl = spawn } = {}) {
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
 
 // Keep the fixture visible to the repair model even when a long YAML proposal fills the report excerpt.
+const STALLED = /^(?:Claude Code (?:stalled|did not finish)|.* did not finish within \d+ minutes)/;
+
 /** The report's own binary disposition, read when Semgrep cannot classify the draft. */
 function reportDisposition(markdown) {
   return /\*\*Disposition\*\*\s*:\s*(FALSE POSITIVE|TRUE POSITIVE)/i.exec(markdown || '')?.[1]?.toUpperCase() || '';
@@ -366,9 +368,17 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         ...(prepareFix ? ['For a supported TRUE POSITIVE, include quoted Evidence with checkout file:line references and a source-to-sink or exposure assessment. If the evidence is inconclusive, name the exact Blocking Evidence and Resolution Plan. Wait for Threatlint to explicitly request a unified diff in a follow-up after checking the evidence. Until then, still put concrete fix code under **Proposed Fix**: fenced before/after code blocks for every affected line, never only a description.'] : []),
       ].join('\n');
       const userMessage = buildUserMessage(repo, `${message.target || ''}\n${guidance}`.trim(), [], attachment, { avits: [avit], semgrep });
-      const review = extra => runModel({ settings, systemPrompt: AGENTS[AGENT_ID].systemPrompt, repoPath: repo, signal, override, purpose: 'review', agentId: AGENT_ID,
+      const runReview = extra => runModel({ settings, systemPrompt: AGENTS[AGENT_ID].systemPrompt, repoPath: repo, signal, override, purpose: 'review', agentId: AGENT_ID,
         userMessage: extra ? `${userMessage}\n\n${extra}` : userMessage,
         onEvent: event => { if (event.type === 'tool_executing') send({ type: 'avit_item', avit, stage: 'triage', tool: event.tool }); } });
+      // A stalled or overlong review is usually transient (rate limiting or overload): retry it once with a fresh process.
+      const review = async extra => {
+        try { return await runReview(extra); } catch (error) {
+          if (signal.aborted || !STALLED.test(error?.message || '')) throw error;
+          step('triage', `${error.message} Retrying the review once.`, { retry: true });
+          return runReview(extra);
+        }
+      };
       const targetPath = path.join(work, 'reviewed-target.json');
       const draftPath = path.join(work, 'review-draft.md');
       if (prepareFix || preflightTuning) fs.writeFileSync(targetPath, JSON.stringify({ ...target, avit }), { mode: 0o600 });

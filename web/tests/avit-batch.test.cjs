@@ -519,6 +519,28 @@ describe('False positive review batch', () => {
     assert.match(final.detail, /Rule source unavailable|Semgrep follow-up logged for repair later: Policy readback failed/);
   });
 
+  it('retries a stalled review once and completes the AVIT', async t => {
+    setupRefinement(t, '');
+    const firstModel = modelCalls.length;
+    modelReports = [new Error('Claude Code stalled: no output for 15 minutes, so the run was stopped (often API rate limiting or overload).'),
+      report(FP, 'FALSE POSITIVE')];
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.equal(modelCalls.length - firstModel, 2, 'one retry after the stall');
+    assert.notEqual(final.stage, 'error');
+    assert.ok(final.outcome.attached && final.outcome.closed);
+    assert.ok(events.some(event => /Claude Code stalled.*Retrying the review once\./.test(event.detail || '')));
+  });
+
+  it('does not retry a review that failed for another reason', async t => {
+    setupRefinement(t, '');
+    const firstModel = modelCalls.length;
+    modelReports = [new Error('Claude Code run failed: Credit balance is too low.')];
+    const events = await runBatch(FP, { createFixPr: false });
+    assert.equal(modelCalls.length - firstModel, 1);
+    assert.equal(events.find(event => event.done && event.avit === FP).stage, 'error');
+  });
+
   it('attaches and closes an evidence-backed FP when the Semgrep token is missing', async t => {
     setupRefinement(t, '');
     semgrepTokenMissing = true;

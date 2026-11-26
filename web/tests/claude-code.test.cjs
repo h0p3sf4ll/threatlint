@@ -116,6 +116,26 @@ describe('Claude Code provider', () => {
     assert.equal(claudeCode.executable({ env, home: env.HOME }), path.join(env.PATH, CLAUDE_NAME));
   });
 
+  it('stops a run that stalls with no output and reports Claude Code\'s last error line', async () => {
+    const env = fakeInstall();
+    let child;
+    const spawnImpl = (_file, _args) => {
+      child = new EventEmitter();
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.kill = signal => { child.killed = signal; setImmediate(() => child.emit('close', null)); };
+      child.stdin = { end: () => setImmediate(() => {
+        child.stdout.emit('data', JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Grep', input: { pattern: 'x' } }] } }) + '\n');
+        child.stderr.emit('data', 'API Error: 529 Overloaded. Retrying in 64 seconds\n');
+      }) };
+      return child;
+    };
+    const started = Date.now();
+    await assert.rejects(() => claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'u', repoPath: os.tmpdir(), env, spawnImpl, idleMs: 80, idleCheckMs: 10 }),
+      error => /^Claude Code stalled: no output for 0 minutes/.test(error.message) && /Last message from Claude Code: API Error: 529 Overloaded/.test(error.message));
+    assert.equal(child.killed, 'SIGTERM', 'the stuck process is stopped');
+    assert.ok(Date.now() - started < 5000, 'the stall is detected long before the overall limit');
+  });
+
   it('explains a missing install, a failed run, and a sign-in problem', async () => {
     await assert.rejects(() => claudeCode.runClaudeCode({ systemPrompt: 's', userMessage: 'u', claudePath: null }), /not installed/);
     const env = fakeInstall();

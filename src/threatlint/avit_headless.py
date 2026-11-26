@@ -200,7 +200,14 @@ def _run_review_model(provider: str, system_prompt: str, prompt: str, repo: Path
                                    daybreak_blue=getattr(args, "daybreak_blue", False))
     if provider == "claude-code":
         from . import claude_code  # noqa: PLC0415
-        return claude_code.run_agent(system_prompt, prompt, str(repo), model)
+        try:
+            return claude_code.run_agent(system_prompt, prompt, str(repo), model)
+        except claude_code.ClaudeCodeError as exc:
+            if not re.match(r"Claude Code (?:stalled|did not finish)", str(exc)):
+                raise
+            # A stalled or overlong run is usually transient (rate limiting or overload): retry once with a fresh process.
+            print(f"  ! {exc} Retrying the review once.", flush=True)
+            return claude_code.run_agent(system_prompt, prompt, str(repo), model)
     if provider == "claude":
         from . import claude_api  # noqa: PLC0415
         return claude_api.run_agent(f"{base_url}/messages", model, system_prompt, prompt,

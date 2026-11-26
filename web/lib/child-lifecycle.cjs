@@ -3,7 +3,8 @@
 /** Supervise one native CLI. Termination is a request; only close confirms its resources are released. */
 function superviseChild(child, { signal, timeoutMs, timeoutMessage, startMessage, onClose, resolve, reject, killGraceMs = 5000 }) {
   let settled = false, closed = false, stopping = null, killTimer = null;
-  const timer = setTimeout(() => stop(new Error(timeoutMessage)), timeoutMs);
+  // timeoutMessage may be a function, so the message can include output gathered while the child ran.
+  const timer = setTimeout(() => stop(new Error(typeof timeoutMessage === 'function' ? timeoutMessage() : timeoutMessage)), timeoutMs);
   const abort = () => stop(Object.assign(new Error('Run cancelled'), { name: 'AbortError' }));
 
   function finish(error, value) {

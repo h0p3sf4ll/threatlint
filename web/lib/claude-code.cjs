@@ -26,6 +26,14 @@ const { superviseChild } = require('./child-lifecycle.cjs');
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const STATUS_TIMEOUT_MS = 15_000;
 const RUN_TIMEOUT_MS = Number(process.env.THREATLINT_CLAUDE_CODE_TIMEOUT_MS) || 60 * 60_000;
+// No output for this long means the run is stuck (typically API rate limiting or overload retries); stop it early.
+const IDLE_TIMEOUT_MS = Number(process.env.THREATLINT_CLAUDE_CODE_IDLE_MS) || 15 * 60_000;
+
+/** Claude Code's last error line (often a rate-limit or overload message), for stall and timeout reports. */
+function lastErrorLine(stderr) {
+  const line = String(stderr || '').trim().split('\n').map(item => item.trim()).filter(Boolean).pop();
+  return line ? ` Last message from Claude Code: ${line.slice(0, 240)}` : '';
+}
 // Credit/billing errors come from API (Console) billing: the CLI is not on the user's Claude subscription login.
 const BILLING_ERROR = /credit balance|billing|purchase credits|insufficient credits/i;
 const SUBSCRIPTION_HINT = 'Claude Code is signed in to an API-billed Anthropic Console account, not your Claude subscription. Run `claude` in a terminal, use /logout, then /login and choose your Claude account (Pro/Max/Team/Enterprise), then retry.';
@@ -98,7 +106,7 @@ function handleEvent(event, onEvent) {
 }
 
 /** Runs one agent and resolves to its final report text. */
-async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, effort = '', repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }) }) {
+async function runClaudeCode({ systemPrompt, userMessage, images = [], history = [], model, effort = '', repoPath, onEvent = () => {}, signal, env = process.env, spawnImpl = spawn, claudePath = executable({ env }), idleMs = IDLE_TIMEOUT_MS, idleCheckMs = 5000 }) {
   const file = claudePath;
   if (!file) throw new Error('Claude Code is not installed. Install it (https://claude.com/claude-code), run `claude` once to sign in, then retry.');
   if (signal?.aborted) throw Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
@@ -117,10 +125,15 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
   try {
     return await new Promise((resolve, reject) => {
       const child = spawnImpl(file, command(model, promptFile, imagePaths.length ? [imageDir] : [], effort), { cwd: repoPath, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
-      let buffer = '', stderr = '', result = null;
+      let buffer = '', stderr = '', result = null, lastOutput = Date.now();
+      const idle = setInterval(() => {
+        if (Date.now() - lastOutput < idleMs) return;
+        lifecycle.stop(new Error(`Claude Code stalled: no output for ${Math.round(idleMs / 60000)} minutes, so the run was stopped (often API rate limiting or overload).${lastErrorLine(stderr)}`));
+      }, idleCheckMs);
+      const settle = done => value => { clearInterval(idle); done(value); };
       const lifecycle = superviseChild(child, { signal, timeoutMs: RUN_TIMEOUT_MS,
-        timeoutMessage: `Claude Code did not finish within ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes`,
-        startMessage: 'Claude Code could not start. Check the installed CLI.', resolve, reject,
+        timeoutMessage: () => `Claude Code did not finish within ${Math.round(RUN_TIMEOUT_MS / 60000)} minutes.${lastErrorLine(stderr)}`,
+        startMessage: 'Claude Code could not start. Check the installed CLI.', resolve: settle(resolve), reject: settle(reject),
         onClose(code, finish) {
           if (result && !result.is_error && result.subtype === 'success' && code === 0) return finish(null, String(result.result || ''));
           const reason = result?.result || stderr.trim().split('\n').pop() || `exit code ${code}`;
@@ -130,6 +143,7 @@ async function runClaudeCode({ systemPrompt, userMessage, images = [], history =
         },
       });
       child.stdout.on('data', chunk => {
+        lastOutput = Date.now();
         if (lifecycle.settled || lifecycle.stopping) return;
         buffer += chunk;
         const lines = buffer.split('\n');
