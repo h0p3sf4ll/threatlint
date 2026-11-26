@@ -66,7 +66,7 @@ def test_scope_and_returned_ids_are_verified_and_durable(home):
 
 
 @pytest.mark.parametrize("kind", ["sast", "sca"])
-def test_cross_ref_fingerprint_on_later_page_blocks_write(home, kind):
+def test_same_fingerprint_peers_across_pages_are_audited_before_write(home, kind):
     def query(path, token, *, body=None):
         assert body is None
         params = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
@@ -74,11 +74,18 @@ def test_cross_ref_fingerprint_on_later_page_blocks_write(home, kind):
             return {"findings": [row()]}
         if "ref" not in params and params["page"] == ["1"]:
             return {"findings": [row(2, ref="main", match_based_id="fingerprint-1")]}
+        if "ref" not in params and params["page"] == ["2"]:
+            return {"findings": [row(3, "ignored", match_based_id="fingerprint-1"), row(4, ref="other")]}
         return {"findings": []}
 
-    with pytest.raises(ResolveError, match="additional findings with the same fingerprint.*No Semgrep triage write was sent"):
+    with pytest.raises(triage.TriageScopeBlocked, match="Semgrep triage blocked:.*2 outside the requested write") as failure:
         ignore(query, kind=kind)
-    assert "submitted_ids" not in audits(home)[0]
+    assert "No Semgrep triage write was sent" in str(failure.value)
+    assert str(next((home / "triage").glob("*.json"))) in str(failure.value)
+    [audit] = audits(home)
+    assert audit["status"] == "scope_blocked" and "submitted_ids" not in audit
+    assert audit["peers"] == [{"id": 2, "ref": "main", "status": "open"},
+                              {"id": 3, "ref": "feature", "status": "ignored"}]
 
 
 @pytest.mark.parametrize("preflight,reason", [
@@ -112,10 +119,12 @@ def test_secrets_same_rule_on_another_ref_blocks_automatic_write(home):
                   "status": "FINDING_STATUS_OPEN"}
         return {"findings": [{**fields, "id": "1", "ref": "feature"}, {**fields, "id": "2", "ref": "main"}]}
 
-    with pytest.raises(ResolveError, match="Secrets findings under the same rule on another ref"):
+    with pytest.raises(triage.TriageScopeBlocked, match="Secrets findings under the same rule on another ref"):
         ignore(query, kind="secrets", deployment_id=123)
     assert len(reads) == 1
-    assert "submitted_ids" not in audits(home)[0]
+    [audit] = audits(home)
+    assert audit["status"] == "scope_blocked" and "submitted_ids" not in audit
+    assert audit["peers"] == [{"id": 2, "ref": "main", "status": "open"}]
 
 
 def test_cross_branch_expansion_is_an_error_and_all_affected_ids_survive(home):

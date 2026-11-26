@@ -120,6 +120,21 @@ test('keeps completed results while cancelling remaining active and queued revie
   assert.match(restored.node('fpreview-run-note').textContent, /Up to 2 reviews at once/);
 });
 
+test('retains blocked proof and triage as distinct from errors and successful writes after reload', () => {
+  const f = client();
+  f.run.start({ avits: avits.slice(0, 2), sctasks: [] });
+  item(f.run, avits[0], 'blocked', { done: true, disposition: 'FALSE POSITIVE', detail: 'Rule tuning blocked before AVIT write-back.' });
+  item(f.run, avits[1], 'blocked', { done: true, result: 'blocked', disposition: 'FALSE POSITIVE', detail: 'Semgrep triage blocked by a shared fingerprint.', outcome: { closed: true, attached: true } });
+  f.run.handle({ type: 'avit_batch_complete' });
+  const restored = client(f.entries);
+  assert.equal(restored.run.restore(), true);
+  assert.match(restored.node('fpreview-counts').textContent, /2 \/ 2.*2 blocked · 0 errors/);
+  const unwritten = restored.node(`avit-${avits[0]}`);
+  assert.equal(unwritten.querySelector('.avit-stage').textContent, 'Blocked');
+  assert.equal(unwritten.querySelector('.avit-outcome').textContent, '');
+  assert.match(restored.node(`avit-${avits[1]}`).querySelector('.avit-outcome').textContent, /Word report attached.*Closed as false positive/);
+});
+
 test('tracks shared task progress while separate findings finish and uses authoritative batch concurrency', () => {
   const f = client(); f.run.start({ avits: [], sctasks: ['SCTASK0000001'], execution: { maxConcurrency: 3 } });
   f.run.handle({ type: 'sctask_item', sctask: 'SCTASK0000001', stage: 'reviewing', avits: avits.slice(0, 3) });

@@ -172,6 +172,37 @@ def ignore_matches(token, dep, kind, matches, note) -> int:
                           repository=repository, ref=ref, rule=rule, deployment_id=dep["id"])
 
 
+def _apply_semgrep_review(args, avit, markdown, context, token, dep, target, kind, matches, *, note, tune) -> int:
+    """Track finding triage and rule tuning separately. Only a proven no-write scope block can defer triage."""
+    from threatlint import semgrep_platform as sp  # noqa: PLC0415
+
+    scope_block = None
+    if matches:
+        for match in matches:
+            print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
+        try:
+            count = ignore_matches(token, dep, kind, matches, note)
+        except avit_semgrep_triage.TriageScopeBlocked as exc:
+            scope_block = exc
+        else:
+            print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
+    else:
+        product = {"secrets": "Secrets", "sca": "Supply Chain"}.get(kind, "Code")
+        print(f"  ! No open Semgrep {product} finding matches {context.get('file_path')}; finding triage unchanged")
+
+    if tune:
+        try:
+            _tune_verified_rule(args, markdown, avit, kind, context, token, dep, target, matches)
+        except (sp.SemgrepError, sn.ServiceNowError, ResolveError, OSError) as exc:
+            if scope_block:
+                print(f"  ! {scope_block}")
+            print(f"  ! Rule not tuned: {exc}")
+            return 1
+    if scope_block:
+        raise scope_block
+    return int(not matches and getattr(args, "require_complete_semgrep", False))
+
+
 def _verified_tuning_match(target: dict[str, str], context: dict[str, str], kind: str,
                            line: int, matches: list[dict]) -> bool:
     """Require a current exact Semgrep finding before inferring Unified ruleset membership."""
@@ -217,7 +248,8 @@ def _tune_verified_rule(args, markdown: str, avit: str, kind: str, context: dict
     with _tuning_checkout(args, markdown, avit, context, target) as (_, flagged, line):
         sp.tune_rule(markdown, kind, context["rule"], str(flagged), line, token, {"id": dep["id"], "slug": dep["slug"]},
                      project=avit_semgrep.tuning_project(target, matches),
-                     verified_finding=_verified_tuning_match(target, context, kind, line, matches))
+                     verified_finding=_verified_tuning_match(target, context, kind, line, matches),
+                     **({"allow_live_shortcut": False} if context.get("snippet_match") == "semgrep" else {}))
 
 
 def _tuning_proposal_error(context: dict[str, str], markdown: str) -> ResolveError | None:
@@ -236,7 +268,7 @@ def _check_existing_tuning(args, markdown, avit, kind, context, token, dep, targ
     from threatlint.avit_tuning import flagged_location  # noqa: PLC0415
 
     rule = context.get("rule", "")
-    if rule:
+    if rule and context.get("snippet_match") != "semgrep":
         active = sp.existing_tuning(token, {"id": dep["id"], "slug": dep["slug"]}, kind, rule,
                                     project=avit_semgrep.tuning_project(target, matches))
         if active:
@@ -253,6 +285,38 @@ def _semgrep_resolution(args, avit, context, kind, markdown):
     target = sn.repository_target(context)
     dep, matches = semgrep_matches(token, kind, target, {**context, "avit": avit}, args.semgrep_deployment, markdown)
     return token, target, dep, matches
+
+
+def _locate_scanner_snippet(record, args):
+    """Repeat checkout-based location recovery against the fresh AVIT before write-back."""
+    from threatlint.avit_tuning import confirm_snippet_match
+
+    context = record["context"]
+    if str(context.get("line", "")).isdigit() or not record.get("fields", {}).get("u_code_snippet"):
+        return
+    target = sn.repository_target(context)
+    if not context.get("file_path") or not target.get("branch"):
+        return
+
+    def corroborate(repo):
+        location = avit_repositories.scanner_snippet_location(record, repo, target)
+        if location.get("line_blocker"):
+            raise ResolveError(location["line_blocker"])
+        if location.get("line_source") == "scanner_snippet":
+            location["snippet_match"] = confirm_snippet_match(context, repo / context["file_path"], int(location["line"]),
+                                                             semgrep_token(args.aws_profile), getattr(args, "semgrep_deployment", None))
+            context.update(location)
+
+    checkout = getattr(args, "checkout", None)
+    if checkout:
+        corroborate(Path(checkout))
+    else:
+        from threatlint import runtime_env as rt
+
+        with rt.temporary_repo(prefix="threatlint-avit-line-") as work:
+            repo = Path(work) / "repo"
+            sn.checkout_repository(target, str(repo), context["file_path"])
+            corroborate(repo)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -307,6 +371,8 @@ def cmd_resolve(args) -> int:
     code_security = sn.in_code_security_view(record)
     kind = sn.finding_kind(record)
     false_positive = verdict["disposition"] == "FALSE POSITIVE"
+    if false_positive and code_security and not args.skip_semgrep and kind in ("sast", "secrets"):
+        _locate_scanner_snippet(record, args)
     name = getattr(args, "attachment_name", None) or f"{avit}-threatlint-fp-review.docx"
     report_name = re.compile(rf"{re.escape(avit)}-threatlint-fp-review(?:-\d{{8}}T\d{{12}}Z)?\.docx")
     if not report_name.fullmatch(name):
@@ -329,6 +395,8 @@ def cmd_resolve(args) -> int:
                 sg_token, target, dep, matches = semgrep_resolution
                 _check_existing_tuning(args, markdown, avit, dep.get("product", kind), record["context"],
                                        sg_token, dep, target, matches, blocker)
+            except avit_semgrep_triage.TriageScopeBlocked:
+                raise
             except (sp.SemgrepError, sn.ServiceNowError, ResolveError, OSError) as exc:
                 print(f"  ! Rule not tuned: {exc}. ServiceNow and Semgrep were not changed.")
                 return 1
@@ -368,6 +436,8 @@ def cmd_resolve(args) -> int:
     if false_positive and code_security and not args.skip_semgrep:
         try:
             sg_token, target, dep, matches = semgrep_resolution or _semgrep_resolution(args, avit, record["context"], kind, markdown)
+        except avit_semgrep_triage.TriageScopeBlocked:
+            raise
         except ResolveError as exc:
             # The AVIT stays closed; exit non-zero so callers (queue, CI) see that Semgrep was not updated.
             # Only a 404 points at the deployment; other failures (ambiguous match, missing line) say what to fix.
@@ -375,24 +445,11 @@ def cmd_resolve(args) -> int:
             print(f"  ! Semgrep unchanged: {exc}.{hint}")
             return 1
         kind = dep.get("product", kind)
-        unmatched = not matches
-        if not matches:
-            print(f"  ! No open Semgrep {({'secrets': 'Secrets', 'sca': 'Supply Chain'}).get(kind, 'Code')} finding matches {record['context'].get('file_path')}; finding triage unchanged")
-        else:
-            for match in matches:
-                print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
-            count = ignore_matches(sg_token, dep, kind, matches, f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}")
-            print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
-        # SAST and Secrets: replace the rule with the reviewer's tuned rule so the same false positive does not return.
-        if kind in ("sast", "secrets") and not args.skip_rule_tuning:
-            from threatlint import semgrep_platform as sp  # noqa: PLC0415
-            try:
-                _tune_verified_rule(args, markdown, avit, kind, record["context"], sg_token, dep, target, matches)
-            except (sp.SemgrepError, sn.ServiceNowError, ResolveError) as exc:
-                print(f"  ! Rule not tuned: {exc}")
-                return 1
-        if unmatched and getattr(args, "require_complete_semgrep", False):
-            return 1
+        return _apply_semgrep_review(
+            args, avit, markdown, record["context"], sg_token, dep, target, kind, matches,
+            note=f"Closed by Threatlint as a false positive ({avit}, {verdict['id']}): {verdict['title']}",
+            tune=kind in ("sast", "secrets") and not args.skip_rule_tuning,
+        )
     return 0
 
 
@@ -416,6 +473,8 @@ def cmd_semgrep(args) -> int:
         context["rule_hash_id"] = args.semgrep_rule_hash_id
     if args.line:
         context["line"] = str(args.line)
+    if kind in ("sast", "secrets"):
+        _locate_scanner_snippet({**record, "context": context}, args)
     report_requested = bool(getattr(args, "report", None))
     markdown = ""
     if report_requested:
@@ -434,21 +493,11 @@ def cmd_semgrep(args) -> int:
             except (sp.SemgrepError, sn.ServiceNowError, ResolveError, OSError) as exc:
                 print(f"  ! Rule not tuned: {exc}. Semgrep was not changed.")
                 return 1
-    if not matches:
-        print(f"  ! No open Semgrep finding matches {context.get('file_path')}{':' + context['line'] if context.get('line') else ''}; Semgrep triage unchanged")
-    else:
-        for match in matches:
-            print(f"    Semgrep #{match['id']} · {match['rule']} · {match['path']}:{match['line'] or '?'} · {match['ref'] or ''}")
-        count = ignore_matches(sg_token, dep, kind, matches, f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT")
-        print(f"  ✓ Semgrep ignored {count} finding(s) as false_positive; branch scope and stored IDs verified")
-    if tune_requested:
-        from threatlint import semgrep_platform as sp  # noqa: PLC0415
-        try:
-            _tune_verified_rule(args, markdown, avit, kind, context, sg_token, dep, target, matches)
-        except (sp.SemgrepError, sn.ServiceNowError, ResolveError) as exc:
-            print(f"  ! Rule not tuned: {exc}")
-            return 1
-    return 0
+    return _apply_semgrep_review(
+        args, avit, markdown, context, sg_token, dep, target, kind, matches,
+        note=f"Closed by Threatlint as a false positive ({avit}); see the report attached to the AVIT",
+        tune=tune_requested,
+    )
 
 
 def run(handler, args) -> int:

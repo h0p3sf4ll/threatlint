@@ -6,7 +6,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from . import avit_resolve, servicenow as sn
+from . import avit_resolve, avit_semgrep, servicenow as sn
 from .avit_report import ResolveError, report_line, safe_error, verdict_for
 
 
@@ -16,8 +16,8 @@ def guard_fp_rule(item: dict, repo: Path, rule_base: str, report: str, avit: str
         return
     if not rule_base:
         raise ResolveError("The Semgrep rule source is unavailable; the false-positive AVIT was not changed")
-    require_proposal(item["context"], report)
     flagged_location(repo, item["context"], report, avit)
+    require_proposal(item["context"], report)
 
 
 def require_proposal(context: dict, report: str) -> None:
@@ -43,6 +43,8 @@ def flagged_location(repo: Path, context: dict, report: str, avit: str) -> tuple
     flagged = (root / file_path).resolve() if file_path else root
     if not file_path or Path(file_path).is_absolute() or not flagged.is_relative_to(root) or not flagged.is_file():
         raise ResolveError("The flagged checkout file is unavailable; the false-positive AVIT was not changed")
+    if context.get("line_blocker"):
+        raise ResolveError(context["line_blocker"])
     line_text = str(context.get("line", ""))
     line = int(line_text) if line_text.isdigit() else report_line(report, avit, file_path)
     if not line or line < 1:
@@ -63,9 +65,43 @@ def prove_tuned_rule(item: dict, repo: Path, report: str, avit: str, args) -> No
     flagged, line = flagged_location(repo, context, report, avit)
     token = avit_resolve.semgrep_token(args.aws_profile)
     with tempfile.TemporaryDirectory(prefix="threatlint-preflight-") as work:
-        sp.validate_tuned_rule(semgrep_rule_text.tuned_rule_from_report(report), context["rule"],
-                               str(flagged), line, semgrep_rule_text.fixtures_from_report(report), token,
-                               work=Path(work))
+        checked = sp.validate_tuned_rule(semgrep_rule_text.tuned_rule_from_report(report), context["rule"],
+                                         str(flagged), line, semgrep_rule_text.fixtures_from_report(report), token,
+                                         work=Path(work))
+        if context.get("line_source") == "scanner_snippet" and not checked["reproduced"]:
+            confirm_snippet_match(context, flagged, line, token, getattr(args, "semgrep_deployment", None), reproduced=False)
+
+
+def confirm_snippet_match(context: dict, flagged: Path, line: int, token: str, deployment=None, *, reproduced=None) -> str:
+    """Corroborate the unique snippet with the original rule or one exact scanner finding."""
+    from . import semgrep_platform as sp
+
+    if not context.get("rule"):
+        raise ResolveError("The AVIT has no scanner rule to corroborate the snippet location.")
+    if reproduced is None:
+        try:
+            original = sp.original_rule_yaml(context["rule"], token)
+            reproduced = bool(sp.live_rule_matches(original, str(flagged), line))
+        except (sp.SemgrepError, OSError):
+            reproduced = False
+    if reproduced:
+        return "checkout"
+    target = context if context.get("scm") and context.get("name") else sn.repository_target(context)
+    kind = context.get("kind") or sn.finding_kind({"context": context})
+    exact = {**context, "line": str(line), "line_source": "scanner_snippet", "branch": target["branch"]}
+    dep, matches = avit_resolve.semgrep_matches(token, kind, target, exact, deployment)
+    product = dep.get("product", kind)
+    rule = context.get("rule_hash_id") if product == "secrets" else context["rule"]
+    project = avit_semgrep.project_names(target)[0]
+    products = {"secrets", "sast"} if kind == "secrets" else {kind}
+    if len(matches) == 1 and rule and product in products:
+        match = matches[0]
+        if (match.get("project") == project and match.get("ref") == target["branch"] and match.get("product") == product
+                and match.get("rule") == rule and match.get("status") in ("open", "ignored")
+                and avit_semgrep.same_path(match.get("path"), context["file_path"]) and str(match.get("line")) == str(line)):
+            return "semgrep"
+    raise ResolveError(f"The original rule did not reproduce at checkout line {line}, and Semgrep did not identify one exact "
+                       "finding for the project, branch, rule, file and line. Verify the original scanner location and scan revision.")
 
 
 def repairable_rule_error(error: Exception) -> bool:
@@ -74,9 +110,12 @@ def repairable_rule_error(error: Exception) -> bool:
 
     if isinstance(error, sp.SemgrepError):
         message = str(error).lower()
-        return not any(word in message for word in ("http ", "token", "download", "network", "credential", "timeout",
-                                                    "semgrep cli is required", "no rule body", "engine fallback",
-                                                    "pro engine is unavailable"))
+        # Only proposal diagnostics can be fixed by revising the report. Identifiers
+        # such as "access-token" inside a rule name do not indicate an auth failure.
+        return message.startswith(("the tuned rule must contain", "tuned rule is not valid:",
+                                   "semgrep could not parse the tuned rule pattern", "the report has no",
+                                   "fixtures need at least one", "tuned rule fixtures did not pass:",
+                                   "the original rule misses ", "the tuned rule still reports "))
     message = str(error).lower()
     return any(fragment in message for fragment in ("report needs one complete tuned rule", "tuned rule id must",
                                                     "tuned rule needs true-positive"))
@@ -94,6 +133,8 @@ def assess_draft(avit: str, report: str, target: dict, args) -> dict:
         item = {"in_view": True, "context": target}
         repo = Path(args.checkout)
         try:
+            if target.get("line_blocker"):
+                raise ResolveError(target["line_blocker"])
             base = Path(args.rule_base) if args.rule_base else None
             if not base or not base.is_file():
                 raise ResolveError("The Semgrep rule source is unavailable for this project")
@@ -105,11 +146,14 @@ def assess_draft(avit: str, report: str, target: dict, args) -> dict:
             if label.startswith("# Tuning base: live tuned rule "):
                 flagged, line = flagged_location(repo, target, report, avit)
                 covered = not sp._matches(str(base), str(flagged), line, exact=True)
+                if covered and target.get("line_source") == "scanner_snippet":
+                    original = sp.original_rule_yaml(target["rule"], avit_resolve.semgrep_token(args.aws_profile))
+                    covered = bool(sp.live_rule_matches(original, str(flagged), line))
             if not covered:
                 require_proposal(target, report)
                 prove_tuned_rule(item, repo, report, avit, args)
             status = "ready"
-        except (sp.SemgrepError, ResolveError, OSError) as exc:
+        except (sp.SemgrepError, ResolveError, sn.ServiceNowError, OSError) as exc:
             status = "refine" if repairable_rule_error(exc) else "blocked"
             reason = safe_error(exc)
     return {"status": status, "reason": reason, "disposition": disposition}

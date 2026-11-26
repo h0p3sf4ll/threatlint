@@ -435,10 +435,25 @@ describe('False positive review batch', () => {
     }
     const events = await runBatch(FP, { createFixPr: false });
     const final = events.find(event => event.done && event.avit === FP);
-    assert.equal(final.stage, 'error');
+    assert.equal(final.stage, failure === 'changed disposition' ? 'error' : 'blocked');
+    assert.equal(final.result, final.stage);
     assert.equal(modelCalls.length - firstModel, { 'missing fixtures': 3, 'changed disposition': 2, 'deleted branch': 1 }[failure]);
     assert.equal(calls.some(args => args[1] === 'resolve' || args[1] === 'fix-pr'), false);
     assert.equal(events.some(event => event.stage === 'reported'), false);
+  });
+
+  it('preserves completed ServiceNow and rule actions when the CLI blocks finding triage', async t => {
+    setupRefinement(t, '');
+    const reason = 'Semgrep triage blocked: another finding shares the fingerprint. No Semgrep triage write was sent.';
+    resolveResult = { code: 3, stdout: '  ✓ Attached report.docx\n  ✓ Closed as false positive\n  ✓ Published org-private rule fixture.tuned\n', stderr: `BLOCKED: ${reason}\n` };
+    t.after(() => { resolveResult = null; });
+    const events = await runBatch(FP, { createFixPr: false });
+    const final = events.find(event => event.avit === FP && event.done);
+    assert.equal(final.stage, 'blocked');
+    assert.equal(final.result, 'blocked');
+    assert.equal(final.detail, reason);
+    assert.ok(final.outcome.attached && final.outcome.closed && final.outcome.tuned);
+    assert.deepEqual(events.filter(event => event.action).map(event => event.action), ['attached', 'closed', 'tuned']);
   });
 
   for (const target of [{ kind: 'sca' }, { code_security: false }]) it(`does not require rule tuning for ${target.kind || 'non-CodeSecurity'} FPs`, async t => {

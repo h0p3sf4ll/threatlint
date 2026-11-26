@@ -17,7 +17,7 @@ def add_resolve_parsers(actions) -> None:
     sn.add_avit_arguments(checkout)
     semgrep = actions.add_parser("semgrep", help="Re-run the Semgrep triage for an AVIT already closed as a false positive by Threatlint")
     semgrep.add_argument("number", metavar="AVIT")
-    semgrep.add_argument("--line", type=int, help="Flagged line, when the AVIT does not record one (narrows the match to ±3 lines)")
+    semgrep.add_argument("--line", type=int, help="Original scanner line when the AVIT omits it (prefers an exact match)")
     semgrep.add_argument("--semgrep-deployment", help="Semgrep deployment ID or slug (default: THREATLINT_SEMGREP_DEPLOYMENT, org.json, or the token's only deployment)")
     semgrep.add_argument("--semgrep-rule-hash-id", help="Authoritative ruleHashId for Secrets-product correlation")
     semgrep.add_argument("--report", help="FP report with a **Tuned rule** block: also tune the rule (SAST/Secrets)")
@@ -127,8 +127,14 @@ def cmd_fix_pr(args) -> int:
 
 
 def run(handler, args, *, remove_checkout) -> int:
+    from threatlint.avit_semgrep import TriageScopeBlocked  # noqa: PLC0415
+
     try:
         return handler(args)
+    except TriageScopeBlocked as exc:
+        # Workbench distinguishes a confirmed pre-write scope block from an uncertain write.
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 3
     except (ResolveError, sn.ServiceNowError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -16,10 +16,10 @@
   const MAX_STORED = 4000;
   const MAX_LOG = 3000;
   const AVIT_STAGES = { queued: 'Queued', fetching: 'Fetching', checkout: 'Cloning', triage: 'Reviewing', reported: 'Report saved', resolving: 'Updating ServiceNow',
-    'fix-pr': 'Opening draft PR', done: 'Done', info: 'Info', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
+    'fix-pr': 'Opening draft PR', done: 'Done', info: 'Info', blocked: 'Blocked', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
   const TASK_STAGES = { queued: 'Queued', expanding: 'Reading task', reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error', cancelled: 'Cancelled' };
   const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'pull-request': 'Draft PR', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
-  const RESULTS = ['closed', 'noted', 'error', 'skipped'];
+  const RESULTS = ['closed', 'noted', 'blocked', 'error', 'skipped'];
   const RUN_STATUS = { expanding: 'Expanding SCTASKs and ISSTs', running: 'Reviewing', complete: 'Complete', cancelled: 'Stopped', error: 'Did not start', interrupted: 'Interrupted' };
 
   function el(tag, className, text) {
@@ -34,6 +34,7 @@
   function resultOf(event) {
     if (event.result && RESULTS.includes(event.result)) return event.result;
     if (event.stage === 'error') return 'error';
+    if (event.stage === 'blocked') return 'blocked';
     if (['out-of-scope', 'cancelled', 'skipped'].includes(event.stage)) return 'skipped';
     return event.disposition === 'REPO REMOVED' || event.outcome?.closed === true ? 'closed' : 'noted';
   }
@@ -154,7 +155,7 @@
       item.result = result; item.active = false;
       item.node.classList.remove('active'); item.node.dataset.result = result;
       const history = item.node.querySelector('.fp-history');
-      if (!history.dataset.userToggled && result !== 'error') history.open = false;
+      if (!history.dataset.userToggled && result !== 'error' && result !== 'blocked') history.open = false;
     }
     function activate(item) { if (!item.result) { item.active = true; item.node.classList.add('active'); } }
 
@@ -194,7 +195,7 @@
       else { bar.setAttribute('aria-valuenow', String(done)); bar.setAttribute('aria-valuetext', `${done} of ${plural(total, 'AVIT')} done${running ? `, ${active} active, ${queued} queued` : ''}`); }
       for (const result of RESULTS) segments[result].style.width = total ? `${(tally[result] / total) * 100}%` : '0%';
       counts.replaceChildren(el('strong', 'fp-count-done', `${done} / ${total}`),
-        document.createTextNode(`${running ? ` · ${active} active · ${queued} queued` : ''} · ${tally.closed} closed · ${tally.noted} noted · ${plural(tally.error, 'error')}${tally.skipped ? ` · ${tally.skipped} skipped` : ''}`));
+        document.createTextNode(`${running ? ` · ${active} active · ${queued} queued` : ''} · ${tally.closed} closed · ${tally.noted} noted${tally.blocked ? ` · ${tally.blocked} blocked` : ''} · ${plural(tally.error, 'error')}${tally.skipped ? ` · ${tally.skipped} skipped` : ''}`));
       const taskTally = Object.fromEntries(RESULTS.map(result => [result, 0]));
       for (const item of run.tasks.values()) if (item.result) taskTally[item.result]++;
       const taskKeys = [...run.tasks.keys()];
@@ -277,7 +278,7 @@
           if (event.detail !== undefined && !event.action) item.node.querySelector('.avit-detail').textContent = event.detail;
           if (event.disposition) { const badge = item.node.querySelector('.avit-disposition'); badge.className = 'avit-disposition disposition-badge'; badge.textContent = event.disposition; }
           const label = event.action ? ACTIONS[event.action] || 'Updated' : AVIT_STAGES[event.stage] || event.stage;
-          const kind = event.stage === 'error' ? 'error' : event.stage === 'info' ? 'info' : event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
+          const kind = event.stage === 'error' ? 'error' : event.stage === 'info' ? 'info' : event.stage === 'blocked' || event.action === 'warning' ? 'warning' : event.action || (event.done && event.stage === 'done') ? 'success' : '';
           const detail = `${event.detail || ''}${event.disposition && event.stage === 'reported' ? ` · ${event.disposition}` : ''}`;
           addHistory(item, at, label, detail, kind);
           runLog(at, event.avit, label, detail, kind);

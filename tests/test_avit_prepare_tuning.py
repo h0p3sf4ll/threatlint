@@ -101,3 +101,19 @@ def test_preflight_distinguishes_inapplicable_and_inaccessible_targets(check):
     assert check(kind="sca", branch_deleted="deleted", omit_base=True)["status"] == "blocked"
     assert check(omit_base=True)["status"] == "blocked"
     assert check(HEADER + RULE + FIXTURES, file_path="../outside.py")["status"] == "blocked"
+
+
+def test_line_blocker_precedes_fixture_refinement(check):
+    reason = "The scanner snippet occurs more than once in the flagged file."
+    result = check(line="", line_blocker=reason)
+    assert result["status"] == "blocked" and result["reason"] == reason
+
+
+def test_live_rule_with_an_inferred_line_needs_a_reproducible_original_or_fixture_proof(check, monkeypatch):
+    monkeypatch.setattr(avit_resolve, "semgrep_token", lambda _: "test-token")
+    monkeypatch.setattr(sp, "_matches", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(sp, "original_rule_yaml", lambda *_args: "original")
+    monkeypatch.setattr(sp, "live_rule_matches", lambda *_args: [])
+    assert check(live=True, line_source="scanner_snippet")["status"] == "refine"
+    monkeypatch.setattr(sp, "live_rule_matches", lambda *_args: [1])
+    assert check(live=True, line_source="scanner_snippet")["status"] == "ready"

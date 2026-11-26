@@ -266,18 +266,27 @@ work without changing a completed triage result. See [Repository storage](setup.
 
 ### Semgrep tuning
 
-Finding triage comes first. Code/Supply Chain matching uses project, file,
-available rule ID, and line ±3; Secrets matching uses repository, branch, path, and line ±3.
+Threatlint correlates a single Semgrep finding by project, branch, file, rule,
+and line. An exact line takes precedence over neighboring lines, including when
+the exact finding is already ignored. A unique candidate within three lines can
+resolve a numeric AVIT or report location. Multiple equally plausible IDs block triage.
 A Secrets AVIT names only a service type (for example AWS), which is never treated as a rule:
 when no `--semgrep-rule-hash-id` is given, the open Secrets finding at that exact location is
 matched and its own `ruleHashId` is used. If findings with different rules share the location,
 nothing is changed and you choose one with `--semgrep-rule-hash-id`.
-**No flagged line means no match**, not file-wide suppression. Put the line in the
-AVIT/report, or use `avit semgrep --line N`. A Semgrep ignore can immediately affect
+When the AVIT lacks a line, Threatlint looks for an exact, unique single-line
+scanner excerpt in the named checkout. The original rule or one exact Semgrep
+finding must corroborate that location before write-back. Supply the original
+scanner line and revision when the excerpt is ambiguous or the checkout has moved.
+A Semgrep ignore can immediately affect
 other refs with the same fingerprint. Threatlint checks the project's findings
 across refs before submitting IDs and stops when it cannot establish the requested
-scope. It also checks the affected IDs in the response and reads back their stored
-status. [Semgrep triage behavior](https://semgrep.dev/docs/for-developers/resolve-findings-through-app#triage-behavior-across-refs-and-branches)
+scope. A fingerprint collision produces a blocked result with the peer finding
+IDs, refs, and statuses in the local audit. Independently requested rule tuning
+can still proceed through its proof and policy checks. If a write was attempted,
+Threatlint checks the affected IDs in the response and reads back their stored
+status. An unverified write stops further Semgrep updates.
+[Semgrep triage behavior](https://semgrep.dev/docs/for-developers/resolve-findings-through-app#triage-behavior-across-refs-and-branches)
 
 SCA receives triage only because it has no Code or Secrets rule to replace.
 SAST and Secrets rule tuning uses the flagged file and a proposed rule with
@@ -290,8 +299,9 @@ fixtures:
    `**Tuned rule fixtures**:` in the report. Keep at least one `ruleid:` true-positive
    case and one `ok:` false-positive case.
 3. Validation uses the matching Semgrep Pro engine and requires valid rule syntax, passing `semgrep --test` fixtures, and
-   original-rule matches on both fixture shapes. If the original reproduces the
-   exact flagged line locally, the tuned rule must drop it.
+   original-rule matches on both fixture shapes. A tuned rule that matches the
+   exact flagged checkout line fails validation, even when the original rule
+   cannot reproduce the finding locally.
 4. After proof, publish `org_private`. Legacy policy replacements enable the
    tuned rule in `MODE_MONITOR` before disabling the original. Unified policies
    use project-scoped inclusion and exclusion when the original rule selection
@@ -306,9 +316,9 @@ local checkout cannot reproduce the line.
 Workbench and the headless runner check the proposed rule and fixtures against
 the flagged file **before** AVIT write-back. The configured model gets up to two
 attempts to repair a proposal that fails validation. If the required proof
-remains unavailable, Threatlint stops before attaching the report or closing the
-AVIT. The tracker update, finding triage, and rule publication can still succeed
-or fail independently.
+remains unavailable, the result is **Blocked** with the false-positive verdict and
+the outstanding proof requirement. This happens before report attachment and AVIT
+closure. A later triage block preserves completed ServiceNow actions on the card.
 
 ## Re-running the Semgrep step
 

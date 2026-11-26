@@ -11,6 +11,10 @@ from threatlint import servicenow as sn
 from threatlint.avit_report import ResolveError
 
 
+class TriageScopeBlocked(ResolveError):
+    """The requested finding identity or write scope could not be isolated before triage."""
+
+
 def request(path, token, *, body=None, api):
     request = urllib.request.Request(f"{api}{path}", data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": f"Bearer {token}", "Accept": "application/json", **({"Content-Type": "application/json"} if body is not None else {})})
@@ -121,6 +125,23 @@ def scoped_findings(token, dep, kind, repository, branch, rule, *, query, status
         cursor = following
 
 
+def _location_match(rows, path, line, same_path, *, exact_only=False, secrets=False):
+    """One AVIT can authorize a single identifiable finding, including a previously ignored one."""
+    candidates = [row for row in rows if row["status"] in ("open", "ignored") and same_path(row["path"], path)
+                  and str(row["line"]).isdigit() and int(row["line"]) > 0 and abs(int(row["line"]) - line) <= 3]
+    exact = [row for row in candidates if int(row["line"]) == line]
+    considered = exact if exact_only else candidates
+    if secrets and len({row["rule"] for row in considered}) > 1:
+        raise TriageScopeBlocked(f"Semgrep triage blocked: Secrets findings at {path}:{line} have different rules "
+                                 "(ruleHashIds). Supply --semgrep-rule-hash-id to identify the finding. No Semgrep triage write was sent.")
+    selected = exact if exact or exact_only else candidates
+    if len(selected) > 1:
+        locations = ", ".join(f"#{row['id']} at line {row['line']}" for row in selected[:8])
+        raise TriageScopeBlocked(f"Semgrep triage blocked: {len(selected)} findings could identify the AVIT at {path}:{line} "
+                                 f"({locations}). No Semgrep triage write was sent.")
+    return selected
+
+
 def semgrep_matches(token, kind, target, context, deployment=None, report_text="", *,
                     query, report_line, same_path):
     from threatlint.semgrep_platform import deployment as find_deployment, SemgrepError
@@ -142,24 +163,14 @@ def semgrep_matches(token, kind, target, context, deployment=None, report_text="
     if not branch or not rule:
         raise ResolveError("Semgrep matching requires the exact branch and rule")
     repository = project_names(target)[0]
-    near = lambda found: str(found).isdigit() and int(found) > 0 and abs(int(found) - int(line)) <= 3
     product = "sast" if kind == "secrets" else kind
-    matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule, query=query, status="open")
-               if same_path(found["path"], path) and near(found["line"])]
-    if not matches:
-        matches = [found for found in scoped_findings(token, dep, product, repository, branch, rule, query=query, status="ignored")
-                   if same_path(found["path"], path) and near(found["line"])]
+    exact_only = context.get("line_source") == "scanner_snippet"
+    findings = (row for status in ("open", "ignored")
+                for row in scoped_findings(token, dep, product, repository, branch, rule, query=query, status=status))
+    matches = _location_match(findings, path, int(line), same_path, exact_only=exact_only)
     if kind == "secrets" and not matches:
         product = "secrets"
         rule_hash = context.get("rule_hash_id", "") or None
-        # Without a supplied ruleHashId, the location is the identity: the open Secrets finding on this exact
-        # repository, branch, and file, within the same ±3 lines as Code matching. The matched finding's own
-        # ruleHashId is then authoritative. The service type an AVIT names is never used as a rule.
-        candidates = [found for found in scoped_findings(token, dep, product, repository, branch, rule_hash, query=query, status="open")
-                      if same_path(found["path"], path) and near(found["line"])]
-        rules = sorted({found["rule"] for found in candidates})
-        if not rule_hash and len(rules) > 1:
-            raise ResolveError(f"{len(candidates)} open Semgrep Secrets findings at {path}:{line} have different rules "
-                               f"({', '.join(rules)}); pass --semgrep-rule-hash-id to choose one")
-        matches = candidates
+        findings = scoped_findings(token, dep, product, repository, branch, rule_hash, query=query)
+        matches = _location_match(findings, path, int(line), same_path, exact_only=exact_only, secrets=True)
     return {**dep, "project": repository, "product": product}, matches

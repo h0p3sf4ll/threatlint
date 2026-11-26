@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -273,6 +274,66 @@ def test_tuned_rule_is_proven_against_flagged_file_before_writeback(monkeypatch,
     assert checked[0][1:4] == ("js.rule", str(flagged), 2)
     assert checked[0][5] == "synthetic-token"
     assert "ruleid: js.rule.tuned" in checked[0][4]
+
+
+@pytest.mark.parametrize(("case", "reviews", "reason"), [
+    ("exhausted", 3, "still reports"),
+    ("missing-line", 1, "source line is unavailable"),
+    ("changed-verdict", 2, "changed the reviewed FALSE POSITIVE"),
+    ("missing-verdict", 2, "lost the reviewed AVIT verdict"),
+    ("scope", 1, "Semgrep triage blocked"),
+    ("unexpected", 1, None),
+])
+def test_headless_incomplete_tuning_preserves_the_review_and_returns_nonzero(monkeypatch, capsys, case, reviews, reason):
+    from threatlint import semgrep_platform as sp
+
+    args = _args(AVIT_FP)
+    monkeypatch.setattr(avit_resolve, "_session", lambda *_: ("https://test.service-now.com", "token"))
+    monkeypatch.setattr(sn, "fetch_avits", lambda *_: ([_item(AVIT_FP)], [], []))
+    monkeypatch.setattr(sn, "avits_markdown", lambda *_: "AVIT evidence")
+    monkeypatch.setattr(sn, "finding_kind", lambda *_: "sast")
+    monkeypatch.setattr(avit_headless, "_rule_base", lambda *_: "original rule")
+    monkeypatch.setattr(avit_headless, "_checkout", lambda _item, _args, repo: repo.mkdir() or {"scm": "github"})
+    prompts = []
+
+    def model(_provider, _system, prompt, *_rest):
+        prompts.append(prompt)
+        if case == "missing-verdict" and len(prompts) > 1:
+            return "# Revised tuning without AVIT identity"
+        disposition = "TRUE POSITIVE" if case == "changed-verdict" and len(prompts) > 1 else "FALSE POSITIVE"
+        return (f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; js.rule; Semgrep; src/flagged.js:2\n"
+                f"**Disposition**: {disposition}\n**Evidence**: `src/flagged.js:2` uses a literal.\n"
+                "**Verified Safe Behavior**: The literal cannot be influenced by a caller.\n")
+
+    def prove(*_args):
+        if case == "missing-line":
+            raise avit_headless.ResolveError("The flagged source line is unavailable")
+        if case == "unexpected":
+            raise TypeError("Unexpected implementation error")
+        if case != "scope":
+            raise sp.SemgrepError("The tuned rule still reports the false-positive location")
+
+    def resolve(_args):
+        assert case == "scope", "An unproven rule must never reach write-back"
+        raise avit_headless.TriageScopeBlocked("Semgrep triage blocked: Peer findings outside the requested write")
+
+    monkeypatch.setattr(avit_headless, "_run_review_model", model)
+    monkeypatch.setattr(avit_headless, "_prove_tuned_rule", prove)
+    monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
+    monkeypatch.setattr(avit_resolve, "cmd_resolve", resolve)
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 1
+    assert len(prompts) == reviews
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["completed"] == 0
+    [outcome] = result["outcomes"]
+    assert outcome["completed"] is False
+    if reason is None:
+        assert (result["failed"], result["blocked"]) == (1, 0)
+        assert outcome["disposition"] == "NOT REVIEWED"
+    else:
+        assert (result["failed"], result["blocked"]) == (0, 1)
+        assert outcome["disposition"] == "FALSE POSITIVE" and outcome["status"] == "blocked"
+        assert reason in outcome["reason"]
 
 
 def test_isst_discovery_drives_same_avit_review_and_summary(monkeypatch):
