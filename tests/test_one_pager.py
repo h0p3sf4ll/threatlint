@@ -357,3 +357,16 @@ def test_lists_keep_whole_items_rather_than_ending_mid_sentence():
     shortened = one_pager._prose(text, 200)
     assert shortened.splitlines() == ["\u2022 No String.Format builds SQL from the region anywhere in the controller.",
                                       "\u2022 Regression assertions 1 to 5 pass in CI and the owner attaches the run output."]
+
+
+def test_bulleted_impact_and_punctuated_severity_are_understood():
+    report = LIVE_SHAPE.replace("**Severity**: CRITICAL (my own assessment)", "**Severity**: HIGH. It becomes CRITICAL without platform authentication.")
+    report = report.replace("**Impact.** A single quote ends the literal. From there an attacker can add predicates, UNION queries or stacked "
+                            "statements to the batch, which runs as the SQL login loaded from Key Vault (lines 39\u201354; values not inspected).",
+                            "- **Reachability:** The route exposes the action to any client.\n"
+                            "- **Impact:** An attacker can close the literal and append UNION queries or stacked T-SQL.")
+    page = one_pager.summary(report, avit=AVIT)
+    assert page["severity"] == "HIGH"
+    assert page["bottom_line"].startswith("Confirmed high-severity finding at LedgerController.cs:96")
+    assert "An attacker can close the literal and append UNION queries or stacked T-SQL." in page["bottom_line"]
+    assert "Severity \xb7 HIGH." not in _text(one_pager.render(page))

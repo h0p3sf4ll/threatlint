@@ -151,10 +151,11 @@ def _sentences(text: str) -> list[str]:
 
 
 def _subsection(text: str, name: str) -> str:
-    """The paragraph after a bold lead-in such as **Impact.** or **Impact:**, up to the next unbulleted lead-in."""
+    """The text after a bold lead-in such as **Impact.**, **Impact:** or - **Impact:**, up to the next lead-in or heading."""
     lead = r"\*\*[A-Z][^*\n]{1,60}?[.:]?\*\*[.:]?"
-    match = re.search(rf"(?ims)^[ \t]*\*\*{re.escape(name)}[.:]?\*\*[.:]?[ \t]*(.*?)"
-                      rf"(?=^[ \t]*{lead}(?:[ \t]|$)|^#{{1,6}}[ \t]|\Z)", text)
+    bullet = r"(?:[-*+][ \t]+)?"
+    match = re.search(rf"(?ims)^[ \t]*{bullet}\*\*{re.escape(name)}[.:]?\*\*[.:]?[ \t]*(.*?)"
+                      rf"(?=^[ \t]*{bullet}{lead}(?:[ \t]|$)|^#{{1,6}}[ \t]|\Z)", text)
     return match.group(1).strip() if match else ""
 
 
@@ -366,7 +367,7 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
     page = {
         "false_positive": false_positive, "disposition": disposition or "REPORTED FINDING", "id": finding["id"],
         "title": _prose(finding["title"], 150) or finding["id"], "avit": avit,
-        "severity": _field(body, "Severity").upper().split()[0] if _field(body, "Severity") else "UNSPECIFIED",
+        "severity": (re.findall(r"[A-Za-z]+", _field(body, "Severity")) or ["UNSPECIFIED"])[0].upper(),
         "confidence": (re.findall(r"[A-Za-z]+", _field(body, "Confidence")) or [""])[0].upper(),
         "basis": _field(body, "Decision basis").upper(),
         "owner": _prose(re.sub(r"\s*\(suggested\)", "", _field(body, "Owner")), 180),
@@ -395,6 +396,8 @@ def summary(report: str, avit: str = "", finding_id: str = "") -> dict:
         subsection = _subsection(impact, "Impact") or _subsection(body, "Impact")
         exploit = _section(body, "Exploit path")
         consequences = _consequences(subsection, impact, exploit, _field(head, "Risk and decision"))
+        if not consequences and not _prose(impact):  # No impact text at all: look anywhere in the finding.
+            consequences = _consequences(body)
         risk = subsection or ("\n".join(f"- {sentence}" for sentence in consequences) if consequences else impact)
         fix = _section(body, "Proposed fix patch") + "\n" + _section(body, "Proposed Fix")
         fix_kind, fix_lines = _fix_code(fix, location.rsplit(":", 1)[-1].split("-")[0] if ":" in location else "")
