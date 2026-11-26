@@ -60,7 +60,7 @@ the temporary checkout and report files. An AVIT with a true-positive verdict
 gets the report and a work note while staying open. A false positive gets the
 report, a closure request, and scoped Semgrep triage. For SAST and Secrets, the
 runner also asks the selected model to repair a missing or invalid rule proposal.
-If the proposal fails validation, the AVIT can still close with its Word report. The CLI
+If the proposal fails validation, the AVIT can still close with its Word report. If re-examining the code during that repair establishes a true positive instead, Threatlint continues as a true positive: it attaches the revised report with a disposition-history note, adds the true-positive work note, leaves the AVIT open, and prepares a draft fix PR when the patch validates. A later revision that returns to false positive stops without changing the AVIT, so it is never closed on conflicting evidence. The CLI
 does this without Dia or UI actions. Omit `--resolve-avits --yes` for a
 report-only AVIT review.
 

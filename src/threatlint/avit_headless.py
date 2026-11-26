@@ -211,6 +211,11 @@ def _run_review_model(provider: str, system_prompt: str, prompt: str, repo: Path
     raise ResolveError(f"{provider} is not a supported headless FP review provider")
 
 
+OVERTURNED_NOTE = ("\n\n**Disposition history**: The first review proposed FALSE POSITIVE, but its Semgrep tuning did not pass "
+                   "validation. Re-examining the code to repair the rule established a TRUE POSITIVE, so Threatlint reports a "
+                   "true positive and leaves the AVIT open.\n")
+
+
 def _review_one(args, item: dict, instance: str, system_prompt: str, model: str, semgrep_version: str,
                 *, provider: str = "codex", base_url: str = "", api_key: str = "") -> dict:
     from . import dast, semgrep_platform as sp
@@ -270,23 +275,31 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                 # the final verdict still must parse before any tracker write.
             return redact_secrets(draft, repo, file_path, source)
 
-        output, redacted = sanitized_draft(output)
-        if prepare_fix:
+        def investigate(draft):
+            """Evidence and fix readiness with up to two follow-ups per phase: (draft, readiness, redacted count)."""
             from .avit_evidence import assess_review  # noqa: PLC0415
-            readiness = assess_review(avit, output, str(repo), evidence_target)
-            while readiness["status"] == "refine":
-                phase = "patch" if readiness.get("phase") == "patch" else "evidence"
+            found = 0
+            state = assess_review(avit, draft, str(repo), evidence_target)
+            while state["status"] == "refine":
+                phase = "patch" if state.get("phase") == "patch" else "evidence"
                 if followups[phase] >= 2:
                     break
                 followups[phase] += 1
                 action = "Preparing the proposed fix" if phase == "patch" else "Investigating the finding evidence"
                 print(f"  {action} (follow-up {followups[phase]}/2)", flush=True)
-                output = _run_review_model(provider, system_prompt, prompt + "\n\n" + readiness["prompt"],
-                                           repo, model, args, base_url, api_key)
-                output, count = sanitized_draft(output)
-                redacted += count
-                readiness = assess_review(avit, output, str(repo), evidence_target)
+                draft = _run_review_model(provider, system_prompt, prompt + "\n\n" + state["prompt"],
+                                          repo, model, args, base_url, api_key)
+                draft, count = sanitized_draft(draft)
+                found += count
+                state = assess_review(avit, draft, str(repo), evidence_target)
+            return draft, state, found
+
+        output, redacted = sanitized_draft(output)
+        if prepare_fix:
+            output, readiness, count = investigate(output)
+            redacted += count
         verdict = verdict_for(output, avit)
+        overturned = False
 
         tuning_reason = ""
         if verdict["disposition"] == "FALSE POSITIVE":
@@ -321,6 +334,17 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                     except (RuntimeError, OSError, subprocess.SubprocessError) as unavailable:
                         tuning_reason = f"The tuning revision failed. {_safe_error(unavailable)}"
                         break
+                    if revised_verdict["disposition"] == "TRUE POSITIVE":
+                        # Re-examining the code to repair the rule established a vulnerability. Reporting it keeps the
+                        # AVIT open, which is the safe direction, so continue as a true positive with the revised report.
+                        print("  ! The tuning revision re-examined the evidence and found a TRUE POSITIVE; "
+                              "continuing as a true positive (the AVIT stays open)", flush=True)
+                        output, redacted, verdict, overturned = revision + OVERTURNED_NOTE, redacted + count, revised_verdict, True
+                        if prepare_fix:
+                            output, readiness, count = investigate(output)
+                            redacted += count
+                            verdict = verdict_for(output, avit)
+                        break
                     if revised_verdict["disposition"] != verdict["disposition"]:
                         raise ResolveError("The tuning revision changed the reviewed FALSE POSITIVE disposition. "
                                            "Resolve the conflicting evidence before closing this AVIT.")
@@ -332,6 +356,9 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                     tuning_reason = f"Local rule validation failed ({type(exc).__name__})."
                     break
                 break
+        if overturned and verdict["disposition"] != "TRUE POSITIVE":
+            raise ResolveError("The reviews disagree: the tuning revision found a TRUE POSITIVE, but a later revision did not. "
+                               "Resolve the conflicting evidence; the AVIT was not changed.")
         if tuning_reason:
             output = reviewed_output + f"\n\n**Rule tuning status**: Rule not tuned. {tuning_reason}\n"
             print(f"  ! Rule not tuned: {tuning_reason}", flush=True)

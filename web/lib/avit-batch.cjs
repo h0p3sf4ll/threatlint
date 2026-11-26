@@ -92,6 +92,10 @@ function runCli(args, { env = {}, signal, input, spawnImpl = spawn } = {}) {
 const lastLine = text => String(text).trim().split(/\r?\n/).filter(Boolean).pop() || '';
 
 // Keep the fixture visible to the repair model even when a long YAML proposal fills the report excerpt.
+// Matches src/threatlint/avit_headless.py OVERTURNED_NOTE.
+const OVERTURNED_NOTE = '\n\n**Disposition history**: The first review proposed FALSE POSITIVE, but its Semgrep tuning did not pass '
+  + 'validation. Re-examining the code to repair the rule established a TRUE POSITIVE, so Threatlint reports a true positive and leaves the AVIT open.\n';
+
 function tuningRepairContext(markdown, reason) {
   const fixture = /^\*\*Tuned rule fixtures\*\*:[ \t]*\n+```\w*\n([\s\S]*?)\n```/m.exec(markdown);
   if (!fixture) return markdown.slice(0, 60_000);
@@ -363,7 +367,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       const draftPath = path.join(work, 'review-draft.md');
       if (prepareFix || preflightTuning) fs.writeFileSync(targetPath, JSON.stringify({ ...target, avit }), { mode: 0o600 });
       let output = await review(), markdown, count = 0, preparation = null, tuning = null;
-      let confirmedDraft, tuningReason = '';
+      let confirmedDraft, tuningReason = '', overturned = false;
       const followups = { evidence: 0, patch: 0, tuning: 0 };
       for (;;) {
         if (signal.aborted) throw new Error('Cancelled');
@@ -371,7 +375,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
         if (!prepareFix && !preflightTuning) break;
         fs.writeFileSync(draftPath, markdown, { mode: 0o600 });
         const draftArgs = [avit, '--report', draftPath, '--checkout', repo, '--target', targetPath];
-        if (prepareFix && !followups.tuning) {
+        if (prepareFix && (!followups.tuning || overturned)) {
           const assessed = await cli(['avit', 'prepare-fix', ...draftArgs, ...profile], { env, signal });
           if (signal.aborted) throw new Error('Cancelled');
           try { preparation = JSON.parse(lastLine(assessed.stdout)); } catch { preparation = null; }
@@ -389,7 +393,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
             continue;
           }
         }
-        if (!preflightTuning) break;
+        if (!preflightTuning || overturned) break;
         let checked;
         try {
           checked = await cli(['avit', 'prepare-tuning', ...draftArgs, ...(ruleBase ? ['--rule-base', basePath] : []), ...profile], { env, signal });
@@ -409,6 +413,15 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
           throw new Error(`The Semgrep tuning proof could not be checked before AVIT write-back: ${errorOf(checked)}`);
         }
         const { status, disposition } = tuning;
+        if (followups.tuning && disposition === 'TRUE POSITIVE') {
+          // Re-examining the code to repair the rule established a vulnerability. Reporting it keeps the AVIT open, the
+          // safe direction, so continue as a true positive with the revised report and its own evidence and fix checks.
+          overturned = true;
+          tuning = null;
+          output += OVERTURNED_NOTE;
+          step('triage', 'The Semgrep tuning revision re-examined the evidence and found a TRUE POSITIVE; continuing as a true positive (the AVIT stays open)', { phase: 'tuning' });
+          continue;
+        }
         if (followups.tuning && disposition !== 'FALSE POSITIVE') {
           return step('error', 'The Semgrep tuning revision changed the finding disposition. The AVIT was not changed.', { done: true });
         }
@@ -443,6 +456,9 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
       const finding = report.findings.find(item => (item.body.match(/Original finding\W*:\s*(.+)/i)?.[1] || '').toUpperCase().includes(avit)) || report.findings[0];
       const disposition = tuning?.disposition || finding?.disposition || 'UNSPECIFIED';
       created = report;
+      if (overturned && disposition !== 'TRUE POSITIVE') {
+        return step('error', 'The reviews disagree: the Semgrep tuning revision found a TRUE POSITIVE, but a later revision did not. The AVIT was not changed.', { disposition, done: true });
+      }
       if (tuning?.status === 'ready' && fs.readFileSync(report.mdPath, 'utf8') !== markdown) {
         return step('error', 'The saved report differs from the Semgrep-validated draft. The AVIT was not changed.', { disposition, done: true });
       }

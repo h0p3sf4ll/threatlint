@@ -282,7 +282,6 @@ def test_tuned_rule_is_proven_against_flagged_file_before_writeback(monkeypatch,
 @pytest.mark.parametrize(("case", "reviews", "reason"), [
     ("exhausted", 3, "still reports"),
     ("missing-line", 1, "source line is unavailable"),
-    ("changed-verdict", 2, "changed the reviewed FALSE POSITIVE"),
     ("missing-verdict", 2, "lost the reviewed AVIT verdict"),
     ("scope", 1, "Semgrep triage blocked"),
     ("provider-error", 2, "tuning revision failed"),
@@ -308,7 +307,7 @@ def test_headless_reports_fp_closure_independently_from_semgrep(monkeypatch, cap
             return "# Revised tuning without AVIT identity"
         if case == "provider-error" and len(prompts) > 1:
             raise RuntimeError("Synthetic provider unavailable")
-        disposition = "TRUE POSITIVE" if case == "changed-verdict" and len(prompts) > 1 else "FALSE POSITIVE"
+        disposition = "FALSE POSITIVE"
         return (f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; js.rule; Semgrep; src/flagged.js:2\n"
                 f"**Disposition**: {disposition}\n**Evidence**: `src/flagged.js:2` uses a literal.\n"
                 "**Verified Safe Behavior**: The literal cannot be influenced by a caller.\n")
@@ -340,7 +339,7 @@ def test_headless_reports_fp_closure_independently_from_semgrep(monkeypatch, cap
     monkeypatch.setattr(avit_headless, "_prove_tuned_rule", prove)
     monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
     monkeypatch.setattr(avit_resolve, "cmd_resolve", resolve)
-    assert avit_headless.run(args, "reviewer", "", "1.99") == int(case in ("changed-verdict", "uncertain"))
+    assert avit_headless.run(args, "reviewer", "", "1.99") == int(case == "uncertain")
     assert len(prompts) == reviews
     captured = capsys.readouterr()
     result = json.loads(captured.out.splitlines()[-1])
@@ -494,3 +493,78 @@ def test_cli_routes_explicit_headless_run_to_per_avit_orchestrator(monkeypatch, 
     assert cli.cmd_run(args) == 0
     assert seen[0][0][0] is args and seen[0][0][3] == (version or "")
     assert seen[0][1] == {"provider": "codex", "base_url": "", "api_key": ""}
+
+
+def _overturn_setup(monkeypatch, revisions, prepare_fix=False, readiness=None):
+    """A FALSE POSITIVE whose tuning fails, then the repair (and any later revision) returns the given dispositions."""
+    from threatlint import avit_evidence, semgrep_platform as sp
+
+    args = _args(AVIT_FP)
+    args.no_fix_pr = not prepare_fix
+    monkeypatch.setattr(avit_resolve, "_session", lambda *_: ("https://test.service-now.com", "token"))
+    monkeypatch.setattr(sn, "fetch_avits", lambda *_: ([_item(AVIT_FP)], [], []))
+    monkeypatch.setattr(sn, "avits_markdown", lambda *_: "AVIT evidence")
+    monkeypatch.setattr(sn, "finding_kind", lambda *_: "sast")
+    monkeypatch.setattr(avit_headless, "_rule_base", lambda *_: "original rule")
+    monkeypatch.setattr(avit_headless, "_checkout", lambda _item, _args, repo: repo.mkdir() or {"scm": "github"})
+    dispositions = ["FALSE POSITIVE", *revisions]
+    prompts = []
+
+    def model(_provider, _system, prompt, *_rest):
+        prompts.append(prompt)
+        disposition = dispositions[min(len(prompts), len(dispositions)) - 1]
+        return (f"#### [FP-001] — Finding\n**Original finding**: {AVIT_FP}; js.rule; Semgrep; src/flagged.js:2\n"
+                f"**Disposition**: {disposition}\n**Confidence**: CONFIRMED\n**Evidence**: `src/flagged.js:2` passes caller input.\n"
+                "**Verified Safe Behavior**: Synthetic.\n")
+
+    def prove(*_args):
+        raise sp.SemgrepError("The tuned rule still reports the false-positive location")
+
+    monkeypatch.setattr(avit_headless, "_run_review_model", model)
+    monkeypatch.setattr(avit_headless, "_prove_tuned_rule", prove)
+    if readiness is not None:
+        monkeypatch.setattr(avit_evidence, "assess_review", readiness)
+    monkeypatch.setattr(dast, "to_docx", lambda _md, docx: Path(docx).write_bytes(b"PKword"))
+    resolved = []
+    monkeypatch.setattr(avit_resolve, "cmd_resolve", lambda call: resolved.append(call) or 0)
+    return args, prompts, resolved
+
+
+def test_tuning_repair_that_finds_a_true_positive_reports_it_and_keeps_the_avit_open(monkeypatch, capsys):
+    args, prompts, resolved = _overturn_setup(monkeypatch, ["TRUE POSITIVE"])
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 0
+    assert len(prompts) == 2 and len(resolved) == 1
+    call = resolved[0]
+    assert call.skip_rule_tuning is False
+    out = capsys.readouterr().out
+    assert "found a TRUE POSITIVE; continuing as a true positive (the AVIT stays open)" in out
+    assert "TRUE POSITIVE · Word report ready" in out
+
+
+def test_overturned_report_carries_the_disposition_history(monkeypatch):
+    args, _prompts, resolved = _overturn_setup(monkeypatch, ["TRUE POSITIVE"])
+    reports = []
+    monkeypatch.setattr(avit_resolve, "cmd_resolve", lambda call: reports.append(Path(call.report).read_text()) or 0)
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 0
+    assert avit_headless.verdict_for(reports[0], AVIT_FP)["disposition"] == "TRUE POSITIVE"
+    assert "**Disposition history**: The first review proposed FALSE POSITIVE" in reports[0]
+    assert "Rule not tuned" not in reports[0]
+
+
+def test_a_later_revision_that_flips_back_to_false_positive_changes_nothing(monkeypatch, capsys):
+    states = iter([{"status": "skipped", "issues": [], "prompt": ""},
+                   {"status": "refine", "issues": ["Provide evidence"], "prompt": "Investigate"},
+                   {"status": "skipped", "issues": [], "prompt": ""}])
+    args, prompts, resolved = _overturn_setup(monkeypatch, ["TRUE POSITIVE", "FALSE POSITIVE"], prepare_fix=True,
+                                              readiness=lambda *_a: next(states))
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 1
+    assert resolved == []
+    assert "The reviews disagree" in capsys.readouterr().err
+
+
+def test_an_ambiguous_tuning_revision_is_reported_as_an_unverified_true_positive(monkeypatch, capsys):
+    # A legacy AMBIGUOUS verdict normalizes to a conservative TRUE POSITIVE, so it too keeps the AVIT open.
+    args, _prompts, resolved = _overturn_setup(monkeypatch, ["AMBIGUOUS"])
+    assert avit_headless.run(args, "reviewer", "", "1.99") == 0
+    assert len(resolved) == 1
+    assert '"unverified": true' in capsys.readouterr().out

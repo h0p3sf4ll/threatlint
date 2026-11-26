@@ -465,10 +465,32 @@ describe('False positive review batch', () => {
       assert.ok(resolvedReports[0].startsWith(tuningDrafts[0]));
       assert.match(resolvedReports[0], /Rule tuning status.*Rule not tuned/);
       assert.ok(calls.find(args => args[1] === 'resolve').includes('--skip-rule-tuning'));
+    } else if (failure === 'changed disposition') {
+      // The repair re-examined the code and found a vulnerability: report it as a true positive and keep the AVIT open.
+      assert.equal(final.disposition, 'TRUE POSITIVE');
+      assert.notEqual(final.result, 'closed');
+      assert.ok(final.outcome.attached && !final.outcome.closed);
+      assert.equal(resolvedReports.length, 1);
+      assert.match(resolvedReports[0], /\*\*Disposition\*\*: TRUE POSITIVE/);
+      assert.match(resolvedReports[0], /\*\*Disposition history\*\*: The first review proposed FALSE POSITIVE/);
+      assert.doesNotMatch(resolvedReports[0], /Rule not tuned/);
+      assert.ok(events.some(event => /found a TRUE POSITIVE; continuing as a true positive/.test(event.detail || '')));
     } else {
-      assert.equal(final.stage, failure === 'changed disposition' ? 'error' : 'blocked');
+      assert.equal(final.stage, 'blocked');
       assert.equal(calls.some(args => args[1] === 'resolve'), false);
     }
+  });
+
+  it('refuses to write anything when a later revision flips an overturned true positive back to false positive', async t => {
+    setupRefinement(t, 'azure-devops');
+    tuningResults = [missingFixtures];
+    preparationResults = [{ status: 'skipped', issues: [] }, refine('Inspect the actual control')];
+    modelReports = [report(FP, 'FALSE POSITIVE'), report(FP, 'TRUE POSITIVE'), report(FP, 'FALSE POSITIVE')];
+    const events = await runBatch(FP, {});
+    const final = events.find(event => event.done && event.avit === FP);
+    assert.equal(final.stage, 'error');
+    assert.match(final.detail, /The reviews disagree/);
+    assert.equal(calls.some(args => args[1] === 'resolve'), false);
   });
 
   it('attaches and closes an evidence-backed FP when the Semgrep token is missing', async t => {
