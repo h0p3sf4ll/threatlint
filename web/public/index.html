@@ -228,22 +228,27 @@
           <div><div class="eyebrow"><span class="tiny-line"></span>CONNECTED SOURCE / SHARED CONTEXT</div><h1 id="sources-title">Your source.<br><span class="muted-heading">One connected workspace.</span></h1><p class="page-description">Browse GitHub or Azure DevOps, choose a branch, and bring its checkout into the same specialist workspace.</p></div>
           <div class="operations-seal"><img src="/mark.svg" width="40" height="44" alt=""><span>YOUR CODE.<br><strong>YOUR BOUNDARIES.</strong></span></div>
         </div>
-        <output class="operations-status" id="scm-status" aria-live="polite" aria-atomic="true">Connect an account to browse source. Tokens are not saved by this interface.</output>
+        <output class="operations-status" id="scm-status" aria-live="polite" aria-atomic="true">Loading source connections…</output>
         <div class="sources-grid">
           <section class="panel" aria-labelledby="scm-connect-title">
-            <div class="panel-header"><div><span class="eyebrow">01 / CONNECT</span><h2 id="scm-connect-title">A session, not a saved secret.</h2></div><div class="panel-header-pills"><span class="operations-pill is-connected" id="scm-connect-state" hidden></span><span class="operations-pill">SESSION ONLY</span></div></div>
-            <form id="scm-connection-form" class="operations-form" autocomplete="off">
-              <fieldset id="scm-connection-fields" class="operations-fieldset">
-                <legend class="operations-sr-only">Source connection</legend>
-                <div class="operations-field"><label for="scm-provider">Source provider</label><select id="scm-provider" name="scmProvider"><option value="github">GitHub</option><option value="azure-devops">Azure DevOps</option></select></div>
-                <div class="operations-field" id="scm-organization-field" hidden><label for="scm-organization">Azure DevOps organization</label><input id="scm-organization" name="scmOrganization" placeholder="your-organization" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" disabled><p class="field-note subtle">Organization name only, not a URL. For example: your-team.</p></div>
-                <div class="operations-field"><label for="scm-token">Access token <span class="subtle">session memory only</span><span data-tip="scm-token"></span></label><input id="scm-token" name="scmAccessToken" type="password" autocomplete="off" spellcheck="false" required maxlength="4096" placeholder="A repository-read token" aria-describedby="scm-token-note"></div>
-                <p class="operations-notice" id="scm-token-note">Connections saved in Settings and the configured GitHub App connect automatically under Connected accounts. The token field is only needed for an additional session connection and clears after each attempt.</p>
-                <button type="button" class="button secondary" id="scm-github-app-settings">GitHub App settings</button>
-                <button class="button primary operations-full-button" id="scm-connect" type="submit">Connect source <span aria-hidden="true">↗</span></button>
-              </fieldset>
-            </form>
-            <div class="operations-panel-divider"><div class="operations-subheading"><h3>Connected accounts</h3><button class="text-button" id="scm-refresh-connections" type="button">↻ Refresh</button></div><ul class="scm-connections" id="scm-connections" aria-label="Source connections"><li class="operations-empty-note">No accounts loaded. Connect a source or refresh.</li></ul><p class="micro subtle">Disconnect releases the runner’s connection. Existing checkouts are not deleted.</p></div>
+            <div class="panel-header"><h2 id="scm-connect-title">Connected accounts</h2><span class="operations-pill is-connected" id="scm-connect-state" hidden></span></div>
+            <div class="operations-panel-body"><ul class="scm-connections" id="scm-connections" aria-label="Source connections"><li class="operations-empty-note">Loading accounts…</li></ul><button class="text-button" id="scm-refresh-connections" type="button">↻ Refresh</button></div>
+            <div id="scm-connection-entry">
+              <div class="operations-panel-divider operations-button-row">
+                <button class="button secondary" id="scm-add-connection" type="button" aria-expanded="false" aria-controls="scm-connection-form">Add new source</button>
+                <button class="text-button" id="scm-github-app-settings" type="button">GitHub App settings</button>
+              </div>
+              <form id="scm-connection-form" class="operations-form" autocomplete="off" hidden>
+                <fieldset id="scm-connection-fields" class="operations-fieldset" disabled>
+                  <legend class="operations-sr-only">Source connection</legend>
+                  <div class="operations-field"><label for="scm-provider">Source provider</label><select id="scm-provider" name="scmProvider"><option value="github">GitHub</option><option value="azure-devops">Azure DevOps</option></select></div>
+                  <div class="operations-field" id="scm-organization-field" hidden><label for="scm-organization">Azure DevOps organization</label><input id="scm-organization" name="scmOrganization" placeholder="your-organization" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" disabled><p class="field-note subtle">Organization name only, not a URL. For example: your-team.</p></div>
+                  <div class="operations-field"><label for="scm-token">Access token <span class="subtle">session memory only</span><span data-tip="scm-token"></span></label><input id="scm-token" name="scmAccessToken" type="password" autocomplete="off" spellcheck="false" required maxlength="4096" placeholder="A repository-read token" aria-describedby="scm-token-note"></div>
+                  <p class="field-note subtle" id="scm-token-note">Use a token with repository read access for this session.</p>
+                  <button class="button primary operations-full-button" id="scm-connect" type="submit">Connect source</button>
+                </fieldset>
+              </form>
+            </div>
           </section>
           <section class="panel sources-repositories" aria-labelledby="scm-repositories-title">
             <div class="panel-header"><div><span class="eyebrow">02 / SELECT SOURCE</span><h2 id="scm-repositories-title">Find your next review.</h2></div><span class="operations-pill" id="scm-repository-count">NO CONNECTION</span></div>

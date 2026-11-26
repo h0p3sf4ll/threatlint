@@ -280,9 +280,9 @@
     $('management-current-role').textContent = state.access?.role || 'Unavailable';
     document.body.classList.toggle('management-viewer', !can('review'));
     for (const id of ['runtime-scan-form', 'chat-form', 'fpreview-form', 'scanimport-form']) { const form = $(id); if (form) form.inert = !can('review'); }
-    if ($('scm-connection-form')) $('scm-connection-form').inert = !can('review');
+    if ($('scm-connection-entry')) $('scm-connection-entry').inert = !can('review');
     let sourceNotice = $('management-source-role-notice');
-    if (!sourceNotice) { sourceNotice = node('p', 'management-role-notice'); sourceNotice.id = 'management-source-role-notice'; $('scm-connection-form')?.before(sourceNotice); }
+    if (!sourceNotice) { sourceNotice = node('p', 'management-role-notice'); sourceNotice.id = 'management-source-role-notice'; $('scm-connection-entry')?.before(sourceNotice); }
     sourceNotice.hidden = can('review'); sourceNotice.textContent = 'Viewer access allows reading saved findings and reports. Ask an administrator to enable reviews or source access.';
     let notice = $('management-role-notice');
     if (!notice) { notice = node('p', 'management-role-notice'); notice.id = 'management-role-notice'; document.querySelector('.settings-layout')?.before(notice); }
