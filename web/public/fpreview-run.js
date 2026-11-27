@@ -16,10 +16,10 @@
   const MAX_STORED = 4000;
   const MAX_LOG = 3000;
   const AVIT_STAGES = { queued: 'Queued', fetching: 'Fetching', checkout: 'Cloning', triage: 'Reviewing', reported: 'Report saved', resolving: 'Updating ServiceNow',
-    'fix-pr': 'Opening draft PR', 'rule-not-tuned': 'Rule not tuned', 'triage-not-applied': 'Triage not applied',
+    'fix-pr': 'Opening fix PR', 'rule-not-tuned': 'Rule not tuned', 'triage-not-applied': 'Triage not applied',
     done: 'Done', info: 'Info', blocked: 'Blocked', error: 'Error', 'out-of-scope': 'Out of scope', cancelled: 'Cancelled', skipped: 'Skipped' };
   const TASK_STAGES = { queued: 'Queued', expanding: 'Reading task', reviewing: 'Reviewing its AVITs', resolving: 'Updating the task', done: 'Done', error: 'Error', cancelled: 'Cancelled' };
-  const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'pull-request': 'Draft PR', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
+  const ACTIONS = { attached: 'Attached', closed: 'Closed', noted: 'Note added', 'pull-request': 'Fix PR', 'semgrep-ignored': 'Semgrep ignored', tuned: 'Rule tuned', semgrep: 'Semgrep', warning: 'Warning' };
   const RESULTS = ['closed', 'noted', 'blocked', 'error', 'skipped'];
   const RUN_STATUS = { expanding: 'Expanding SCTASKs and ISSTs', running: 'Reviewing', complete: 'Complete', cancelled: 'Stopped', error: 'Did not start', interrupted: 'Interrupted' };
 
@@ -333,7 +333,7 @@
     function renderPullRequest(item, result) {
       const actions = item.node.querySelector('.avit-actions');
       actions.replaceChildren();
-      if (result.status === 'skipped') { actions.append(el('span', 'small subtle', `Draft PR: ${result.reason}`)); return; }
+      if (result.status === 'skipped') { actions.append(el('span', 'small subtle', `Fix PR: ${result.reason}`)); return; }
       let url;
       try { url = new URL(result.url); } catch { return; }
       if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return;
@@ -349,7 +349,7 @@
         } catch { /* A GitHub PR link needs its reviewed repository URL. */ }
       }
       if (!ado && !github) return;
-      const link = el('a', 'small', result.draft === false ? 'Open fix PR ↗' : 'Open draft fix PR ↗');
+      const link = el('a', 'small', result.draft === true ? 'Open draft fix PR ↗' : 'Open fix PR ↗');
       link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
       actions.append(link);
     }

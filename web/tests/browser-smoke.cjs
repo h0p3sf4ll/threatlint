@@ -515,7 +515,7 @@ async function fpReviewRun(page) {
   assert.equal(await avitLink.textContent(), FPR.A3);
   assert.equal(await avitLink.getAttribute('target'), '_blank');
   assert.equal(await avitLink.getAttribute('rel'), 'noopener noreferrer');
-  assert.equal(await infoCard.getByRole('link', { name: 'Open draft fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42');
+  assert.equal(await infoCard.getByRole('link', { name: 'Open fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42');
   assert.match(await page.locator('#fpreview-task-counts').innerText(), /3 SCTASKs · 1 closed · 1 left open · 1 error/);
   assert.equal(await page.locator('#fpreview-results .fp-spinner:visible').count(), 0, 'every spinner stops at the end');
   assert.equal(await page.locator('#fpreview-run').getAttribute('aria-busy'), 'false');
@@ -550,7 +550,7 @@ async function fpReviewRun(page) {
   assert.equal(await page.locator('#fpreview-counts').innerText(), '4 / 4 · 1 closed · 2 noted · 1 error');
   assert.equal(await infoCard.locator('.avit-stage').innerText(), 'INFO');
   assert.equal(await avitLink.getAttribute('href'), recordUrl.href, 'the record link survives replay');
-  assert.equal(await infoCard.getByRole('link', { name: 'Open draft fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42', 'the draft PR link survives replay');
+  assert.equal(await infoCard.getByRole('link', { name: 'Open fix PR' }).getAttribute('href'), 'https://dev.azure.com/contoso/project/_git/svc/pullrequest/42', 'the fix PR link survives replay');
   assert.equal(await page.locator('#fpreview-run-log .fp-history-entry').count(), runLog);
   assert.deepEqual((await history(`avit-${FPR.A1}`)).length, 11);
 

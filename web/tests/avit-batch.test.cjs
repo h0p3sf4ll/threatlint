@@ -377,7 +377,7 @@ describe('False positive review batch', () => {
     assert.equal(final.stage, 'info'); assert.equal(final.result, 'noted');
     assert.equal(final.outcome.attached, true); assert.equal(final.outcome.leftOpen, true);
     assert.deepEqual(final.outcome.pullRequest, { status: 'blocked', reason: 'Deployment configuration is unavailable' });
-    assert.match(final.detail, /Draft fix PR blocked pending evidence.*Deployment configuration is unavailable/);
+    assert.match(final.detail, /Fix PR blocked pending evidence.*Deployment configuration is unavailable/);
     assert.equal(calls.some(args => args[1] === 'fix-pr'), false);
     assert.equal(calls.find(args => args[1] === 'resolve').includes('--keep-checkout'), false);
   });

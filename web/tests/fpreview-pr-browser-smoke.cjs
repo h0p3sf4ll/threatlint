@@ -34,7 +34,7 @@ const { chromium } = require('playwright');
         window.run.start({ avits: [avit], sctasks: [] });
         window.run.handle({ type: 'avit_item', avit, stage: 'triage', target });
         window.run.handle({ type: 'avit_item', avit, stage: 'done', done: true, outcome: {
-          attached: true, pullRequest: { status: 'created', url, draft: true },
+          attached: true, pullRequest: { status: 'created', url, draft: false },
         } });
         window.run.handle({ type: 'avit_batch_complete' });
       }, { avit, target, url });
@@ -71,7 +71,7 @@ const { chromium } = require('playwright');
       window.run.handle({
         type: 'avit_item', avit, stage: 'info', done: true, result: 'noted',
         disposition: 'TRUE POSITIVE',
-        detail: `Report attached. Draft fix PR blocked pending evidence. ${reason}`,
+        detail: `Report attached. Fix PR blocked pending evidence. ${reason}`,
         outcome: { attached: true, leftOpen: true, pullRequest: { status: 'blocked', reason } },
       });
       window.run.handle({ type: 'avit_batch_complete' });
@@ -79,12 +79,12 @@ const { chromium } = require('playwright');
     const card = page.locator(`#avit-${blocked}`);
     assert.equal(await card.getAttribute('data-result'), 'noted');
     assert.equal(await card.locator('.avit-stage').textContent(), 'Info');
-    assert.match(await card.locator('.avit-detail').textContent(), /Draft fix PR blocked pending evidence/);
+    assert.match(await card.locator('.avit-detail').textContent(), /Fix PR blocked pending evidence/);
     assert.ok((await card.locator('.avit-detail').textContent()).includes(reason));
     assert.equal(await card.locator('.avit-actions a').count(), 0);
     assert.match(await page.locator('#fpreview-counts').textContent(), /1 noted · 0 errors/);
     assert.deepEqual(errors, []);
-    console.log('PASS: AVIT draft PR links, reload persistence, unsafe-link rejection, and evidence-blocked reviews.');
+    console.log('PASS: AVIT fix PR links, reload persistence, unsafe-link rejection, and evidence-blocked reviews.');
   } finally {
     await browser.close();
   }

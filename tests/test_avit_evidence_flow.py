@@ -79,7 +79,7 @@ def test_investigates_conservative_tp_then_repairs_missing_patch_and_publishes(m
 
 def test_confirmed_complete_review_publishes_without_followup(monkeypatch, workflow):
     outcome = run_workflow(monkeypatch, workflow, [confirmed_report()])
-    assert outcome["completed"] and outcome["pull_request"]["draft"] is True
+    assert outcome["completed"] and outcome["pull_request"]["draft"] is False
     assert len(workflow["reviews"]) == 1
 
 

@@ -408,20 +408,20 @@ def _review_one(args, item: dict, instance: str, system_prompt: str, model: str,
                     reason = "; ".join(readiness["issues"])
                     pull_request = {"status": "blocked", "reason": reason}
                     if readiness.get("unverified"):
-                        print(f"  INFO: Report attached. Draft fix PR blocked pending evidence: {reason}", flush=True)
+                        print(f"  INFO: Report attached. Fix PR blocked pending evidence: {reason}", flush=True)
                     else:
                         completed = False
                         print(f"  ! Report attached, but evidence investigation could not produce a validated fix: {reason}", flush=True)
                 elif readiness["status"] == "skipped":
                     pull_request = {"status": "skipped", "reason": "; ".join(readiness["issues"])}
-                    print(f"  INFO: Draft fix PR: {pull_request['reason']}", flush=True)
+                    print(f"  INFO: Fix PR: {pull_request['reason']}", flush=True)
                 else:
                     pull_request = create_fix_pr(avit, output, str(repo), evidence_target, profile=args.aws_profile, instance=instance)
-                    print(f"  INFO: Draft fix PR: {pull_request.get('url') or pull_request.get('reason')}", flush=True)
+                    print(f"  INFO: Fix PR: {' · '.join(filter(None, (pull_request.get('url'), pull_request.get('reason'))))}", flush=True)
             except (ResolveError, sn.ServiceNowError, OSError, ValueError, subprocess.SubprocessError) as exc:
                 completed = False
                 pull_request = {"status": "error", "reason": _safe_error(exc)}
-                print(f"  ! Report attached, but draft fix PR failed: {_safe_error(exc)}", flush=True)
+                print(f"  ! Report attached, but the fix PR failed: {_safe_error(exc)}", flush=True)
         scanner_status = {}
         if scanner_error:
             scanner_status = {"status": "semgrep_followup", "reason": scanner_error}

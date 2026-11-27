@@ -1,8 +1,10 @@
-"""Publish a bounded reviewer proposal as an Azure DevOps or GitHub draft PR.
+"""Publish a bounded reviewer proposal as an Azure DevOps or GitHub pull request.
 
 The reviewer remains read-only. This host workflow proves the diff against an
-isolated Git index, then uses the configured credential for one branch and draft PR.
-It never modifies the checkout, runs repository code, or merges a PR.
+isolated Git index, then uses the configured credential for one branch and one
+published (not draft) PR, so branch-policy reviewers and CODEOWNERS are notified.
+It also requests review from the developers who most recently changed the files.
+It never modifies the checkout, runs repository code, approves, or merges a PR.
 """
 
 from __future__ import annotations
@@ -159,10 +161,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _request(base: str, pat: str, path: str = "", *, params: dict | None = None, body: dict | None = None) -> dict:
+def _request(base: str, pat: str, path: str = "", *, params: dict | None = None, body: dict | None = None,
+             method: str | None = None) -> dict:
     query = urllib.parse.urlencode({"api-version": "7.1", **(params or {})})
     encoded = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(f"{base}{path}?{query}", data=encoded,
+    request = urllib.request.Request(f"{base}{path}?{query}", data=encoded, method=method,
                                     headers={"Authorization": "Basic " + base64.b64encode(f":{pat}".encode()).decode(),
                                              "Accept": "application/json", "Content-Type": "application/json"})
     opener = urllib.request.build_opener(_NoRedirect(), urllib.request.HTTPSHandler(context=tls.ssl_context()))
@@ -181,6 +184,56 @@ def _request(base: str, pat: str, path: str = "", *, params: dict | None = None,
     return result
 
 
+_AUTOMATION = re.compile(r"(?i)\[bot\]|\bbot\b|no-?reply|automation|pipeline|build[-_. ]?service|svc[-_.]|threatlint")
+_MAX_REVIEWERS = 3
+
+
+def recent_authors(repo: Path, head: str, changes: list[dict], limit: int = _MAX_REVIEWERS) -> list[tuple[str, str]]:
+    """(name, email) of the people who most recently changed the files a fix touches, newest first; no bots."""
+    paths = [change["item"]["path"].removeprefix("/") for change in changes]
+    raw = _git(repo, ["log", "-n", "100", "--no-merges", "--format=%an%x00%ae", head, "--", *paths], allow_failure=True)
+    authors, seen = [], set()
+    for line in raw.decode("utf-8", "replace").splitlines():
+        name, _, email = line.partition("\x00")
+        key = email.strip().casefold()
+        if "@" not in key or key in seen or _AUTOMATION.search(name) or _AUTOMATION.search(email):
+            continue
+        seen.add(key)
+        authors.append((name.strip() or email.strip(), email.strip()))
+        if len(authors) >= limit:
+            break
+    return authors
+
+
+def _ado_reviewers(base: str, pat: str, organization: str, number: int, authors: list[tuple[str, str]], creator: str) -> dict:
+    """Add each recent author as an optional reviewer, which notifies them. Never fails the PR."""
+    added, unresolved = [], []
+    identities = f"https://vssps.dev.azure.com/{urllib.parse.quote(organization, safe='')}/_apis/identities"
+    for name, email in authors:
+        try:
+            rows = _request(identities, pat, params={"searchFilter": "General", "filterValue": email,
+                                                     "queryMembership": "None"}).get("value")
+            ids = [row.get("id") for row in rows or [] if isinstance(row, dict) and row.get("isActive", True) is not False]
+            if len(ids) != 1 or not isinstance(ids[0], str) or not re.fullmatch(r"[a-fA-F0-9-]{36}", ids[0]):
+                unresolved.append(name)
+                continue
+            if ids[0].casefold() != creator.casefold():
+                _request(base, pat, f"/pullrequests/{number}/reviewers/{ids[0]}", body={"vote": 0}, method="PUT")
+                added.append(name)
+        except ResolveError:
+            unresolved.append(name)
+    return {"reviewers": added, "unresolved_reviewers": unresolved}
+
+
+def notice(result: dict) -> str:
+    """One line on who was asked to review a published fix PR."""
+    reviewers = result.get("reviewers") or []
+    text = ("review requested from " + ", ".join(reviewers)) if reviewers else "no recent author could be added as a reviewer"
+    if result.get("unresolved_reviewers"):
+        text += "; could not request review from " + ", ".join(result["unresolved_reviewers"])
+    return text + "; branch-policy reviewers and code owners are notified where configured"
+
+
 def _ref(base: str, pat: str, name: str) -> str:
     rows = _request(base, pat, "/refs", params={"filter": name.removeprefix("refs/"), "$top": 100}).get("value")
     if not isinstance(rows, list):
@@ -192,7 +245,7 @@ def _ref(base: str, pat: str, name: str) -> str:
 
 
 def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profile=None, instance="") -> dict:
-    """Create/reuse one draft PR, or explain why this review has no publishable fix."""
+    """Create/reuse one published PR, or explain why this review has no publishable fix."""
     if not re.fullmatch(r"AVIT\d{7,15}", avit):
         raise ResolveError("A fix PR requires a valid AVIT number")
     verdict = verdict_for(report, avit)
@@ -286,20 +339,33 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
                     and ref.get("newObjectId") == commits[0].get("commitId") for ref in refs)):
                 raise ResolveError("Azure DevOps did not confirm the proposed fix commit; inspect the fix branch before retrying")
         summary = _summary(verdict.get("title", ""))
-        description = (f"{summary}. This draft proposes the source fix from the Threatlint review of {avit_label}.\n\n"
+        description = (f"{summary}. This PR proposes the source fix from the Threatlint review of {avit_label}.\n\n"
                        f"Reviewed target: `{canonical['branch']}` at `{head}`.\n"
                        f"Changed files: {', '.join('`' + change['item']['path'] + '`' for change in changes)}.\n\n"
                        "Validation: the proposed diff applies cleanly to the reviewed revision. "
                        "Application and regression tests: NOT RUN. Human review and CI validation are required before merge.")
         pull = _request(base, pat, "/pullrequests", body={"sourceRefName": source_ref, "targetRefName": target_ref,
-                        "title": f"Fix {avit}: {summary}", "description": description, "isDraft": True})
-        if pull.get("isDraft") is not True:
-            raise ResolveError("Azure DevOps did not confirm a draft PR; inspect the PR before retrying")
+                        "title": f"Fix {avit}: {summary}", "description": description, "isDraft": False})
+        if pull.get("isDraft") is not False:
+            raise ResolveError("Azure DevOps did not confirm a published PR; inspect the PR before retrying")
     if pull.get("sourceRefName") != source_ref or pull.get("targetRefName") != target_ref or (pull.get("repository") or {}).get("id") != repo_id:
         raise ResolveError("Azure DevOps returned a PR for unexpected repository or branches")
     number = pull.get("pullRequestId")
     if type(number) is not int or number < 1:
         raise ResolveError("Azure DevOps did not return a valid PR number; inspect the fix branch before retrying")
-    return {"status": "existing" if pulls else "created", "url": f"{canonical['web_url']}/pullrequest/{number}",
-            "number": number, "branch": source_ref.removeprefix("refs/heads/"), "draft": pull.get("isDraft") is True,
-            "reason": "Existing fix PR reused" if pulls else "Draft PR created with the proposed fix"}
+    published = False
+    if pulls and pull.get("isDraft") is True and pull.get("status") == "active":
+        # Earlier Threatlint versions opened drafts, which notify no one; publish them now.
+        pull = _request(base, pat, f"/pullrequests/{number}", body={"isDraft": False}, method="PATCH")
+        if pull.get("isDraft") is not False:
+            raise ResolveError("Azure DevOps did not publish the existing draft fix PR; publish it manually")
+        published = True
+    result = {"status": "existing" if pulls else "created", "url": f"{canonical['web_url']}/pullrequest/{number}",
+              "number": number, "branch": source_ref.removeprefix("refs/heads/"), "draft": pull.get("isDraft") is True,
+              "reviewers": [], "unresolved_reviewers": []}
+    if not pulls or published:
+        creator = (pull.get("createdBy") or {}).get("id") or ""
+        result.update(_ado_reviewers(base, pat, canonical["organization"], number, recent_authors(repo, head, changes), creator))
+    lead = "PR opened with the proposed fix" if not pulls else "Existing draft fix PR published" if published else "Existing fix PR reused"
+    result["reason"] = lead if pulls and not published else f"{lead}; {notice(result)}"
+    return result

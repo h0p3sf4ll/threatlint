@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 
 from . import github_repository, tls
-from .avit_pr import _NoRedirect, _SHA, _git, _summary
+from .avit_pr import _AUTOMATION, _MAX_REVIEWERS, _NoRedirect, _SHA, _git, _summary, notice
 from .avit_report import ResolveError
 from .github_app import GitHubAppError
 
@@ -71,6 +71,44 @@ def _pull_matches(pull, repo_id, source, branch, revision):
                 or side["repo"].get("id") != repo_id):
             return False
     return pull["head"].get("sha") == revision
+
+
+def _graphql_url(api_url: str) -> str:
+    return api_url.removesuffix("/v3") + "/graphql" if api_url.endswith("/api/v3") else api_url + "/graphql"
+
+
+def _mark_ready(api_url: str, token: str, pull: dict) -> dict:
+    """Publish an earlier Threatlint draft; REST cannot change draft state, GraphQL can."""
+    node = pull.get("node_id")
+    if not isinstance(node, str) or not node:
+        raise ResolveError("GitHub did not identify the existing draft fix PR; publish it manually")
+    result = _request(_graphql_url(api_url), token, body={
+        "query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+        "variables": {"id": node}})
+    ready = (((result or {}).get("data") or {}).get("markPullRequestReadyForReview") or {}).get("pullRequest") or {}
+    if not isinstance(result, dict) or result.get("errors") or ready.get("isDraft") is not False:
+        raise ResolveError("GitHub did not publish the existing draft fix PR; publish it manually")
+    return {**pull, "draft": False}
+
+
+def _reviewers(base: str, token: str, number: int, head: str, changes: list[dict], author: str) -> dict:
+    """Request review from the people who most recently changed the files. Never fails the PR."""
+    logins = []
+    try:
+        for change in changes:
+            rows = _request(base, token, "/commits", params={"sha": head, "path": change["item"]["path"].removeprefix("/"), "per_page": 30})
+            for row in rows if isinstance(rows, list) else []:
+                user = row.get("author") if isinstance(row, dict) else None
+                login = user.get("login") if isinstance(user, dict) and user.get("type") == "User" else None
+                if (isinstance(login, str) and login and not _AUTOMATION.search(login)
+                        and login.casefold() != author.casefold() and login.casefold() not in map(str.casefold, logins)):
+                    logins.append(login)
+        logins = logins[:_MAX_REVIEWERS]
+        if logins:
+            _request(base, token, f"/pulls/{number}/requested_reviewers", body={"reviewers": logins})
+    except ResolveError:
+        return {"reviewers": [], "unresolved_reviewers": logins}
+    return {"reviewers": logins, "unresolved_reviewers": []}
 
 
 def publish(avit, verdict, repo, canonical, patch, head, changes, tree, avit_label):
@@ -138,20 +176,30 @@ def publish(avit, verdict, repo, canonical, patch, head, changes, tree, avit_lab
         if _ref(base, token, branch) != head:
             raise ResolveError("The target branch changed since review; the proposal branch was retained without opening a PR")
         summary = _summary(verdict.get("title", ""))
-        description = (f"{summary}. This draft proposes the source fix from the Threatlint review of {avit_label}.\n\n"
+        description = (f"{summary}. This PR proposes the source fix from the Threatlint review of {avit_label}.\n\n"
                        f"Reviewed target: `{branch}` at `{head}`.\n"
                        f"Changed files: {', '.join('`' + change['item']['path'] + '`' for change in changes)}.\n\n"
                        "Validation: the proposed diff applies cleanly to the reviewed revision. "
                        "Application and regression tests: NOT RUN. Human review and CI validation are required before merge.")
         pull = _request(base, token, "/pulls", body={"title": f"Fix {avit}: {summary}", "head": source,
-                                                   "base": branch, "body": description, "draft": True})
-        if not isinstance(pull, dict) or pull.get("draft") is not True:
-            raise ResolveError("GitHub did not confirm a draft PR; inspect the PR before retrying")
+                                                   "base": branch, "body": description, "draft": False})
+        if not isinstance(pull, dict) or pull.get("draft") is not False:
+            raise ResolveError("GitHub did not confirm a published PR; inspect the PR before retrying")
     if not _pull_matches(pull, repo_id, source, branch, revision):
         raise ResolveError("GitHub did not confirm the reviewed repository and branches on the PR")
     number = pull.get("number")
     if type(number) is not int or number <= 0:
         raise ResolveError("GitHub did not return a valid PR number")
-    return {"status": "existing" if pulls else "created", "url": f"{canonical['web_url']}/pull/{number}",
-            "id": number, "draft": pull.get("draft") is True, "branch": source,
-            "reason": "Existing fix PR reused" if pulls else "Draft PR created with the proposed fix"}
+    published = False
+    if pulls and pull.get("draft") is True and pull.get("state") == "open":
+        # Earlier Threatlint versions opened drafts, which request no review; publish them now.
+        pull = _mark_ready(endpoints["api_url"], token, pull)
+        published = True
+    result = {"status": "existing" if pulls else "created", "url": f"{canonical['web_url']}/pull/{number}",
+              "id": number, "draft": pull.get("draft") is True, "branch": source, "reviewers": [], "unresolved_reviewers": []}
+    if not pulls or published:
+        author = (pull.get("user") or {}).get("login") or ""
+        result.update(_reviewers(base, token, number, head, changes, author))
+    lead = "PR opened with the proposed fix" if not pulls else "Existing draft fix PR published" if published else "Existing fix PR reused"
+    result["reason"] = lead if pulls and not published else f"{lead}; {notice(result)}"
+    return result

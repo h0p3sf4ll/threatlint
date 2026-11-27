@@ -13,6 +13,8 @@ from threatlint.avit_report import ResolveError
 AVIT = "AVIT000000000000001"
 TARGET = {"scm": "azure-devops", "organization": "contoso", "project": "Platform", "name": "api", "branch": "main"}
 ORIGIN = "https://dev.azure.com/contoso/Platform/_git/api"
+REVIEWER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+CREATOR_ID = "99999999-8888-7777-6666-555555555555"
 REPO_ID = "11111111-2222-3333-4444-555555555555"
 PAT = "synthetic-service-account-pat-value"
 SOURCE = "def parse(value):\n    return eval(value)\n"
@@ -77,11 +79,24 @@ class FakeAdo:
         self.commit = "a" * 40
         self.pulls = []
         self.remote_head = self.head
+        self.identities = {"fixture@example.test": [{"id": REVIEWER_ID, "isActive": True}]}
+        self.reviewers = []
 
-    def __call__(self, base, pat, path="", *, params=None, body=None):
-        assert base == "https://dev.azure.com/contoso/Platform/_apis/git/repositories/api"
+    def __call__(self, base, pat, path="", *, params=None, body=None, method=None):
         assert pat == PAT
+        if base == "https://vssps.dev.azure.com/contoso/_apis/identities":
+            assert params["searchFilter"] == "General" and body is None
+            return {"value": self.identities.get(params["filterValue"], [])}
+        assert base == "https://dev.azure.com/contoso/Platform/_apis/git/repositories/api"
         self.calls.append((path, params, body))
+        if path.startswith("/pullrequests/42/reviewers/"):
+            assert method == "PUT" and body == {"vote": 0}
+            self.reviewers.append(path.rsplit("/", 1)[1])
+            return {"id": path.rsplit("/", 1)[1], "vote": 0}
+        if path == "/pullrequests/42":
+            assert method == "PATCH" and body == {"isDraft": False}
+            self.pulls[0] = {**self.pulls[0], "isDraft": False}
+            return self.pulls[0]
         if path == "":
             return {"id": REPO_ID}
         if path == "/refs":
@@ -101,11 +116,12 @@ class FakeAdo:
             return {"commits": [{"commitId": self.commit, "treeId": self.tree, "parents": [self.head]}],
                     "refUpdates": [{"name": self.source, "newObjectId": self.commit}]}
         if path == "/pullrequests" and body:
-            assert body["isDraft"] is True
+            assert body["isDraft"] is False
             assert "autoCompleteSetBy" not in body and "completionOptions" not in body
             assert "NOT RUN" in body["description"]
             assert PAT not in body["description"]
-            pull = {**body, "pullRequestId": 42, "repository": {"id": REPO_ID}}
+            pull = {**body, "pullRequestId": 42, "repository": {"id": REPO_ID}, "status": "active",
+                    "createdBy": {"id": CREATOR_ID}}
             self.pulls = [pull]
             return pull
         pytest.fail(f"Unexpected API path: {path}")
@@ -119,14 +135,16 @@ def api(monkeypatch, checkout):
     return fake
 
 
-def test_creates_draft_pr_without_modifying_checkout(checkout, api, monkeypatch):
+def test_creates_published_pr_without_modifying_checkout(checkout, api, monkeypatch):
     original_index = (checkout / ".git" / "index").read_bytes()
     original_objects = sorted(str(path.relative_to(checkout)) for path in (checkout / ".git" / "objects").rglob("*"))
     credentials = []
     monkeypatch.setattr(ado_login, "service_account_pat", lambda organization, profile=None: credentials.append((organization, profile)) or (PAT, "service account"))
     result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET, profile="appsec", instance="https://test.service-now.com")
-    assert result["status"] == "created" and result["draft"] is True
+    assert result["status"] == "created" and result["draft"] is False
     assert result["url"] == ORIGIN + "/pullrequest/42"
+    assert result["reviewers"] == ["Fixture"] and api.reviewers == [REVIEWER_ID]
+    assert "review requested from Fixture" in result["reason"]
     assert credentials == [("contoso", "appsec")]
     assert (checkout / "app.py").read_text() == SOURCE
     assert (checkout / ".git" / "index").read_bytes() == original_index
@@ -233,10 +251,10 @@ def test_patch_from_a_different_finding_is_not_published(checkout, api):
 
 
 @pytest.mark.parametrize("marker", ["**Proposed fix patch:**", "- **Proposed fix patch**:", "### Proposed fix patch"])
-def test_formatted_patch_label_creates_the_same_validated_draft(checkout, api, marker):
+def test_formatted_patch_label_creates_the_same_validated_pr(checkout, api, marker):
     content = confirmed_report().replace("**Proposed fix patch**:", marker).replace("**Original finding**:", "- **Original finding:**")
     assert pr.create_fix_pr(AVIT, content, str(checkout), TARGET)["status"] == "created"
-    assert any(body and body.get("isDraft") is True for _, _, body in api.calls)
+    assert any(body and body.get("isDraft") is False for _, _, body in api.calls)
 
 
 def test_example_patch_markers_are_not_executable_proposals():
@@ -310,15 +328,15 @@ def test_service_account_failure_never_uses_personal_credentials(checkout, api, 
     assert api.calls == []
 
 
-@pytest.mark.parametrize("draft", [None, False, "true"])
-def test_creation_requires_an_explicit_draft_acknowledgement(checkout, api, monkeypatch, draft):
+@pytest.mark.parametrize("draft", [None, True, "false"])
+def test_creation_requires_an_explicit_published_acknowledgement(checkout, api, monkeypatch, draft):
     def request(*args, **kwargs):
         result = api(*args, **kwargs)
         if args[2:] == ("/pullrequests",) and kwargs.get("body"):
             result["isDraft"] = draft
         return result
     monkeypatch.setattr(pr, "_request", request)
-    with pytest.raises(ResolveError, match="confirm a draft"):
+    with pytest.raises(ResolveError, match="confirm a published PR"):
         pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
 
 
@@ -397,3 +415,45 @@ def test_lf_proposal_uses_index_content_for_an_autocrlf_checkout(checkout):
     changes, _tree = pr._prepare(checkout, PATCH, git(checkout, "rev-parse", "HEAD"))
     assert changes[0]["newContent"]["content"] == "import ast\n\ndef parse(value):\n    return ast.literal_eval(value)\n"
     assert (checkout / "app.py").read_bytes() == working_bytes
+
+
+def test_earlier_draft_is_published_and_reviewers_requested(checkout, api):
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    api.pulls[0]["isDraft"] = True
+    api.reviewers.clear()
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["status"] == "existing" and result["draft"] is False
+    assert result["reason"].startswith("Existing draft fix PR published; review requested from Fixture")
+    assert api.reviewers == [REVIEWER_ID]
+
+
+def test_reused_published_pr_does_not_renotify(checkout, api):
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    api.reviewers.clear()
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["reason"] == "Existing fix PR reused" and api.reviewers == []
+
+
+def test_abandoned_draft_is_left_alone(checkout, api):
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    api.pulls[0].update(isDraft=True, status="abandoned")
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["draft"] is True and not any(path == "/pullrequests/42" for path, _, _ in api.calls)
+
+
+def test_unmatched_author_is_reported_without_failing_the_pr(checkout, api):
+    api.identities = {}
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["status"] == "created" and result["reviewers"] == [] and result["unresolved_reviewers"] == ["Fixture"]
+    assert "could not request review from Fixture" in result["reason"]
+
+
+def test_recent_authors_are_newest_first_without_bots_or_duplicates(checkout):
+    for name, email in (("Build Service", "build@example.test"), ("Dev Two", "two@example.test"),
+                        ("dependabot[bot]", "bot@example.test"), ("Dev One", "one@example.test"), ("Dev Two", "TWO@example.test")):
+        (checkout / "app.py").write_text((checkout / "app.py").read_text() + "#\n")
+        git(checkout, "-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-am", "change")
+    head = git(checkout, "rev-parse", "HEAD")
+    changes = [{"item": {"path": "/app.py"}}]
+    assert pr.recent_authors(checkout, head, changes) == [("Dev Two", "TWO@example.test"), ("Dev One", "one@example.test"),
+                                                         ("Fixture", "fixture@example.test")]

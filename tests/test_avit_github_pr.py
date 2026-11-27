@@ -44,11 +44,26 @@ class FakeGitHub:
         self.source = ""
         self.pulls = []
         self.calls = []
+        self.graphql = api_url.removesuffix("/v3") + "/graphql" if api_url.endswith("/api/v3") else api_url + "/graphql"
+        self.history = [{"author": {"login": "dev-two", "type": "User"}}, {"author": {"login": "renovate[bot]", "type": "Bot"}},
+                        {"author": {"login": "threatlint-app", "type": "User"}}, {"author": None},
+                        {"author": {"login": "Dev-Two", "type": "User"}}, {"author": {"login": "dev-one", "type": "User"}}]
+        self.requested = []
 
     def __call__(self, base, token, path="", *, params=None, body=None, missing_ok=False):
-        assert base == self.base
         assert token == TOKEN
+        if base == self.graphql:
+            assert "markPullRequestReadyForReview" in body["query"] and body["variables"] == {"id": "PR_node42"}
+            self.pulls[0] = {**self.pulls[0], "draft": False}
+            return {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}}
+        assert base == self.base
         self.calls.append((path, params, body))
+        if path == "/commits":
+            assert params["sha"] == self.head and params["path"]
+            return self.history
+        if path == "/pulls/42/requested_reviewers":
+            self.requested.append(body["reviewers"])
+            return {"number": 42}
         if path == "":
             return {"id": REPO_ID, "full_name": "contoso/api"}
         if path.startswith("/git/ref/"):
@@ -81,12 +96,12 @@ class FakeGitHub:
             self.source = body["ref"]
             return {"ref": self.source, "object": {"type": "commit", "sha": self.commit}}
         if path == "/pulls":
-            assert body["draft"] is True
+            assert body["draft"] is False
             assert body["head"] == self.source.removeprefix("refs/heads/")
             assert body["base"] == "main"
             assert "NOT RUN" in body["body"]
             assert TOKEN not in body["body"]
-            pull = {"number": 42, "draft": True, "state": "open",
+            pull = {"number": 42, "draft": False, "state": "open", "node_id": "PR_node42", "user": {"login": "threatlint-app"},
                     "head": {"ref": body["head"], "sha": self.commit, "repo": {"id": REPO_ID}},
                     "base": {"ref": "main", "sha": self.head, "repo": {"id": REPO_ID}}}
             self.pulls = [pull]
@@ -107,14 +122,14 @@ def api(checkout, monkeypatch):
     ("https://git.example.test/api/v3", "https://git.example.test"),
     ("https://api.acme.ghe.com", "https://acme.ghe.com"),
 ])
-def test_cloud_and_enterprise_create_draft_without_touching_checkout(checkout, api, monkeypatch, api_url, web_url):
+def test_cloud_and_enterprise_create_published_pr_without_touching_checkout(checkout, api, monkeypatch, api_url, web_url):
     monkeypatch.setenv("THREATLINT_GITHUB_API_URL", api_url)
     api.base = api_url + "/repos/contoso/api"
     git(checkout, "remote", "set-url", "origin", web_url + "/contoso/api.git")
     index = (checkout / ".git" / "index").read_bytes()
     objects = sorted(str(p.relative_to(checkout)) for p in (checkout / ".git" / "objects").rglob("*"))
     result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET, instance="https://test.service-now.com")
-    assert result["status"] == "created" and result["draft"] is True
+    assert result["status"] == "created" and result["draft"] is False
     assert result["url"] == web_url + "/contoso/api/pull/42"
     assert (checkout / "app.py").read_text() == SOURCE
     assert (checkout / ".git" / "index").read_bytes() == index
@@ -185,15 +200,15 @@ def test_unverified_review_skips_before_github_authentication(checkout, monkeypa
     assert result["status"] == "skipped" and "still unverified" in result["reason"]
 
 
-@pytest.mark.parametrize("draft", [False, None, "true"])
-def test_new_pr_requires_draft_acknowledgement(checkout, api, monkeypatch, draft):
+@pytest.mark.parametrize("draft", [True, None, "false"])
+def test_new_pr_requires_published_acknowledgement(checkout, api, monkeypatch, draft):
     def request(*args, **kwargs):
         result = api(*args, **kwargs)
         if args[2:] == ("/pulls",) and kwargs.get("body"):
             result["draft"] = draft
         return result
     monkeypatch.setattr(github_pr, "_request", request)
-    with pytest.raises(ResolveError, match="confirm a draft"):
+    with pytest.raises(ResolveError, match="confirm a published PR"):
         pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
 
 
@@ -312,3 +327,39 @@ def test_transport_rejects_malformed_or_oversized_responses(monkeypatch, payload
     monkeypatch.setattr(github_pr.urllib.request, "build_opener", lambda *_: Opener())
     with pytest.raises(ResolveError):
         github_pr._request("https://api.github.com/repos/contoso/api", TOKEN)
+
+
+def test_new_pr_requests_review_from_recent_human_authors(checkout, api):
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["draft"] is False and result["reviewers"] == ["dev-two", "dev-one"]
+    assert api.requested == [["dev-two", "dev-one"]]
+    assert "review requested from dev-two, dev-one" in result["reason"]
+
+
+def test_earlier_draft_is_marked_ready_and_reviewers_requested(checkout, api):
+    pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    api.pulls[0]["draft"] = True
+    api.requested.clear()
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["status"] == "existing" and result["draft"] is False
+    assert result["reason"].startswith("Existing draft fix PR published")
+    assert api.requested == [["dev-two", "dev-one"]]
+
+
+def test_reviewer_request_failure_never_fails_the_pr(checkout, api, monkeypatch):
+    def request(*args, **kwargs):
+        if args[2:] == ("/pulls/42/requested_reviewers",):
+            raise ResolveError("GitHub PR operation failed (HTTP 422)")
+        return api(*args, **kwargs)
+    monkeypatch.setattr(github_pr, "_request", request)
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["status"] == "created" and result["unresolved_reviewers"] == ["dev-two", "dev-one"]
+
+
+@pytest.mark.parametrize("api_url,expected", [
+    ("https://api.github.com", "https://api.github.com/graphql"),
+    ("https://git.example.test/api/v3", "https://git.example.test/api/graphql"),
+    ("https://api.acme.ghe.com", "https://api.acme.ghe.com/graphql"),
+])
+def test_graphql_endpoint_for_each_host(api_url, expected):
+    assert github_pr._graphql_url(api_url) == expected

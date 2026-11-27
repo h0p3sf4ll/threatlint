@@ -46,12 +46,12 @@ def add_resolve_parsers(actions) -> None:
     resolve.add_argument("--keep-checkout", action="store_true", help="Do not delete the checkout after resolving")
     resolve.add_argument("--yes", action="store_true", help="Apply without prompting (the caller has confirmed the verdict)")
     sn.add_avit_arguments(resolve)
-    fix = actions.add_parser("fix-pr", help="Open a draft Azure DevOps or GitHub pull request for a reviewed AVIT fix")
+    fix = actions.add_parser("fix-pr", help="Open an Azure DevOps or GitHub pull request for a reviewed AVIT fix and request review from the code's recent authors")
     fix.add_argument("number", metavar="AVIT")
     fix.add_argument("--report", required=True, help="Reviewed Markdown report containing a Proposed fix patch")
     fix.add_argument("--checkout", required=True, help="Clean checkout of the exact reviewed repository and branch")
     fix.add_argument("--target", required=True, help="JSON repository target emitted by avit checkout")
-    fix.add_argument("--yes", action="store_true", help="Create the draft PR without prompting")
+    fix.add_argument("--yes", action="store_true", help="Create the PR without prompting")
     sn.add_avit_arguments(fix)
     prepare = actions.add_parser("prepare-fix", help="Inspect local evidence and proposed-fix readiness without tracker or repository writes")
     prepare.add_argument("number", metavar="AVIT")
@@ -123,7 +123,7 @@ def cmd_fix_pr(args) -> int:
     from threatlint.avit_pr import create_fix_pr  # noqa: PLC0415
 
     avit, report, target = _proposal_inputs(args)
-    confirm(f"{avit}: publish its proposed fix as a draft pull request?", args.yes)
+    confirm(f"{avit}: open a pull request with its proposed fix and notify its reviewers?", args.yes)
     result = create_fix_pr(avit, report, args.checkout, target, profile=args.aws_profile, instance=args.snow_instance)
     print(json.dumps(result))
     return 0

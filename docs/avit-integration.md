@@ -60,7 +60,7 @@ the temporary checkout and report files. An AVIT with a true-positive verdict
 gets the report and a work note while staying open. A false positive gets the
 report, a closure request, and scoped Semgrep triage. For SAST and Secrets, the
 runner also asks the selected model to repair a missing or invalid rule proposal.
-If the proposal fails validation, the AVIT can still close with its Word report. If re-examining the code during that repair establishes a true positive instead, Threatlint continues as a true positive: it attaches the revised report with a disposition-history note, adds the true-positive work note, leaves the AVIT open, and prepares a draft fix PR when the patch validates. A later revision that returns to false positive stops without changing the AVIT, so it is never closed on conflicting evidence. The CLI
+If the proposal fails validation, the AVIT can still close with its Word report. If re-examining the code during that repair establishes a true positive instead, Threatlint continues as a true positive: it attaches the revised report with a disposition-history note, adds the true-positive work note, leaves the AVIT open, and opens a fix PR when the patch validates. A later revision that returns to false positive stops without changing the AVIT, so it is never closed on conflicting evidence. The CLI
 does this without Dia or UI actions. Omit `--resolve-avits --yes` for a
 report-only AVIT review.
 
@@ -444,7 +444,7 @@ and ISSTs (an ISST may name any number). **Parallel reviews** defaults to **3** 
 accepts **1–8**; select **1** to review one finding at a time. There is no total AVIT
 limit. Each review uses its own checkout and report, so a slow finding does not block
 the next available review slot. Within a batch, updates to ServiceNow, Semgrep, and
-draft fix PRs run one at a time. The run belongs to the Workbench,
+fix PRs run one at a time. The run belongs to the Workbench,
 not the page: leaving Finding triage, reloading, closing the tab, or a dropped connection
 does not stop it. Returning, from any tab, replays the run's history and continues with
 live progress. One run is active at a time; **Stop** works from any tab, and quitting the
@@ -524,11 +524,11 @@ needed, uses the AVIT resolver, skips Semgrep, and deletes the checkout. No Invi
 API is called: `set_invicti_hook(fn)` supplies an optional callback; otherwise
 `invicti_mark_false_positive` only reports the issue ID.
 
-## Draft pull requests for proposed fixes
+## Pull requests for proposed fixes
 
-Finding triage opens a draft Azure DevOps or GitHub PR after a true-positive report
+Finding triage opens an Azure DevOps or GitHub PR after a true-positive report
 has been attached successfully. GitHub Enterprise Cloud and Enterprise Server
-repositories are supported. The Workbench's **Open draft PRs for proposed fixes**
+repositories are supported. The Workbench's **Open PRs for proposed fixes**
 option is enabled by default. Headless `run fp-review
 --resolve-avits --yes` includes the same step; pass `--no-fix-pr` to skip it.
 
@@ -552,9 +552,17 @@ responsible for the semantic evidence and fix assessment.
 
 Only the final report is attached. The publisher rechecks the evidence and
 confirms that the target branch still points at the reviewed commit. It then
-publishes the proposed change on a separate branch and opens a draft PR for
-engineering review. A retry reuses the
-matching PR or branch. The AVIT card and headless result include the PR link.
+publishes the proposed change on a separate branch and opens a PR. The PR is
+published, not a draft, because drafts notify no one: Azure DevOps adds and
+notifies the branch policy's required reviewers, and GitHub requests review
+from CODEOWNERS. Threatlint also requests review from up to three developers who
+most recently changed the files the fix touches (from the checkout's Git history,
+skipping bots and service accounts). On Azure DevOps it matches each commit email
+to an account through the identities API, which needs the service-account PAT's
+**Identity (Read)** scope; on GitHub it uses the commit's linked account. An author
+who cannot be matched is listed in the result and never fails the PR. A retry
+reuses the matching PR or branch; if that PR is still a draft from an earlier
+Threatlint version, Threatlint publishes it and requests the same reviewers. The AVIT card and headless result include the PR link.
 Static source evidence can confirm a vulnerability without executing an exploit.
 Application tests are not run by this publishing step; the PR states that CI and
 engineering validation remain due.
@@ -584,7 +592,7 @@ use that configured host. See [GitHub App setup](github-app.md).
 If further investigation disproves the claim, the final false-positive report
 follows the closure and rule-tuning flow. For a true positive that remains
 unverified, successful attachment completes the review, and Threatlint shows the
-draft PR as blocked with its remaining evidence gaps. If Threatlint confirms a
+fix PR as blocked with its remaining evidence gaps. If Threatlint confirms a
 finding and patch validation or publication fails, it reports the fix error
 alongside the completed ServiceNow work. Unsupported SCM providers or
 checkouts without the exact reviewed Git branch produce an explicit skip. The
@@ -627,7 +635,7 @@ not treated as citations.
 | Report | Reviewer → temporary Markdown/Word → ServiceNow Word attachment when upload succeeds; manual CLI stages retain their reports, while headless AVIT workflows and Workbench batches attempt cleanup even after failure |
 | Semgrep token | Credential source → Semgrep API and rule publishing |
 | ADO service-account PAT | Configured AWS parameter → runtime memory → Azure DevOps; no local PAT copy |
-| Proposed fix | Reviewed diff → isolated applicability check → separate Azure DevOps or GitHub branch and draft PR |
+| Proposed fix | Reviewed diff → isolated applicability check → separate Azure DevOps or GitHub branch and PR with reviewers notified |
 | Model input | Prompts and inspected source → selected provider; use approved provider/data settings |
 
 ## Known limits

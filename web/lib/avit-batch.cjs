@@ -512,7 +512,7 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
           const reason = preparation.issues.join(' • ') || 'The review could not establish the vulnerability and a safe, applicable fix';
           outcome.pullRequest = { status: 'blocked', reason };
           if (preparation.unverified === true) {
-            return step('info', `Report attached. Draft fix PR blocked pending evidence. ${reason}`, { disposition, outcome, done: true });
+            return step('info', `Report attached. Fix PR blocked pending evidence. ${reason}`, { disposition, outcome, done: true });
           }
           return step('error', `Report attached, but evidence investigation could not produce a validated fix: ${reason}`, { disposition, outcome, done: true });
         }
@@ -521,20 +521,20 @@ function createAvitBatch({ store, reports, override, integrations = {} }) {
           step('info', outcome.pullRequest.reason, { pullRequest: outcome.pullRequest, disposition });
         }
         if (resolved.code === 0 && createFixPr) {
-          step('fix-pr', 'Opening a draft pull request for the proposed fix', { disposition });
+          step('fix-pr', 'Opening a pull request for the proposed fix and notifying its reviewers', { disposition });
           let proposed;
           try {
             proposed = await cli(['avit', 'fix-pr', avit, '--report', report.mdPath, '--checkout', repo, '--target', targetPath, '--yes', ...profile], { env });
           } catch {
-            return step('error', 'Report attached, but the draft fix PR command could not complete. Retry after checking the Workbench connection.', { disposition, outcome, done: true });
+            return step('error', 'Report attached, but the fix PR command could not complete. Retry after checking the Workbench connection.', { disposition, outcome, done: true });
           }
           let pullRequest;
           try { pullRequest = JSON.parse(lastLine(proposed.stdout)); } catch { /* invalid output is reported below */ }
           if (proposed.code !== 0 || !['created', 'existing', 'skipped'].includes(pullRequest?.status)) {
-            return step('error', `Report attached, but the draft fix PR could not be opened: ${errorOf(proposed)}`, { disposition, outcome, done: true });
+            return step('error', `Report attached, but the fix PR could not be opened: ${errorOf(proposed)}`, { disposition, outcome, done: true });
           }
           outcome.pullRequest = pullRequest;
-          step(pullRequest.status === 'skipped' ? 'info' : 'fix-pr', pullRequest.reason || (pullRequest.status === 'existing' ? 'Existing draft fix PR found' : 'Draft fix PR opened for engineering review'),
+          step(pullRequest.status === 'skipped' ? 'info' : 'fix-pr', pullRequest.reason || (pullRequest.status === 'existing' ? 'Existing fix PR found' : 'Fix PR opened and reviewers notified'),
             { action: pullRequest.status === 'skipped' ? undefined : 'pull-request', pullRequest, disposition });
         }
         if (resolved.code === 0 && outcome.information) return step('info', outcome.information, { disposition, outcome, done: true });

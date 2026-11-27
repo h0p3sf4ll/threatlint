@@ -270,7 +270,7 @@ same-turn inspection calls in Threatlint-owned Node/Python API loops (default 4,
 Finding triage exposes **Parallel reviews** in both Guided and Advanced mode.
 It defaults to **3** and accepts **1–8**. Fetches, checkouts, and model reviews can
 overlap; each finding keeps its own progress and result. Selecting **1** retains
-sequential reviews. ServiceNow, Semgrep, draft fix PR, and SCTASK/ISST updates
+sequential reviews. ServiceNow, Semgrep, fix PR, and SCTASK/ISST updates
 run one at a time, after the relevant reviews finish. **Stop** cancels queued work
 and active reviews while allowing an external update already in progress to finish.
 The same setting is available as `execution.maxConcurrency` on `run_avit_batch`.

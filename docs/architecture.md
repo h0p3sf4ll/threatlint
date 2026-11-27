@@ -135,7 +135,7 @@ Environment limits are operator settings, not a provider quota negotiation. Conf
 before starting the relevant process. Multiple Node processes do not share a distributed
 limiter. Native coding clients schedule their own tools; Python AVIT/Sidekick pools retain
 their existing controls. AVIT fetch, checkout, and model reviews can overlap within
-one batch; ServiceNow, Semgrep, draft PR, and group updates share one serialized lane.
+one batch; ServiceNow, Semgrep, fix PR, and group updates share one serialized lane.
 
 **Ordering and failures:** each task receives successful ancestor context in selected-agent
 order, not completion order. Parallel siblings do not read each other's partial reports.
