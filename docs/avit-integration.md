@@ -557,10 +557,14 @@ published, not a draft, because drafts notify no one: Azure DevOps adds and
 notifies the branch policy's required reviewers, and GitHub requests review
 from CODEOWNERS. Threatlint also requests review from up to three developers who
 most recently changed the files the fix touches (from the checkout's Git history,
-skipping bots and service accounts). On Azure DevOps it matches each commit email
-to an account through the identities API, which needs the service-account PAT's
-**Identity (Read)** scope; on GitHub it uses the commit's linked account. An author
-who cannot be matched is listed in the result and never fails the PR. A retry
+skipping bots and service accounts). On Azure DevOps each author is the account
+that pushed their latest commit, which works even when the commit email is a vendor
+or personal address; identity search by email (PAT **Identity (Read)** scope) is the
+fallback. On GitHub it uses the commit's linked account. An author who cannot be
+matched, or who can no longer see the repository, is listed in the result and never
+fails the PR. On Azure DevOps, when no author can be added, the people who most
+recently pushed to the target branch are asked instead. Read requests that drop on
+the network are retried once. A retry
 reuses the matching PR or branch; if that PR is still a draft from an earlier
 Threatlint version, Threatlint publishes it and requests the same reviewers. The AVIT card and headless result include the PR link.
 Static source evidence can confirm a vulnerability without executing an exploit.

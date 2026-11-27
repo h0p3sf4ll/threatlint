@@ -170,8 +170,14 @@ def _request(base: str, pat: str, path: str = "", *, params: dict | None = None,
                                              "Accept": "application/json", "Content-Type": "application/json"})
     opener = urllib.request.build_opener(_NoRedirect(), urllib.request.HTTPSHandler(context=tls.ssl_context()))
     try:
-        with opener.open(request, timeout=45) as response:
-            data = response.read(2 * 1024 * 1024 + 1)
+        try:
+            with opener.open(request, timeout=45) as response:
+                data = response.read(2 * 1024 * 1024 + 1)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if body is not None or isinstance(exc, urllib.error.HTTPError):
+                raise
+            with opener.open(request, timeout=45) as response:  # one retry for a dropped read
+                data = response.read(2 * 1024 * 1024 + 1)
         if len(data) > 2 * 1024 * 1024:
             raise ResolveError("Azure DevOps returned an oversized response")
         result = json.loads(data)
@@ -188,40 +194,100 @@ _AUTOMATION = re.compile(r"(?i)\[bot\]|\bbot\b|no-?reply|automation|pipeline|bui
 _MAX_REVIEWERS = 3
 
 
-def recent_authors(repo: Path, head: str, changes: list[dict], limit: int = _MAX_REVIEWERS) -> list[tuple[str, str]]:
-    """(name, email) of the people who most recently changed the files a fix touches, newest first; no bots."""
+def recent_authors(repo: Path, head: str, changes: list[dict], limit: int = _MAX_REVIEWERS * 2) -> list[tuple[str, str, str]]:
+    """(name, email, latest commit) of the people who most recently changed the files a fix touches; no bots.
+
+    Files the fix adds have no history and contribute nothing.
+    """
     paths = [change["item"]["path"].removeprefix("/") for change in changes]
-    raw = _git(repo, ["log", "-n", "100", "--no-merges", "--format=%an%x00%ae", head, "--", *paths], allow_failure=True)
+    raw = _git(repo, ["log", "-n", "200", "--no-merges", "--format=%H%x00%an%x00%ae", head, "--", *paths], allow_failure=True)
     authors, seen = [], set()
     for line in raw.decode("utf-8", "replace").splitlines():
-        name, _, email = line.partition("\x00")
+        sha, _, rest = line.partition("\x00")
+        name, _, email = rest.partition("\x00")
         key = email.strip().casefold()
-        if "@" not in key or key in seen or _AUTOMATION.search(name) or _AUTOMATION.search(email):
+        if not _SHA.fullmatch(sha) or "@" not in key or key in seen or _AUTOMATION.search(name) or _AUTOMATION.search(email):
             continue
         seen.add(key)
-        authors.append((name.strip() or email.strip(), email.strip()))
+        authors.append((name.strip() or email.strip(), email.strip(), sha))
         if len(authors) >= limit:
             break
     return authors
 
 
-def _ado_reviewers(base: str, pat: str, organization: str, number: int, authors: list[tuple[str, str]], creator: str) -> dict:
-    """Add each recent author as an optional reviewer, which notifies them. Never fails the PR."""
-    added, unresolved = [], []
+_IDENTITY = re.compile(r"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}")
+
+
+def _ado_identity(base: str, identities: str, pat: str, email: str, sha: str) -> tuple[str, str]:
+    """(id, display name) of the account behind a commit, or ("", "").
+
+    The account that pushed the commit is a real Azure DevOps identity even when the commit email is a vendor or
+    personal address, and needs no extra PAT scope. Identity search by email is the fallback.
+    """
+    try:
+        pusher = ((_request(base, pat, f"/commits/{sha}").get("push") or {}).get("pushedBy") or {})
+        if (isinstance(pusher.get("id"), str) and _IDENTITY.fullmatch(pusher["id"])
+                and not _AUTOMATION.search(str(pusher.get("displayName", ""))) and not _AUTOMATION.search(str(pusher.get("uniqueName", "")))):
+            return pusher["id"], str(pusher.get("displayName") or "")
+    except ResolveError:
+        pass
+    try:
+        rows = _request(identities, pat, params={"searchFilter": "General", "filterValue": email, "queryMembership": "None"}).get("value")
+    except ResolveError:
+        return "", ""
+    rows = [row for row in rows or [] if isinstance(row, dict) and row.get("isActive", True) is not False]
+    if len(rows) == 1 and isinstance(rows[0].get("id"), str) and _IDENTITY.fullmatch(rows[0]["id"]):
+        return rows[0]["id"], str(rows[0].get("providerDisplayName") or "")
+    return "", ""
+
+
+def _branch_pushers(base: str, pat: str, branch_ref: str) -> list[tuple[str, str]]:
+    """(id, display name) of the people who most recently pushed to the target branch; no automation."""
+    try:
+        rows = _request(base, pat, "/pushes", params={"searchCriteria.refName": branch_ref, "$top": 50}).get("value")
+    except ResolveError:
+        return []
+    pushers = []
+    for row in rows if isinstance(rows, list) else []:
+        user = (row.get("pushedBy") or {}) if isinstance(row, dict) else {}
+        if (isinstance(user.get("id"), str) and _IDENTITY.fullmatch(user["id"]) and user["id"] not in (item[0] for item in pushers)
+                and not _AUTOMATION.search(str(user.get("displayName", ""))) and not _AUTOMATION.search(str(user.get("uniqueName", "")))):
+            pushers.append((user["id"], str(user.get("displayName") or "")))
+    return pushers
+
+
+def _ado_reviewers(base: str, pat: str, organization: str, number: int, authors: list[tuple[str, str, str]], creator: str,
+                   branch_ref: str = "") -> dict:
+    """Add up to three recent authors as optional reviewers, which notifies them. Never fails the PR.
+
+    An author who cannot be matched, or who can no longer see the repository, is listed. When no author could be
+    added, the people who most recently pushed to the target branch are asked instead.
+    """
+    added, unresolved, ids = [], [], {creator.casefold()}
     identities = f"https://vssps.dev.azure.com/{urllib.parse.quote(organization, safe='')}/_apis/identities"
-    for name, email in authors:
+
+    def add(identity: str, label: str) -> bool:
+        if identity.casefold() in ids:
+            return False
+        ids.add(identity.casefold())
         try:
-            rows = _request(identities, pat, params={"searchFilter": "General", "filterValue": email,
-                                                     "queryMembership": "None"}).get("value")
-            ids = [row.get("id") for row in rows or [] if isinstance(row, dict) and row.get("isActive", True) is not False]
-            if len(ids) != 1 or not isinstance(ids[0], str) or not re.fullmatch(r"[a-fA-F0-9-]{36}", ids[0]):
-                unresolved.append(name)
-                continue
-            if ids[0].casefold() != creator.casefold():
-                _request(base, pat, f"/pullrequests/{number}/reviewers/{ids[0]}", body={"vote": 0}, method="PUT")
-                added.append(name)
+            _request(base, pat, f"/pullrequests/{number}/reviewers/{identity}", body={"vote": 0}, method="PUT")
         except ResolveError:
+            return False
+        added.append(label)
+        return True
+
+    for name, email, sha in authors:
+        if len(added) >= _MAX_REVIEWERS:
+            break
+        identity, display = _ado_identity(base, identities, pat, email, sha)
+        if not identity or (identity.casefold() not in ids and not add(identity, display or name)):
             unresolved.append(name)
+    if not added and branch_ref:
+        for identity, display in _branch_pushers(base, pat, branch_ref):
+            if len(added) >= _MAX_REVIEWERS:
+                break
+            add(identity, display)
     return {"reviewers": added, "unresolved_reviewers": unresolved}
 
 
@@ -365,7 +431,7 @@ def create_fix_pr(avit: str, report: str, checkout: str, target: dict, *, profil
               "reviewers": [], "unresolved_reviewers": []}
     if not pulls or published:
         creator = (pull.get("createdBy") or {}).get("id") or ""
-        result.update(_ado_reviewers(base, pat, canonical["organization"], number, recent_authors(repo, head, changes), creator))
+        result.update(_ado_reviewers(base, pat, canonical["organization"], number, recent_authors(repo, head, changes), creator, target_ref))
     lead = "PR opened with the proposed fix" if not pulls else "Existing draft fix PR published" if published else "Existing fix PR reused"
     result["reason"] = lead if pulls and not published else f"{lead}; {notice(result)}"
     return result

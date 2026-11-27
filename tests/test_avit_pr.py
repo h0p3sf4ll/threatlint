@@ -14,6 +14,7 @@ AVIT = "AVIT000000000000001"
 TARGET = {"scm": "azure-devops", "organization": "contoso", "project": "Platform", "name": "api", "branch": "main"}
 ORIGIN = "https://dev.azure.com/contoso/Platform/_git/api"
 REVIEWER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+PUSHER_ID = "12121212-3434-5656-7878-909090909090"
 CREATOR_ID = "99999999-8888-7777-6666-555555555555"
 REPO_ID = "11111111-2222-3333-4444-555555555555"
 PAT = "synthetic-service-account-pat-value"
@@ -81,6 +82,9 @@ class FakeAdo:
         self.remote_head = self.head
         self.identities = {"fixture@example.test": [{"id": REVIEWER_ID, "isActive": True}]}
         self.reviewers = []
+        self.pushes = []
+        self.no_access = set()
+        self.pushers = {}  # commit -> pushedBy; None makes commit lookups return the fix-commit shape
 
     def __call__(self, base, pat, path="", *, params=None, body=None, method=None):
         assert pat == PAT
@@ -89,8 +93,13 @@ class FakeAdo:
             return {"value": self.identities.get(params["filterValue"], [])}
         assert base == "https://dev.azure.com/contoso/Platform/_apis/git/repositories/api"
         self.calls.append((path, params, body))
+        if path == "/pushes" and body is None:
+            assert params["searchCriteria.refName"] == "refs/heads/main"
+            return {"value": self.pushes}
         if path.startswith("/pullrequests/42/reviewers/"):
             assert method == "PUT" and body == {"vote": 0}
+            if path.rsplit("/", 1)[1] in self.no_access:
+                raise pr.ResolveError("Azure DevOps PR operation failed (HTTP 400)")
             self.reviewers.append(path.rsplit("/", 1)[1])
             return {"id": path.rsplit("/", 1)[1], "vote": 0}
         if path == "/pullrequests/42":
@@ -105,6 +114,8 @@ class FakeAdo:
                 return {"value": [{"name": name, "objectId": self.remote_head}]}
             return {"value": [{"name": name, "objectId": self.commit}] if name == self.source else []}
         if path.startswith("/commits/"):
+            if path != f"/commits/{self.commit}" and self.pushers is not None:
+                return {"parents": [], "push": {"pushedBy": self.pushers.get(path.removeprefix("/commits/"), {})}}
             return {"parents": [self.head], "treeId": self.tree}
         if path == "/pullrequests" and body is None:
             return {"value": self.pulls}
@@ -455,5 +466,29 @@ def test_recent_authors_are_newest_first_without_bots_or_duplicates(checkout):
         git(checkout, "-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-am", "change")
     head = git(checkout, "rev-parse", "HEAD")
     changes = [{"item": {"path": "/app.py"}}]
-    assert pr.recent_authors(checkout, head, changes) == [("Dev Two", "TWO@example.test"), ("Dev One", "one@example.test"),
-                                                         ("Fixture", "fixture@example.test")]
+    assert [author[:2] for author in pr.recent_authors(checkout, head, changes)] == [
+        ("Dev Two", "TWO@example.test"), ("Dev One", "one@example.test"), ("Fixture", "fixture@example.test")]
+
+
+def test_commit_pusher_identifies_authors_with_unlinked_emails(checkout, api):
+    fixture_commit = git(checkout, "rev-parse", "HEAD")
+    api.identities = {}
+    api.pushers = {fixture_commit: {"id": PUSHER_ID, "displayName": "Fixture Dev", "uniqueName": "fixture.dev@example.test"}}
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["reviewers"] == ["Fixture Dev"] and api.reviewers == [PUSHER_ID] and result["unresolved_reviewers"] == []
+
+
+def test_build_service_pusher_falls_back_to_email_search(checkout, api):
+    api.pushers = {git(checkout, "rev-parse", "HEAD"): {"id": PUSHER_ID, "displayName": "Project Build Service"}}
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert api.reviewers == [REVIEWER_ID] and result["reviewers"] == ["Fixture"]
+
+
+def test_author_without_access_falls_back_to_branch_pushers(checkout, api):
+    api.no_access = {REVIEWER_ID}
+    api.pushes = [{"pushedBy": {"id": "00000000-0000-0000-0000-00000000000b", "displayName": "Project Build Service"}},
+                  {"pushedBy": {"id": PUSHER_ID, "displayName": "Branch Owner"}},
+                  {"pushedBy": {"id": PUSHER_ID, "displayName": "Branch Owner"}}]
+    result = pr.create_fix_pr(AVIT, confirmed_report(), str(checkout), TARGET)
+    assert result["reviewers"] == ["Branch Owner"] and result["unresolved_reviewers"] == ["Fixture"]
+    assert api.reviewers == [PUSHER_ID]
