@@ -27,6 +27,7 @@ GHSA-9v8h-qqgm-4m35 (Brotli); GHSA-xqc2-xf4c-x3h3 and GHSA-673q-mjm6-r5xr (React
 | Advisory | Evidence / package | Affected | First fixed | Severity |
 | --- | --- | --- | --- | --- |
 | CVE-2026-109618, CVE-2026-109619 PHP2Shell (CISA KEV) | PHP runtime | below 8.2.35, 8.3.36, 8.4.27, 8.5.12; 8.1 and older have no official release | 8.2.35, 8.3.36, 8.4.27, 8.5.12; 8.1 and older: **no fix**, move to a supported line | CRITICAL, CVSS v4 9.2 |
+| CVE-2026-115560 PHP session serializer mismatch (no official nickname) | PHP runtime | below 8.2.36, 8.3.37, 8.4.28, 8.5.13; 8.1 and older impacted | 8.2.36, 8.3.37, 8.4.28, 8.5.13, 8.6.0; 8.1 and older: **no fix** | CRITICAL, CVSS v4 9.2 (Red Hat 8.1); PLAUSIBLE at most |
 | CVE-2026-63030 WP2Shell (CISA KEV) | WordPress core | 6.9.0 to 6.9.4, 7.0.0 to 7.0.1, 7.1-beta1 | 6.9.5, 7.0.2, 7.1-beta2 | CRITICAL, CVSS 9.8 |
 | CVE-2026-60137 WP2Shell chain half (SQL injection) | WordPress core | 6.8.0 to 6.8.5, 6.9.0 to 6.9.4, 7.0.0 to 7.0.1 | 6.8.6, 6.9.5, 7.0.2 | MEDIUM, CVSS 5.9 |
 | CVE-2026-111497 Node2Shell, Brotli decoder (CISA KEV) | Node.js runtime; PyPI `brotli`, `brotlicffi` | Node.js 22 below 22.23.4, 24 below 24.22.1, 26 below 26.12.1, and end-of-life Node.js lines; `brotli` 1.0.3 to before 1.0.10, 1.1.0 to before 1.1.1, 1.2.0 to before 1.2.1; `brotlicffi` 1.0.3 to before 1.2.1.0 | Node.js 22.23.4, 24.22.1, 26.12.1 (end-of-life lines: **no fix**); `brotli` 1.0.10, 1.1.1, 1.2.1; `brotlicffi` 1.2.1.0 | CRITICAL, CVSS v4 9.2 |
@@ -72,6 +73,15 @@ Exploit preconditions to evidence before keeping CRITICAL/CONFIRMED:
 - PHP2Shell: unauthenticated requests to a persistent PHP worker (Apache mod_php validated;
   PHP-FPM, FrankenPHP, LSAPI likely). Partial mitigations: `session.upload_progress.enabled=0`,
   `fatal_error_backtraces=0`.
+- CVE-2026-115560: needs session.upload_progress.enabled (default On on affected versions; only an
+  administrative php.ini / FPM pool / server setting disables it, never ini_set() or .user.ini), a
+  php_binary/php_serialize writer and a php reader on the same session store (ini_set before
+  session_start, or separate apps/pools/CLI jobs sharing storage), and a gadget chain for code
+  execution (Guzzle, Monolog 2.x demonstrated). Look for explicit upload-progress settings and
+  serialize_handler values in php.ini, conf.d, FPM pools, .htaccess and Dockerfiles, and for
+  ini_set('session.serialize_handler', ...) in source. Patched runtimes with upload progress
+  explicitly enabled and mismatched serializers remain exposed. Ubuntu 22.04 and older and RHEL
+  PHP 8.0 and older builds hard-disable upload progress and are not affected.
 - WP2Shell: the REST `/batch/v1` route on 6.9+ chained with the `author__not_in` SQL injection; on
   6.8 only the SQL injection, through a plugin or theme passing untrusted input. Forced
   auto-updates may already have patched a live site.

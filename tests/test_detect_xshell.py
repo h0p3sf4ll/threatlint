@@ -567,7 +567,7 @@ def test_php_wordpress_and_python_runtime_evidence(tmp_path):
     found = {(f["file"], f["package"], f["version"]): f for f in result.findings}
     php = found[("docker/Dockerfile", advisories.PHP_RUNTIME, "8.3.10")]
     assert (php["severity"], php["confidence"], php["fixAvailable"]) == ("CRITICAL", "CONFIRMED", True)
-    assert php["fixedIn"] == "8.3.36" and "CVE-2026-109618" in php["cves"]
+    assert php["fixedIn"] == "8.3.37" and {"CVE-2026-109618", "CVE-2026-115560"} <= set(php["cves"])
     old_php = found[("composer.json", advisories.PHP_RUNTIME, "8.1.27")]
     assert old_php["fixAvailable"] is False and old_php["confidence"] == "PLAUSIBLE"
     wp = found[("site/wp-includes/version.php", advisories.WORDPRESS_CORE, "6.9.3")]
@@ -625,3 +625,34 @@ def test_legacy_env_names_still_work(tmp_path):
     assert metrics.record(doc, mode="scan", environ={"THREATLINT_HOME": str(tmp_path), "THREATLINT_2SHELL_METRICS": "off"}) is None
     path = metrics.record(doc, mode="scan", environ={"THREATLINT_HOME": str(tmp_path)})
     assert path and path.name == "metrics.jsonl" and path.parent.name == "detect-xshell"
+
+
+@pytest.mark.parametrize("version,affected", [
+    ("8.2.35", True), ("8.2.36", False), ("8.3.36", True), ("8.3.37", False), ("8.4.27", True),
+    ("8.4.28", False), ("8.5.12", True), ("8.5.13", False), ("8.6.0", False), ("7.4.33", True), ("5.3.29", False),
+])
+def test_cve_2026_115560_versions(version, affected):
+    assert bool(scanner.matching_line(adv("php-session-serializer-rce"), parse(version))) is affected
+
+
+def test_cve_2026_115560_alone_is_plausible_with_default_on_note(tmp_path):
+    write(tmp_path, {"Dockerfile": "FROM php:8.3.36-fpm\n"})
+    [finding] = scanner.scan_path(str(tmp_path)).findings
+    assert finding["cves"] == ["CVE-2026-115560"] and finding["fixedIn"] == "8.3.37"
+    assert finding["confidence"] == "PLAUSIBLE" and finding["fixAvailable"] is True
+    assert "default On" in finding["exposure"]
+
+
+def test_cve_2026_115560_config_context(tmp_path):
+    write(tmp_path, {
+        "Dockerfile": "FROM php:8.4.20-apache\nRUN echo 'session.upload_progress.enabled=0' > /usr/local/etc/php/conf.d/up.ini\n",
+        "docker/php-fpm.d/www.conf": "[www]\nphp_admin_value[session.serialize_handler] = php_serialize\n",
+        "public/.user.ini": "session.upload_progress.enabled = Off\n",
+    })
+    finding = next(f for f in scanner.scan_path(str(tmp_path)).findings if "CVE-2026-115560" in f["cves"])
+    assert "disabled administratively (`Dockerfile:2`)" in finding["exposure"]
+    assert "php_serialize" in finding["exposure"]
+    write(tmp_path / "on", {"Dockerfile": "FROM php:8.4.20-apache\n", "php.ini": "session.upload_progress.enabled = On\n",
+                            "app/.user.ini": "session.upload_progress.enabled=0\n"})
+    finding = next(f for f in scanner.scan_path(str(tmp_path / "on")).findings if "CVE-2026-115560" in f["cves"])
+    assert "explicitly On (`php.ini:1`)" in finding["exposure"]

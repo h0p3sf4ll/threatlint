@@ -11,7 +11,9 @@ from .lockfiles import (
     MAX_FILE_BYTES, Declared, Resolved, excluded, is_java_manifest, is_lockfile, is_manifest, jar_artifacts, parse_lockfile,
     parse_manifest,
 )
-from .runtimes import is_runtime_file, package_json_runtime, parse_runtime_file
+from .runtimes import (
+    is_php_config_file, is_runtime_file, package_json_runtime, parse_runtime_file, php_session_facts, php_session_note,
+)
 from .semver import Version, parse, range_floor
 
 SEVERITY_RANK = {"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1}
@@ -182,6 +184,7 @@ def scan_source(source: FileSource) -> ScanResult:
 
     declared: list[Declared] = []
     runtime_declared: list[Declared] = []
+    php_facts: list[dict] = []
     war_dirs: set[str] = set()
     for path in manifests:
         try:
@@ -202,7 +205,10 @@ def scan_source(source: FileSource) -> ScanResult:
         if size is not None and size > MAX_FILE_BYTES:
             continue
         try:
-            found_resolved, found_declared, notes = parse_runtime_file(path, read(path))
+            text = read(path)
+            if is_php_config_file(path) or "dockerfile" in path.lower():
+                php_facts.extend(php_session_facts(path, text))
+            found_resolved, found_declared, notes = parse_runtime_file(path, text)
             resolved.extend(found_resolved)
             runtime_declared.extend(found_declared)
             result.coverage.extend(notes)
@@ -253,6 +259,8 @@ def scan_source(source: FileSource) -> ScanResult:
             return
         finding = _fold(package, version, matches)
         exposure, confidence = _exposure(finding, package, file, paths, rsc_markers, confidence, war_dirs)
+        if "CVE-2026-115560" in finding["cves"]:
+            exposure = f"{exposure} {php_session_note(php_facts)}"
         if finding.pop("soften"):
             confidence = _soften(confidence)  # uncommon exploit preconditions the repository cannot show
         finding.pop("advisoryExposure", None)

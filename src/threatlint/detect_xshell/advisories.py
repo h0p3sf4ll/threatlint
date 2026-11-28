@@ -388,6 +388,37 @@ ADVISORIES += (
         tags=("rce", "runtime", "php"),
     ),
     Advisory(
+        key="php-session-serializer-rce",
+        title="PHP session serializer mismatch code execution through upload progress",
+        cves=("CVE-2026-115560",),
+        severity="CRITICAL",
+        cvss="9.2 (CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H); Red Hat 8.1",
+        cwe="CWE-502",
+        packages=(PHP_RUNTIME,),
+        lines=(
+            # "below 8.2.36" with no lower bound; upload progress exists since PHP 5.4.0.
+            FixLine("5.4.0-0", "8.2.0-0", eol=True),
+            FixLine("8.2.0-0", "8.2.36"), FixLine("8.3.0-0", "8.3.37"),
+            FixLine("8.4.0-0", "8.4.28"), FixLine("8.5.0-0", "8.5.13"),
+        ),
+        impact=("A multipart upload stores an upload-progress key with a php_binary/php_serialize writer; a later "
+                "read with the php serializer unserializes attacker bytes, enabling object injection and, with a "
+                "gadget chain (Guzzle, Monolog 2.x were demonstrated), code execution."),
+        exposure=("Needs session.upload_progress.enabled (On by default on affected versions), a serializer mismatch "
+                  "between writers and readers of one session store (ini_set before session_start, or separate "
+                  "apps/pools/CLI jobs sharing storage), and a gadget chain. Ubuntu 22.04 and older and RHEL PHP "
+                  "8.0 and older builds hard-disable upload progress and are not affected."),
+        remediation=("Upgrade PHP to 8.2.36, 8.3.37, 8.4.28, 8.5.13 or 8.6.0. Until then, set "
+                     "session.upload_progress.enabled=0 administratively (php.ini, FPM pool or server config, not "
+                     "ini_set or .user.ini) everywhere that writes the session store, use one serialize_handler per "
+                     "store, and isolate session storage per serializer. PHP 8.1 and older have no fix."),
+        sources=("https://github.com/php/php-src/security/advisories/GHSA-658j-r8rw-q6mx",
+                 "https://www.php.net/ChangeLog-8.php",
+                 "https://cveawg.mitre.org/api/cve/CVE-2026-115560"),
+        tags=("rce", "runtime", "php"),
+        soften=True,
+    ),
+    Advisory(
         key="wp2shell-rce",
         title="WP2Shell: unauthenticated remote code execution in WordPress core",
         cves=("CVE-2026-63030", "CVE-2026-60137"),

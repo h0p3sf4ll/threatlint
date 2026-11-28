@@ -64,3 +64,7 @@
 .post-card-meta{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
 .post-card-meta img{width:28px;height:28px;border-radius:50%;border:0}
 @media(max-width:760px){.post{padding-top:36px}.post-dek{font-size:16px}.run-steps>li{padding:20px 18px 8px 18px}.run-steps>li:before{position:static;display:block;margin-bottom:6px}.tldr{padding:22px 20px}.post-card{grid-template-columns:1fr}}
+.free-scan{border:1px solid rgba(140,229,199,.35);border-radius:var(--radius);background:#102630;padding:24px 26px;margin:32px 0}
+.post .free-scan h2{font-size:22px;margin:0 0 8px}
+.free-scan .actions{margin-top:14px}
+.post .free-scan a.button-outline{color:#e4f0ee;text-decoration:none}

@@ -155,3 +155,21 @@ h1{font-size:clamp(45px,5.3vw,75px);line-height:1.11;font-weight:800;margin:29px
 .capability-wide .cap-icon{flex-shrink:0;margin-bottom:0}
 .capability-wide .inline-link{font-size:13px;margin-top:4px}
 @media(max-width:760px){.capability-wide{flex-direction:column}}
+
+/* Featured briefing + free *-Shell scan (homepage). */
+.featured-post{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:36px;align-items:center;margin-bottom:56px;padding:30px;border:1px solid rgba(140,229,199,.35);border-radius:20px;background:radial-gradient(ellipse at top right,rgba(56,134,123,.18),transparent 60%),#0f2630}
+.featured-media img{display:block;width:100%;border-radius:14px;border:1px solid var(--line)}
+.featured-copy h2{font-size:clamp(26px,3vw,36px);line-height:1.18;margin:14px 0 12px;letter-spacing:-.04em}
+.featured-copy h2 a:hover{color:var(--mint)}
+.featured-copy p{font-size:15px;line-height:1.8;color:#a9bcc0;margin:0 0 16px}
+.featured-copy p strong{color:var(--mint)}
+.featured-byline{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);margin-bottom:18px}
+.featured-byline img{width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(140,229,199,.45)}
+.featured-byline a{color:var(--text);font-weight:700}
+.featured-byline a:hover,.featured-contact a:hover{color:var(--mint)}
+.featured-contact{font-size:13px!important;margin:16px 0 0!important}
+.featured-contact a{color:var(--mint);font-weight:700}
+.nav-contact{font-size:13px;font-weight:650;color:#aec2c6;margin-right:14px;white-space:nowrap}
+.nav-contact:hover{color:var(--mint)}
+@media(max-width:900px){.featured-post{grid-template-columns:1fr;padding:22px;gap:22px}}
+@media(max-width:760px){.nav-contact{margin-left:auto;margin-right:0;font-size:12px}}

@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07131b">
-  <meta name="description" content="React2Shell, Log4Shell, Spring4Shell and Text4Shell are critical remote code execution flaws. ThreatLint now finds every *-2Shell and *-4Shell exposure across the repositories and branches your GitHub and Azure DevOps credentials can read.">
+  <meta name="description" content="React2Shell, PHP2Shell, WP2Shell, Node2Shell, Log4Shell, Spring4Shell, Text4Shell and Java4Shell are critical remote code execution flaws. ThreatLint finds every *-Shell exposure across your repositories and branches, free on ThreatLint's infrastructure.">
   <meta name="author" content="Amelio Wright, MBA">
   <meta property="og:type" content="article">
-  <meta property="og:title" content="Find every *-2Shell and *-4Shell exposure across your repositories in one scan">
+  <meta property="og:title" content="Find every *-Shell exposure across your repositories in one scan">
   <meta property="og:description" content="What leaders need to know about React2Shell and the Log4Shell family, and how to scan all repositories and branches with ThreatLint.">
   <meta property="og:url" content="https://threatlint.dev/blog/react2shell-fleet-scanning/">
   <meta property="og:site_name" content="ThreatLint">
@@ -17,7 +17,7 @@
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/blog/blog.css">
-  <title>Find every *-2Shell and *-4Shell exposure in one scan — ThreatLint</title>
+  <title>Find every *-Shell exposure across your repositories in one scan — ThreatLint</title>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -42,8 +42,8 @@
     <article>
       <header class="post-header">
         <a class="post-back" href="/blog/"><span aria-hidden="true">←</span> All posts</a>
-        <div class="section-kicker">SECURITY BRIEFING · *-2SHELL &amp; *-4SHELL</div>
-        <h1>Find every *-2Shell and *-4Shell exposure across your repositories in one scan.</h1>
+        <div class="section-kicker">SECURITY BRIEFING · *-SHELL (*-2SHELL &amp; *-4SHELL)</div>
+        <h1>Find every *-Shell exposure across your repositories in one scan</h1>
         <p class="post-dek">React2Shell lets anyone on the internet run code on servers that use React Server Components, just as Log4Shell, Spring4Shell and Text4Shell did for Java. Each fix is a version bump. The hard part is knowing every repository and branch that still needs it. ThreatLint now answers that in one scan.</p>
         <div class="byline">
           <a class="byline-author" href="https://www.linkedin.com/in/ameliowright" target="_blank" rel="noopener noreferrer author">
@@ -64,6 +64,12 @@
         </ul>
       </section>
 
+      <section class="free-scan" aria-labelledby="free-scan-title">
+        <h2 id="free-scan-title">Run this scan free on ThreatLint's infrastructure</h2>
+        <p>You do not need to install anything. Sign in to the ThreatLint Workbench, connect GitHub or Azure DevOps with read-only access, and run a fleet scan on ThreatLint's hosted infrastructure at no cost. Prefer to run it yourself? The same scanner is in the open-source CLI and CI workflow below.</p>
+        <div class="actions"><a class="button button-primary" href="https://app.threatlint.dev">Run a free *-Shell scan <span aria-hidden="true">↗</span></a><a class="button button-outline" href="mailto:amelio@threatlint.dev">Questions? amelio@threatlint.dev</a></div>
+      </section>
+
       <h2>What React2Shell is, in plain terms</h2>
       <p>React Server Components let a web server run part of a React app and stream the result to the browser. On December 3, 2025, the React team disclosed that the code that decodes those server requests could be tricked into running an attacker's instructions. No password, no click, no special access: one crafted request is enough.</p>
       <figure class="post-figure">
@@ -81,6 +87,7 @@
             <tr><td><code>react-server-dom-webpack</code> / <code>-parcel</code> / <code>-turbopack</code></td><td>19.0.0 – 19.2.8, 19.3.0 (incl. 2026 follow-up CVE-2026-126187)</td><td>19.0.9 · 19.1.10 · 19.2.9 · 19.3.1</td></tr>
             <tr><td><code>next</code> (App Router)</td><td>15.x, 16.x, 14.3 canaries; DoS follow-ups from 13.3; 16.0 – 16.4.0 (2026 follow-up)</td><td>14.2.35 · 15.0.8 · 15.1.12 · 15.2.9 · 15.3.9 · 15.4.11 · 15.5.10 · 16.4.1</td></tr>
             <tr><td>PHP runtime: PHP2Shell (2026)<br>CVE-2026-109618, -109619</td><td>below 8.2.35 · 8.3.36 · 8.4.27 · 8.5.12; 7.4–8.1 <strong>no fix</strong></td><td>8.2.35 · 8.3.36 · 8.4.27 · 8.5.12</td></tr>
+            <tr><td>PHP runtime: session serializer RCE (2026)<br>CVE-2026-115560</td><td>below 8.2.36 · 8.3.37 · 8.4.28 · 8.5.13; 8.1 and older <strong>no fix</strong></td><td>8.2.36 · 8.3.37 · 8.4.28 · 8.5.13</td></tr>
             <tr><td>WordPress core: WP2Shell (2026)<br>CVE-2026-63030 (+ -60137)</td><td>6.9.0 – 6.9.4 · 7.0.0 – 7.0.1</td><td>6.9.5 · 7.0.2</td></tr>
             <tr><td>Node.js runtime and Python Brotli: Node2Shell (2026)<br>CVE-2026-111497</td><td>Node 22, 24, 26 before the fix; Node 20 and older <strong>no fix</strong>; <code>brotli</code> &lt; 1.2.1</td><td>Node 22.23.4 · 24.22.1 · 26.12.1</td></tr>
           </tbody>
@@ -194,16 +201,16 @@ threatlint detect-xshell scan --path . --fail-on CRITICAL</code></pre>
       </section>
 
       <section class="post-cta">
-        <h2>Run your first fleet scan</h2>
-        <p>Connect GitHub or Azure DevOps, choose what to include, and get an answer for every branch you ship.</p>
+        <h2>Run your first fleet scan, free</h2>
+        <p>Connect GitHub or Azure DevOps, choose what to include, and get an answer for every branch you ship, on ThreatLint's infrastructure at no cost. Need help? Email <a href="mailto:amelio@threatlint.dev">amelio@threatlint.dev</a>.</p>
         <div class="actions actions-center">
-          <a class="button button-primary" href="https://app.threatlint.dev">Open ThreatLint <span aria-hidden="true">↗</span></a>
+          <a class="button button-primary" href="https://app.threatlint.dev">Run a free scan <span aria-hidden="true">↗</span></a>
           <a class="button button-outline" href="/docs/">Read the docs <span aria-hidden="true">↗</span></a>
         </div>
       </section>
     </article>
   </main>
 
-  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="/blog/">Blog</a><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
+  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="mailto:amelio@threatlint.dev">Support &amp; contact: amelio@threatlint.dev</a><a href="/blog/">Blog</a><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
 </body>
 </html>

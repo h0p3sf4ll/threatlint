@@ -43,7 +43,8 @@ def is_runtime_file(path: str) -> bool:
                         "composer.lock", "poetry.lock", "uv.lock", "Pipfile.lock")
             or (lower.startswith("requirements") and lower.endswith(".txt"))
             or path.endswith("wp-includes/version.php")
-            or (re.search(r"(^|/)\.github/workflows/[^/]+\.ya?ml$", path) is not None))
+            or (re.search(r"(^|/)\.github/workflows/[^/]+\.ya?ml$", path) is not None)
+            or is_php_config_file(path))
 
 
 def exact_version(text: str) -> str:
@@ -160,6 +161,62 @@ def parse_runtime_file(path: str, text: str) -> tuple[list[Resolved], list[Decla
         return resolved, declared, notes
 
     return resolved, declared, notes
+
+
+# ─── PHP session configuration (CVE-2026-115560 exposure context) ────────────
+# Forms: php.ini / conf.d "session.upload_progress.enabled = On", FPM pools
+# "php_admin_value[session.upload_progress.enabled] = 0", Apache "php_flag session.upload_progress.enabled off",
+# Dockerfile "echo 'session.upload_progress.enabled=0' > .../conf.d/x.ini".
+_UPLOAD_PROGRESS = re.compile(
+    r"session\.upload_progress\.enabled\]?\s*(?:=|\s)\s*[\"']?(on|off|1|0|true|false|yes|no)\b", re.I)
+_SERIALIZER = re.compile(r"session\.serialize_handler['\"]?\]?\s*(?:=|,|\s)\s*[\"']?(php_binary|php_serialize|php)\b", re.I)
+
+
+def is_php_config_file(path: str) -> bool:
+    lower = path.lower()
+    name = basename(lower)
+    return (name.endswith(".ini") and ("php" in lower or name in (".user.ini",)) or name == ".htaccess"
+            or (name.endswith(".conf") and ("php" in lower or "fpm" in lower)))
+
+
+def php_session_facts(path: str, text: str) -> list[dict]:
+    """Explicit upload-progress and serializer settings, with whether they are administrative.
+
+    GHSA-658j-r8rw-q6mx: upload progress must be disabled administratively (php.ini, FPM pool,
+    server config); ini_set() and .user.ini are too late, so those never count as mitigation.
+    """
+    facts = []
+    user_level = basename(path.lower()) == ".user.ini"
+    for match in _UPLOAD_PROGRESS.finditer(text):
+        on = match.group(1).lower() in ("on", "1", "true", "yes")
+        facts.append({"kind": "upload_progress", "enabled": on, "admin": not user_level,
+                      "file": path, "line": _line(text, match.start())})
+    for match in _SERIALIZER.finditer(text):
+        facts.append({"kind": "serializer", "value": match.group(1).lower(), "file": path,
+                      "line": _line(text, match.start())})
+    return facts
+
+
+def php_session_note(facts: list[dict]) -> str:
+    """One sentence of CVE-2026-115560 exposure context from the repository's PHP configuration."""
+    enabled = [f for f in facts if f["kind"] == "upload_progress" and f["enabled"]]
+    disabled = [f for f in facts if f["kind"] == "upload_progress" and not f["enabled"] and f["admin"]]
+    user_off = [f for f in facts if f["kind"] == "upload_progress" and not f["enabled"] and not f["admin"]]
+    serializers = sorted({f["value"] for f in facts if f["kind"] == "serializer"})
+    parts = []
+    if enabled:
+        parts.append(f"session.upload_progress.enabled is explicitly On (`{enabled[0]['file']}:{enabled[0]['line']}`)")
+    if disabled:
+        parts.append(f"upload progress is disabled administratively (`{disabled[0]['file']}:{disabled[0]['line']}`), "
+                     "which mitigates CVE-2026-115560 where it applies to every writer of the session store")
+    if user_off and not disabled:
+        parts.append(f"upload progress is only disabled in .user.ini (`{user_off[0]['file']}`), which is too late to mitigate")
+    if not enabled and not disabled:
+        parts.append("no administrative session.upload_progress.enabled setting was found, so affected versions "
+                     "run with the default On")
+    if len(serializers) > 1 or (serializers and serializers != ["php"]):
+        parts.append(f"session serializers configured: {', '.join(serializers)} (a writer/reader mismatch is the trigger)")
+    return "CVE-2026-115560 context: " + "; ".join(parts) + "."
 
 
 def package_json_runtime(path: str, data: dict, text: str) -> list[Declared]:
