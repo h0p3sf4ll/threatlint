@@ -125,6 +125,7 @@ function createMcpServer(dependencies) {
     tool('list_repositories', 'Browse repositories through a connected source account.', { connectionId: id, search: z.string().max(200).optional(), page: z.number().int().min(1).max(100).optional() },
       ({ connectionId, ...input }) => dependencies.scm.repositories(connectionId, input), { openWorld: true });
   }
+  if (dependencies.twoShellFleet) require('./mcp-two-shell.cjs').registerTwoShellTools({ tool, z, id, twoShellFleet: dependencies.twoShellFleet });
   require('./mcp-workflows.cjs').registerWorkflowTools({ tool, z, id, workspace, ...dependencies });
   return server;
 }

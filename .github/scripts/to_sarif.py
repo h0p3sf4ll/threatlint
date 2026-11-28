@@ -33,7 +33,7 @@ SECURITY_SEVERITY = {
 }
 
 FINDING_PATTERN = re.compile(
-    r'^#### \[((?:TM|CR|DA|IC|CI|AR|AU|SS)-\d+)\] — (.+)$',
+    r'^#### \[((?:TM|CR|DA|IC|CI|AR|AU|SS|TS)-\d+)\] — (.+)$',
     re.MULTILINE,
 )
 
@@ -48,7 +48,7 @@ def extract_findings(report_text):
     """Extract structured finding data from a threatlint Markdown report."""
     findings = []
     # Split on finding headers
-    sections = re.split(r'(?=^#### \[(?:TM|CR|DA|IC|CI|AR|AU|SS)-\d+\])', report_text, flags=re.MULTILINE)
+    sections = re.split(r'(?=^#### \[(?:TM|CR|DA|IC|CI|AR|AU|SS|TS)-\d+\])', report_text, flags=re.MULTILINE)
 
     for section in sections:
         m = FINDING_PATTERN.match(section.strip())

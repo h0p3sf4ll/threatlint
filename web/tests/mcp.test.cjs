@@ -69,7 +69,7 @@ it('active tool admission is shared across transports and releases capacity afte
   assert.equal(rejected.isError, true); assert.match(rejected.content[0].text, /Too many active/);
   release(); assert.ok((await Promise.all(calls)).every(result => result.isError));
   assert.equal(deps.mcpActivity.active, 0);
-  assert.equal((await second.callTool({ name: 'list_agents', arguments: {} })).structuredContent.result.length, 22);
+  assert.equal((await second.callTool({ name: 'list_agents', arguments: {} })).structuredContent.result.length, 23);
 });
 
 it('tool errors redact complete long credentials before truncating diagnostics', async t => {

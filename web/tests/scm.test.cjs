@@ -155,7 +155,7 @@ it('reports unavailable default storage before invoking Git', async t => {
 
 describe('Source manager public contract and session-only credentials', () => {
   it('documents fixed cloud origins, permissions, bounds, and lifecycle without dependencies', () => {
-    assert.deepEqual(Object.keys(createSourceManagers()).sort(), ['branches', 'checkout', 'connect', 'disconnect', 'list', 'refreshCredential', 'repositories']);
+    assert.deepEqual(Object.keys(createSourceManagers()).sort(), ['branches', 'checkout', 'connect', 'credential', 'disconnect', 'list', 'refreshCredential', 'repositories']);
     assert.equal(CAPABILITIES.pageSize, 100);
     assert.equal(CAPABILITIES.maxPage, 100);
     assert.equal(CAPABILITIES.providers.github.apiOrigin, 'https://api.github.com');

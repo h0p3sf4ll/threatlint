@@ -15,6 +15,7 @@ const groups = [
   ['Source accounts', 'sources-and-repository-checkout', ['list_source_providers', 'list_sources', 'connect_source', 'reconnect_source', 'disconnect_source', 'list_repositories', 'list_branches', 'checkout_repository']],
   ['Repository evidence', 'run-a-specialist-with-the-clients-model', ['read_file', 'find_files', 'search_files', 'inspect_git']],
   ['Source scans and fixes', 'first-scan-without-the-ui', ['start_scan', 'list_scans', 'get_scan', 'cancel_scan', 'propose_fix', 'apply_fix']],
+  ['detect-2shell fleet scans', 'sources-and-repository-checkout', ['start_2shell_scan', 'list_2shell_scans', 'get_2shell_scan', 'cancel_2shell_scan']],
   ['Specialist jobs', 'background-reviews-and-conversations', ['start_review', 'list_reviews', 'get_review', 'cancel_review']],
   ['Conversations', 'background-reviews-and-conversations', ['ask_question', 'list_conversations', 'get_conversation']],
   ['Design inputs', 'background-reviews-and-conversations', ['upload_design_inputs', 'remove_design_inputs']],
@@ -27,7 +28,7 @@ const groups = [
 ];
 
 async function discover() {
-  const services = Object.fromEntries(['intelligence', 'reports', 'workspaces', 'reviews', 'sources', 'securityScanner', 'scanImports', 'designInputs', 'runtime', 'history', 'conversations', 'scannerBatch', 'avitRuns'].map(name => [name, Object.freeze({})]));
+  const services = Object.fromEntries(['intelligence', 'reports', 'workspaces', 'reviews', 'sources', 'securityScanner', 'scanImports', 'designInputs', 'runtime', 'history', 'conversations', 'scannerBatch', 'avitRuns', 'twoShellFleet'].map(name => [name, Object.freeze({})]));
   const server = createMcpServer({ ...services, store: { sessions: new Map() } });
   const client = new Client({ name: 'threatlint-docs', version: '1.0.0' });
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();

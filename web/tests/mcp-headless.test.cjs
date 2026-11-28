@@ -57,7 +57,7 @@ test('a fresh Workbench profile exposes usable specialists, repository inspectio
   assert.equal(workbench.server.listening, false);
   assert.deepEqual(await call(client, 'list_workspaces'), []);
   const agents = await call(client, 'list_agents');
-  assert.equal(agents.length, 22); assert.ok(agents.every(agent => agent.skills.length > 0 && agent.contract.boundaries));
+  assert.equal(agents.length, 23); assert.ok(agents.every(agent => agent.skills.length > 0 && agent.contract.boundaries));
   const { sessionId } = await call(client, 'open_workspace', { repoPath: repo, confirm: true });
   assert.equal((await call(client, 'get_workspace', { sessionId })).repoPath, fs.realpathSync(repo));
   assert.match((await call(client, 'read_file', { sessionId, path: 'app.py', offset: 1, limit: 1 })).text, /^2\t.*synthetic evidence/);
@@ -74,7 +74,7 @@ test('a fresh Workbench profile exposes usable specialists, repository inspectio
   assert.match(prompt.messages[1].content.text, /proposed tests are NOT RUN/);
   assert.ok((await client.listResources()).resources.some(resource => resource.uri === 'threatlint://agents'));
   assert.ok((await client.listResourceTemplates()).resourceTemplates.some(resource => resource.uriTemplate === 'threatlint://agents/{agentId}'));
-  assert.equal(JSON.parse((await client.readResource({ uri: 'threatlint://agents' })).contents[0].text).length, 22);
+  assert.equal(JSON.parse((await client.readResource({ uri: 'threatlint://agents' })).contents[0].text).length, 23);
   assert.match((await client.readResource({ uri: `threatlint://agents/${agentId}` })).contents[0].text, /Required Skill Workflows/);
   assert.equal(JSON.parse((await client.readResource({ uri: 'threatlint://workspaces' })).contents[0].text)[0].id, sessionId);
   const completed = await client.complete({ ref: { type: 'ref/prompt', name: 'security_review' }, argument: { name: 'agentId', value: 'appsec-auth' } });
@@ -214,7 +214,7 @@ test('the real stdio entrypoint uses an isolated fresh profile and works while i
   await client.connect(transport);
   const pid = transport.pid; assert.ok(pid);
   assert.deepEqual(await call(client, 'list_workspaces'), []);
-  assert.equal((await call(client, 'list_agents')).length, 22);
+  assert.equal((await call(client, 'list_agents')).length, 23);
   const { sessionId } = await call(client, 'open_workspace', { repoPath: repo, confirm: true });
   assert.match((await call(client, 'read_file', { sessionId, path: 'app.py' })).text, /synthetic evidence/);
   assert.match((await client.getPrompt({ name: 'security_review', arguments: { agentId, sessionId } })).messages[0].content.text, /Required Skill Workflows/);

@@ -8,7 +8,7 @@ toc_max_heading_level: 3
 
 # MCP tool reference
 
-The full Threatlint server exposes **69 tools** over stdio and Streamable HTTP.
+The full Threatlint server exposes **73 tools** over stdio and Streamable HTTP.
 This reference is generated from the same `tools/list` response clients receive. Custom
 embedders may expose fewer tools when they omit backing services; discover the connected
 server before calling a tool.
@@ -57,6 +57,7 @@ fields record explicit intent; underlying authorization and evidence gates still
 | Source accounts | [`list_source_providers`](#list_source_providers), [`list_sources`](#list_sources), [`connect_source`](#connect_source), [`reconnect_source`](#reconnect_source), [`disconnect_source`](#disconnect_source), [`list_repositories`](#list_repositories), [`list_branches`](#list_branches), [`checkout_repository`](#checkout_repository) |
 | Repository evidence | [`read_file`](#read_file), [`find_files`](#find_files), [`search_files`](#search_files), [`inspect_git`](#inspect_git) |
 | Source scans and fixes | [`start_scan`](#start_scan), [`list_scans`](#list_scans), [`get_scan`](#get_scan), [`cancel_scan`](#cancel_scan), [`propose_fix`](#propose_fix), [`apply_fix`](#apply_fix) |
+| detect-2shell fleet scans | [`start_2shell_scan`](#start_2shell_scan), [`list_2shell_scans`](#list_2shell_scans), [`get_2shell_scan`](#get_2shell_scan), [`cancel_2shell_scan`](#cancel_2shell_scan) |
 | Specialist jobs | [`start_review`](#start_review), [`list_reviews`](#list_reviews), [`get_review`](#get_review), [`cancel_review`](#cancel_review) |
 | Conversations | [`ask_question`](#ask_question), [`list_conversations`](#list_conversations), [`get_conversation`](#get_conversation) |
 | Design inputs | [`upload_design_inputs`](#upload_design_inputs), [`remove_design_inputs`](#remove_design_inputs) |
@@ -1205,6 +1206,260 @@ Apply a reviewed supported fix to its bound source snapshot, then rescan. Explic
 
 </details>
 
+## detect-2shell fleet scans
+
+[Workflow guide and examples](mcp.md#sources-and-repository-checkout).
+
+### `start_2shell_scan`
+
+Scan many repositories for React2Shell-family exposure (CVE-2025-55182, CVE-2025-66478 and RSC follow-ups) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles through provider APIs without cloning; poll get_2shell_scan.
+
+**MCP annotations:** `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=true`.
+
+| Argument | Type | Required | Defaults and constraints |
+| --- | --- | --- | --- |
+| `connections` | array of object | **Yes** | Min items: 1; Max items: 16; Connection IDs from list_sources.; Nested constraints: see full schema |
+| `workers` | integer | No | Minimum: 1; Maximum: 8 |
+| `maxRepositories` | integer | No | Minimum: 1; Maximum: 10000 |
+| `maxBranchesPerRepository` | integer | No | Minimum: 1; Maximum: 500 |
+| `confirm` | boolean | **Yes** | Must be `true` |
+
+<details>
+<summary>Full input schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "repositories": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "all"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 300
+                },
+                "minItems": 1,
+                "maxItems": 1000
+              }
+            ],
+            "default": "all",
+            "description": "\"all\", or owner/name (GitHub) and project/repository or organization/project/repository (Azure DevOps)."
+          },
+          "branches": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "all"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "minItems": 1,
+                "maxItems": 20
+              }
+            ],
+            "default": "default"
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "description": "Connection IDs from list_sources."
+    },
+    "workers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "maxRepositories": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "maxBranchesPerRepository": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "confirm": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "connections",
+    "confirm"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
+```
+
+</details>
+
+### `list_2shell_scans`
+
+List retained detect-2shell fleet scans with status, progress and summary counts.
+
+**MCP annotations:** `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
+
+| Argument | Type | Required | Defaults and constraints |
+| --- | --- | --- | --- |
+| `offset` | integer | No | Minimum: 0 |
+| `limit` | integer | No | Minimum: 1; Maximum: 100 |
+
+<details>
+<summary>Full input schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
+```
+
+</details>
+
+### `get_2shell_scan`
+
+Read a detect-2shell fleet scan. Use section=results with offset/limit to page per-branch results, or section=recent for live progress events.
+
+**MCP annotations:** `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
+
+| Argument | Type | Required | Defaults and constraints |
+| --- | --- | --- | --- |
+| `scanId` | string | **Yes** | Min length: 1; Max length: 200 |
+| `section` | string | No | Allowed: `"results"`, `"recent"` |
+| `status` | string | No | Allowed: `"vulnerable"`, `"clean"`, `"not-applicable"`, `"error"` |
+| `offset` | integer | No | Minimum: 0 |
+| `limit` | integer | No | Minimum: 1; Maximum: 100 |
+
+<details>
+<summary>Full input schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "scanId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "section": {
+      "type": "string",
+      "enum": [
+        "results",
+        "recent"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "vulnerable",
+        "clean",
+        "not-applicable",
+        "error"
+      ]
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "scanId"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
+```
+
+</details>
+
+### `cancel_2shell_scan`
+
+Cancel a running detect-2shell fleet scan. Partial results are never reported as clean.
+
+**MCP annotations:** `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`.
+
+| Argument | Type | Required | Defaults and constraints |
+| --- | --- | --- | --- |
+| `scanId` | string | **Yes** | Min length: 1; Max length: 200 |
+| `confirm` | boolean | **Yes** | Must be `true` |
+
+<details>
+<summary>Full input schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "scanId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "confirm": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "scanId",
+    "confirm"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
+```
+
+</details>
+
 ## Specialist jobs
 
 [Workflow guide and examples](mcp.md#background-reviews-and-conversations).
@@ -1218,7 +1473,7 @@ Start a background specialist review using a configured server-side provider. Re
 | Argument | Type | Required | Defaults and constraints |
 | --- | --- | --- | --- |
 | `sessionId` | string | **Yes** | Min length: 1; Max length: 200 |
-| `agentIds` | array of string | **Yes** | Min items: 1; Max items: 22; Nested constraints: see full schema |
+| `agentIds` | array of string | **Yes** | Min items: 1; Max items: 23; Nested constraints: see full schema |
 | `target` | string | No | Max length: 12000 |
 | `provider` | string | No | Allowed: `"claude"`, `"claude-code"`, `"bedrock"`, `"daybreak"`, `"daybreak-bedrock"`, `"openai"`, `"copilot"`, `"codex"`, `"lmstudio"` |
 | `model` | string | No | Max length: 200 |
@@ -1267,11 +1522,12 @@ Start a background specialist review using a configured server-side provider. Re
           "appsec-ai-security-reviewer",
           "appsec-security-test-planner",
           "appsec-secure-codegen-reviewer",
-          "appsec-privacy-reviewer"
+          "appsec-privacy-reviewer",
+          "appsec-2shell-detector"
         ]
       },
       "minItems": 1,
-      "maxItems": 22
+      "maxItems": 23
     },
     "target": {
       "type": "string",
@@ -3934,7 +4190,7 @@ Save a complete report written by the MCP client model. Marked as a client revie
 | Argument | Type | Required | Defaults and constraints |
 | --- | --- | --- | --- |
 | `sessionId` | string | **Yes** | Min length: 1; Max length: 200 |
-| `agentId` | string | **Yes** | 22 allowed values; see full schema |
+| `agentId` | string | **Yes** | 23 allowed values; see full schema |
 | `markdown` | string | **Yes** | Min length: 1; Max length: 1048576 |
 | `title` | string | No | Max length: 300 |
 | `confirm` | boolean | **Yes** | Must be `true` |
@@ -3975,7 +4231,8 @@ Save a complete report written by the MCP client model. Marked as a client revie
         "appsec-ai-security-reviewer",
         "appsec-security-test-planner",
         "appsec-secure-codegen-reviewer",
-        "appsec-privacy-reviewer"
+        "appsec-privacy-reviewer",
+        "appsec-2shell-detector"
       ]
     },
     "markdown": {

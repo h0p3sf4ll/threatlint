@@ -18,7 +18,7 @@ Read [the learning path](learning.md) first for a guided introduction, or
 
 ## System context: shared contracts, separate runtimes
 
-The package ships **22 specialist definitions**, **26 skills**, a canonical agent-to-skill
+The package ships **23 specialist definitions**, **27 skills**, a canonical agent-to-skill
 registry, and explicit execution/handoff contracts. Several entry points consume that material, but they do **not** all run through one
 Python or Node process. Installed native-client bundles, Python CLI runs, Workbench reviews,
 CI snapshots, and Teams conversations have different execution and storage boundaries.
@@ -193,7 +193,7 @@ plus its specialist skills. Assignments come from
 - **Design and attack paths:** [Threat Modeler](#appsec-threat-modeler) · [Attack Tree](#appsec-attack-tree) · [Red Team](#appsec-red-team)
 - **Change review:** [Code Reviewer](#appsec-code-reviewer) · [Secure Codegen Reviewer](#appsec-secure-codegen-reviewer)
 - **Domain deep dives:** [API Security Reviewer](#appsec-api-security-reviewer) · [Auth Reviewer](#appsec-auth-reviewer) · [Business Logic Reviewer](#appsec-business-logic-reviewer) · [Client Security Reviewer](#appsec-client-security-reviewer) · [Crypto Reviewer](#appsec-crypto-reviewer) · [AI Security Reviewer](#appsec-ai-security-reviewer) · [Privacy Reviewer](#appsec-privacy-reviewer)
-- **Supply chain and platform:** [Dependency Auditor](#appsec-dependency-auditor) · [Secrets Scanner](#appsec-secrets-scanner) · [IaC Reviewer](#appsec-iac-reviewer) · [CI/CD Auditor](#appsec-cicd-auditor)
+- **Supply chain and platform:** [Dependency Auditor](#appsec-dependency-auditor) · [2Shell Detector](#appsec-2shell-detector) · [Secrets Scanner](#appsec-secrets-scanner) · [IaC Reviewer](#appsec-iac-reviewer) · [CI/CD Auditor](#appsec-cicd-auditor)
 - **Triage and lifecycle:** [Finding Triager](#appsec-fp-reviewer) · [Verify Fix](#appsec-verify-fix) · [Threat Delta](#appsec-threat-delta) · [Compliance Checker](#appsec-compliance-checker)
 - **Runtime and testing:** [Runtime Reviewer](#appsec-runtime-reviewer) · [Security Test Planner](#appsec-security-test-planner)
 
@@ -392,6 +392,21 @@ plus its specialist skills. Assignments come from
 | **Skills** | Shared + [Dependency audit](#threatlint-dependency-audit) |
 | **Guardrails** | Never installs or runs dependency code. Unverified advisories are labeled as such. |
 
+### 2Shell Detector
+
+<a id="appsec-2shell-detector"></a>`appsec-2shell-detector` · Supply chain and platform
+
+**Finds React2Shell and Next.js App Router RCE exposure from resolved versions, across one repo or a fleet.**
+
+| | |
+| --- | --- |
+| **Use it when** | A new 2Shell-family advisory lands, before a release, or to sweep every repository and branch your SCM connections can reach. |
+| **Give it** | Lockfiles, manifests, App Router or RSC usage, deploy configuration; optional `threatlint detect-2shell` output. |
+| **You get** | TS-NNN findings: package root, resolved vulnerable version, CVEs, exposure, same-line fixed version, rotation trigger. |
+| **Run it** | `/detect-2shell` (add `-local` for LM Studio); deterministic `threatlint detect-2shell scan` / `fleet` |
+| **Skills** | Shared + [2Shell detection](#threatlint-2shell-detection) |
+| **Guardrails** | No live probes or exploit payloads. Reports only flaws with verified advisory data; others are coverage gaps. |
+
 ### Secrets Scanner
 
 <a id="appsec-secrets-scanner"></a>`appsec-secrets-scanner` · Supply chain and platform
@@ -542,7 +557,7 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 - Keep severity separate from confidence: CONFIRMED, PLAUSIBLE, THEORETICAL.
 
 **Produces:** An evidence ledger per claim, and explicit unknowns instead of “secure”.  
-**Used by:** All 22 agents
+**Used by:** All 23 agents
 
 ### Actionable reporting (shared)
 
@@ -553,7 +568,7 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 - Positive, negative, boundary and bypass assertions labeled NOT RUN.
 
 **Produces:** A report that ends in a clear decision and the next engineering action.  
-**Used by:** All 22 agents
+**Used by:** All 23 agents
 
 ### Threat modeling
 
@@ -598,6 +613,17 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 
 **Produces:** DA findings with the smallest safe upgrade and rollback.  
 **Used by:** [Dependency Auditor](#appsec-dependency-auditor)
+
+### 2Shell detection
+
+<a id="threatlint-2shell-detection"></a>`threatlint-2shell-detection`: React2Shell and RSC remote-code-execution exposure.
+
+- Resolve `next` and `react-server-dom-*` from the lockfile and map them to the verified advisory catalog.
+- Establish exposure: App Router, Server Functions, RSC frameworks, internet-facing deployment.
+- Recommend the smallest same-line upgrade and flag secret rotation after 2025-12-04.
+
+**Produces:** TS findings with lockfile evidence, CVEs and fixed versions.  
+**Used by:** [2Shell Detector](#appsec-2shell-detector)
 
 ### Secrets triage
 

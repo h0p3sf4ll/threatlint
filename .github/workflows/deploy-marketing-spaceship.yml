@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for required in index.html styles.css assets/mark.svg robots.txt sitemap.xml .htaccess; do
+          for required in index.html styles.css assets/mark.svg robots.txt sitemap.xml .htaccess blog/index.html blog/blog.css; do
             test -s "marketing/$required" || { echo "::error::Missing marketing/$required"; exit 1; }
           done
           python3 - <<'PY'
@@ -60,15 +60,20 @@ jobs:
                   for name, value in attrs:
                       if name in ("href", "src") and value and value.startswith("/") and not value.startswith("//"):
                           self.refs.append(value.split("#", 1)[0].split("?", 1)[0])
-          parser = Parser()
-          parser.feed(Path("marketing/index.html").read_text())
-          for ref in parser.refs:
-              target = Path("marketing") / ref.lstrip("/")
-              if target.is_dir():
-                  target /= "index.html"
-              if ref and not target.is_file():
-                  raise SystemExit(f"Missing internal asset: {ref}")
-          print("Static website validation passed")
+          # Every marketing page (home and blog); the built docs are validated by their own build.
+          pages = [p for p in Path("marketing").rglob("*.html") if "docs" not in p.relative_to("marketing").parts]
+          for page in pages:
+              parser = Parser()
+              parser.feed(page.read_text(encoding="utf-8"))
+              for ref in parser.refs:
+                  if ref.startswith("/docs/"):
+                      continue  # produced by the Docusaurus build above
+                  target = Path("marketing") / ref.lstrip("/")
+                  if target.is_dir():
+                      target /= "index.html"
+                  if ref and not target.is_file():
+                      raise SystemExit(f"Missing internal asset in {page}: {ref}")
+          print(f"Static website validation passed ({len(pages)} pages)")
           PY
           mkdir -p dist
           cp -a marketing/. dist/

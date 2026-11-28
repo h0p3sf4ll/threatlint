@@ -734,6 +734,15 @@ options = {}) {
   }, 'SCM_CHECKOUT_FAILED');
 
   function list() { return [...connections.values()].map(summary); }
+  // Host-internal: hands an active connection's credential to a local child process environment
+  // (detect-2shell fleet scans). Never route this value to HTTP, MCP, logs, or stored job state.
+  function credential(id) {
+    const connection = connectionFor(id);
+    if (!connection.token) throw failure('SCM_CONNECTION_NOT_FOUND');
+    return Object.freeze({ provider: connection.provider, token: connection.token, account: connection.account,
+      ...(connection.organization ? { organization: connection.organization } : {}),
+      ...(connection.provider === 'github' ? { kind: connection.kind || 'user', apiBase: 'https://api.github.com' } : {}) });
+  }
   function disconnect(id) {
     const connection = connections.get(id);
     if (!connection) return false;
@@ -747,7 +756,7 @@ options = {}) {
     return true;
   }
 
-  return Object.freeze({ connect, list, disconnect, repositories, branches, checkout, refreshCredential });
+  return Object.freeze({ connect, list, disconnect, repositories, branches, checkout, refreshCredential, credential });
 }
 
 module.exports = { createSourceManagers, SOURCE_MANAGER_CAPABILITIES };

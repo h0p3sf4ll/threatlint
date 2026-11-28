@@ -30,6 +30,7 @@ SPECIALISTS = {
     "security-test-plan": ("appsec-security-test-planner", ["threatlint-security-test-design", "threatlint-runtime-auth-workflows"]),
     "secure-codegen-review": ("appsec-secure-codegen-reviewer", ["threatlint-secure-codegen"]),
     "privacy-review": ("appsec-privacy-reviewer", ["threatlint-privacy-review"]),
+    "detect-2shell": ("appsec-2shell-detector", ["threatlint-2shell-detection"]),
 }
 
 

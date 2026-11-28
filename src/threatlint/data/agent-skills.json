@@ -20,5 +20,6 @@
   "appsec-ai-security-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-ai-security"],
   "appsec-security-test-planner": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-security-test-design", "threatlint-runtime-auth-workflows"],
   "appsec-secure-codegen-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-secure-codegen"],
-  "appsec-privacy-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-privacy-review"]
+  "appsec-privacy-reviewer": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-privacy-review"],
+  "appsec-2shell-detector": ["threatlint-evidence-analysis", "threatlint-actionable-reporting", "threatlint-2shell-detection"]
 }

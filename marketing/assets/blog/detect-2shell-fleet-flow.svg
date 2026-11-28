@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="t d" font-family="Inter, Segoe UI, sans-serif">
+  <title id="t">How ThreatLint detect-2shell scans a whole fleet</title>
+  <desc id="d">ThreatLint uses the GitHub and Azure DevOps credentials you have already connected to list repositories and branches, reads only package manifests and lockfiles through the API without cloning, matches resolved versions against a vendor-verified advisory catalog, and produces an executive summary, per-finding evidence, SARIF and tracker issues. The appsec-2shell-detector agent then verifies exposure in source.</desc>
+  <rect width="960" height="420" rx="18" fill="#0c202a"/>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8ce5c7"/></marker></defs>
+  <g font-size="11" font-weight="800" letter-spacing="1.6" fill="#8ce5c7">
+    <text x="36" y="48">1 · SELECT</text><text x="268" y="48">2 · ENUMERATE</text><text x="500" y="48">3 · READ (NO CLONE)</text><text x="732" y="48">4 · MATCH &amp; REPORT</text>
+  </g>
+  <g fill="none" stroke-width="2">
+    <rect x="28" y="64" width="200" height="232" rx="14" stroke="#2d5560" fill="#0e222d"/>
+    <rect x="260" y="64" width="200" height="232" rx="14" stroke="#2d5560" fill="#0e222d"/>
+    <rect x="492" y="64" width="200" height="232" rx="14" stroke="#2d5560" fill="#0e222d"/>
+    <rect x="724" y="64" width="208" height="232" rx="14" stroke="#8ce5c7" fill="#10283a"/>
+    <path d="M230 180H254" stroke="#8ce5c7" marker-end="url(#a)"/>
+    <path d="M462 180H486" stroke="#8ce5c7" marker-end="url(#a)"/>
+    <path d="M694 180H718" stroke="#8ce5c7" marker-end="url(#a)"/>
+  </g>
+  <g fill="#edf6f5" font-size="14">
+    <text x="44" y="96" font-weight="700">Connected sources</text>
+    <text x="44" y="124" fill="#9db1b6" font-size="12.5">☑ GitHub (token or App)</text>
+    <text x="44" y="146" fill="#9db1b6" font-size="12.5">☑ Azure DevOps (PAT)</text>
+    <text x="44" y="180" font-weight="700">Repositories</text>
+    <text x="44" y="204" fill="#9db1b6" font-size="12.5">All · or a chosen subset</text>
+    <text x="44" y="236" font-weight="700">Branches</text>
+    <text x="44" y="260" fill="#9db1b6" font-size="12.5">Default · all · patterns</text>
+    <text x="44" y="280" fill="#9db1b6" font-size="12.5">e.g. main, release/*</text>
+
+    <text x="276" y="96" font-weight="700">SCM APIs</text>
+    <text x="276" y="124" fill="#9db1b6" font-size="12.5">List every repository</text>
+    <text x="276" y="144" fill="#9db1b6" font-size="12.5">the credential can read</text>
+    <text x="276" y="176" fill="#9db1b6" font-size="12.5">Resolve each branch to</text>
+    <text x="276" y="196" fill="#9db1b6" font-size="12.5">an exact commit</text>
+    <text x="276" y="228" fill="#9db1b6" font-size="12.5">Skip archived repos;</text>
+    <text x="276" y="248" fill="#9db1b6" font-size="12.5">honour rate limits</text>
+
+    <text x="508" y="96" font-weight="700">Only what matters</text>
+    <text x="508" y="124" fill="#9db1b6" font-size="12.5">package.json</text>
+    <text x="508" y="144" fill="#9db1b6" font-size="12.5">npm · Yarn · pnpm · Bun</text>
+    <text x="508" y="164" fill="#9db1b6" font-size="12.5">lockfiles</text>
+    <text x="508" y="196" fill="#9db1b6" font-size="12.5">File tree for App Router</text>
+    <text x="508" y="216" fill="#9db1b6" font-size="12.5">exposure (app/ routes)</text>
+    <text x="508" y="248" fill="#9db1b6" font-size="12.5">Source code is never</text>
+    <text x="508" y="268" fill="#9db1b6" font-size="12.5">downloaded</text>
+
+    <text x="740" y="96" font-weight="700">Verified catalog</text>
+    <text x="740" y="120" fill="#9db1b6" font-size="12.5">React2Shell + Next.js</text>
+    <text x="740" y="140" fill="#9db1b6" font-size="12.5">+ DoS / source-exposure</text>
+    <text x="740" y="160" fill="#9db1b6" font-size="12.5">follow-ups (6 CVEs)</text>
+    <text x="740" y="194" font-weight="700">Outputs</text>
+    <text x="740" y="218" fill="#9db1b6" font-size="12.5">Executive summary</text>
+    <text x="740" y="238" fill="#9db1b6" font-size="12.5">Per-repo fix-to versions</text>
+    <text x="740" y="258" fill="#9db1b6" font-size="12.5">SARIF · issues · CI gate</text>
+  </g>
+  <rect x="28" y="316" width="904" height="84" rx="14" fill="#0a1a23" stroke="#2d5560"/>
+  <text x="48" y="344" fill="#edf6f5" font-size="14" font-weight="700">Then: appsec-2shell-detector agent</text>
+  <text x="48" y="366" fill="#9db1b6" font-size="12.5">Verifies reachability in source (monorepos, vendored copies, Dockerfiles, deploy config) and writes the fix plan.</text>
+  <text x="48" y="386" fill="#9db1b6" font-size="12.5">Analysis-only: it never changes code or probes live applications.</text>
+</svg>

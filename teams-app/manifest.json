@@ -20,7 +20,7 @@
   },
   "description": {
     "short": "Application security analysis via Claude AI agents",
-    "full": "threatlint offers specialized application security agents powered by Claude AI: threat modeling, code review, supply chain, compliance, runtime evidence, business logic, client security, cryptography, AI/LLM security, security test planning, secure code generation, and privacy review. Teams analyzes supplied redacted evidence only; it cannot inspect repositories, capture traffic, log in, or execute tests."
+    "full": "threatlint offers specialized application security agents powered by Claude AI: threat modeling, code review, supply chain, compliance, runtime evidence, business logic, client security, cryptography, AI/LLM security, security test planning, secure code generation, privacy review, and React2Shell (2Shell RCE) exposure detection. Teams analyzes supplied redacted evidence only; it cannot inspect repositories, capture traffic, log in, or execute tests."
   },
   "accentColor": "#D97706",
   "bots": [
@@ -57,6 +57,7 @@
             { "title": "security-test-plan", "description": "Plan traceable security acceptance cases without executing tests" },
             { "title": "secure-codegen-review", "description": "Check generated or new code for insecure defaults and safe rewrites" },
             { "title": "privacy-review", "description": "Inventory PII and review data flows, retention, and consent" },
+            { "title": "detect-2shell", "description": "Detect React2Shell and Next.js RSC RCE exposure from versions" },
             { "title": "help", "description": "Show all available commands" }
           ]
         }

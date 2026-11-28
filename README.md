@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <img alt="22 specialists" src="https://img.shields.io/badge/specialists-22-8ce5c7?style=flat-square">
-  <img alt="26 focused skills" src="https://img.shields.io/badge/skills-26-8ce5c7?style=flat-square">
+  <img alt="23 specialists" src="https://img.shields.io/badge/specialists-23-8ce5c7?style=flat-square">
+  <img alt="27 focused skills" src="https://img.shields.io/badge/skills-27-8ce5c7?style=flat-square">
   <img alt="Cloud or local models" src="https://img.shields.io/badge/models-cloud%20or%20local-8ce5c7?style=flat-square">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-0284C7?style=flat-square">
 </p>
@@ -162,7 +162,7 @@ For Codex, local models, cloud providers, and client-specific setup, use the
 | "Was the root cause fixed?" | Fix verification | A remediation verdict, residual paths, and validation gaps |
 | "Where should the portfolio focus?" | Sidekick | Loadouts, vReports, ownership, trends, and action history |
 
-Pick a [specialist by outcome](docs/agents.md). The 22 agents receive shared
+Pick a [specialist by outcome](docs/agents.md). The 23 agents receive shared
 evidence/reporting workflows plus domain-specific skills, with explicit inputs, outputs,
 and boundaries for each assignment. Read the [agentic-workflow learning path](docs/learning.md)
 for a practical introduction using race-engineering metaphors.
@@ -251,7 +251,7 @@ engineering handoff without overstating what was verified.
 | --- | --- |
 | Install for Claude, Copilot, Codex, or terminal use | [Setup](docs/setup.md) |
 | Review code visually or inspect authorized runtime evidence | [Workbench](docs/workbench.md) |
-| Choose one of the 22 specialists | [Agent guide](docs/agents.md) |
+| Choose one of the 23 specialists | [Agent guide](docs/agents.md) |
 | Learn AI, agentic workflows, parallelism, and AppSec through practical exercises | [Learning path](docs/learning.md) |
 | See the architecture, data flows, and every agent and skill on one page | [Architecture](docs/architecture.md) |
 | Add instructions, guard hooks, or the VS Code extension | [IDE guide](docs/ide.md) |

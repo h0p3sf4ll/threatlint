@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07131b">
+  <meta name="description" content="React2Shell (CVE-2025-55182) is a CVSS 10 remote code execution flaw in React Server Components and Next.js. ThreatLint now finds it across every repository and branch your GitHub and Azure DevOps credentials can read.">
+  <meta name="author" content="Amelio Wright, MBA">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Find every React2Shell exposure across your repositories in one scan">
+  <meta property="og:description" content="What leaders need to know about CVE-2025-55182, and how to scan all repositories and branches with ThreatLint detect-2shell.">
+  <meta property="og:url" content="https://threatlint.dev/blog/react2shell-fleet-scanning/">
+  <meta property="og:site_name" content="ThreatLint">
+  <meta property="article:published_time" content="2026-11-28">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://threatlint.dev/blog/react2shell-fleet-scanning/">
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/blog/blog.css">
+  <title>Find every React2Shell exposure in one scan — ThreatLint</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="nav-shell container" aria-label="Primary">
+      <a class="brand" href="/" aria-label="ThreatLint home">
+        <img src="/assets/mark.svg" width="38" height="42" alt="">
+        <span>threat<span class="brand-light">lint</span><small>APPLICATION SECURITY</small></span>
+      </a>
+      <div class="nav-links">
+        <a href="/#capabilities">Capabilities</a>
+        <a href="/blog/" aria-current="page">Blog</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+      <a class="nav-action nav-login" href="https://app.threatlint.dev">Log in <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main" class="post container">
+    <article>
+      <header class="post-header">
+        <a class="post-back" href="/blog/"><span aria-hidden="true">←</span> All posts</a>
+        <div class="section-kicker">SECURITY BRIEFING · REACT2SHELL</div>
+        <h1>Find every React2Shell exposure across your repositories in one scan.</h1>
+        <p class="post-dek">A CVSS 10 flaw lets anyone on the internet run code on servers that use React Server Components. The fix is a version bump. The hard part is knowing every repository and branch that still needs it. ThreatLint now answers that in one scan.</p>
+        <div class="byline">
+          <a class="byline-author" href="https://www.linkedin.com/in/ameliowright" target="_blank" rel="noopener noreferrer author">
+            <img src="/assets/authors/amelio-wright.jpg" width="56" height="56" alt="Amelio Wright">
+            <span><strong>Amelio Wright, MBA</strong><span>Connect on LinkedIn <span aria-hidden="true">↗</span></span></span>
+          </a>
+          <span class="byline-meta"><time datetime="2026-11-28">November 28, 2026</time> · 6 min read</span>
+        </div>
+      </header>
+
+      <section class="tldr" aria-labelledby="tldr-title">
+        <h2 id="tldr-title">For leadership: the two-minute version</h2>
+        <ul>
+          <li><strong>The risk.</strong> React2Shell (CVE-2025-55182, and CVE-2025-66478 in Next.js) lets an unauthenticated attacker take over a server with one HTTP request. It scores the maximum CVSS 10.0.</li>
+          <li><strong>Why it is still open.</strong> Patches shipped in December 2025, but old versions linger in release branches, forks, side projects and apps nobody owns any more. Each one is a full server compromise waiting to happen.</li>
+          <li><strong>What changed.</strong> ThreatLint's new <code>detect-2shell</code> scan checks every repository and branch your GitHub and Azure DevOps access covers. It is read-only, needs no clones, and returns a list of exactly what to upgrade and to which version.</li>
+          <li><strong>What to ask your team for.</strong> One fleet scan this week, every CRITICAL item upgraded and redeployed, secrets rotated where an exposed app was online, and the scan scheduled weekly.</li>
+        </ul>
+      </section>
+
+      <h2>What React2Shell is, in plain terms</h2>
+      <p>React Server Components let a web server run part of a React app and stream the result to the browser. On December 3, 2025, the React team disclosed that the code that decodes those server requests could be tricked into running an attacker's instructions. No password, no click, no special access: one crafted request is enough.</p>
+      <figure class="post-figure">
+        <img src="/assets/blog/react2shell-attack-path.svg" width="960" height="300" alt="Diagram: anyone on the internet sends one request to a Server Function endpoint; unsafe deserialization runs attacker code on the server, exposing secrets, data and the internal network.">
+        <figcaption>One unauthenticated request can turn into full control of the server and everything it can reach.</figcaption>
+      </figure>
+      <p>Next.js applications that use the App Router inherit the flaw, because Next.js bundles React Server Components. A week later the React team fixed several related denial-of-service and source-code-exposure bugs, so “patched in December” may still mean “not fully patched”.</p>
+
+      <div class="callout">
+        <h3>Who is affected</h3>
+        <table>
+          <caption class="sr-only">Affected packages and the first safe versions</caption>
+          <thead><tr><th scope="col">Package</th><th scope="col">Affected</th><th scope="col">Upgrade to (or later on the same line)</th></tr></thead>
+          <tbody>
+            <tr><td><code>react-server-dom-webpack</code> / <code>-parcel</code> / <code>-turbopack</code></td><td>19.0.0 – 19.2.3</td><td>19.0.4 · 19.1.5 · 19.2.4</td></tr>
+            <tr><td><code>next</code> (App Router)</td><td>15.x, 16.x, 14.3 canaries; DoS follow-ups from 13.3</td><td>14.2.35 · 15.0.8 · 15.1.12 · 15.2.9 · 15.3.9 · 15.4.11 · 15.5.10 · 16.0.11 · 16.1.5</td></tr>
+          </tbody>
+        </table>
+        <p class="callout-note">Not affected by the RCE: Next.js Pages Router apps, the Edge Runtime, and Next.js 13.x/14.x stable. Frameworks that use React Server Components (Waku, React Router RSC, RedwoodSDK, Parcel and Vite RSC plugins) are affected through the packages above. Sources: <a href="https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components" target="_blank" rel="noopener noreferrer">React</a>, <a href="https://react.dev/blog/2025/12/11/denial-of-service-and-source-code-exposure-in-react-server-components" target="_blank" rel="noopener noreferrer">React follow-up</a>, <a href="https://nextjs.org/blog/CVE-2025-66478" target="_blank" rel="noopener noreferrer">Next.js</a>.</p>
+      </div>
+
+      <h2>Why one dashboard is not enough</h2>
+      <p>Most teams patched their flagship app within days. The exposure that remains sits where nobody is looking: a <code>release/2025.11</code> branch that still deploys, a marketing microsite built on a starter template, a fork in a different organization, an Azure DevOps project from an acquisition. Dependency alerts usually watch default branches of repositories someone enrolled. Attackers do not limit themselves the same way.</p>
+
+      <h2>What ThreatLint now does</h2>
+      <p><code>detect-2shell</code> is a new ThreatLint scan with two parts. A <strong>deterministic detector</strong> reads lockfiles and compares resolved versions with a vendor-verified advisory catalog, so the same input always gives the same answer. A <strong>specialist agent</strong>, <code>appsec-2shell-detector</code>, then confirms the result in source code and writes the remediation plan.</p>
+      <figure class="post-figure">
+        <img src="/assets/blog/detect-2shell-fleet-flow.svg" width="960" height="420" alt="Diagram: select connected sources, repositories and branches; ThreatLint enumerates them through the GitHub and Azure DevOps APIs; reads only package manifests and lockfiles without cloning; matches against a verified catalog and produces an executive summary, per-repository fix versions, SARIF and issues; then the appsec-2shell-detector agent verifies exposure in source.">
+        <figcaption>Fleet scanning reads only manifests and lockfiles through the SCM API. No clones, no source downloads, nothing written back.</figcaption>
+      </figure>
+      <ul class="checks">
+        <li><strong>Your whole estate or a slice of it.</strong> Every source you have connected, every repository those credentials can read, and the default branch, all branches, or patterns such as <code>release/*</code>.</li>
+        <li><strong>Fast and light.</strong> The scanner lists the file tree and downloads only <code>package.json</code> files and npm, Yarn, pnpm or Bun lockfiles. Thousands of branches are practical.</li>
+        <li><strong>Honest confidence.</strong> A version pinned in a lockfile is <em>Confirmed</em>. A range with no lockfile is <em>Plausible</em>. An affected Next.js version with no App Router is <em>Theoretical</em>: still upgrade it, but it is not reachable as built.</li>
+        <li><strong>Fits existing workflows.</strong> Reports use the standard ThreatLint format, so CI gates, SARIF code scanning and issue creation work unchanged.</li>
+      </ul>
+
+      <h2 id="run-it">How to run it</h2>
+      <p>Pick whichever entry point your team already uses. All four run the same scanner.</p>
+
+      <ol class="run-steps">
+        <li>
+          <h3>In the ThreatLint Workbench</h3>
+          <p>Open <a href="https://app.threatlint.dev">app.threatlint.dev</a>, then go to <strong>Test → 2Shell exposure</strong>.</p>
+          <ol class="ui-steps">
+            <li>Tick the connected sources to include, or <strong>All connected sources</strong>.</li>
+            <li>Choose <strong>All repositories this credential can access</strong>, or search and select specific ones.</li>
+            <li>Choose <strong>Default branch</strong>, <strong>All branches</strong>, or list branches such as <code>main, release/*</code>.</li>
+            <li>Select <strong>Scan for 2Shell exposure</strong>. Progress and results stream in; download the JSON or Markdown report when it finishes.</li>
+          </ol>
+        </li>
+        <li>
+          <h3>From the command line</h3>
+          <pre><code># One checkout
+threatlint detect-2shell scan --path .
+
+# Every repo and branch your GitHub and Azure DevOps logins can read
+threatlint detect-2shell fleet --all --branches all --output 2shell-report.md
+
+# A subset: wildcards work for repositories and branches
+threatlint detect-2shell fleet --repo "acme/*" --repo "Payments/checkout-web" --branches "main,release/*"
+
+# Fail a pipeline on confirmed critical exposure
+threatlint detect-2shell scan --path . --fail-on CRITICAL</code></pre>
+          <p>Credentials come from your existing logins: <code>threatlint github login</code> (or <code>GH_TOKEN</code>) and <code>threatlint ado login</code>.</p>
+        </li>
+        <li>
+          <h3>In CI</h3>
+          <p>The <strong>AppSec Detect 2Shell</strong> GitHub Actions workflow (and its Azure Pipelines twin) runs on lockfile changes and weekly. To sweep the fleet, open <strong>Actions → AppSec Detect 2Shell → Run workflow</strong> and set <strong>fleet</strong> to true.</p>
+        </li>
+        <li>
+          <h3>From an AI assistant over MCP</h3>
+          <p>Connected assistants can call <code>start_2shell_scan</code>, then <code>get_2shell_scan</code> for results. Starting a scan requires explicit confirmation.</p>
+        </li>
+      </ol>
+
+      <h2>Reading the results</h2>
+      <p>The report opens with a one-line risk level and a short list of targets that need action, each with the installed version and the version to upgrade to. Below it, every finding cites the exact lockfile line, the CVEs, and an acceptance check your engineers can verify.</p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">How to act on each result</caption>
+          <thead><tr><th scope="col">Result</th><th scope="col">What it means</th><th scope="col">Action</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill pill-critical">Critical · Confirmed</span></td><td>An affected version is installed and reachable.</td><td>Upgrade, redeploy, rotate secrets if it was online after Dec 4, 2025, and review logs.</td></tr>
+            <tr><td><span class="pill pill-high">High</span></td><td>Denial-of-service or source-exposure follow-ups remain.</td><td>Upgrade in the next release.</td></tr>
+            <tr><td><span class="pill">Theoretical</span></td><td>Affected version, but not reachable as built.</td><td>Upgrade with normal maintenance.</td></tr>
+            <tr><td><span class="pill">Error</span></td><td>The scanner could not read that target.</td><td>Not a clean result. Fix access and rescan.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Questions leaders should ask this week</h2>
+      <ol class="questions">
+        <li>Have we scanned <em>every</em> repository and branch we deploy from, including acquired and archived-but-live apps?</li>
+        <li>Which internet-facing apps ran an affected version after December 4, 2025, and have their secrets been rotated?</li>
+        <li>Is the scan scheduled, so new repositories and branches are checked without anyone remembering to?</li>
+      </ol>
+
+      <section class="trust-note" aria-labelledby="data-title">
+        <h2 id="data-title">How your data is handled</h2>
+        <p>The scan is read-only. It uses the credentials you have already connected, downloads only package manifests and lockfiles, never clones or stores source code, and never sends traffic to your live applications. Tokens stay in memory and are never logged or returned. To measure the program, the ThreatLint server keeps aggregate counts only (scans run and exposures found, with no repository names, paths or credentials). That data is never exposed through the app, and operators can turn it off.</p>
+      </section>
+
+      <section class="post-cta">
+        <h2>Run your first fleet scan</h2>
+        <p>Connect GitHub or Azure DevOps, choose what to include, and get an answer for every branch you ship.</p>
+        <div class="actions actions-center">
+          <a class="button button-primary" href="https://app.threatlint.dev">Open ThreatLint <span aria-hidden="true">↗</span></a>
+          <a class="button button-outline" href="/docs/">Read the docs <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="/blog/">Blog</a><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
+</body>
+</html>

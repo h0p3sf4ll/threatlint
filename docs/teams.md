@@ -56,7 +56,7 @@ Review this supplied finding and code excerpt. Identify missing context,
 give a disposition only where supported, and propose the next verification step.
 ```
 
-The bot routes the 22 specialist commands and returns the report in the
+The bot routes the 23 specialist commands and returns the report in the
 conversation, splitting long responses in order. It does not create a Word file.
 Missing source is a limitation, not permission to invent a code path.
 

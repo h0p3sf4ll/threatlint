@@ -30,6 +30,7 @@
   <script src="/scanners.js" defer></script>
   <script src="/design-inputs.js" defer></script>
   <script src="/security-platform.js" defer></script>
+  <script src="/two-shell.js" defer></script>
   <script src="/finding-intelligence.js" defer></script>
   <script src="/unified-workflows.js" defer></script>
   <script src="/specialist-workflows.js" defer></script>
@@ -43,6 +44,7 @@
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
       <button class="nav-item" data-view="designreviews" aria-controls="view-designreviews"><span class="nav-icon" aria-hidden="true">⑂</span>Design &amp; threats</button>
       <button class="nav-item" data-view="specialistreviews" aria-controls="view-specialistreviews"><span class="nav-icon" aria-hidden="true">⌘</span>Specialist reviews</button>
+      <button class="nav-item" data-view="twoshell" aria-controls="view-twoshell"><span class="nav-icon" aria-hidden="true">⌖</span><span class="nav-label">2Shell exposure<small class="nav-caption">React2Shell fleet scan</small></span></button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Scan running app<small class="nav-caption">Preview · not yet GA</small></span></button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>Finding triage</button>
       <div class="sidebar-label">2 · FIX</div>
@@ -174,6 +176,58 @@
         <div class="section-heading"><div><h2>Findings to act on</h2><p>Highest severity first. A scanner result is a lead; review its context.</p></div><button class="button secondary small-button" data-go-view="intelligence">Explore repository risk →</button></div>
         <div id="security-findings" class="platform-findings"><p class="subtle">Select your code and run a scan to see results.</p></div>
         <details class="platform-history"><summary>Previous scans in this workspace</summary><div id="security-history"></div></details>
+      </section>
+
+      <section class="view operations-view two-shell-view" id="view-twoshell" aria-labelledby="twoshell-title" hidden>
+        <div class="page-heading compact"><div><div class="eyebrow">TEST · EVERY REPOSITORY · EVERY BRANCH</div><h1 id="twoshell-title">2Shell exposure</h1><p class="page-description">Find React2Shell (CVE-2025-55182, CVE-2025-66478) and its follow-up React Server Components flaws across the repositories your connected GitHub and Azure DevOps credentials can read. Lockfiles are read through the provider API; nothing is cloned.</p></div><button class="button secondary" type="button" data-go-view="sources">Manage sources</button></div>
+        <output class="operations-status" id="twoshell-status" aria-live="polite" aria-atomic="true">Loading connected sources…</output>
+        <form id="twoshell-form" class="two-shell-form" autocomplete="off" novalidate>
+          <section class="panel" aria-labelledby="twoshell-sources-title">
+            <div class="panel-header"><div><span class="eyebrow">01 / SOURCES</span><h2 id="twoshell-sources-title">Which credentials?</h2></div><button class="text-button" id="twoshell-refresh" type="button">↻ Refresh</button></div>
+            <div class="operations-panel-body">
+              <fieldset class="operations-fieldset"><legend class="operations-sr-only">Connected sources to scan</legend>
+                <label class="checkbox-label"><input type="checkbox" id="twoshell-all-sources"><span><strong>All connected sources</strong></span></label>
+                <ul class="two-shell-sources" id="twoshell-sources" aria-label="Connected sources"><li class="operations-empty-note">Loading…</li></ul>
+              </fieldset>
+            </div>
+          </section>
+          <section class="panel" aria-labelledby="twoshell-repos-title">
+            <div class="panel-header"><div><span class="eyebrow">02 / REPOSITORIES</span><h2 id="twoshell-repos-title">Which repositories?</h2></div><span class="operations-pill" id="twoshell-repo-count">ALL</span></div>
+            <div class="operations-panel-body">
+              <fieldset class="operations-fieldset"><legend class="operations-sr-only">Repository scope</legend>
+                <label class="checkbox-label"><input type="radio" name="twoshell-repo-scope" value="all" checked><span>All repositories these credentials can access</span></label>
+                <label class="checkbox-label"><input type="radio" name="twoshell-repo-scope" value="selected"><span>Choose repositories</span></label>
+              </fieldset>
+              <div id="twoshell-picker" class="two-shell-picker" hidden>
+                <div class="operations-field"><label for="twoshell-picker-source">Source</label><select id="twoshell-picker-source"></select></div>
+                <div class="operations-input-row" role="search"><label class="search-field"><span aria-hidden="true">⌕</span><input id="twoshell-search" type="search" placeholder="Search repositories…" aria-label="Search repositories for this source" maxlength="200"></label><button class="button secondary" id="twoshell-search-button" type="button">Search</button></div>
+                <ul class="two-shell-repositories" id="twoshell-repositories" aria-label="Repositories to scan"></ul>
+                <button class="button secondary operations-full-button" id="twoshell-more" type="button" hidden>Load more repositories</button>
+              </div>
+            </div>
+          </section>
+          <section class="panel" aria-labelledby="twoshell-branches-title">
+            <div class="panel-header"><div><span class="eyebrow">03 / BRANCHES</span><h2 id="twoshell-branches-title">Which branches?</h2></div></div>
+            <div class="operations-panel-body">
+              <fieldset class="operations-fieldset"><legend class="operations-sr-only">Branch scope</legend>
+                <label class="checkbox-label"><input type="radio" name="twoshell-branch-scope" value="default" checked><span>Default branch</span></label>
+                <label class="checkbox-label"><input type="radio" name="twoshell-branch-scope" value="all"><span>All branches <span class="subtle">(up to 50 per repository)</span></span></label>
+                <label class="checkbox-label"><input type="radio" name="twoshell-branch-scope" value="named"><span>These branches</span></label>
+              </fieldset>
+              <div class="operations-field"><label for="twoshell-branch-list">Branch names <span class="subtle">comma-separated, * wildcards allowed</span></label><input id="twoshell-branch-list" placeholder="main, release/*" maxlength="2000" spellcheck="false" disabled></div>
+              <button class="button primary operations-full-button" id="twoshell-start" type="submit" disabled>Scan for 2Shell exposure →</button>
+              <button class="button secondary operations-full-button" id="twoshell-cancel" type="button" hidden>Cancel scan</button>
+            </div>
+          </section>
+        </form>
+        <section class="panel two-shell-results" aria-labelledby="twoshell-results-title">
+          <div class="panel-header"><div><span class="eyebrow">04 / RESULTS</span><h2 id="twoshell-results-title">Exposure across your fleet</h2></div><div class="two-shell-downloads"><button class="button secondary small-button" id="twoshell-download-json" type="button" disabled>Download JSON</button><button class="button secondary small-button" id="twoshell-download-md" type="button" disabled>Download report</button></div></div>
+          <div class="operations-panel-body">
+            <div class="two-shell-progress"><progress id="twoshell-progress" max="1" value="0" aria-label="Scan progress"></progress><span class="small subtle" id="twoshell-progress-label">No scan yet.</span></div>
+            <div class="platform-coverage two-shell-tiles" id="twoshell-tiles"></div>
+            <div class="two-shell-table-wrap"><table class="two-shell-table" aria-describedby="twoshell-results-title"><thead><tr><th scope="col">Repository</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Severity</th><th scope="col">Package → fix</th></tr></thead><tbody id="twoshell-rows"><tr><td colspan="5" class="subtle">Start a scan to see results.</td></tr></tbody></table></div>
+          </div>
+        </section>
       </section>
 
       <section class="view" id="view-intelligence" aria-labelledby="intelligence-title" hidden>

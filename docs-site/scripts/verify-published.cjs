@@ -60,8 +60,11 @@ function collectTargets(base) {
     check(!existing || (existing.expected?.equals(target.expected) && existing.csp === target.csp), 'Conflicting expectations for a published route');
     if (!existing) targets.set(target.resource, target);
   };
-  for (const name of ['index.html', 'styles.css', 'assets/mark.svg', 'robots.txt', 'sitemap.xml']) {
-    add({ resource: name === 'index.html' ? '/' : '/' + name, kind: 'root', expected: localBytes(path.join(ROOT, name)) });
+  for (const name of ['index.html', 'styles.css', 'assets/mark.svg', 'robots.txt', 'sitemap.xml',
+    'blog/index.html', 'blog/blog.css', 'blog/react2shell-fleet-scanning/index.html',
+    'assets/authors/amelio-wright.jpg', 'assets/blog/react2shell-attack-path.svg', 'assets/blog/detect-2shell-fleet-flow.svg']) {
+    const resource = name === 'index.html' ? '/' : '/' + name.replace(/(^|\/)index\.html$/, '$1');
+    add({ resource, kind: 'root', expected: localBytes(path.join(ROOT, name)) });
   }
   const directives = [...fs.readFileSync(path.join(DOCS, '.htaccess'), 'utf8').matchAll(/Header\s+always\s+set\s+Content-Security-Policy\s+"([^"\r\n]+)"/g)];
   check(directives.length === 1, 'Expected exactly one built documentation CSP');

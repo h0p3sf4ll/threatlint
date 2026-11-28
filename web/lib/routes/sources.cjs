@@ -208,7 +208,14 @@ function registerSourceRoutes(app, { store, scm, integrations = {} }) {
 
   // Both transports share saved-source activation, credential rotation, discovery scoping,
   // and checkout provenance. Never hand MCP the raw manager and bypass these checks.
-  return { providers: () => SOURCE_MANAGER_CAPABILITIES, list, connect, reconnect, disconnect, repositories, branches, checkout };
+  const facade = { providers: () => SOURCE_MANAGER_CAPABILITIES, list, connect, reconnect, disconnect, repositories, branches, checkout };
+  // Host-internal and non-enumerable, so spreading or serializing the facade never carries it. It refreshes
+  // saved credentials exactly like discovery, then returns the token for a local child-process environment only.
+  Object.defineProperty(facade, 'credentialFor', { enumerable: false, value: async id => {
+    if (typeof scm.credential !== 'function') throw new HttpError('This source manager cannot share credentials with local scans.', 503);
+    return scm.credential(await currentConnection(id));
+  } });
+  return facade;
 }
 
 module.exports = { registerSourceRoutes };

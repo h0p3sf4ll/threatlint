@@ -146,3 +146,12 @@ h1{font-size:clamp(45px,5.3vw,75px);line-height:1.11;font-weight:800;margin:29px
 @media(max-width:360px){.nav-shell{padding-inline:16px;gap:10px}.nav-shell .brand{gap:8px;font-size:22px}.nav-login{padding:10px 12px}.brand small{letter-spacing:1.6px}}
 
 .ambient-layer{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+
+/* React2Shell launch: hero announcement and full-width capability. */
+.announce{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;max-width:560px;border:1px solid rgba(249,203,143,.35);background:rgba(249,203,143,.07);border-radius:12px;padding:12px 16px;margin:22px 0 0;font-size:13px;line-height:1.6;color:#d9c7aa}
+.announce strong{color:var(--amber);letter-spacing:1px;font-size:11px}
+.announce a{color:var(--mint);font-weight:750;white-space:nowrap}
+.capability-wide{grid-column:1/-1;display:flex;gap:20px;align-items:flex-start;min-height:0;border-color:rgba(140,229,199,.35)}
+.capability-wide .cap-icon{flex-shrink:0;margin-bottom:0}
+.capability-wide .inline-link{font-size:13px;margin-top:4px}
+@media(max-width:760px){.capability-wide{flex-direction:column}}

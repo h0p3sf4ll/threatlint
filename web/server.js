@@ -131,10 +131,12 @@ function createWorkbench(options = {}) {
   registerDesignInputRoutes(app, { designInputs });
   registerScannerRoutes(app, { scannerBatch, integrations: options.integrations });
   registerSecurityScannerRoutes(app, { securityScanner });
+  const twoShellFleet = require('./lib/two-shell-fleet.cjs').createTwoShellFleet({ sources, integrations: options.integrations });
+  require('./lib/routes/two-shell.cjs').registerTwoShellRoutes(app, { twoShellFleet });
   registerFindingIntelligenceRoutes(app, { intelligence, store });
   const mcpActivity = { active: 0 };
   const mcpDependencies = { store, intelligence, reports, scm, securityScanner, workspaces, reviews, sources, mcpActivity,
-    scanImports, designInputs, runtime, history, conversations, scannerBatch, avitRuns, integrations: options.integrations };
+    scanImports, designInputs, runtime, history, conversations, scannerBatch, avitRuns, twoShellFleet, integrations: options.integrations };
   require('./lib/mcp.cjs').registerMcpRoutes(app, mcpDependencies);
 
   // Native desktop remains an individually owned application. Company authorization and shared
@@ -177,7 +179,7 @@ function createWorkbench(options = {}) {
   // Only the gateway's private worker credential can reach this endpoint. Desktop does not expose it.
   app.get('/internal/activity', (_req, res) => {
     if (process.env.THREATLINT_PROFILE_WORKER !== '1') return res.status(404).json({ error: 'Not found' });
-    res.json({ busy: activeRequestCount() > 0 || mcpActivity.active > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || [...store.sessions.keys()].some(id => securityScanner.isBusy(id)) || sidekick.active || runtime.active === true || wss.clients.size > 0 });
+    res.json({ busy: activeRequestCount() > 0 || mcpActivity.active > 0 || socketOperations > 0 || avitRuns.active || scanImports.active || twoShellFleet.active || [...store.sessions.keys()].some(id => securityScanner.isBusy(id)) || sidekick.active || runtime.active === true || wss.clients.size > 0 });
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
@@ -195,7 +197,7 @@ function createWorkbench(options = {}) {
     pipeline.abortAll();
     const avitClosing = avitRuns.close();
     unsubscribe();
-    await Promise.all([avitClosing, reviews.close(), pipeline.close(), scanImports.close(), securityScanner.close()]);
+    await Promise.all([avitClosing, reviews.close(), pipeline.close(), scanImports.close(), securityScanner.close(), twoShellFleet.close()]);
     await runtime.close?.();
     for (const socket of wss.clients) socket.terminate();
     await new Promise(resolve => wss.close(resolve));

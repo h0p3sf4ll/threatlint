@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-labelledby="t d" font-family="Inter, Segoe UI, sans-serif">
+  <title id="t">How React2Shell turns one request into server takeover</title>
+  <desc id="d">An unauthenticated attacker sends one crafted HTTP request to a React Server Components endpoint. The vulnerable deserializer executes attacker code on the server, which exposes secrets, data and internal systems.</desc>
+  <rect width="960" height="300" rx="18" fill="#0c202a"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8ce5c7"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f9cb8f"/></marker>
+  </defs>
+  <g fill="none" stroke-width="2">
+    <rect x="28" y="92" width="168" height="116" rx="14" stroke="#f9cb8f" fill="#2a2418"/>
+    <rect x="264" y="92" width="200" height="116" rx="14" stroke="#81d7df" fill="#10283a"/>
+    <rect x="532" y="92" width="168" height="116" rx="14" stroke="#f9cb8f" fill="#2a2418"/>
+    <rect x="768" y="92" width="168" height="116" rx="14" stroke="#f9cb8f" fill="#2a2418"/>
+    <path d="M198 150H258" stroke="#f9cb8f" marker-end="url(#r)"/>
+    <path d="M466 150H526" stroke="#f9cb8f" marker-end="url(#r)"/>
+    <path d="M702 150H762" stroke="#f9cb8f" marker-end="url(#r)"/>
+  </g>
+  <g fill="#edf6f5" text-anchor="middle">
+    <text x="112" y="132" font-size="15" font-weight="700">Anyone on</text>
+    <text x="112" y="152" font-size="15" font-weight="700">the internet</text>
+    <text x="112" y="182" font-size="12" fill="#c9b48f">no login, no user action</text>
+    <text x="364" y="132" font-size="15" font-weight="700">Server Function</text>
+    <text x="364" y="152" font-size="15" font-weight="700">endpoint (RSC)</text>
+    <text x="364" y="182" font-size="12" fill="#9db1b6">Next.js App Router, Waku,</text>
+    <text x="364" y="198" font-size="12" fill="#9db1b6">React Router RSC, …</text>
+    <text x="616" y="132" font-size="15" font-weight="700">Attacker code</text>
+    <text x="616" y="152" font-size="15" font-weight="700">runs on server</text>
+    <text x="616" y="182" font-size="12" fill="#c9b48f">unsafe deserialization</text>
+    <text x="852" y="132" font-size="15" font-weight="700">Secrets, data,</text>
+    <text x="852" y="152" font-size="15" font-weight="700">internal network</text>
+    <text x="852" y="182" font-size="12" fill="#c9b48f">full compromise</text>
+  </g>
+  <g fill="#8ea9ae" font-size="12" text-anchor="middle">
+    <text x="228" y="138">1 request</text>
+  </g>
+  <text x="28" y="50" fill="#8ce5c7" font-size="12" font-weight="800" letter-spacing="2">CVE-2025-55182 · CVSS 10.0 · UNAUTHENTICATED REMOTE CODE EXECUTION</text>
+  <text x="28" y="262" fill="#9db1b6" font-size="13">The fix is a dependency upgrade. The risk is not knowing every repository and branch that still ships the old version.</text>
+</svg>

@@ -54,6 +54,7 @@ const ROLE_META = {
   'appsec-security-test-planner': ['Security test plan', 'Analysis', 'ST', 'Plan evidence-grounded regression coverage, role/tenant cases, and manual SSO/MFA prerequisites.', 'Traceable acceptance plan with owners, authorization blockers, and NOT RUN test cases.'],
   'appsec-secure-codegen-reviewer': ['Secure codegen', 'Analysis', 'SG', 'Catch insecure defaults in AI-generated or new code and propose secure-by-default rewrites.', 'Source-to-sink findings, before/after secure rewrites, and reusable IDE/assistant guardrails.'],
   'appsec-privacy-reviewer': ['Privacy & data', 'Analysis', 'PD', 'Inventory personal data and trace it to logs, analytics, AI providers, and third parties.', 'Data inventory, flow-specific findings, minimization/retention fixes, and synthetic-data acceptance cases.'],
+  'appsec-2shell-detector': ['2Shell RCE detector', 'Supply Chain', 'TS', 'Find React2Shell and Next.js RSC remote-code-execution exposure from resolved lockfile versions.', 'Package-root exposure inventory, CVE-mapped findings, same-line upgrades, and rotation triggers.'],
 };
 
 function loadSkills() {

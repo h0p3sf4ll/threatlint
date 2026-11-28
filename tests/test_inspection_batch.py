@@ -79,7 +79,7 @@ def test_failure_drains_inflight_work_before_returning(monkeypatch):
 def test_canonical_contracts_cover_every_agent_and_reach_prompts():
     contracts = agent_contracts()
     assert set(contracts) == set(skill_map())
-    assert len({contract["inputs"] for contract in contracts.values()}) == 22
+    assert len({contract["inputs"] for contract in contracts.values()}) == 23
     for agent, contract in contracts.items():
         prompt = agent_prompt(agent)
         assert contract["inputs"] in prompt

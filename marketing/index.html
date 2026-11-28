@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07131b">
-  <meta name="description" content="One security workbench for code review, scanner triage, source-aware tuning, and multi-tracker metrics. Work in your browser or on desktop with 22 specialist agents.">
+  <meta name="description" content="One security workbench for code review, scanner triage, source-aware tuning, and multi-tracker metrics. Work in your browser or on desktop with 23 specialist agents, including fleet-wide React2Shell detection.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="ThreatLint — Find. Explain. Act.">
   <meta property="og:description" content="Security should help you ship, not hand you another unread report. Evidence-led application security for the way developers work.">
@@ -30,6 +30,7 @@
         <a href="#why">Why ThreatLint</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#how-it-works">How it works</a>
+        <a href="/blog/">Blog</a>
         <a href="/docs/">Docs</a>
         <a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a>
       </div>
@@ -48,6 +49,7 @@
           <a class="button button-outline" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
         </div>
         <div class="hero-support"><span class="support-line"></span> Built for developers, AppSec teams, and the space between them.</div>
+        <p class="announce"><strong>New</strong> Scan every repository and branch for React2Shell (CVE-2025-55182) in one pass. <a href="/blog/react2shell-fleet-scanning/">Read the briefing <span aria-hidden="true">→</span></a></p>
       </div>
       <div class="hero-visual" aria-label="Illustrative security review finding with evidence, impact, and next action">
         <div class="visual-chrome"><span class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>THREATLINT / REVIEW</span><span class="chrome-right">EXAMPLE OUTPUT</span></div>
@@ -66,8 +68,8 @@
     </section>
 
     <section class="metric-ribbon container" aria-label="Product highlights">
-      <div class="metric"><strong>22</strong><span>specialist agents</span></div>
-      <div class="metric"><strong>26</strong><span>focused skills</span></div>
+      <div class="metric"><strong>23</strong><span>specialist agents</span></div>
+      <div class="metric"><strong>27</strong><span>focused skills</span></div>
       <div class="metric"><strong>Cloud <em>/</em> Local</strong><span>model options</span></div>
       <div class="metric"><strong>One</strong><span>clear next action</span></div>
     </section>
@@ -86,11 +88,12 @@
         <div class="section-intro"><div class="section-kicker">02 / CAPABILITIES</div><h2 id="capabilities-title">A security teammate<br><span class="muted">for the entire lifecycle.</span></h2><p>Use focused reviewers where the questions happen: during design, in the pull request, after a scan, and before closing a finding.</p></div>
         <div class="capability-grid">
           <article class="capability"><div class="cap-icon" aria-hidden="true">&lt;/&gt;</div><h3>Review code in one place</h3><p>Connect a repository, run scanners, and prepare a specialist review from the same workflow. Semgrep Pro is selected when the current login and engine are verified.</p></article>
-          <article class="capability"><div class="cap-icon" aria-hidden="true">⟡</div><h3>Choose focused expertise</h3><p>Find all 22 agents in grouped design, application security, AI and data, delivery, and verification workflows. Choose one specialist or prepare a coordinated review.</p></article>
+          <article class="capability"><div class="cap-icon" aria-hidden="true">⟡</div><h3>Choose focused expertise</h3><p>Find all 23 agents in grouped design, application security, AI and data, delivery, and verification workflows. Choose one specialist or prepare a coordinated review.</p></article>
           <article class="capability"><div class="cap-icon" aria-hidden="true">≋</div><h3>Triage across your tools</h3><p>Review ServiceNow records, Azure DevOps work items, Jira tickets, GitHub issues, DefectDojo, SonarQube, or uploaded scan reports. Add an optional source link for more context.</p></article>
           <article class="capability"><div class="cap-icon" aria-hidden="true">✓</div><h3>Fix and tune at the source</h3><p>Keep each finding's scanner origin. Proven false positives can lead to scoped Semgrep, Trivy, or SonarQube tuning, with explicit review before changes are applied.</p></article>
           <article class="capability"><div class="cap-icon" aria-hidden="true">▦</div><h3>Measure the individual findings</h3><p>Combine supported trackers in saved metrics views. Group findings by types such as exposed secrets, SQL injection, and XSS, and keep repository risk alongside actionable findings.</p></article>
           <article class="capability"><div class="cap-icon" aria-hidden="true">↔</div><h3>Work in your browser or on desktop</h3><p>Use the same review workflows in either app. The web workbench keeps personal profiles separate and supports organization roles and shared issue management.</p></article>
+          <article class="capability capability-wide"><div class="cap-icon" aria-hidden="true">⌖</div><div><h3>Sweep the whole fleet for React2Shell</h3><p>Check every repository and branch your GitHub and Azure DevOps access covers, or just the ones you choose, for CVE-2025-55182 and its Next.js and follow-up CVEs. Read-only, no clones, and every result names the exact version to upgrade to. <a class="inline-link" href="/blog/react2shell-fleet-scanning/">How to run it <span aria-hidden="true">↗</span></a></p></div></article>
         </div>
       </div>
     </section>
@@ -132,6 +135,6 @@
     </section>
   </main>
 
-  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/agents.md" target="_blank" rel="noopener noreferrer">Agents</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
+  <footer class="footer"><div class="container footer-inner"><div class="footer-brand"><img src="/assets/mark.svg" width="30" height="34" alt=""><div><strong>threatlint</strong><span>Find. Explain. Act.</span></div></div><div class="footer-links"><a href="/blog/">Blog</a><a href="https://github.com/h0p3sf4ll/threatlint" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/docs/agents.md" target="_blank" rel="noopener noreferrer">Agents</a><a href="https://github.com/h0p3sf4ll/threatlint/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></div><small>© 2026 ThreatLint. Evidence first.</small></div></footer>
 </body>
 </html>

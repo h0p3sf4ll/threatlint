@@ -82,3 +82,27 @@ body[data-experience="advanced"] .guided-only{display:none}
 @media(max-width:800px){.platform-gallery{grid-template-columns:1fr}}
 @media(max-width:1050px){.security-scan-panel{grid-template-columns:1fr}.experience-switch>span{display:none}.role-workers{width:100%;justify-content:flex-end}}
 @media(max-width:700px){.security-steps,.platform-coverage{grid-template-columns:1fr}.guided-path{display:block}.security-scan-panel,.platform-finding{padding:16px}.platform-filter-row{display:grid;grid-template-columns:1fr}.platform-filter-row label{min-width:0}.topbar-actions{gap:8px}.experience-switch select{max-width:94px}.platform-finding-heading{gap:8px}}
+
+/* 2Shell exposure (detect-2shell fleet scans) */
+.two-shell-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:18px}
+.two-shell-sources,.two-shell-repositories{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}
+.two-shell-repositories{max-height:320px;overflow:auto;margin-top:12px}
+.two-shell-repositories .checkbox-label{margin:0;padding:10px 11px;width:100%}
+.two-shell-picker{margin-top:12px}
+.two-shell-progress{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.two-shell-progress progress{flex:1;min-width:180px;height:10px;accent-color:var(--accent)}
+.two-shell-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+.two-shell-tile{display:flex;flex-direction:column;gap:4px}
+.two-shell-tile-value{font-size:26px;font-weight:600;line-height:1.1}
+.two-shell-tile.tone-bad .two-shell-tile-value{color:var(--red)}
+.two-shell-tile.tone-good .two-shell-tile-value{color:var(--accent)}
+.two-shell-tile.tone-warn .two-shell-tile-value{color:var(--amber)}
+.two-shell-downloads{display:flex;gap:8px;flex-wrap:wrap}
+.two-shell-table-wrap{overflow:auto;max-height:560px;border:1px solid var(--border);border-radius:8px}
+.two-shell-table{width:100%;border-collapse:collapse;font-size:13px}
+.two-shell-table th,.two-shell-table td{padding:9px 11px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.two-shell-table th{position:sticky;top:0;background:var(--surface);font-weight:500}
+.two-shell-row.status-vulnerable td:nth-child(3){color:var(--red)}
+.two-shell-row.status-error td:nth-child(3){color:var(--amber)}
+@media(max-width:1100px){.two-shell-form{grid-template-columns:1fr}}
+@media(max-width:640px){.two-shell-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.two-shell-table th:nth-child(4),.two-shell-table td:nth-child(4){display:none}}

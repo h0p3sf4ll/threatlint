@@ -7,7 +7,7 @@
 <text x="48" y="87" class="sub">Component map · implementation-oriented · model and native-client behavior depend on configuration</text>
 <rect x="48" y="123" width="1344" height="125" rx="12" fill="#e9f7f3" stroke="#71b5a7" stroke-width="1.5"/>
 <text x="68" y="152" class="head">Canonical review material</text>
-<text x="68" y="177" class="body">22 specialist protocols + 26 skills + agent-skills.json + agent-contracts.json</text>
+<text x="68" y="177" class="body">23 specialist protocols + 27 skills + agent-skills.json + agent-contracts.json</text>
 <text x="68" y="202" class="body">Installers and prompt assembly share contracts; CI and conversation adapters also use purpose-specific prompt packs.</text>
 <path d="M198 248V295" class="line"/>
 <path d="M546 248V295" class="line"/>

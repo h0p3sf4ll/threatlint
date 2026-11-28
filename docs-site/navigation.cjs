@@ -5,7 +5,7 @@ const category = (label, items, collapsed = true) => ({ type: 'category', label,
 const sidebar = [
   'index',
   category('Getting started', ['learning', 'setup', 'profiles', 'model-providers', 'troubleshooting'], false),
-  category('Core workflows', ['workbench', 'security-scanner', 'threat-modeling', 'finding-intelligence', 'reports', 'dashboards', 'sidekick']),
+  category('Core workflows', ['workbench', 'security-scanner', 'detect-2shell', 'threat-modeling', 'finding-intelligence', 'reports', 'dashboards', 'sidekick']),
   category('Integrations', ['integrations', 'github-app', 'aws-parameters', 'avit-integration', 'integrations/defectdojo', 'integrations/sonarqube', 'teams', 'mcp']),
   category('Automation', ['ide', 'github-actions', 'ci-templates', 'review-orchestration', 'avit-orchestrator']),
   category('Reference', ['mcp-tools', 'agents', 'runtime-redteam', 'assurance', 'semgrep-policies', 'integrations/README', 'integrations/authoring', 'web-app']),

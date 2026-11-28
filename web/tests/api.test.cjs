@@ -95,6 +95,7 @@ describe('GET /api/agents', () => {
       'appsec-secure-codegen-reviewer', 'appsec-privacy-reviewer']) {
       assert.equal(byId[id]?.category, 'Analysis', id);
     }
+    assert.equal(byId['appsec-2shell-detector']?.category, 'Supply Chain');
   });
 });
 

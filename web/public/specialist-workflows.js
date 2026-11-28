@@ -11,7 +11,7 @@
     specialistreviews: [
       ['application', 'Application security', 'Review changes and the application boundaries that protect users and data.', ['code-reviewer', 'api-security-reviewer', 'auth-reviewer', 'business-logic-reviewer', 'client-security-reviewer', 'crypto-reviewer']],
       ['data', 'AI & data', 'Review AI authority, generated code, and sensitive data flows.', ['ai-security-reviewer', 'privacy-reviewer', 'secure-codegen-reviewer']],
-      ['delivery', 'Delivery & infrastructure', 'Review dependencies, exposed credentials, infrastructure, and build pipelines.', ['dependency-auditor', 'secrets-scanner', 'iac-reviewer', 'cicd-auditor']],
+      ['delivery', 'Delivery & infrastructure', 'Review dependencies, exposed credentials, infrastructure, and build pipelines.', ['dependency-auditor', '2shell-detector', 'secrets-scanner', 'iac-reviewer', 'cicd-auditor']],
       ['verification', 'Verification & assurance', 'Verify fixes, compare revisions, correlate runtime evidence, and plan security acceptance.', ['verify-fix', 'threat-delta', 'runtime-reviewer', 'security-test-planner', 'compliance-checker']],
     ],
   };

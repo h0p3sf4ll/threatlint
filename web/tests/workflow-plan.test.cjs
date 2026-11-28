@@ -9,7 +9,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 test('every role has a distinct, runtime-loaded handoff contract', () => {
   assert.deepEqual(Object.keys(CONTRACTS), Object.keys(AGENTS));
-  assert.equal(new Set(Object.values(CONTRACTS).map(contract => contract.inputs)).size, 22);
+  assert.equal(new Set(Object.values(CONTRACTS).map(contract => contract.inputs)).size, 23);
   for (const agent of Object.values(AGENTS)) {
     assert.ok(agent.systemPrompt.includes(agent.contract.boundaries));
     assert.equal(agent.inputHint, agent.contract.inputs);

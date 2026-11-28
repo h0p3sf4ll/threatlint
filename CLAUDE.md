@@ -20,6 +20,7 @@ This project provides read-only application-security subagents for Claude Code.
 - Delegate verification of whether a specific finding has been remediated to `appsec-verify-fix`.
 - Delegate secure-by-default review of AI/model-generated or newly written code to `appsec-secure-codegen-reviewer`.
 - Delegate privacy and sensitive-data flow reviews (PII inventory, logging/analytics/third-party flows, retention, consent) to `appsec-privacy-reviewer`.
+- Delegate React2Shell / 2Shell-family RCE exposure detection (React Server Components and Next.js App Router vulnerable versions, upgrade paths, rotation triggers) to `appsec-2shell-detector`.
 - When a threat-modeling request has no target or application context, use `appsec-threat-modeler` anyway. It must autonomously discover the repository, select an evidence-supported initial scope, and explain that choice.
 
 ## Boundaries

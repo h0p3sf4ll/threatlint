@@ -113,6 +113,6 @@ const { createWorkbench } = require('../server.js');
     assert.equal(await page.locator('#runtime-source-build').isChecked(), false);
     await page.screenshot({ path: '/tmp/threatlint-unified-runtime.png', fullPage: true });
     assert.deepEqual(errors, []);
-    console.log('PASS: all 22 agent entry points, accessible grouped tabs, mobile layouts, control spacing, unified scanner triage, GitHub ticket ingestion, private tracker settings, finding counts, persisted multi-source metrics, Pro descriptor, and source-runtime prompts.');
+    console.log('PASS: all 23 agent entry points, accessible grouped tabs, mobile layouts, control spacing, unified scanner triage, GitHub ticket ingestion, private tracker settings, finding counts, persisted multi-source metrics, Pro descriptor, and source-runtime prompts.');
   } catch (error) { console.error(error); throw error; } finally { await browser.close(); await app.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -24,7 +24,7 @@ const { chromium } = require('playwright');
     await page.goto(base, { waitUntil: 'networkidle' });
     assert.equal(await page.locator('header .nav-login').getAttribute('href'), 'https://app.threatlint.dev');
     assert.match(await page.locator('#capabilities').innerText(), /Semgrep Pro/);
-    for (const text of ['Azure DevOps', 'Jira', 'GitHub issues', 'Trivy', 'SonarQube', 'SQL injection', '22']) assert.match(await page.locator('main').innerText(), new RegExp(text));
+    for (const text of ['Azure DevOps', 'Jira', 'GitHub issues', 'Trivy', 'SonarQube', 'SQL injection', '23', 'React2Shell']) assert.match(await page.locator('main').innerText(), new RegExp(text));
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
       const login = page.locator('header .nav-login'); assert.equal(await login.isVisible(), true);

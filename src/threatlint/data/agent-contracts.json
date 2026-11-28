@@ -132,6 +132,12 @@
       "inputs": "Data inventories and source flows into storage, logs, analytics, AI providers and third parties.",
       "outputs": "Purpose/retention/exposure inventory; minimization proposals; synthetic-data acceptance cases.",
       "boundaries": "Do not print personal data or give legal compliance conclusions; distinguish observed and inferred flows."
+    },
+    "appsec-2shell-detector": {
+      "evidenceMode": "source",
+      "inputs": "Manifests, resolved lockfiles, RSC/App Router usage, deploy configuration, and optional deterministic detector output.",
+      "outputs": "Package-root exposure inventory; CVE-mapped TS findings; minimal same-line upgrades; rotation triggers.",
+      "boundaries": "Do not probe live hosts, run exploit payloads, install packages, or report flaws absent from verified advisory data."
     }
   }
 }

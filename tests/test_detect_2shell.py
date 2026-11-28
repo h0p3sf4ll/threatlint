@@ -1,0 +1,369 @@
+import importlib.util
+import io
+import json
+import sys
+import urllib.error
+from email.message import Message
+from pathlib import Path
+
+import pytest
+
+from threatlint.detect_2shell import advisories, fleet, lockfiles, scanner
+from threatlint.detect_2shell.cli import cmd_detect_2shell
+from threatlint.detect_2shell.report import document, markdown, target_result
+from threatlint.detect_2shell.semver import parse, range_floor
+
+ROOT = Path(__file__).resolve().parents[1]
+W = advisories.WATCHED_PACKAGES
+
+
+def adv(key):
+    return next(a for a in advisories.ADVISORIES if a.key == key)
+
+
+# ─── versions ────────────────────────────────────────────────────────────────
+
+def test_semver_orders_prereleases_before_releases():
+    assert parse("15.6.0-canary.57") < parse("15.6.0-canary.58") < parse("15.6.0")
+    assert parse("15.0.0-0") < parse("15.0.0-canary.1") < parse("15.0.0-rc.1") < parse("15.0.0")
+    assert parse("^19.0.0") is None and parse("latest") is None
+
+
+def test_range_floor_handles_common_npm_specs():
+    assert str(range_floor("^19.1.0")) == "19.1.0"
+    assert str(range_floor(">=15.0.0 <16")) == "15.0.0"
+    assert str(range_floor("npm:next@15.1.0")) == "15.1.0"
+    assert range_floor("workspace:*") is None and range_floor("latest") is None
+
+
+@pytest.mark.parametrize("version,affected", [
+    ("19.0.0", True), ("19.0.1", False), ("19.1.1", True), ("19.1.2", False), ("19.2.0", True), ("19.2.1", False),
+    ("18.3.1", False), ("19.0.0-rc-66855b96-20241106", False),
+])
+def test_react2shell_versions(version, affected):
+    assert bool(scanner.matching_line(adv("react2shell-rce"), parse(version))) is affected
+
+
+@pytest.mark.parametrize("version,affected", [
+    ("14.2.20", False), ("14.3.0-canary.76", False), ("14.3.0-canary.77", True), ("15.0.4", True), ("15.0.5", False),
+    ("15.1.8", True), ("15.1.9", False), ("15.5.6", True), ("15.5.7", False), ("15.6.0-canary.57", True),
+    ("15.6.0-canary.58", False), ("16.0.6", True), ("16.0.7", False), ("16.1.0-canary.11", True),
+    ("16.1.0-canary.12", False), ("16.1.0", False), ("13.5.6", False),
+])
+def test_next_rce_versions(version, affected):
+    assert bool(scanner.matching_line(adv("next-react2shell"), parse(version))) is affected
+
+
+@pytest.mark.parametrize("version,affected", [
+    ("14.2.34", True), ("14.2.35", False), ("15.4.10", True), ("15.4.11", False), ("16.1.0-canary.18", True),
+    ("16.1.0-canary.19", False), ("16.1.4", True), ("16.1.5", False), ("13.2.0", False),
+])
+def test_next_followup_versions(version, affected):
+    assert bool(scanner.matching_line(adv("next-rsc-followups"), parse(version))) is affected
+
+
+def test_every_advisory_cites_a_vendor_source_and_parses():
+    for item in advisories.ADVISORIES:
+        assert item.sources and all(s.startswith("https://") for s in item.sources)
+        assert item.severity in scanner.SEVERITY_RANK
+        for line in item.lines:
+            assert parse(line.introduced) and (line.fixed is None or parse(line.fixed))
+
+
+# ─── lockfiles ───────────────────────────────────────────────────────────────
+
+NPM_V3 = json.dumps({"lockfileVersion": 3, "packages": {
+    "": {"dependencies": {"next": "15.1.0"}},
+    "node_modules/next": {"version": "15.1.0"},
+    "node_modules/react": {"version": "19.0.0"},
+    "node_modules/foo/node_modules/react-server-dom-webpack": {"version": "19.1.0"},
+    "node_modules/my-next": {"name": "next", "version": "15.1.0"},
+}}, indent=2)
+
+
+def test_npm_lock_v3_reads_nested_and_aliased_packages():
+    found = lockfiles.parse_npm_lock(NPM_V3, "package-lock.json", W)
+    pairs = {(r.package, r.version) for r in found}
+    assert ("next", "15.1.0") in pairs and ("react-server-dom-webpack", "19.1.0") in pairs
+    assert all(r.line > 1 for r in found)
+
+
+def test_npm_lock_v1():
+    text = json.dumps({"lockfileVersion": 1, "dependencies": {"next": {"version": "15.0.3", "dependencies": {
+        "react-server-dom-webpack": {"version": "19.0.0"}}}}}, indent=2)
+    pairs = {(r.package, r.version) for r in lockfiles.parse_npm_lock(text, "package-lock.json", W)}
+    assert pairs == {("next", "15.0.3"), ("react-server-dom-webpack", "19.0.0")}
+
+
+def test_yarn_classic_and_berry():
+    classic = 'next@^15.0.0, next@15.1.0:\n  version "15.1.0"\n  resolved "x"\n\n"@vitejs/plugin-rsc@^0.4.0":\n  version "0.4.1"\n'
+    berry = '"next@npm:16.0.3":\n  version: 16.0.3\n  resolution: "next@npm:16.0.3"\n'
+    assert {(r.package, r.version, r.line) for r in lockfiles.parse_yarn_lock(classic, "yarn.lock", W)} == {
+        ("next", "15.1.0", 1), ("@vitejs/plugin-rsc", "0.4.1", 5)}
+    assert [(r.package, r.version) for r in lockfiles.parse_yarn_lock(berry, "yarn.lock", W)] == [("next", "16.0.3")]
+
+
+def test_pnpm_v6_v9_and_v5_keys():
+    text = ("lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      next:\n        version: 15.2.0\n"
+            "packages:\n  next@15.2.0:\n    resolution: {}\n  '@parcel/rsc@2.0.0':\n    resolution: {}\n"
+            "  /react-server-dom-webpack@19.2.0(react@19.2.0):\n    resolution: {}\n  /next/14.2.3:\n    x: 1\n"
+            "snapshots:\n  next@15.2.0(react@19.0.0):\n    dependencies: {}\n")
+    pairs = {(r.package, r.version) for r in lockfiles.parse_pnpm_lock(text, "pnpm-lock.yaml", W)}
+    assert pairs == {("next", "15.2.0"), ("@parcel/rsc", "2.0.0"), ("react-server-dom-webpack", "19.2.0"), ("next", "14.2.3")}
+
+
+def test_bun_lock():
+    text = '{\n  "packages": {\n    "next": ["next@16.0.1", "", {}],\n    "waku": ["waku@0.21.0", "", {}],\n  }\n}\n'
+    assert {(r.package, r.version) for r in lockfiles.parse_bun_lock(text, "bun.lock", W)} == {("next", "16.0.1"), ("waku", "0.21.0")}
+
+
+# ─── single repository scans ─────────────────────────────────────────────────
+
+def write(root: Path, files: dict):
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content if isinstance(content, str) else json.dumps(content, indent=2), encoding="utf-8")
+
+
+def test_app_router_next_is_confirmed_critical(tmp_path):
+    write(tmp_path, {"package.json": {"dependencies": {"next": "15.1.0"}}, "package-lock.json": NPM_V3,
+                     "src/app/page.tsx": "export default function P(){}",
+                     "node_modules/next/package.json": {"name": "next", "version": "15.1.0"}})
+    result = scanner.scan_path(str(tmp_path))
+    nxt = next(f for f in result.findings if f["package"] == "next")
+    assert (nxt["severity"], nxt["confidence"]) == ("CRITICAL", "CONFIRMED")
+    assert "CVE-2025-66478" in nxt["cves"] and "CVE-2025-55184" in nxt["cves"]
+    assert nxt["fixedIn"] == "15.1.12"  # the follow-up fix supersedes the RCE fix on the same line
+    assert "src/app/page.tsx" in nxt["exposure"]
+    assert result.status == "vulnerable"
+    assert result.findings[0]["id"] == "TS-001"
+    assert not any("node_modules" in f["file"] for f in result.findings)
+
+
+def test_pages_router_next_is_theoretical(tmp_path):
+    write(tmp_path, {"package.json": {"dependencies": {"next": "15.1.0"}},
+                     "yarn.lock": 'next@15.1.0:\n  version "15.1.0"\n', "pages/index.js": ""})
+    finding = scanner.scan_path(str(tmp_path)).findings[0]
+    assert finding["confidence"] == "THEORETICAL" and "Pages Router" in finding["exposure"]
+
+
+def test_manifest_without_lockfile_is_plausible(tmp_path):
+    write(tmp_path, {"apps/web/package.json": {"dependencies": {"react-server-dom-webpack": "^19.0.0", "waku": "0.21.0"}}})
+    result = scanner.scan_path(str(tmp_path))
+    assert [(f["package"], f["confidence"]) for f in result.findings] == [("react-server-dom-webpack", "PLAUSIBLE")]
+    assert "waku" in result.findings[0]["exposure"]
+
+
+def test_patched_versions_are_clean_and_no_stack_is_not_applicable(tmp_path):
+    write(tmp_path / "a", {"package.json": {"dependencies": {"next": "16.1.5"}},
+                           "pnpm-lock.yaml": "packages:\n  next@16.1.5:\n    x: 1\n", "app/layout.tsx": ""})
+    write(tmp_path / "b", {"package.json": {"dependencies": {"express": "4.0.0"}}})
+    assert scanner.scan_path(str(tmp_path / "a")).status == "clean"
+    assert scanner.scan_path(str(tmp_path / "b")).status == "not-applicable"
+
+
+def test_malformed_lockfile_is_reported_not_fatal(tmp_path):
+    write(tmp_path, {"package-lock.json": "{not json", "package.json": {"dependencies": {"next": "15.0.0"}}})
+    result = scanner.scan_path(str(tmp_path))
+    assert any("Could not parse package-lock.json" in note for note in result.coverage)
+
+
+# ─── report contract with the CI gate and SARIF converter ────────────────────
+
+def load_script(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / ".github" / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_markdown_report_is_gateable(tmp_path):
+    write(tmp_path, {"package.json": {"dependencies": {"next": "15.1.0"}}, "package-lock.json": NPM_V3, "app/page.js": ""})
+    doc = document([target_result(scanner.scan_path(str(tmp_path)), repository="web")], scope="web")
+    text = markdown(doc)
+    assert "## TIER 1 — EXECUTIVE SUMMARY" in text and "**CRITICAL**" in text
+    parsed = load_script("gate_report").parse_findings(text)
+    assert parsed and parsed[0].id == "TS-001" and parsed[0].severity == "CRITICAL" and parsed[0].confidence == "CONFIRMED"
+
+
+def test_cli_scan_json_and_fail_on(tmp_path, capsys):
+    write(tmp_path, {"package.json": {"dependencies": {"next": "15.1.0"}}, "package-lock.json": NPM_V3, "app/page.js": ""})
+
+    class Args:
+        action, path, format, output, fail_on = "scan", str(tmp_path), "json", None, "CRITICAL"
+    assert cmd_detect_2shell(Args()) == 3
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["schema"] == "threatlint.detect-2shell/v1" and doc["summary"]["critical"] >= 1
+
+
+def test_cli_is_registered():
+    from threatlint.cli import build_parser
+    args = build_parser().parse_args(["detect-2shell", "fleet", "--all", "--branches", "main,release/*"])
+    assert args.action == "fleet" and args.all and args.integration_handler is cmd_detect_2shell
+
+
+# ─── fleet ───────────────────────────────────────────────────────────────────
+
+class FakeResponse(io.BytesIO):
+    def __init__(self, body, headers=None, status=200):
+        super().__init__(body if isinstance(body, bytes) else json.dumps(body).encode())
+        self.headers, self.status = Message(), status
+        for key, value in (headers or {}).items():
+            self.headers[key] = value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeOpener:
+    def __init__(self, routes):
+        self.routes, self.requests = routes, []
+
+    def open(self, request, timeout=None):
+        self.requests.append(request)
+        url = request.full_url
+        # Longest prefix wins, so a page-2 URL never falls back to the page-1 route.
+        for prefix, response in sorted(self.routes.items(), key=lambda item: -len(item[0])):
+            if url.startswith(prefix):
+                value = response(request) if callable(response) else response
+                if isinstance(value, int):
+                    raise urllib.error.HTTPError(url, value, "err", Message(), None)
+                return value
+        raise urllib.error.HTTPError(url, 404, "missing", Message(), None)
+
+
+GH = "https://api.github.com"
+LOCK = json.dumps({"lockfileVersion": 3, "packages": {"node_modules/next": {"version": "16.0.3"}}}, indent=2)
+
+
+def github_routes():
+    return {
+        f"{GH}/installation/repositories?per_page=100": lambda r: FakeResponse(
+            {"repositories": [{"full_name": "acme/web", "owner": {"login": "acme"}, "default_branch": "main"}]},
+            {"Link": f'<{GH}/installation/repositories?per_page=100&page=2>; rel="next"'}),
+        f"{GH}/installation/repositories?per_page=100&page=2": lambda r: FakeResponse(
+            {"repositories": [{"full_name": "acme/api", "owner": {"login": "acme"}, "default_branch": "main"},
+                              {"full_name": "acme/old", "owner": {"login": "acme"}, "archived": True}]}),
+        f"{GH}/repos/acme/web/branches": lambda r: FakeResponse([{"name": "main", "commit": {"sha": "a" * 40}},
+                                                                  {"name": "release/1", "commit": {"sha": "b" * 40}},
+                                                                  {"name": "feature/x", "commit": {"sha": "c" * 40}}]),
+        f"{GH}/repos/acme/web/commits/main": lambda r: FakeResponse(b"a" * 40),
+        f"{GH}/repos/acme/web/git/trees/": lambda r: FakeResponse({"tree": [
+            {"path": "package.json", "type": "blob", "size": 40}, {"path": "package-lock.json", "type": "blob", "size": 99},
+            {"path": "app/page.tsx", "type": "blob", "size": 5}, {"path": "src/index.ts", "type": "blob", "size": 5}]}),
+        f"{GH}/repos/acme/web/contents/package-lock.json": lambda r: FakeResponse(LOCK.encode()),
+        f"{GH}/repos/acme/web/contents/package.json": lambda r: FakeResponse(b'{"dependencies":{"next":"16.0.3"}}'),
+        f"{GH}/repos/acme/api/commits/main": lambda r: FakeResponse(b"d" * 40),
+        f"{GH}/repos/acme/api/git/trees/": lambda r: FakeResponse({"tree": [{"path": "go.mod", "type": "blob", "size": 9}]}),
+    }
+
+
+def gh_env(token="ghs_test"):
+    return {fleet.CREDENTIALS_ENV: json.dumps({"connections": [{"id": "gh1", "provider": "github", "token": token}]})}
+
+
+def test_fleet_scans_all_repositories_default_branch_without_cloning():
+    opener = FakeOpener(github_routes())
+    connection = fleet.load_connections(gh_env())[0]
+    events = []
+    doc = fleet.run_fleet({"connections": [{"connection": "gh1"}]}, progress=events.append, environ=gh_env(),
+                          clients={"gh1": fleet.client(connection, opener, sleep=lambda s: None)})
+    by_repo = {r["repository"]: r for r in doc["results"]}
+    assert set(by_repo) == {"acme/web", "acme/api"}  # archived repository skipped, pagination followed
+    assert by_repo["acme/web"]["status"] == "vulnerable" and by_repo["acme/web"]["commit"] == "a" * 40
+    assert by_repo["acme/api"]["status"] == "not-applicable"
+    assert events[0] == {"event": "plan", "total": 2} and events[-1] == {"event": "done"}
+    fetched = [r.full_url for r in opener.requests if "/contents/" in r.full_url]
+    assert all(("package" in u) for u in fetched) and not any("index.ts" in u or "page.tsx" in u for u in fetched)
+    assert all(r.get_header("Authorization") == "Bearer ghs_test" for r in opener.requests)
+    assert "ghs_test" not in json.dumps(doc) and "ghs_test" not in json.dumps(events)
+
+
+def test_fleet_subset_and_branch_patterns():
+    opener = FakeOpener(github_routes())
+    connection = fleet.load_connections(gh_env())[0]
+    doc = fleet.run_fleet({"connections": [{"connection": "github", "repositories": ["acme/web"],
+                                            "branches": ["main", "release/*"]}]}, environ=gh_env(),
+                          clients={"gh1": fleet.client(connection, opener, sleep=lambda s: None)})
+    assert [(r["repository"], r["branch"]) for r in doc["results"]] == [("acme/web", "main"), ("acme/web", "release/1")]
+
+
+def test_fleet_falls_back_to_user_repos_for_personal_tokens():
+    routes = github_routes()
+    routes[f"{GH}/installation/repositories"] = 403
+    routes[f"{GH}/user/repos"] = lambda r: FakeResponse([{"full_name": "me/site", "owner": {"login": "me"}, "default_branch": "main"}])
+    del routes[f"{GH}/installation/repositories?per_page=100"]
+    del routes[f"{GH}/installation/repositories?per_page=100&page=2"]
+    api = fleet.client(fleet.load_connections(gh_env())[0], FakeOpener(routes), sleep=lambda s: None)
+    assert [r.name for r in api.repositories()] == ["me/site"]
+
+
+def test_fleet_errors_are_per_target():
+    routes = github_routes()
+    routes[f"{GH}/repos/acme/web/git/trees/"] = 404
+    connection = fleet.load_connections(gh_env())[0]
+    doc = fleet.run_fleet({}, environ=gh_env(),
+                          clients={"gh1": fleet.client(connection, FakeOpener(routes), sleep=lambda s: None)})
+    web = next(r for r in doc["results"] if r["repository"] == "acme/web")
+    assert web["status"] == "error" and "404" in web["error"] and doc["summary"]["errors"] == 1
+
+
+def test_http_refuses_cross_host_and_retries_rate_limits():
+    calls = []
+
+    def limited(request):
+        calls.append(1)
+        return 429 if len(calls) < 3 else FakeResponse({"ok": True})
+    http = fleet.Http(GH, {}, FakeOpener({f"{GH}/x": limited}), sleep=lambda s: None)
+    assert http.get("/x")[0] == {"ok": True} and len(calls) == 3
+    with pytest.raises(fleet.FleetError, match="different host"):
+        http.get("https://evil.example/x")
+
+
+def test_azure_devops_listing_branches_and_content():
+    base = "https://dev.azure.com/contoso"
+    tree = {"value": [{"path": "/web/package.json", "gitObjectType": "blob"},
+                      {"path": "/web/pnpm-lock.yaml", "gitObjectType": "blob"},
+                      {"path": "/web/app/page.tsx", "gitObjectType": "blob"}]}
+    routes = {
+        f"{base}/_apis/git/repositories?": FakeResponse({"value": [
+            {"id": "r1", "name": "storefront", "project": {"name": "Retail"}, "defaultBranch": "refs/heads/main"}]}),
+        f"{base}/Retail/_apis/git/repositories/r1/refs?filter=heads/main": FakeResponse(
+            {"value": [{"name": "refs/heads/main", "objectId": "e" * 40}]}),
+        f"{base}/Retail/_apis/git/repositories/r1/items?recursionLevel=Full": FakeResponse(tree),
+        f"{base}/Retail/_apis/git/repositories/r1/items?path=/web/pnpm-lock.yaml": FakeResponse(
+            b"packages:\n  react-server-dom-webpack@19.2.0:\n    x: 1\n  next@15.5.6:\n    x: 1\n"),
+        f"{base}/Retail/_apis/git/repositories/r1/items?path=/web/package.json": FakeResponse(b'{"dependencies":{}}'),
+    }
+    env = {fleet.CREDENTIALS_ENV: json.dumps({"connections": [
+        {"id": "ado", "provider": "azure-devops", "token": "pat", "organization": "contoso"}]})}
+    opener = FakeOpener(routes)
+    doc = fleet.run_fleet({}, environ=env,
+                          clients={"ado": fleet.client(fleet.load_connections(env)[0], opener, sleep=lambda s: None)})
+    result = doc["results"][0]
+    assert result["repository"] == "Retail/storefront" and result["status"] == "vulnerable"
+    assert {f["package"] for f in result["findings"]} == {"react-server-dom-webpack", "next"}
+    assert all(r.get_header("Authorization").startswith("Basic ") for r in opener.requests)
+
+
+@pytest.mark.parametrize("data", [
+    {"connections": [{"repositories": "some"}]},
+    {"connections": [{"branches": ["ok", "../etc"]}]},
+    {"maxRepositories": 0},
+    {"connections": "all"},
+])
+def test_invalid_targets_rejected(data):
+    with pytest.raises(fleet.FleetError):
+        fleet.load_targets(data)
+
+
+def test_invalid_credentials_rejected():
+    with pytest.raises(fleet.FleetError):
+        fleet.load_connections({fleet.CREDENTIALS_ENV: json.dumps({"connections": [{"provider": "gitlab", "token": "x"}]})})
+    with pytest.raises(fleet.FleetError):
+        fleet.load_connections({fleet.CREDENTIALS_ENV: json.dumps({"connections": [
+            {"provider": "github", "token": "x", "apiBase": "http://insecure.example"}]})})

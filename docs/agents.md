@@ -1,11 +1,11 @@
 ---
 title: Choose a specialist
-description: Choose from 22 security specialists by the question, source evidence, and outcome you need.
+description: Choose from 23 security specialists by the question, source evidence, and outcome you need.
 ---
 
 # Choose a specialist
 
-Choose the specialist that answers your question. The 22 roles use different review instructions and evidence; they are not 22 independently trained models. Start with one role, then add another when its input or decision is needed.
+Choose the specialist that answers your question. The 23 roles use different review instructions and evidence; they are not 23 independently trained models. Start with one role, then add another when its input or decision is needed.
 
 ## Choose by outcome
 
@@ -17,6 +17,7 @@ Choose the specialist that answers your question. The 22 roles use different rev
 | Check a proposed repair | [Verify fix](#appsec-verify-fix) |
 | Plan regression coverage | [Security test planner](#appsec-security-test-planner) |
 | Compare earlier and current findings | [Threat delta](#appsec-threat-delta) |
+| Check exposure to React2Shell / 2Shell RCE | [2Shell detector](#appsec-2shell-detector) |
 
 <a name="define-the-assignment-before-choosing-more-agents"></a>
 
@@ -117,6 +118,12 @@ Provide manifests, resolved lockfiles, package provenance, and available advisor
 ### Secrets scanner {#appsec-secrets-scanner}
 
 Provide source, configuration, and authorized history in scope. Get redacted exposure locations and a containment or rotation plan. The specialist does not test credentials or rotate them; use a separately authorized operational process.
+
+<a name="appsec-2shell-detector"></a>
+
+### 2Shell detector {#appsec-2shell-detector}
+
+Provide a repository, branch, or deterministic detector output. Get every package root that resolves a vulnerable React Server Components or Next.js version (React2Shell, CVE-2025-55182 and CVE-2025-66478, plus the follow-up DoS and source-exposure CVEs), whether the App Router or another RSC framework exposes it, the smallest same-line upgrade, and whether secrets should be rotated. Run `threatlint detect-2shell fleet` to scan many repositories and branches across your GitHub and Azure DevOps connections. The specialist never probes live hosts or installs packages.
 
 <a name="appsec-iac-reviewer"></a>
 

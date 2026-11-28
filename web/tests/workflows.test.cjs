@@ -12,7 +12,7 @@ const workflows = fs.readdirSync(directory).filter(name => /^appsec-.*\.yml$/.te
 
 describe('Push-triggered Claude workflows', () => {
   it('uses the standalone action rather than the PR/issue event wrapper', () => {
-    assert.equal(workflows.length, 3);
+    assert.equal(workflows.length, 4);
     for (const { name, source } of workflows) {
       assert.match(source, /uses: anthropics\/claude-code-action\/base-action@[a-f0-9]{40}\b/, name);
       assert.doesNotMatch(source, /uses: anthropics\/claude-code-action@/, name);
