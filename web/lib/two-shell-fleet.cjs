@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * detect-2shell fleet scans: run the Python `threatlint detect-2shell fleet` command across a chosen subset, or all,
+ * detect-xshell fleet scans: run the Python `threatlint detect-xshell fleet` command across a chosen subset, or all,
  * of the repositories and branches that connected GitHub / Azure DevOps credentials can read.
  *
  * - Selection is validated here against live source connections; nothing the client sends reaches argv unchecked.
  * - Tokens come from the sources facade (which refreshes saved GitHub App / Azure DevOps credentials first) and go
- *   to the child ONLY through THREATLINT_2SHELL_CREDENTIALS in its environment. They are never written to the
+ *   to the child ONLY through THREATLINT_XSHELL_CREDENTIALS in its environment. They are never written to the
  *   targets file, argv, job state, errors, HTTP or MCP responses.
  * - The Python CLI reads repository trees and lockfiles through the provider APIs; nothing is cloned.
  */
@@ -18,7 +18,9 @@ const { spawn } = require('node:child_process');
 const { HttpError } = require('./http.cjs');
 const { superviseChild } = require('./child-lifecycle.cjs');
 
-const SCHEMA = 'threatlint.detect-2shell/v1';
+const SCHEMA = 'threatlint.detect-xshell/v1';
+// Output written by a CLI built before the detect-xshell rename is still accepted.
+const SCHEMAS = new Set([SCHEMA, 'threatlint.detect-2shell/v1']);
 const RETAINED = 25;
 const CONCURRENT = 2;
 const MAX_CONNECTIONS = 16;
@@ -101,7 +103,7 @@ function spawnCli(args, { env, signal, onStderrLine, command, spawnImpl = spawn 
       env: { ...process.env, PYTHONPATH: pythonpath, PYTHONIOENCODING: 'utf-8', ...env }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', buffered = '', tail = '';
-    superviseChild(child, { signal, timeoutMs: TIMEOUT_MS, timeoutMessage: 'The detect-2shell fleet scan exceeded its three-hour limit',
+    superviseChild(child, { signal, timeoutMs: TIMEOUT_MS, timeoutMessage: 'The detect-xshell fleet scan exceeded its three-hour limit',
       startMessage: 'Python could not start. Check THREATLINT_PYTHON.', resolve, reject,
       onClose: (code, finish) => { if (buffered) onStderrLine(buffered); finish(null, { code, stdout, stderr: tail }); } });
     child.stdout.on('data', chunk => { if (stdout.length < 1_000_000) stdout += chunk; });
@@ -122,24 +124,25 @@ function markdownReport(job) {
   const findings = [];
   for (const target of result.results || []) for (const finding of target.findings || []) findings.push({ target, finding });
   findings.sort((a, b) => (SEVERITY_RANK[b.finding.severity] ?? -1) - (SEVERITY_RANK[a.finding.severity] ?? -1));
+  const noFix = findings.filter(item => item.finding.fixAvailable === false).length;
   const level = findings.length ? topSeverity(findings.map(item => item.finding)) || 'HIGH' : (summary.errors ? 'UNKNOWN' : 'CLEAN');
   const where = target => [target.provider, target.organization, target.project, target.repository].filter(Boolean).join(' / ');
   const cell = value => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
   const lines = [
-    '# *-2Shell / *-4Shell Exposure Scan (fleet)', '',
+    '# *-Shell Exposure Scan (fleet)', '',
     `**Date**: ${new Date(job.finishedAt || Date.now()).toISOString().slice(0, 10)}`,
     `**Scope**: ${summary.targets ?? 0} repository branches across ${job.selection.length} source connection(s)`,
-    '**Reviewed by**: detect-2shell (Threatlint Workbench)', '', '---', '',
-    '## TIER 1 — EXECUTIVE SUMMARY', '', '### *-2Shell / *-4Shell Risk Level', '', `**${level}**`, '',
-    findings.length ? `${summary.vulnerable ?? 0} branch(es) resolve a version affected by the *-2Shell (React2Shell, Next.js) or *-4Shell (Log4Shell, Spring4Shell, Text4Shell) advisories${summary.families ? ` (*-2Shell: ${summary.families['2Shell'] ?? 0} finding(s), *-4Shell: ${summary.families['4Shell'] ?? 0})` : ''}.`
+    '**Reviewed by**: detect-xshell (Threatlint Workbench)', '', '---', '',
+    '## TIER 1 — EXECUTIVE SUMMARY', '', '### *-Shell Risk Level', '', `**${level}**`, '',
+    findings.length ? `${summary.vulnerable ?? 0} branch(es) resolve a version affected by the *-2Shell (React2Shell, Next.js, PHP2Shell, WP2Shell, Node2Shell) or *-4Shell (Log4Shell, Spring4Shell, Text4Shell, Java4Shell) advisories${summary.families ? ` (*-2Shell: ${summary.families['2Shell'] ?? 0} finding(s), *-4Shell: ${summary.families['4Shell'] ?? 0})` : ''}.`
       : summary.errors ? 'No affected versions were found in the branches that could be read, but some branches could not be scanned; this is not a clean result.'
         : 'No *-2Shell or *-4Shell affected versions were found in the scanned branches.', '',
     '| Targets | Scanned | Vulnerable | Clean | Not applicable | Errors | Critical | High | Medium |',
     '|---|---|---|---|---|---|---|---|---|',
     `| ${summary.targets ?? 0} | ${summary.scanned ?? 0} | ${summary.vulnerable ?? 0} | ${summary.clean ?? 0} | ${summary.notApplicable ?? 0} | ${summary.errors ?? 0} | ${summary.critical ?? 0} | ${summary.high ?? 0} | ${summary.medium ?? 0} |`, '',
     '### Recommended Immediate Action', '',
-    findings.length ? 'Upgrade each affected package (`next` / `react-server-dom-*`, `log4j-core`, Spring Framework or Boot, `commons-text`) to the patched release on its line, redeploy, hunt logs for `${jndi:` and `class.module` payloads, and rotate secrets for any affected app that was internet-facing and unpatched.'
-      : 'Keep this scan scheduled; re-run it when lockfiles, Maven/Gradle builds or vendored jars change.', '', '---', '',
+    findings.length ? `Upgrade each affected package or runtime (\`next\` / \`react-server-dom-*\`, \`log4j-core\`, Spring Framework or Boot, \`commons-text\`, PHP, WordPress core, Node.js / Brotli, the JDK) to the patched release on its line; where the line has no fix (${noFix} finding(s)), move to a supported line. Redeploy, hunt logs for \`\${jndi:\` and \`class.module\` payloads, and rotate secrets for any affected app that was internet-facing and unpatched.`
+      : 'Keep this scan scheduled; re-run it when lockfiles, Maven/Gradle builds, vendored jars or runtime pins (Dockerfiles, .nvmrc, .tool-versions) change.', '', '---', '',
     '## TIER 2 — TECHNICAL SCAN RESULTS', '', '### Findings', '',
   ];
   let index = 0;
@@ -152,7 +155,8 @@ function markdownReport(job) {
       `| Family | ${finding.family ? `*-${cell(finding.family)}` : '—'} |`,
       `| Repository | ${cell(where(target))} |`,
       `| Branch | ${cell(target.branch)}${target.commit ? ` @ ${cell(String(target.commit).slice(0, 12))}` : ''} |`,
-      `| Package | ${cell(finding.package)}@${cell(finding.version)} → ${cell(finding.fixedIn || 'move to a supported line')} |`,
+      `| Package | ${cell(finding.package)}@${cell(finding.version)} → ${finding.fixAvailable === false ? `**No fix on this line**: ${cell(finding.fixedIn || 'move to a supported line')}` : cell(finding.fixedIn || 'move to a supported line')} |`,
+      `| Fix available | ${finding.fixAvailable === false ? 'No — impacted, move to a supported release line' : 'Yes'} |`,
       `| Location | \`${cell(finding.file || 'package.json')}:${Number.isInteger(finding.line) ? finding.line : 1}\` |`,
       `| CVEs | ${cell((finding.cves || []).join(', '))} |`,
       `| Exposure | ${cell(finding.exposure)} |`,
@@ -165,7 +169,7 @@ function markdownReport(job) {
     for (const target of errors.slice(0, 500)) lines.push(`| ${cell(where(target))} | ${cell(target.branch)} | ${cell(target.error || 'Could not be scanned')} |`);
     lines.push('');
   }
-  lines.push('### Residual Risk', '', 'detect-2shell reads declared and resolved dependency versions (npm lockfiles, Maven, Gradle, vendored jars). It does not prove a deployed build matches the branch, and it does not probe live hosts. Version-only findings stay PLAUSIBLE until exposure is confirmed (App Router / Server Functions, WAR on a servlet container, StringSubstitutor interpolation).', '');
+  lines.push('### Residual Risk', '', 'detect-xshell reads declared and resolved dependency versions (npm lockfiles, Maven, Gradle, vendored jars) and pinned runtime versions (Dockerfile FROM tags, .nvmrc, .tool-versions, setup-* versions, WordPress core). It does not prove a deployed build matches the branch, and it does not probe live hosts. Version-only findings stay PLAUSIBLE until exposure is confirmed (App Router / Server Functions, WAR on a servlet container, StringSubstitutor interpolation, Brotli decompression of untrusted data, AVX-512 VBMI CPUs for Java4Shell).', '');
   return lines.join('\n');
 }
 
@@ -200,7 +204,7 @@ function createTwoShellFleet({ sources, integrations = {} } = {}) {
       if (typeof item.connectionId !== 'string' || !connection) throw new HttpError('A selected source is not connected. Refresh Connected accounts and try again.');
       if (seen.has(item.connectionId)) throw new HttpError('Each source can be selected once');
       seen.add(item.connectionId);
-      if (!['github', 'azure-devops'].includes(connection.provider)) throw new HttpError('detect-2shell supports GitHub and Azure DevOps sources');
+      if (!['github', 'azure-devops'].includes(connection.provider)) throw new HttpError('detect-xshell supports GitHub and Azure DevOps sources');
       return { connectionId: connection.id, provider: connection.provider, label: connection.label || `${connection.provider} · ${connection.account}`,
         account: connection.account, repositories: normalizeRepositories(item.repositories, connection), branches: normalizeBranches(item.branches) };
     });
@@ -230,11 +234,11 @@ function createTwoShellFleet({ sources, integrations = {} } = {}) {
 
   function readResult(file, redact) {
     let stat;
-    try { stat = fs.statSync(file); } catch { throw new HttpError('detect-2shell finished without writing results'); }
-    if (!stat.isFile() || stat.size > MAX_OUTPUT_BYTES) throw new HttpError('detect-2shell results are missing or too large');
+    try { stat = fs.statSync(file); } catch { throw new HttpError('detect-xshell finished without writing results'); }
+    if (!stat.isFile() || stat.size > MAX_OUTPUT_BYTES) throw new HttpError('detect-xshell results are missing or too large');
     let result;
-    try { result = JSON.parse(redact(fs.readFileSync(file, 'utf8'))); } catch { throw new HttpError('detect-2shell returned invalid results'); }
-    if (result?.schema !== SCHEMA || !Array.isArray(result.results) || !result.summary || typeof result.summary !== 'object') throw new HttpError('detect-2shell returned results in an unexpected format');
+    try { result = JSON.parse(redact(fs.readFileSync(file, 'utf8'))); } catch { throw new HttpError('detect-xshell returned invalid results'); }
+    if (!SCHEMAS.has(result?.schema) || !Array.isArray(result.results) || !result.summary || typeof result.summary !== 'object') throw new HttpError('detect-xshell returned results in an unexpected format');
     return result;
   }
 
@@ -254,28 +258,28 @@ function createTwoShellFleet({ sources, integrations = {} } = {}) {
       }
       redact = redactor(tokens);
       if (controller.signal.aborted) throw Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
-      directory = fs.mkdtempSync(path.join(integrations.tmpdir || os.tmpdir(), 'threatlint-2shell-'));
+      directory = fs.mkdtempSync(path.join(integrations.tmpdir || os.tmpdir(), 'threatlint-xshell-'));
       const targetsFile = path.join(directory, 'targets.json');
       const outputFile = path.join(directory, 'results.json');
       fs.writeFileSync(targetsFile, JSON.stringify({
         connections: settings.selection.map(item => ({ connection: item.connectionId, repositories: item.repositories, branches: item.branches })),
         maxRepositories: settings.maxRepositories, maxBranchesPerRepository: settings.maxBranchesPerRepository,
       }), { mode: 0o600 });
-      const outcome = await runner(['detect-2shell', 'fleet', '--targets-file', targetsFile, '--format', 'json', '--output', outputFile, '--progress', '--workers', String(settings.workers)], {
-        env: { THREATLINT_2SHELL_CREDENTIALS: JSON.stringify({ connections }) }, signal: controller.signal,
+      const outcome = await runner(['detect-xshell', 'fleet', '--targets-file', targetsFile, '--format', 'json', '--output', outputFile, '--progress', '--workers', String(settings.workers)], {
+        env: { THREATLINT_XSHELL_CREDENTIALS: JSON.stringify({ connections }) }, signal: controller.signal,
         onStderrLine: line => onProgress(job, redact, line),
       });
       if (outcome.code !== 0) {
         let detail = job.lastError || '';
         try { detail = JSON.parse(String(outcome.stderr || '').trim()).error || detail; } catch { /* free-form stderr is never shown */ }
-        throw new HttpError(detail ? `detect-2shell failed: ${redact(detail).slice(0, 300)}` : 'detect-2shell failed; no clean result is claimed');
+        throw new HttpError(detail ? `detect-xshell failed: ${redact(detail).slice(0, 300)}` : 'detect-xshell failed; no clean result is claimed');
       }
       job.result = readResult(outputFile, redact);
       job.summary = job.result.summary;
       job.status = 'completed';
     } catch (error) {
       job.status = controller.signal.aborted ? 'cancelled' : 'failed';
-      job.error = controller.signal.aborted ? 'Scan cancelled; partial results are not reported as clean' : redact(error?.status ? error.message : 'detect-2shell could not complete; no clean result is claimed').slice(0, 400);
+      job.error = controller.signal.aborted ? 'Scan cancelled; partial results are not reported as clean' : redact(error?.status ? error.message : 'detect-xshell could not complete; no clean result is claimed').slice(0, 400);
     } finally {
       tokens.length = 0;
       job.finishedAt = Date.now();
@@ -285,9 +289,9 @@ function createTwoShellFleet({ sources, integrations = {} } = {}) {
   }
 
   async function start(body) {
-    if (closed) throw new HttpError('detect-2shell is closing', 503);
+    if (closed) throw new HttpError('detect-xshell is closing', 503);
     const settings = await plan(body);
-    if (running() >= CONCURRENT) throw new HttpError(`${CONCURRENT} detect-2shell scans are already running; wait for one to finish`, 429);
+    if (running() >= CONCURRENT) throw new HttpError(`${CONCURRENT} detect-xshell scans are already running; wait for one to finish`, 429);
     const id = crypto.randomUUID();
     const controller = new AbortController();
     const job = { id, status: 'running', startedAt: Date.now(), finishedAt: null, workers: settings.workers,
@@ -313,8 +317,8 @@ function createTwoShellFleet({ sources, integrations = {} } = {}) {
     report(id, format = 'json') {
       const job = jobFor(id);
       if (job.status !== 'completed') throw new HttpError('The report is available when the scan completes', 409);
-      if (format === 'markdown') return { contentType: 'text/markdown; charset=utf-8', filename: `detect-2shell-${id}.md`, body: markdownReport(job) };
-      if (format === 'json') return { contentType: 'application/json; charset=utf-8', filename: `detect-2shell-${id}.json`, body: JSON.stringify(job.result, null, 2) };
+      if (format === 'markdown') return { contentType: 'text/markdown; charset=utf-8', filename: `detect-xshell-${id}.md`, body: markdownReport(job) };
+      if (format === 'json') return { contentType: 'application/json; charset=utf-8', filename: `detect-xshell-${id}.json`, body: JSON.stringify(job.result, null, 2) };
       throw new HttpError('Choose json or markdown');
     },
     cancel(id) { const job = jobFor(id); controllers.get(id)?.abort(); return { ok: true, status: job.status }; },

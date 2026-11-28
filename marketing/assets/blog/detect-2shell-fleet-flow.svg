@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="t d" font-family="Inter, Segoe UI, sans-serif">
   <title id="t">How ThreatLint detect-2shell scans a whole fleet for *-2Shell and *-4Shell exposures</title>
-  <desc id="d">ThreatLint uses the GitHub and Azure DevOps credentials you have already connected to list repositories and branches, reads only package manifests, lockfiles and Java build files through the API without cloning, matches resolved versions against a vendor-verified *-2Shell and *-4Shell advisory catalog, and produces an executive summary, per-finding evidence, SARIF and tracker issues. The appsec-2shell-detector agent then verifies exposure in source.</desc>
+  <desc id="d">ThreatLint uses the GitHub and Azure DevOps credentials you have already connected to list repositories and branches, reads only package manifests, lockfiles, Java build files and runtime version files through the API without cloning, matches resolved versions against a vendor-verified *-2Shell and *-4Shell advisory catalog, and produces an executive summary, per-finding evidence, SARIF and tracker issues. The appsec-2shell-detector agent then verifies exposure in source.</desc>
   <rect width="960" height="420" rx="18" fill="#0c202a"/>
   <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8ce5c7"/></marker></defs>
   <g font-size="11" font-weight="800" letter-spacing="1.6" fill="#8ce5c7">
@@ -34,19 +34,19 @@
     <text x="276" y="248" fill="#9db1b6" font-size="12.5">honour rate limits</text>
 
     <text x="508" y="96" font-weight="700">Only what matters</text>
-    <text x="508" y="124" fill="#9db1b6" font-size="12.5">package.json · lockfiles</text>
-    <text x="508" y="144" fill="#9db1b6" font-size="12.5">pom.xml · Gradle builds</text>
-    <text x="508" y="164" fill="#9db1b6" font-size="12.5">jar names (not downloaded)</text>
-    <text x="508" y="196" fill="#9db1b6" font-size="12.5">App Router routes and</text>
-    <text x="508" y="216" fill="#9db1b6" font-size="12.5">WAR packaging (exposure)</text>
-    <text x="508" y="248" fill="#9db1b6" font-size="12.5">Source code is never</text>
-    <text x="508" y="268" fill="#9db1b6" font-size="12.5">downloaded</text>
+    <text x="508" y="122" fill="#9db1b6" font-size="12.5">package.json · lockfiles</text>
+    <text x="508" y="140" fill="#9db1b6" font-size="12.5">pom.xml · Gradle · jar names</text>
+    <text x="508" y="158" fill="#9db1b6" font-size="12.5">Dockerfiles · .nvmrc ·</text>
+    <text x="508" y="176" fill="#9db1b6" font-size="12.5">CI pins · WordPress version</text>
+    <text x="508" y="204" fill="#9db1b6" font-size="12.5">App Router · WAR (exposure)</text>
+    <text x="508" y="236" fill="#9db1b6" font-size="12.5">Source code is never</text>
+    <text x="508" y="254" fill="#9db1b6" font-size="12.5">downloaded</text>
 
     <text x="740" y="96" font-weight="700">Verified catalog</text>
-    <text x="740" y="119" fill="#9db1b6" font-size="12.5">*-2Shell: React2Shell,</text>
-    <text x="740" y="136" fill="#9db1b6" font-size="12.5">Next.js + follow-ups</text>
-    <text x="740" y="153" fill="#9db1b6" font-size="12.5">*-4Shell: Log4Shell,</text>
-    <text x="740" y="170" fill="#9db1b6" font-size="12.5">Spring4Shell, Text4Shell</text>
+    <text x="740" y="119" fill="#9db1b6" font-size="12.5">*-2Shell: React, Next.js,</text>
+    <text x="740" y="136" fill="#9db1b6" font-size="12.5">PHP, WordPress, Node.js</text>
+    <text x="740" y="153" fill="#9db1b6" font-size="12.5">*-4Shell: Log4j, Spring,</text>
+    <text x="740" y="170" fill="#9db1b6" font-size="12.5">Commons Text, JDK</text>
     <text x="740" y="194" font-weight="700">Outputs</text>
     <text x="740" y="218" fill="#9db1b6" font-size="12.5">Executive summary</text>
     <text x="740" y="238" fill="#9db1b6" font-size="12.5">Per-repo fix-to versions</text>

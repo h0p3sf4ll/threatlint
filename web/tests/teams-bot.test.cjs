@@ -26,7 +26,7 @@ const EXPECTED_ROUTES = {
   'client-security-review': 'appsec-client-security-reviewer', 'crypto-review': 'appsec-crypto-reviewer',
   'ai-security-review': 'appsec-ai-security-reviewer', 'security-test-plan': 'appsec-security-test-planner',
   'secure-codegen-review': 'appsec-secure-codegen-reviewer', 'privacy-review': 'appsec-privacy-reviewer',
-  'detect-2shell': 'appsec-2shell-detector',
+  'detect-xshell': 'appsec-xshell-detector',
 };
 const EXPECTED_COMMANDS = Object.keys(EXPECTED_ROUTES);
 const botSrc = fs.readFileSync(BOT_FILE, 'utf8');

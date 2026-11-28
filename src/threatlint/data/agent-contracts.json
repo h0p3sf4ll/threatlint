@@ -133,10 +133,10 @@
       "outputs": "Purpose/retention/exposure inventory; minimization proposals; synthetic-data acceptance cases.",
       "boundaries": "Do not print personal data or give legal compliance conclusions; distinguish observed and inferred flows."
     },
-    "appsec-2shell-detector": {
+    "appsec-xshell-detector": {
       "evidenceMode": "source",
       "inputs": "npm lockfiles and manifests, Maven/Gradle builds, gradle.lockfile, vendored jars, App Router/RSC, WAR packaging and StringSubstitutor usage, deploy configuration, and optional deterministic detector output.",
-      "outputs": "*-2Shell and *-4Shell package-root exposure inventory; CVE-mapped TS findings; minimal same-line upgrades; log-hunting and rotation triggers.",
+      "outputs": "*-Shell (*-2Shell and *-4Shell) package-root and runtime exposure inventory; CVE-mapped TS findings, including impacted lines with no fix; minimal same-line upgrades or supported-line moves; log-hunting and rotation triggers.",
       "boundaries": "Do not probe live hosts, run exploit payloads, install packages, or report flaws absent from verified advisory data."
     }
   }

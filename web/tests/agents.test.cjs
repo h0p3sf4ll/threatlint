@@ -96,7 +96,7 @@ describe('Agent content integrity', () => {
       'appsec-client-security-reviewer': 'CL', 'appsec-crypto-reviewer': 'CY',
       'appsec-ai-security-reviewer': 'AI', 'appsec-security-test-planner': 'ST',
       'appsec-secure-codegen-reviewer': 'SG', 'appsec-privacy-reviewer': 'PD',
-      'appsec-2shell-detector': 'TS',
+      'appsec-xshell-detector': 'TS',
     };
     for (const [id, prefix] of Object.entries(prefixes)) {
       assert.equal(AGENT_META[id].initials, prefix);

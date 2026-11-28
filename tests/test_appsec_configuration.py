@@ -11,7 +11,7 @@ CONFIGURATION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONFIGURATION)
 AUTOMATIC_WORKFLOWS = [
     'appsec-api-security', 'appsec-auth-review', 'appsec-cicd-audit',
-    'appsec-compliance-check', 'appsec-dependency-audit', 'appsec-detect-2shell', 'appsec-iac-review',
+    'appsec-compliance-check', 'appsec-dependency-audit', 'appsec-detect-xshell', 'appsec-iac-review',
     'appsec-pr-review', 'appsec-red-team', 'appsec-scheduled', 'appsec-secrets-scan',
 ]
 

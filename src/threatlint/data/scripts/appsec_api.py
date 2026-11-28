@@ -46,7 +46,7 @@ _SPECIALIST_MODES = {
     'security-test-plan': 'appsec-security-test-planner',
     'secure-codegen-review': 'appsec-secure-codegen-reviewer',
     'privacy-review': 'appsec-privacy-reviewer',
-    'detect-2shell': 'appsec-2shell-detector',
+    'detect-xshell': 'appsec-xshell-detector',
 }
 
 _MODE_TO_AGENT = {

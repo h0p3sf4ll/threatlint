@@ -5,7 +5,7 @@ const category = (label, items, collapsed = true) => ({ type: 'category', label,
 const sidebar = [
   'index',
   category('Getting started', ['learning', 'setup', 'profiles', 'model-providers', 'troubleshooting'], false),
-  category('Core workflows', ['workbench', 'security-scanner', 'detect-2shell', 'threat-modeling', 'finding-intelligence', 'reports', 'dashboards', 'sidekick']),
+  category('Core workflows', ['workbench', 'security-scanner', 'detect-xshell', 'threat-modeling', 'finding-intelligence', 'reports', 'dashboards', 'sidekick']),
   category('Integrations', ['integrations', 'github-app', 'aws-parameters', 'avit-integration', 'integrations/defectdojo', 'integrations/sonarqube', 'teams', 'mcp']),
   category('Automation', ['ide', 'github-actions', 'ci-templates', 'review-orchestration', 'avit-orchestrator']),
   category('Reference', ['mcp-tools', 'agents', 'runtime-redteam', 'assurance', 'semgrep-policies', 'integrations/README', 'integrations/authoring', 'web-app']),
@@ -23,5 +23,6 @@ const retired = [
   { file: 'spaceship-deployment.md', route: 'spaceship-deployment' },
   { file: 'security-platform.md', route: 'security-platform', redirect: '/docs/security-scanner/' },
   { file: 'web-vps-deployment.md', route: 'web-vps-deployment' },
+  { file: 'detect-2shell.md', route: 'detect-2shell', redirect: '/docs/detect-xshell/' },
 ];
 module.exports = { sidebar, publishedIds, retired };

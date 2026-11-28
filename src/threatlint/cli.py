@@ -337,8 +337,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_assure_parser(sub)
     from threatlint.security_scanner.cli import add_security_scanner_parser
     add_security_scanner_parser(sub)
-    from threatlint.detect_2shell.cli import add_detect_2shell_parser
-    add_detect_2shell_parser(sub)
+    from threatlint.detect_xshell.cli import add_detect_xshell_parser
+    add_detect_xshell_parser(sub)
 
     return parser
 

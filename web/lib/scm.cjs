@@ -735,7 +735,7 @@ options = {}) {
 
   function list() { return [...connections.values()].map(summary); }
   // Host-internal: hands an active connection's credential to a local child process environment
-  // (detect-2shell fleet scans). Never route this value to HTTP, MCP, logs, or stored job state.
+  // (detect-xshell fleet scans). Never route this value to HTTP, MCP, logs, or stored job state.
   function credential(id) {
     const connection = connectionFor(id);
     if (!connection.token) throw failure('SCM_CONNECTION_NOT_FOUND');

@@ -1,6 +1,6 @@
 'use strict';
 
-/** 2Shell & 4Shell exposure: choose sources, repositories and branches, then follow a detect-2shell fleet scan. */
+/** *-Shell exposure: choose sources, repositories and branches, then follow a detect-xshell fleet scan. */
 (() => {
   const $ = id => document.getElementById(id);
   const state = { sources: [], chosen: new Map(), page: 1, search: '', scanId: null, timer: null, loaded: false };
@@ -164,6 +164,9 @@
     const families = [...new Set(findings.map(finding => finding.family).filter(Boolean))].sort();
     const family = node('td'); if (families.length) family.append(...families.map(name => node('span', `*-${name}`, 'two-shell-family'))); else family.textContent = '—';
     const fix = node('td', top ? `${top.package}@${top.version} → ${top.fixedIn || 'move to a supported line'}` : (result.status === 'error' ? (result.error || 'Could not be read') : '—'));
+    // Impacted with no fix on the installed release line: say so plainly, so teams still know they are affected.
+    const unfixable = findings.filter(finding => finding.fixAvailable === false).length;
+    if (unfixable) fix.prepend(node('span', unfixable > 1 ? `No fix on this line (${unfixable})` : 'No fix on this line', 'two-shell-nofix'), ' ');
     if (findings.length > 1) fix.append(node('small', ` +${findings.length - 1} more`, 'subtle'));
     row.append(node('td', `${result.provider === 'azure-devops' ? 'Azure DevOps' : 'GitHub'} · ${repo}`), node('td', result.branch || '—'),
       node('td', STATUS_LABEL[result.status] || result.status), family, severity, fix);
@@ -173,7 +176,7 @@
   async function poll() {
     if (!state.scanId) return;
     try {
-      const job = await request(`/api/detect-2shell/scans/${encodeURIComponent(state.scanId)}`);
+      const job = await request(`/api/detect-xshell/scans/${encodeURIComponent(state.scanId)}`);
       renderJob(job);
       if (job.status === 'running') { status(`Scanning… ${job.progress.done} of ${job.progress.total || '…'} repository branches.`, 'busy'); return; }
       clearInterval(state.timer); state.timer = null;
@@ -191,8 +194,8 @@
     event.preventDefault();
     if ($('twoshell-start').disabled) return;
     try {
-      status('Starting detect-2shell…', 'busy');
-      const { id } = await request('/api/detect-2shell/scans', selection());
+      status('Starting detect-xshell…', 'busy');
+      const { id } = await request('/api/detect-xshell/scans', selection());
       state.scanId = id;
       clearInterval(state.timer); state.timer = setInterval(() => void poll(), 1500);
       controls(); await poll();
@@ -202,9 +205,9 @@
   async function download(format) {
     if (!state.scanId) return;
     try {
-      const body = await request(`/api/detect-2shell/scans/${encodeURIComponent(state.scanId)}/report?format=${format}`, undefined, { text: true });
+      const body = await request(`/api/detect-xshell/scans/${encodeURIComponent(state.scanId)}/report?format=${format}`, undefined, { text: true });
       const url = URL.createObjectURL(new Blob([body], { type: format === 'json' ? 'application/json' : 'text/markdown' }));
-      const link = node('a'); link.href = url; link.download = `detect-2shell-${state.scanId}.${format === 'json' ? 'json' : 'md'}`;
+      const link = node('a'); link.href = url; link.download = `detect-xshell-${state.scanId}.${format === 'json' ? 'json' : 'md'}`;
       document.body.append(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (error) { status(error.message, 'error'); }
@@ -212,7 +215,7 @@
 
   async function resume() {
     try {
-      const jobs = await request('/api/detect-2shell/scans');
+      const jobs = await request('/api/detect-xshell/scans');
       const latest = Array.isArray(jobs) ? jobs[0] : null;
       if (!latest || state.scanId) return;
       state.scanId = latest.id;
@@ -238,7 +241,7 @@
     $('twoshell-more').addEventListener('click', () => { state.page += 1; void loadRepositories(false); });
     $('twoshell-cancel').addEventListener('click', async () => {
       if (!state.scanId) return;
-      try { await request(`/api/detect-2shell/scans/${encodeURIComponent(state.scanId)}/cancel`, {}); status('Cancelling…', 'busy'); } catch (error) { status(error.message, 'error'); }
+      try { await request(`/api/detect-xshell/scans/${encodeURIComponent(state.scanId)}/cancel`, {}); status('Cancelling…', 'busy'); } catch (error) { status(error.message, 'error'); }
     });
     $('twoshell-download-json').addEventListener('click', () => void download('json'));
     $('twoshell-download-md').addEventListener('click', () => void download('markdown'));

@@ -57,7 +57,7 @@ fields record explicit intent; underlying authorization and evidence gates still
 | Source accounts | [`list_source_providers`](#list_source_providers), [`list_sources`](#list_sources), [`connect_source`](#connect_source), [`reconnect_source`](#reconnect_source), [`disconnect_source`](#disconnect_source), [`list_repositories`](#list_repositories), [`list_branches`](#list_branches), [`checkout_repository`](#checkout_repository) |
 | Repository evidence | [`read_file`](#read_file), [`find_files`](#find_files), [`search_files`](#search_files), [`inspect_git`](#inspect_git) |
 | Source scans and fixes | [`start_scan`](#start_scan), [`list_scans`](#list_scans), [`get_scan`](#get_scan), [`cancel_scan`](#cancel_scan), [`propose_fix`](#propose_fix), [`apply_fix`](#apply_fix) |
-| detect-2shell fleet scans | [`start_2shell_scan`](#start_2shell_scan), [`list_2shell_scans`](#list_2shell_scans), [`get_2shell_scan`](#get_2shell_scan), [`cancel_2shell_scan`](#cancel_2shell_scan) |
+| detect-xshell fleet scans | [`start_xshell_scan`](#start_xshell_scan), [`list_xshell_scans`](#list_xshell_scans), [`get_xshell_scan`](#get_xshell_scan), [`cancel_xshell_scan`](#cancel_xshell_scan) |
 | Specialist jobs | [`start_review`](#start_review), [`list_reviews`](#list_reviews), [`get_review`](#get_review), [`cancel_review`](#cancel_review) |
 | Conversations | [`ask_question`](#ask_question), [`list_conversations`](#list_conversations), [`get_conversation`](#get_conversation) |
 | Design inputs | [`upload_design_inputs`](#upload_design_inputs), [`remove_design_inputs`](#remove_design_inputs) |
@@ -1206,13 +1206,13 @@ Apply a reviewed supported fix to its bound source snapshot, then rescan. Explic
 
 </details>
 
-## detect-2shell fleet scans
+## detect-xshell fleet scans
 
 [Workflow guide and examples](mcp.md#sources-and-repository-checkout).
 
-### `start_2shell_scan`
+### `start_xshell_scan`
 
-Scan many repositories for *-2Shell and *-4Shell exposures (React2Shell / Next.js CVE-2025-55182, CVE-2025-66478 and RSC follow-ups; Log4Shell CVE-2021-44228, Spring4Shell CVE-2022-22965, Text4Shell CVE-2022-42889) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles and Maven/Gradle build files through provider APIs without cloning; poll get_2shell_scan.
+Scan many repositories for *-2Shell exposures (React2Shell / Next.js and RSC follow-ups, PHP2Shell, WP2Shell, Node2Shell) and *-4Shell exposures (Log4Shell, Spring4Shell, Text4Shell, Java4Shell) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles, Maven/Gradle build files and runtime pins (Dockerfile FROM tags, .nvmrc, .tool-versions, WordPress core) through provider APIs without cloning. Release lines with no fix are still reported (fixAvailable=false). Poll get_xshell_scan.
 
 **MCP annotations:** `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=true`.
 
@@ -1324,9 +1324,9 @@ Scan many repositories for *-2Shell and *-4Shell exposures (React2Shell / Next.j
 
 </details>
 
-### `list_2shell_scans`
+### `list_xshell_scans`
 
-List retained detect-2shell fleet scans with status, progress and summary counts.
+List retained detect-xshell fleet scans with status, progress and summary counts.
 
 **MCP annotations:** `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
 
@@ -1359,9 +1359,9 @@ List retained detect-2shell fleet scans with status, progress and summary counts
 
 </details>
 
-### `get_2shell_scan`
+### `get_xshell_scan`
 
-Read a detect-2shell fleet scan. Use section=results with offset/limit to page per-branch results, or section=recent for live progress events.
+Read a detect-xshell fleet scan. Use section=results with offset/limit to page per-branch results, or section=recent for live progress events.
 
 **MCP annotations:** `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
 
@@ -1421,9 +1421,9 @@ Read a detect-2shell fleet scan. Use section=results with offset/limit to page p
 
 </details>
 
-### `cancel_2shell_scan`
+### `cancel_xshell_scan`
 
-Cancel a running detect-2shell fleet scan. Partial results are never reported as clean.
+Cancel a running detect-xshell fleet scan. Partial results are never reported as clean.
 
 **MCP annotations:** `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`.
 
@@ -1523,7 +1523,7 @@ Start a background specialist review using a configured server-side provider. Re
           "appsec-security-test-planner",
           "appsec-secure-codegen-reviewer",
           "appsec-privacy-reviewer",
-          "appsec-2shell-detector"
+          "appsec-xshell-detector"
         ]
       },
       "minItems": 1,
@@ -4232,7 +4232,7 @@ Save a complete report written by the MCP client model. Marked as a client revie
         "appsec-security-test-planner",
         "appsec-secure-codegen-reviewer",
         "appsec-privacy-reviewer",
-        "appsec-2shell-detector"
+        "appsec-xshell-detector"
       ]
     },
     "markdown": {

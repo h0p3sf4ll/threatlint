@@ -57,7 +57,7 @@
             { "title": "security-test-plan", "description": "Plan traceable security acceptance cases without executing tests" },
             { "title": "secure-codegen-review", "description": "Check generated or new code for insecure defaults and safe rewrites" },
             { "title": "privacy-review", "description": "Inventory PII and review data flows, retention, and consent" },
-            { "title": "detect-2shell", "description": "Detect *-2Shell and *-4Shell RCE exposures from versions" },
+            { "title": "detect-xshell", "description": "Detect *-Shell (2Shell, 4Shell) RCE exposures from versions" },
             { "title": "help", "description": "Show all available commands" }
           ]
         }

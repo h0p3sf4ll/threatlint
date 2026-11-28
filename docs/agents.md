@@ -17,7 +17,7 @@ Choose the specialist that answers your question. The 23 roles use different rev
 | Check a proposed repair | [Verify fix](#appsec-verify-fix) |
 | Plan regression coverage | [Security test planner](#appsec-security-test-planner) |
 | Compare earlier and current findings | [Threat delta](#appsec-threat-delta) |
-| Check \*-2Shell and \*-4Shell exposures (React2Shell, Log4Shell, Spring4Shell, Text4Shell) | [2Shell / 4Shell detector](#appsec-2shell-detector) |
+| Check \*-Shell exposures: \*-2Shell (React2Shell, Next.js, PHP2Shell, WP2Shell, Node2Shell) and \*-4Shell (Log4Shell, Spring4Shell, Text4Shell, Java4Shell) | [\*-Shell detector](#appsec-xshell-detector) |
 
 <a name="define-the-assignment-before-choosing-more-agents"></a>
 
@@ -119,11 +119,11 @@ Provide manifests, resolved lockfiles, package provenance, and available advisor
 
 Provide source, configuration, and authorized history in scope. Get redacted exposure locations and a containment or rotation plan. The specialist does not test credentials or rotate them; use a separately authorized operational process.
 
-<a name="appsec-2shell-detector"></a>
+<a name="appsec-xshell-detector"></a>
 
-### 2Shell / 4Shell detector {#appsec-2shell-detector}
+### \*-Shell detector {#appsec-xshell-detector}
 
-Provide a repository, branch, or deterministic detector output. Get every package root with a \*-2Shell or \*-4Shell exposure: a vulnerable React Server Components or Next.js version (React2Shell, CVE-2025-55182 and CVE-2025-66478, plus the follow-up DoS and source-exposure CVEs), or a vulnerable Log4j (Log4Shell, CVE-2021-44228 and follow-ups), Spring Framework (Spring4Shell, CVE-2022-22965) or Commons Text (Text4Shell, CVE-2022-42889) from Maven, Gradle or vendored jars. You also get whether the deployment exposes it (App Router, WAR on a servlet container, StringSubstitutor interpolation), the smallest same-line upgrade, log-hunting guidance, and whether secrets should be rotated. Run `threatlint detect-2shell fleet` (alias `detect-4shell`) to scan many repositories and branches across your GitHub and Azure DevOps connections. The specialist never probes live hosts or installs packages.
+Provide a repository, branch, or deterministic detector output. Get every package root with a \*-2Shell or \*-4Shell exposure: a vulnerable React Server Components or Next.js version (React2Shell, CVE-2025-55182 and CVE-2025-66478, plus the follow-up DoS and source-exposure CVEs), or a vulnerable Log4j (Log4Shell, CVE-2021-44228 and follow-ups), Spring Framework (Spring4Shell, CVE-2022-22965) or Commons Text (Text4Shell, CVE-2022-42889) from Maven, Gradle or vendored jars. You also get whether the deployment exposes it (App Router, WAR on a servlet container, StringSubstitutor interpolation), the smallest same-line upgrade, log-hunting guidance, and whether secrets should be rotated. Run `threatlint detect-xshell fleet` (alias `detect-4shell`) to scan many repositories and branches across your GitHub and Azure DevOps connections. The specialist never probes live hosts or installs packages. It also covers the 2026 additions: PHP2Shell (CVE-2026-109618/109619, PHP runtime), WP2Shell (CVE-2026-63030/60137, WordPress core), Node2Shell (CVE-2026-111497, Node.js and PyPI Brotli), Java4Shell (CVE-2026-114938, JDK runtime) and the RSC follow-up CVE-2026-126187, using runtime pins such as Dockerfile `FROM` tags, `.nvmrc`, `.tool-versions` and `wp-includes/version.php`. Impacted release lines with no fix are still reported as "No fix on this line" with the supported line to move to. Run it with `threatlint detect-xshell` (aliases `detect-2shell`, `detect-4shell`).
 
 <a name="appsec-iac-reviewer"></a>
 

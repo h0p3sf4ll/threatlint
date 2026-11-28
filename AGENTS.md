@@ -54,8 +54,8 @@ This file configures AI coding agents to perform evidence-based application secu
 **Privacy review** — "privacy review", "PII", "personal data flows", "data retention", "what do we log or send to analytics".
 → Use `appsec-privacy-reviewer` and the [privacy protocol](src/threatlint/data/agents/appsec-privacy-reviewer.md). Never print real personal data or give legal conclusions.
 
-**\*-2Shell / \*-4Shell exposure** — "React2Shell", "CVE-2025-55182", "CVE-2025-66478", "Next.js RSC RCE", "Log4Shell", "CVE-2021-44228", "Spring4Shell", "CVE-2022-22965", "Text4Shell", "CVE-2022-42889", "are we vulnerable to 2shell / 4shell", "detect-2shell", "detect-4shell".
-→ Use `appsec-2shell-detector` and the [2Shell / 4Shell protocol](src/threatlint/data/agents/appsec-2shell-detector.md). Run `threatlint detect-2shell scan --path . --format markdown` (alias `detect-4shell`) first when installed; never probe live hosts, send `${jndi:` payloads, or install packages.
+**\*-Shell exposure (\*-2Shell / \*-4Shell)** — "React2Shell", "CVE-2025-55182", "CVE-2025-66478", "Next.js RSC RCE", "Log4Shell", "CVE-2021-44228", "Spring4Shell", "CVE-2022-22965", "Text4Shell", "CVE-2022-42889", "PHP2Shell", "WP2Shell", "Node2Shell", "Java4Shell", "CVE-2026-109618", "CVE-2026-63030", "CVE-2026-111497", "CVE-2026-114938", "CVE-2026-126187", "are we vulnerable to 2shell / 4shell / xshell", "detect-xshell", "detect-2shell", "detect-4shell".
+→ Use `appsec-xshell-detector` and the [*-Shell protocol](src/threatlint/data/agents/appsec-xshell-detector.md). Run `threatlint detect-xshell scan --path . --format markdown` (aliases `detect-2shell`, `detect-4shell`) first when installed; never probe live hosts, send `${jndi:` payloads, or install packages.
 
 **No target given** — when a security task is requested with no specified component or scope.
 → Use the threat modeler with autonomous repository discovery. Do not ask for a target before beginning.
@@ -237,11 +237,11 @@ git remote get-url origin 2>/dev/null | sed 's/.*[:/]\([^/]*\)\(\.git\)\{0,1\}$/
 **Reviewed by**: appsec-privacy-reviewer
 ```
 
-**2Shell / 4Shell exposure header:**
+**Shell exposure header (\*-2Shell / \*-4Shell):**
 ```
-# 2Shell / 4Shell Exposure Review: <Repo Name>
+# Shell Exposure Review: <Repo Name>
 **Date**: YYYY-MM-DD
-**Reviewed by**: appsec-2shell-detector
+**Reviewed by**: appsec-xshell-detector
 ```
 
 **Verify fix header:**

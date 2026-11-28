@@ -11,7 +11,7 @@ const { createTwoShellFleet, normalizeBranches, normalizeRepositories, markdownR
 const { registerTwoShellRoutes } = require('../lib/routes/two-shell.cjs');
 const { createMcpServer } = require('../lib/mcp.cjs');
 
-const FAKE = path.join(__dirname, 'fixtures', 'fake-2shell-cli.cjs');
+const FAKE = path.join(__dirname, 'fixtures', 'fake-xshell-cli.cjs');
 const GITHUB = { id: '11111111-1111-4111-8111-111111111111', provider: 'github', label: 'GitHub · acme', account: 'acme', connected: true };
 const AZURE = { id: '22222222-2222-4222-8222-222222222222', provider: 'azure-devops', label: 'Azure DevOps · contoso', account: 'contoso', connected: true };
 const TOKENS = { [GITHUB.id]: 'ghs_synthetictoken0000000000000001', [AZURE.id]: 'azurepatsynthetic00000000000000002' };
@@ -25,12 +25,12 @@ function sources({ list = [GITHUB, AZURE, { id: 'saved:github-app', provider: 'g
 function fixture(t, { mode = 'ok', ...options } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'two-shell-test-'));
   const record = path.join(directory, 'record.json');
-  const previous = { mode: process.env.FAKE_2SHELL_MODE, record: process.env.FAKE_2SHELL_RECORD };
-  process.env.FAKE_2SHELL_MODE = mode; process.env.FAKE_2SHELL_RECORD = record;
+  const previous = { mode: process.env.FAKE_XSHELL_MODE, record: process.env.FAKE_XSHELL_RECORD };
+  process.env.FAKE_XSHELL_MODE = mode; process.env.FAKE_XSHELL_RECORD = record;
   const fleet = createTwoShellFleet({ sources: options.sources || sources(), integrations: { twoShellCommand: [process.execPath, FAKE], tmpdir: directory } });
   t.after(async () => {
     await fleet.close();
-    for (const [key, name] of [['mode', 'FAKE_2SHELL_MODE'], ['record', 'FAKE_2SHELL_RECORD']]) { if (previous[key] === undefined) delete process.env[name]; else process.env[name] = previous[key]; }
+    for (const [key, name] of [['mode', 'FAKE_XSHELL_MODE'], ['record', 'FAKE_XSHELL_RECORD']]) { if (previous[key] === undefined) delete process.env[name]; else process.env[name] = previous[key]; }
     fs.rmSync(directory, { recursive: true, force: true });
   });
   return { fleet, record, directory };
@@ -78,7 +78,7 @@ test('runs the CLI with credentials only in the child environment and reports pr
   assert.equal(job.result.results.length, 2);
 
   const seen = JSON.parse(fs.readFileSync(record, 'utf8'));
-  assert.deepEqual(seen.args.slice(0, 2), ['detect-2shell', 'fleet']);
+  assert.deepEqual(seen.args.slice(0, 2), ['detect-xshell', 'fleet']);
   for (const flag of ['--targets-file', '--format', '--output', '--progress', '--workers']) assert.ok(seen.args.includes(flag), flag);
   assert.equal(seen.args[seen.args.indexOf('--workers') + 1], '2');
   assert.deepEqual(seen.targets, { connections: [
@@ -92,14 +92,14 @@ test('runs the CLI with credentials only in the child environment and reports pr
   const surfaces = JSON.stringify([seen.args, seen.targets, fleet.list(), fleet.get(id), fleet.report(id, 'json'), fleet.report(id, 'markdown')]);
   for (const token of Object.values(TOKENS)) assert.equal(surfaces.includes(token), false);
   assert.equal(surfaces.includes('free-form log line'), false);
-  assert.deepEqual(fs.readdirSync(directory).filter(name => name.startsWith('threatlint-2shell-')), []);
+  assert.deepEqual(fs.readdirSync(directory).filter(name => name.startsWith('threatlint-xshell-')), []);
 
   const markdown = fleet.report(id, 'markdown').body;
   assert.match(markdown, /^#### \[TS-001\] — Next\.js App Router remote code execution$/m);
   assert.match(markdown, /\*\*Severity\*\*: CRITICAL/);
   assert.match(markdown, /\*\*Confidence\*\*: CONFIRMED/);
   assert.match(markdown, /`package-lock\.json:12`/);
-  assert.equal(JSON.parse(fleet.report(id, 'json').body).schema, 'threatlint.detect-2shell/v1');
+  assert.equal(JSON.parse(fleet.report(id, 'json').body).schema, 'threatlint.detect-xshell/v1');
   assert.throws(() => fleet.report(id, 'pdf'), /json or markdown/);
 });
 
@@ -129,7 +129,7 @@ test('cancel kills the child; at most two scans run and finished scans are retai
   assert.equal(fleet.active, false);
   assert.throws(() => fleet.get('nope'), /not found/);
 
-  process.env.FAKE_2SHELL_MODE = 'fail';
+  process.env.FAKE_XSHELL_MODE = 'fail';
   for (let index = 0; index < 26; index++) {
     const { id } = await fleet.start({ connections: [{ connectionId: GITHUB.id }] });
     await settle(fleet, id);
@@ -142,7 +142,7 @@ test('routes and MCP tools use the same validated service', async t => {
   const app = express(); app.use(express.json()); registerTwoShellRoutes(app, { twoShellFleet: fleet });
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const base = `http://127.0.0.1:${server.address().port}/api/detect-2shell/scans`;
+  const base = `http://127.0.0.1:${server.address().port}/api/detect-xshell/scans`;
   const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   assert.equal((await post(base, { connections: [] })).status, 400);
   const started = await post(base, { connections: [{ connectionId: GITHUB.id, branches: 'main, develop' }] });
@@ -155,7 +155,7 @@ test('routes and MCP tools use the same validated service', async t => {
   assert.equal(brief.result, undefined); assert.equal(brief.status, 'completed');
   const markdown = await fetch(`${base}/${id}/report?format=markdown`);
   assert.match(markdown.headers.get('content-type'), /text\/markdown/);
-  assert.match(markdown.headers.get('content-disposition'), /attachment; filename="detect-2shell-/);
+  assert.match(markdown.headers.get('content-disposition'), /attachment; filename="detect-xshell-/);
   assert.match(await markdown.text(), /TIER 1 — EXECUTIVE SUMMARY/);
   assert.equal((await fetch(`${base}/missing`)).status, 404);
   assert.equal((await post(`${base}/${id}/cancel`, {})).status, 200);
@@ -167,18 +167,18 @@ test('routes and MCP tools use the same validated service', async t => {
   t.after(async () => { await client.close(); await mcp.close(); });
   await mcp.connect(serverTransport); await client.connect(clientTransport);
   const names = (await client.listTools()).tools.map(tool => tool.name);
-  for (const name of ['start_2shell_scan', 'list_2shell_scans', 'get_2shell_scan', 'cancel_2shell_scan']) assert.ok(names.includes(name), name);
+  for (const name of ['start_xshell_scan', 'list_xshell_scans', 'get_xshell_scan', 'cancel_xshell_scan']) assert.ok(names.includes(name), name);
   const call = async (name, args) => client.callTool({ name, arguments: args });
-  assert.equal((await call('start_2shell_scan', { connections: [{ connectionId: GITHUB.id }] })).isError, true, 'confirmation is required');
-  const response = await call('start_2shell_scan', { connections: [{ connectionId: GITHUB.id, repositories: ['acme/web'], branches: ['main'] }], confirm: true });
+  assert.equal((await call('start_xshell_scan', { connections: [{ connectionId: GITHUB.id }] })).isError, true, 'confirmation is required');
+  const response = await call('start_xshell_scan', { connections: [{ connectionId: GITHUB.id, repositories: ['acme/web'], branches: ['main'] }], confirm: true });
   assert.notEqual(response.isError, true, response.content?.[0]?.text);
   const scanId = JSON.parse(response.content[0].text).id;
   await settle(fleet, scanId);
-  const overview = JSON.parse((await call('get_2shell_scan', { scanId })).content[0].text);
+  const overview = JSON.parse((await call('get_xshell_scan', { scanId })).content[0].text);
   assert.equal(overview.resultCount, 2); assert.equal(overview.result, undefined);
-  const vulnerable = JSON.parse((await call('get_2shell_scan', { scanId, section: 'results', status: 'vulnerable' })).content[0].text);
+  const vulnerable = JSON.parse((await call('get_xshell_scan', { scanId, section: 'results', status: 'vulnerable' })).content[0].text);
   assert.equal(vulnerable.total, 1); assert.equal(vulnerable.items[0].repository, 'acme/web');
-  const page = JSON.parse((await call('list_2shell_scans', { limit: 1 })).content[0].text);
+  const page = JSON.parse((await call('list_xshell_scans', { limit: 1 })).content[0].text);
   assert.equal(page.items.length, 1); assert.equal(page.items[0].recent, undefined);
   for (const token of Object.values(TOKENS)) assert.equal(JSON.stringify([overview, vulnerable, page]).includes(token), false);
 });
@@ -203,4 +203,31 @@ test('the sources facade exposes credentialFor only as a non-enumerable host acc
   assert.equal((await facade.credentialFor(GITHUB.id)).token, TOKENS[GITHUB.id]);
   const legacy = registerSourceRoutes(express(), { store: {}, scm: { list: () => [] }, integrations: { githubApp: {} } });
   await assert.rejects(legacy.credentialFor(GITHUB.id), /cannot share credentials/);
+});
+
+test('accepts results from a pre-rename CLI and marks impacted lines that have no fix', async t => {
+  const { fleet } = fixture(t, { mode: 'legacy' });
+  const { id } = await fleet.start({ connections: [{ connectionId: GITHUB.id }] });
+  const job = await settle(fleet, id);
+  assert.equal(job.status, 'completed');
+  const markdown = fleet.report(id, 'markdown').body;
+  assert.match(markdown, /^# \*-Shell Exposure Scan \(fleet\)$/m);
+  assert.match(markdown, /\*\*No fix on this line\*\*/);
+  assert.match(markdown, /\| Fix available \| No — impacted, move to a supported release line \|/);
+  assert.match(markdown, /where the line has no fix \(1 finding\(s\)\)/);
+});
+
+test('the pre-rename /api/detect-2shell routes still work', async t => {
+  const { fleet } = fixture(t);
+  const app = express(); app.use(express.json()); registerTwoShellRoutes(app, { twoShellFleet: fleet });
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const legacy = `http://127.0.0.1:${server.address().port}/api/detect-2shell/scans`;
+  const started = await fetch(legacy, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connections: [{ connectionId: GITHUB.id }] }) });
+  assert.equal(started.status, 202);
+  const { id } = await started.json();
+  await settle(fleet, id);
+  assert.equal((await (await fetch(`${legacy}/${id}?results=false`)).json()).status, 'completed');
+  const current = `http://127.0.0.1:${server.address().port}/api/detect-xshell/scans/${id}?results=false`;
+  assert.equal((await (await fetch(current)).json()).id, id);
 });
