@@ -17,7 +17,7 @@ Choose the specialist that answers your question. The 23 roles use different rev
 | Check a proposed repair | [Verify fix](#appsec-verify-fix) |
 | Plan regression coverage | [Security test planner](#appsec-security-test-planner) |
 | Compare earlier and current findings | [Threat delta](#appsec-threat-delta) |
-| Check exposure to React2Shell / 2Shell RCE | [2Shell detector](#appsec-2shell-detector) |
+| Check \*-2Shell and \*-4Shell exposures (React2Shell, Log4Shell, Spring4Shell, Text4Shell) | [2Shell / 4Shell detector](#appsec-2shell-detector) |
 
 <a name="define-the-assignment-before-choosing-more-agents"></a>
 
@@ -121,9 +121,9 @@ Provide source, configuration, and authorized history in scope. Get redacted exp
 
 <a name="appsec-2shell-detector"></a>
 
-### 2Shell detector {#appsec-2shell-detector}
+### 2Shell / 4Shell detector {#appsec-2shell-detector}
 
-Provide a repository, branch, or deterministic detector output. Get every package root that resolves a vulnerable React Server Components or Next.js version (React2Shell, CVE-2025-55182 and CVE-2025-66478, plus the follow-up DoS and source-exposure CVEs), whether the App Router or another RSC framework exposes it, the smallest same-line upgrade, and whether secrets should be rotated. Run `threatlint detect-2shell fleet` to scan many repositories and branches across your GitHub and Azure DevOps connections. The specialist never probes live hosts or installs packages.
+Provide a repository, branch, or deterministic detector output. Get every package root with a \*-2Shell or \*-4Shell exposure: a vulnerable React Server Components or Next.js version (React2Shell, CVE-2025-55182 and CVE-2025-66478, plus the follow-up DoS and source-exposure CVEs), or a vulnerable Log4j (Log4Shell, CVE-2021-44228 and follow-ups), Spring Framework (Spring4Shell, CVE-2022-22965) or Commons Text (Text4Shell, CVE-2022-42889) from Maven, Gradle or vendored jars. You also get whether the deployment exposes it (App Router, WAR on a servlet container, StringSubstitutor interpolation), the smallest same-line upgrade, log-hunting guidance, and whether secrets should be rotated. Run `threatlint detect-2shell fleet` (alias `detect-4shell`) to scan many repositories and branches across your GitHub and Azure DevOps connections. The specialist never probes live hosts or installs packages.
 
 <a name="appsec-iac-reviewer"></a>
 

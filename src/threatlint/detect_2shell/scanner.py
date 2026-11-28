@@ -1,4 +1,4 @@
-"""Deterministic 2Shell detector for one repository snapshot (a local directory or a remote tree)."""
+"""Deterministic *-2Shell / *-4Shell detector for one repository snapshot (a local directory or a remote tree)."""
 from __future__ import annotations
 
 import os
@@ -8,7 +8,8 @@ from typing import Iterable, Protocol
 
 from . import advisories as catalog
 from .lockfiles import (
-    MAX_FILE_BYTES, Declared, Resolved, excluded, is_lockfile, is_manifest, parse_lockfile, parse_manifest,
+    MAX_FILE_BYTES, Declared, Resolved, excluded, is_java_manifest, is_lockfile, is_manifest, jar_artifacts, parse_lockfile,
+    parse_manifest,
 )
 from .semver import Version, parse, range_floor
 
@@ -129,6 +130,7 @@ def _fold(package: str, version: Version, matches: list[tuple[catalog.Advisory, 
     fixed_in = str(max(fixes)) if fixes and not no_fix_on_line else ""
     return {
         "advisory": primary.key,
+        "family": primary.family,
         "title": primary.title,
         "severity": primary.severity,
         "cvss": primary.cvss,
@@ -151,7 +153,7 @@ def scan_source(source: FileSource) -> ScanResult:
     lockfiles = sorted(p for p in paths if is_lockfile(p))
     manifests = sorted(p for p in paths if is_manifest(p))
     if len(manifests) > MAX_MANIFESTS:
-        result.coverage.append(f"Only the first {MAX_MANIFESTS} of {len(manifests)} package.json files were read.")
+        result.coverage.append(f"Only the first {MAX_MANIFESTS} of {len(manifests)} build manifests were read.")
         manifests = manifests[:MAX_MANIFESTS]
 
     resolved: list[Resolved] = []
@@ -167,20 +169,29 @@ def scan_source(source: FileSource) -> ScanResult:
             result.coverage.append(f"Could not parse {path}: {type(exc).__name__}.")
 
     declared: list[Declared] = []
+    war_dirs: set[str] = set()
     for path in manifests:
         try:
-            found, _ = parse_manifest(path, source.read(path), watched)
+            found, facts = parse_manifest(path, source.read(path), watched)
             declared.extend(found)
+            if isinstance(facts, dict) and facts.get("war") is True:
+                war_dirs.add(_dir(path))
             result.files_examined += 1
         except Exception as exc:  # noqa: BLE001
             result.coverage.append(f"Could not parse {path}: {type(exc).__name__}.")
+    vendored = jar_artifacts(paths, watched)
+    resolved.extend(vendored)
 
-    lock_dirs = {_dir(p) for p in lockfiles}
+    npm_lock_dirs = {_dir(p) for p in lockfiles if not p.endswith("gradle.lockfile")}
+    gradle_lock_dirs = {_dir(p) for p in lockfiles if p.endswith("gradle.lockfile")}
 
     def covered(manifest: str) -> bool:
+        """A lockfile already pins what this manifest declares (npm: same or parent dir; Gradle: same dir)."""
+        if is_java_manifest(manifest):
+            return not manifest.endswith("pom.xml") and _dir(manifest) in gradle_lock_dirs
         directory = _dir(manifest)
         while True:
-            if directory in lock_dirs:
+            if directory in npm_lock_dirs:
                 return True
             if not directory:
                 return False
@@ -192,7 +203,7 @@ def scan_source(source: FileSource) -> ScanResult:
         if key not in seen_inventory:
             seen_inventory.add(key)
             result.inventory.append({"package": item.package, "version": item.version, "file": item.file,
-                                     "line": item.line, "source": "lockfile"})
+                                     "line": item.line, "source": "jar" if item.file.endswith(".jar") else "lockfile"})
     for item in declared:
         if not covered(item.file):
             result.inventory.append({"package": item.package, "version": item.spec, "file": item.file,
@@ -209,7 +220,7 @@ def scan_source(source: FileSource) -> ScanResult:
         if key in findings:
             return
         finding = _fold(package, version, matches)
-        exposure, confidence = _exposure(finding, package, file, paths, rsc_markers, confidence)
+        exposure, confidence = _exposure(finding, package, file, paths, rsc_markers, confidence, war_dirs)
         finding.update({"file": file, "line": line, "confidence": confidence, "exposure": exposure,
                         "evidence": evidence_note})
         findings[key] = finding
@@ -217,10 +228,25 @@ def scan_source(source: FileSource) -> ScanResult:
     for item in resolved:
         version = parse(item.version)
         if version:
+            how = "ships the vendored jar" if item.file.endswith(".jar") else "resolves"
             add(item.package, version, item.file, item.line, "CONFIRMED",
-                f"{item.file} resolves {item.package}@{item.version}.")
+                f"{item.file} {how} {item.package}@{item.version}.")
     for item in declared:
         if covered(item.file):
+            continue
+        if is_java_manifest(item.file):
+            exact = parse(item.spec)
+            if exact and item.pinned:
+                add(item.package, exact, item.file, item.line, "CONFIRMED",
+                    f"{item.file} declares {item.package} {item.spec} directly; Maven resolves the nearest declaration.")
+                continue
+            # Maven ranges such as "[1.8,2.0)": the lowest bound is the floor.
+            bounds = [v for v in (parse(token) for token in re.findall(r"\d[\w.-]*", item.spec)) if v]
+            floor = exact or (min(bounds) if bounds else None)
+            if floor:
+                add(item.package, floor, item.file, item.line, "PLAUSIBLE",
+                    f"{item.file} declares {item.package} \"{item.spec}\"; the build may resolve a different version "
+                    f"(Gradle picks the highest requested). Confirm with a dependency report or gradle.lockfile.")
             continue
         floor = range_floor(item.spec)
         if floor:
@@ -238,8 +264,38 @@ def scan_source(source: FileSource) -> ScanResult:
     return result
 
 
-def _exposure(finding: dict, package: str, file: str, paths: list[str], markers: set[str], confidence: str):
+def _soften(confidence: str) -> str:
+    return "PLAUSIBLE" if confidence == "CONFIRMED" else confidence
+
+
+def _war_evidence(war_dirs: set[str], file: str) -> str:
     directory = _dir(file)
+    while True:
+        if directory in war_dirs:
+            return directory or "."
+        if not directory:
+            return ""
+        directory = _dir(directory)
+
+
+def _exposure(finding: dict, package: str, file: str, paths: list[str], markers: set[str], confidence: str,
+              war_dirs: set[str] = frozenset()):
+    directory = _dir(file)
+    if package == catalog.LOG4J_CORE:
+        return ("log4j-core is on the classpath; any attacker-influenced log message or parameter can reach the "
+                "vulnerable lookup.", confidence)
+    if package in catalog.SPRING_WEB_PACKAGES or package == catalog.SPRING_BOOT:
+        war = _war_evidence(war_dirs, file)
+        boot = " The Boot version only implies the managed Spring Framework; it can be overridden." if package == catalog.SPRING_BOOT else ""
+        if war:
+            return (f"WAR packaging found (`{war}`). Exploitable on JDK 9+ in Tomcat or another servlet container "
+                    f"when spring-webmvc or spring-webflux is used.{boot}",
+                    "PLAUSIBLE" if package == catalog.SPRING_BOOT else confidence)
+        return ("No WAR packaging found. The known exploit needs JDK 9+ and a WAR in a servlet container; Spring Boot "
+                f"executable jars are not vulnerable to it. Upgrade anyway.{boot}", _soften(confidence))
+    if package == catalog.COMMONS_TEXT:
+        return ("Exploitable only if untrusted input reaches StringSubstitutor interpolation with the default lookups; "
+                "check source for StringSubstitutor.createInterpolator() or StringLookupFactory usage.", _soften(confidence))
     if package == "next":
         evidence = _app_router_evidence(paths, directory)
         if evidence:

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import datetime as _dt
 
+from .advisories import ADVISORIES, FAMILIES
+
 SCHEMA = "threatlint.detect-2shell/v1"
 TOOL = "threatlint detect-2shell"
 
@@ -29,7 +31,7 @@ def target_result(scan, *, provider="local", organization="", project="", reposi
 
 def summarize(results: list[dict]) -> dict:
     summary = {"targets": len(results), "scanned": 0, "vulnerable": 0, "clean": 0, "notApplicable": 0, "errors": 0,
-               "critical": 0, "high": 0, "medium": 0}
+               "critical": 0, "high": 0, "medium": 0, "families": {family: 0 for family in FAMILIES}}
     key = {"vulnerable": "vulnerable", "clean": "clean", "not-applicable": "notApplicable", "error": "errors"}
     for result in results:
         summary[key[result["status"]]] += 1
@@ -37,6 +39,8 @@ def summarize(results: list[dict]) -> dict:
             summary["scanned"] += 1
         for finding in result["findings"]:
             summary[finding["severity"].lower()] = summary.get(finding["severity"].lower(), 0) + 1
+            family = finding.get("family", "2Shell")
+            summary["families"][family] = summary["families"].get(family, 0) + 1
     return summary
 
 
@@ -74,7 +78,7 @@ def markdown(doc: dict) -> str:
     findings = [(r, f) for r in results for f in r["findings"]]
     level = _risk_level(summary, results)
     out = [
-        f"# 2Shell Exposure Scan: {doc['scope']}",
+        f"# *-2Shell / *-4Shell Exposure Scan: {doc['scope']}",
         f"**Date**: {doc['generatedAt'][:10]}",
         f"**Scope**: {summary['targets']} repository/branch target(s)",
         "**Reviewed by**: appsec-2shell-detector (deterministic detector `threatlint detect-2shell`)",
@@ -83,17 +87,19 @@ def markdown(doc: dict) -> str:
         "",
         "## TIER 1 — EXECUTIVE SUMMARY",
         "",
-        "### 2Shell Risk Level",
+        "### *-2Shell / *-4Shell Risk Level",
         "",
         f"**{level}**",
         "",
     ]
     if level == "CLEAN":
-        out.append("No scanned target resolves a React Server Components or Next.js version affected by the React2Shell family.")
+        out.append("No scanned target resolves a version affected by the *-2Shell (React2Shell, Next.js) or *-4Shell "
+                   "(Log4Shell, Spring4Shell, Text4Shell) families.")
     else:
         crit = sum(1 for _, f in findings if f["severity"] == "CRITICAL" and f["confidence"] != "THEORETICAL")
         out.append(f"{summary['vulnerable']} of {summary['scanned']} scanned target(s) ship an affected version; "
-                   f"{crit} critical remote-code-execution exposure(s) need an upgrade now.")
+                   f"{crit} critical remote-code-execution exposure(s) need an upgrade now "
+                   f"(*-2Shell: {summary['families'].get('2Shell', 0)} finding(s), *-4Shell: {summary['families'].get('4Shell', 0)}).")
     out += [
         "",
         "### Coverage",
@@ -115,8 +121,9 @@ def markdown(doc: dict) -> str:
     out += ["", "### Recommended Immediate Action", ""]
     if findings:
         out.append("Upgrade every CRITICAL target to the listed fixed version, redeploy, and rotate secrets on any "
-                   "internet-facing app that ran an affected version after 2025-12-04. THEORETICAL items still need "
-                   "the upgrade but are not reachable as configured.")
+                   "internet-facing app that ran an affected version after its flaw was public (React2Shell: "
+                   "2025-12-04; Log4Shell: 2021-12; Spring4Shell: 2022-03; Text4Shell: 2022-10). THEORETICAL items "
+                   "still need the upgrade but are not reachable as configured.")
     else:
         out.append("Keep this scan scheduled so new repositories and branches are checked as they appear.")
     out += ["", "### Targets Needing Action", "", "| Target | Top severity | Package | Installed | Fix to |", "|---|---|---|---|---|"]
@@ -132,10 +139,12 @@ def markdown(doc: dict) -> str:
         out.append("| — | — | — | — | — |")
 
     out += ["", "---", "", "## TIER 2 — TECHNICAL SCAN RESULTS", "", "### Scan Coverage", "",
-            "- Method: resolved versions from npm, Yarn, pnpm and Bun lockfiles; declared ranges from package.json "
-            "where no lockfile exists; App Router file layout for Next.js exposure.",
-            "- Catalog: CVE-2025-55182, CVE-2025-66478, CVE-2025-55184, CVE-2025-67779, CVE-2026-23864, CVE-2025-55183.",
-            "- Not covered: running containers, vendored or bundled copies outside lockfiles, and live exploitation "
+            "- Method: resolved versions from npm, Yarn, pnpm and Bun lockfiles and gradle.lockfile; vendored jars; "
+            "declared versions from package.json, pom.xml, Gradle builds and version catalogs; App Router layout "
+            "(Next.js) and WAR packaging (Spring) for exposure.",
+            "- Catalog: " + "; ".join(f"*-{fam}: " + ", ".join(dict.fromkeys(c for a in ADVISORIES if a.family == fam
+                                                                 for c in a.cves)) for fam in FAMILIES) + ".",
+            "- Not covered: running containers, copies shaded inside other artifacts, and live exploitation "
             "testing (never performed)."]
     errors = [r for r in results if r["status"] == "error"]
     for result in errors:
@@ -180,6 +189,7 @@ def markdown(doc: dict) -> str:
             "",
         ]
     out += ["### Residual Risk", "",
-            "Version evidence shows exposure, not exploitation. Check web and WAF logs for Server Function requests "
-            "from before the upgrade, and treat secrets reachable by an exposed server as compromised until rotated."]
+            "Version evidence shows exposure, not exploitation. Check web and WAF logs for Server Function requests, "
+            "${jndi: lookups and class.module data-binding payloads from before the upgrade, and treat secrets "
+            "reachable by an exposed server as compromised until rotated."]
     return "\n".join(out) + "\n"

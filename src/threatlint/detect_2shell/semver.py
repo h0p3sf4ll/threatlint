@@ -1,4 +1,4 @@
-"""Minimal SemVer 2.0 parsing and ordering, enough for npm release and canary versions."""
+"""Minimal version parsing and ordering for npm (SemVer, canaries) and Maven/Gradle release versions."""
 from __future__ import annotations
 
 import re
@@ -42,13 +42,22 @@ class Version:
         return self.text
 
 
+# Maven / Gradle versions: 1-3 numeric parts, an optional release marker (5.2.19.RELEASE, 2.4.Final)
+# and an optional qualifier (2.0-beta9, 3.0.0-rc1). Qualifiers order before the release, like SemVer.
+_MAVEN = re.compile(
+    r"^v?(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?(?:\.\d+)?"
+    r"(?:[.-](?:RELEASE|Final|GA|FINAL))?(?:-(?P<pre>[0-9A-Za-z.-]+))?$"
+)
+
+
 def parse(text: str) -> Version | None:
-    """A Version, or None for anything that is not an exact SemVer (ranges, tags, URLs)."""
-    match = _VERSION.match((text or "").strip())
+    """A Version, or None for anything that is not an exact version (ranges, tags, URLs, ${properties})."""
+    raw = (text or "").strip()
+    match = _VERSION.match(raw) or _MAVEN.match(raw)
     if not match:
         return None
     pre = tuple(int(part) if part.isdigit() else part for part in (match["pre"] or "").split(".") if part)
-    return Version(int(match["major"]), int(match["minor"]), int(match["patch"]), pre, text.strip().lstrip("v"))
+    return Version(int(match["major"]), int(match["minor"] or 0), int(match["patch"] or 0), pre, raw.lstrip("v"))
 
 
 _RANGE_FLOOR = re.compile(r"(?:^|[\s|])(?:\^|~|>=|=)?\s*v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)")

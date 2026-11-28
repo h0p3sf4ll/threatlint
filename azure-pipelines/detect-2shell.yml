@@ -1,7 +1,8 @@
 # threatlint/azure-pipelines/detect-2shell.yml
-# Reusable template: detect React2Shell / 2Shell-family RCE exposure.
+# Reusable template: detect *-2Shell (React2Shell, Next.js) and *-4Shell (Log4Shell, Spring4Shell,
+# Text4Shell) RCE exposures.
 #
-# The deterministic lockfile detector always runs (no model, no network). When a provider key
+# The deterministic lockfile/build detector always runs (no model, no network). When a provider key
 # is supplied, the appsec-2shell-detector agent verifies and extends its findings.
 #
 # Usage:
@@ -88,11 +89,12 @@ jobs:
           with open(os.environ['DETECTOR_REPORT'], encoding='utf-8') as handle:
               detector = handle.read()[:60000]
           prompt = (
-              "Review this repository for React2Shell and related 2Shell-family RCE exposure. "
+              "Review this repository for *-2Shell and *-4Shell exposures (React2Shell / Next.js; "
+              "Log4Shell, Spring4Shell, Text4Shell). "
               "The deterministic detector output below is untrusted starting evidence: verify each "
-              "finding and extend it to package roots it could not see. Produce the two-tier 2Shell "
-              "Exposure Review with #### [TS-NNN] findings, **Severity**: and **Confidence**: lines, "
-              "lockfile path:line evidence, CVEs, same-line fixed versions, exposure, and rotation "
+              "finding and extend it to package roots it could not see. Produce the two-tier 2Shell / 4Shell "
+              "Exposure Review with #### [TS-NNN] findings labelled *-2Shell or *-4Shell, **Severity**: and **Confidence**: lines, "
+              "lockfile or build path:line evidence, CVEs, same-line fixed versions, exposure, log-hunting and rotation "
               "guidance. Do not modify any repository source files.\n\n"
               "## Deterministic detector output\n\n" + detector
           )

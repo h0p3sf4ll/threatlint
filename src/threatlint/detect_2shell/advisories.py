@@ -1,4 +1,4 @@
-"""Verified advisory catalog for the "2Shell" family of framework RCE flaws.
+"""Verified advisory catalog for the "*-2Shell" and "*-4Shell" families of framework RCE flaws.
 
 Every entry here is copied from the vendor advisory it cites. Do not add an entry
 without an authoritative source URL and exact fixed versions: this catalog drives
@@ -10,6 +10,13 @@ Sources (read 2026-11-28):
   https://nextjs.org/blog/CVE-2025-66478
   https://github.com/advisories/GHSA-fv66-9v8q-g76r
   https://github.com/vercel/next.js/security/advisories/GHSA-9qr9-h5gf-34mp
+  https://logging.apache.org/security.html
+  https://spring.io/security/cve-2022-22965
+  https://spring.io/blog/2022/03/31/spring-framework-rce-early-announcement
+  https://commons.apache.org/proper/commons-text/security.html
+  https://github.com/advisories/GHSA-599f-7c49-w659
+
+Maven packages are keyed "groupId:artifactId"; npm packages by name.
 """
 from __future__ import annotations
 
@@ -50,6 +57,7 @@ class Advisory:
     sources: tuple[str, ...]
     cwe: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    family: str = "2Shell"  # "2Shell" (React2Shell family) or "4Shell" (Log4Shell family)
 
 
 _REACT_SOURCES = (
@@ -203,6 +211,129 @@ ADVISORIES: tuple[Advisory, ...] = (
         tags=("rce", "rsc"),
     ),
 )
+
+# ─── *-4Shell family (Java) ─────────────────────────────────────────────────
+
+LOG4J_CORE = "org.apache.logging.log4j:log4j-core"
+SPRING_WEB_PACKAGES = (
+    "org.springframework:spring-beans",
+    "org.springframework:spring-webmvc",
+    "org.springframework:spring-webflux",
+)
+# A Spring Boot parent/BOM/plugin version stands in for the Spring Framework it manages.
+SPRING_BOOT = "org.springframework.boot:spring-boot"
+COMMONS_TEXT = "org.apache.commons:commons-text"
+_LOG4J_SOURCES = ("https://logging.apache.org/security.html",)
+_SPRING_SOURCES = (
+    "https://spring.io/security/cve-2022-22965",
+    "https://spring.io/blog/2022/03/31/spring-framework-rce-early-announcement",
+)
+
+ADVISORIES += (
+    Advisory(
+        key="log4shell-rce",
+        title="Log4Shell: remote code execution through JNDI lookups in Log4j",
+        cves=("CVE-2021-44228",),
+        severity="CRITICAL",
+        cvss="10.0 (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H)",
+        cwe="CWE-917",
+        packages=(LOG4J_CORE,),
+        lines=(FixLine("2.0-beta9", "2.3.1"), FixLine("2.4", "2.12.2"), FixLine("2.13.0", "2.15.0")),
+        impact="An attacker who controls a logged message or parameter can make the server load and run code from an LDAP server.",
+        exposure="Any application that logs attacker-influenced data with log4j-core. log4j-api alone is not affected.",
+        remediation=("Upgrade log4j-core to 2.17.0 or later (Java 8+), 2.12.3 (Java 7) or 2.3.1 (Java 6); these also "
+                     "close CVE-2021-45046, CVE-2021-45105 and CVE-2021-44832. Hunt for JNDI lookup strings in logs."),
+        sources=_LOG4J_SOURCES,
+        tags=("rce", "java"),
+        family="4Shell",
+    ),
+    Advisory(
+        key="log4j-context-lookup-rce",
+        title="Log4j Thread Context lookup remote code execution (incomplete Log4Shell fix)",
+        cves=("CVE-2021-45046",),
+        severity="CRITICAL",
+        cvss="9.0 (CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H)",
+        cwe="CWE-917",
+        packages=(LOG4J_CORE,),
+        lines=(FixLine("2.0-beta9", "2.3.1"), FixLine("2.4", "2.12.3"), FixLine("2.13.0", "2.16.0")),
+        impact="With a non-default Pattern Layout using a Thread Context lookup, attacker-controlled MDC input can lead to code execution.",
+        exposure="log4j-core with Pattern Layouts that use Context lookups (for example $${ctx:loginId}).",
+        remediation="Upgrade log4j-core to 2.17.0 or later (Java 8+), 2.12.3 (Java 7) or 2.3.1 (Java 6).",
+        sources=_LOG4J_SOURCES,
+        tags=("rce", "java"),
+        family="4Shell",
+    ),
+    Advisory(
+        key="log4j-followups",
+        title="Log4j recursive lookup denial of service and JDBC Appender code execution",
+        cves=("CVE-2021-45105", "CVE-2021-44832"),
+        severity="MEDIUM",
+        cvss="5.9 (DoS); 6.6 (JDBC Appender, needs write access to logging configuration)",
+        cwe="CWE-674",
+        packages=(LOG4J_CORE,),
+        lines=(FixLine("2.0-alpha1", "2.3.1"), FixLine("2.4", "2.12.3"), FixLine("2.13.0", "2.17.0")),
+        impact="Recursive Context lookups can crash the application; an attacker who can edit logging configuration can run code.",
+        exposure="log4j-core with Context lookups in non-default layouts, or attacker write access to logging configuration.",
+        remediation="Upgrade log4j-core to 2.17.0 or later (Java 8+), 2.12.3 (Java 7) or 2.3.1 (Java 6).",
+        sources=_LOG4J_SOURCES,
+        tags=("dos", "java"),
+        family="4Shell",
+    ),
+    Advisory(
+        key="spring4shell-rce",
+        title="Spring4Shell: remote code execution through Spring MVC / WebFlux data binding",
+        cves=("CVE-2022-22965",),
+        severity="CRITICAL",
+        cvss="CRITICAL (CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H)",
+        cwe="CWE-94",
+        packages=SPRING_WEB_PACKAGES,
+        # "5.2.19.RELEASE and earlier" (older, unsupported lines included) and 5.3.0-5.3.17.
+        lines=(FixLine("0.0.0-0", "5.2.20"), FixLine("5.3.0-0", "5.3.18")),
+        impact="A crafted request bound to a controller parameter can write a web shell and run code on the server.",
+        exposure=("The known exploit needs JDK 9+, a WAR deployed to Apache Tomcat (other servlet containers are also "
+                  "named), and spring-webmvc or spring-webflux. Spring Boot executable jars are not vulnerable to it."),
+        remediation="Upgrade Spring Framework to 5.3.18+ or 5.2.20.RELEASE+ (Spring Boot 2.6.6+ or 2.5.12+).",
+        sources=_SPRING_SOURCES,
+        tags=("rce", "java"),
+        family="4Shell",
+    ),
+    Advisory(
+        key="spring-boot-spring4shell",
+        title="Spring Boot release that manages a Spring4Shell-vulnerable Spring Framework",
+        cves=("CVE-2022-22965",),
+        severity="CRITICAL",
+        cvss="CRITICAL",
+        cwe="CWE-94",
+        packages=(SPRING_BOOT,),
+        lines=(FixLine("0.0.0-0", "2.5.12"), FixLine("2.6.0-0", "2.6.6")),
+        impact="Spring Boot releases before 2.5.12 / 2.6.6 manage a Spring Framework version affected by Spring4Shell.",
+        exposure="Same conditions as Spring4Shell; the managed Spring version can be overridden, so confirm the resolved version.",
+        remediation="Upgrade Spring Boot to 2.6.6+ or 2.5.12+ (both depend on Spring Framework 5.3.18).",
+        sources=_SPRING_SOURCES,
+        tags=("rce", "java"),
+        family="4Shell",
+    ),
+    Advisory(
+        key="text4shell-rce",
+        title="Text4Shell: code execution through Apache Commons Text interpolation",
+        cves=("CVE-2022-42889",),
+        severity="CRITICAL",
+        cvss="9.8 (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H)",
+        cwe="CWE-94",
+        packages=(COMMONS_TEXT,),
+        lines=(FixLine("1.5", "1.10.0"),),
+        impact="The default script, dns and url lookups let untrusted interpolation input run code or reach remote servers.",
+        exposure=("Exploitable only when untrusted input reaches StringSubstitutor interpolation (the defaults). Apache "
+                  "was not aware of applications that do this; verify usage in source."),
+        remediation="Upgrade commons-text to 1.10.0 or later.",
+        sources=("https://commons.apache.org/proper/commons-text/security.html",
+                 "https://github.com/advisories/GHSA-599f-7c49-w659"),
+        tags=("rce", "java"),
+        family="4Shell",
+    ),
+)
+
+FAMILIES = ("2Shell", "4Shell")
 
 # Frameworks whose presence means the app serves RSC through react-server-dom-*.
 # They carry no version range of their own (the advisories give none); the vulnerable

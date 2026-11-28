@@ -1,4 +1,4 @@
-"""`threatlint detect-2shell` — find React2Shell-family exposure in one repository or a whole fleet."""
+"""`threatlint detect-2shell` (alias `detect-4shell`) — find *-2Shell and *-4Shell exposure in one repo or a fleet."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,9 @@ def add_detect_2shell_parser(sub) -> None:
     import argparse  # noqa: PLC0415
 
     parser = sub.add_parser(
-        "detect-2shell", help="Find React2Shell (CVE-2025-55182 / CVE-2025-66478) exposure in one repo or across every connected SCM",
+        "detect-2shell", aliases=["detect-4shell"],
+        help="Find *-2Shell (React2Shell, Next.js) and *-4Shell (Log4Shell, Spring4Shell, Text4Shell) exposure "
+             "in one repo or across every connected SCM",
         epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     actions = parser.add_subparsers(dest="action", required=True)
 

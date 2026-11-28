@@ -44,7 +44,7 @@
       <button class="nav-item active" data-view="workbench"><span class="nav-icon" aria-hidden="true">◫</span>Review code</button>
       <button class="nav-item" data-view="designreviews" aria-controls="view-designreviews"><span class="nav-icon" aria-hidden="true">⑂</span>Design &amp; threats</button>
       <button class="nav-item" data-view="specialistreviews" aria-controls="view-specialistreviews"><span class="nav-icon" aria-hidden="true">⌘</span>Specialist reviews</button>
-      <button class="nav-item" data-view="twoshell" aria-controls="view-twoshell"><span class="nav-icon" aria-hidden="true">⌖</span><span class="nav-label">2Shell exposure<small class="nav-caption">React2Shell fleet scan</small></span></button>
+      <button class="nav-item" data-view="twoshell" aria-controls="view-twoshell"><span class="nav-icon" aria-hidden="true">⌖</span><span class="nav-label">2Shell &amp; 4Shell exposure<small class="nav-caption">*-2Shell / *-4Shell fleet scan</small></span></button>
       <button class="nav-item" data-view="runtime" aria-controls="view-runtime"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Scan running app<small class="nav-caption">Preview · not yet GA</small></span></button>
       <button class="nav-item" data-view="fpreview" aria-controls="view-fpreview"><span class="nav-icon" aria-hidden="true">✓</span>Finding triage</button>
       <div class="sidebar-label">2 · FIX</div>
@@ -179,7 +179,7 @@
       </section>
 
       <section class="view operations-view two-shell-view" id="view-twoshell" aria-labelledby="twoshell-title" hidden>
-        <div class="page-heading compact"><div><div class="eyebrow">TEST · EVERY REPOSITORY · EVERY BRANCH</div><h1 id="twoshell-title">2Shell exposure</h1><p class="page-description">Find React2Shell (CVE-2025-55182, CVE-2025-66478) and its follow-up React Server Components flaws across the repositories your connected GitHub and Azure DevOps credentials can read. Lockfiles are read through the provider API; nothing is cloned.</p></div><button class="button secondary" type="button" data-go-view="sources">Manage sources</button></div>
+        <div class="page-heading compact"><div><div class="eyebrow">TEST · EVERY REPOSITORY · EVERY BRANCH</div><h1 id="twoshell-title">2Shell &amp; 4Shell exposure</h1><p class="page-description">Find *-2Shell and *-4Shell exposures: React2Shell and Next.js (CVE-2025-55182, CVE-2025-66478) with their React Server Components follow-ups, plus Log4Shell (CVE-2021-44228), Spring4Shell (CVE-2022-22965) and Text4Shell (CVE-2022-42889) in Maven, Gradle and vendored jars, across the repositories your connected GitHub and Azure DevOps credentials can read. Lockfiles are read through the provider API; nothing is cloned.</p></div><button class="button secondary" type="button" data-go-view="sources">Manage sources</button></div>
         <output class="operations-status" id="twoshell-status" aria-live="polite" aria-atomic="true">Loading connected sources…</output>
         <form id="twoshell-form" class="two-shell-form" autocomplete="off" novalidate>
           <section class="panel" aria-labelledby="twoshell-sources-title">
@@ -215,7 +215,7 @@
                 <label class="checkbox-label"><input type="radio" name="twoshell-branch-scope" value="named"><span>These branches</span></label>
               </fieldset>
               <div class="operations-field"><label for="twoshell-branch-list">Branch names <span class="subtle">comma-separated, * wildcards allowed</span></label><input id="twoshell-branch-list" placeholder="main, release/*" maxlength="2000" spellcheck="false" disabled></div>
-              <button class="button primary operations-full-button" id="twoshell-start" type="submit" disabled>Scan for 2Shell exposure →</button>
+              <button class="button primary operations-full-button" id="twoshell-start" type="submit" disabled>Scan for 2Shell &amp; 4Shell exposure →</button>
               <button class="button secondary operations-full-button" id="twoshell-cancel" type="button" hidden>Cancel scan</button>
             </div>
           </section>
@@ -225,7 +225,7 @@
           <div class="operations-panel-body">
             <div class="two-shell-progress"><progress id="twoshell-progress" max="1" value="0" aria-label="Scan progress"></progress><span class="small subtle" id="twoshell-progress-label">No scan yet.</span></div>
             <div class="platform-coverage two-shell-tiles" id="twoshell-tiles"></div>
-            <div class="two-shell-table-wrap"><table class="two-shell-table" aria-describedby="twoshell-results-title"><thead><tr><th scope="col">Repository</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Severity</th><th scope="col">Package → fix</th></tr></thead><tbody id="twoshell-rows"><tr><td colspan="5" class="subtle">Start a scan to see results.</td></tr></tbody></table></div>
+            <div class="two-shell-table-wrap"><table class="two-shell-table" aria-describedby="twoshell-results-title"><thead><tr><th scope="col">Repository</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Family</th><th scope="col">Severity</th><th scope="col">Package → fix</th></tr></thead><tbody id="twoshell-rows"><tr><td colspan="6" class="subtle">Start a scan to see results.</td></tr></tbody></table></div>
           </div>
         </section>
       </section>

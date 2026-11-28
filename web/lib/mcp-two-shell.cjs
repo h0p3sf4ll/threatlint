@@ -7,7 +7,7 @@ function registerTwoShellTools({ tool, z, id, twoShellFleet }) {
   const paging = { offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
   const page = (items, { offset = 0, limit = 25 }) => ({ items: items.slice(offset, offset + limit), total: items.length,
     nextOffset: offset + limit < items.length ? offset + limit : null });
-  tool('start_2shell_scan', 'Scan many repositories for React2Shell-family exposure (CVE-2025-55182, CVE-2025-66478 and RSC follow-ups) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles through provider APIs without cloning; poll get_2shell_scan.', {
+  tool('start_2shell_scan', 'Scan many repositories for *-2Shell and *-4Shell exposures (React2Shell / Next.js CVE-2025-55182, CVE-2025-66478 and RSC follow-ups; Log4Shell CVE-2021-44228, Spring4Shell CVE-2022-22965, Text4Shell CVE-2022-42889) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles and Maven/Gradle build files through provider APIs without cloning; poll get_2shell_scan.', {
     connections: z.array(z.object({
       connectionId: id,
       repositories: z.union([z.literal('all'), z.array(repositoryName).min(1).max(1000)]).default('all')

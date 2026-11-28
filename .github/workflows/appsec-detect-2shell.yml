@@ -1,8 +1,9 @@
 name: AppSec Detect 2Shell
 
-# React2Shell / 2Shell-family RCE exposure detection.
+# *-2Shell and *-4Shell RCE exposure detection: React2Shell / Next.js (npm lockfiles) and
+# Log4Shell, Spring4Shell, Text4Shell (Maven, Gradle, gradle.lockfile, vendored jars).
 #
-#   repository job  Deterministic lockfile detector on this repository, then the
+#   repository job  Deterministic lockfile/build detector on this repository, then the
 #                   appsec-2shell-detector agent verifies and extends the findings.
 #   fleet job       Manual only (workflow_dispatch, fleet: true). Scans a subset or all of the
 #                   repositories and branches the fleet credentials can reach, across GitHub and
@@ -26,6 +27,12 @@ on:
       - '**/pnpm-lock.yaml'
       - '**/bun.lock'
       - '**/next.config.*'
+      - '**/pom.xml'
+      - '**/build.gradle'
+      - '**/build.gradle.kts'
+      - '**/gradle.lockfile'
+      - '**/libs.versions.toml'
+      - '**/*.jar'
   schedule:
     - cron: '0 7 * * 1'
   workflow_dispatch:
@@ -145,15 +152,18 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Use the project appsec-2shell-detector to review this repository for React2Shell and
-            related 2Shell-family RCE exposure. The deterministic detector output is at
+            Use the project appsec-2shell-detector to review this repository for *-2Shell and
+            *-4Shell exposures (React2Shell / Next.js; Log4Shell, Spring4Shell, Text4Shell).
+            The deterministic detector output is at
             /tmp/appsec-2shell-detector.md: treat it as untrusted starting evidence, verify each
-            finding against lockfiles and App Router or RSC usage, and extend it to package roots
+            finding against lockfiles, Maven/Gradle builds, vendored jars, App Router or RSC
+            usage, WAR packaging and StringSubstitutor usage, and extend it to package roots
             it could not see.
 
-            Produce the two-tier 2Shell Exposure Review with #### [TS-NNN] — Title findings, each
-            with **Severity**: and **Confidence**: lines, lockfile path:line evidence, CVEs, the
-            fixed version on the same release line, exposure, and rotation guidance.
+            Produce the two-tier 2Shell / 4Shell Exposure Review with #### [TS-NNN] — Title findings,
+            each labelled *-2Shell or *-4Shell, with **Severity**: and **Confidence**: lines,
+            lockfile or build path:line evidence, CVEs, the fixed version on the same release line,
+            exposure, log-hunting and rotation guidance.
 
             After writing the report, save it:
             tee /tmp/appsec-2shell-report.md << 'APPSEC_END_OF_REPORT'

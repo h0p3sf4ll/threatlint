@@ -1,6 +1,6 @@
 'use strict';
 
-/** 2Shell exposure: choose sources, repositories and branches, then follow a detect-2shell fleet scan. */
+/** 2Shell & 4Shell exposure: choose sources, repositories and branches, then follow a detect-2shell fleet scan. */
 (() => {
   const $ = id => document.getElementById(id);
   const state = { sources: [], chosen: new Map(), page: 1, search: '', scanId: null, timer: null, loaded: false };
@@ -135,7 +135,9 @@
       : `${job.status === 'completed' ? 'Completed' : job.status === 'cancelled' ? 'Cancelled' : 'Failed'} · ${progress.done || 0} of ${total} repository branches`;
     const summary = job.summary || { vulnerable: progress.vulnerable, clean: progress.clean, notApplicable: progress.notApplicable, errors: progress.errors };
     $('twoshell-tiles').replaceChildren(tile('Vulnerable', summary.vulnerable, 'bad'), tile('Clean', summary.clean, 'good'),
-      tile('Not applicable', summary.notApplicable), tile('Could not scan', summary.errors, summary.errors ? 'warn' : ''));
+      tile('Not applicable', summary.notApplicable), tile('Could not scan', summary.errors, summary.errors ? 'warn' : ''),
+      ...(summary.families ? [tile('*-2Shell findings', summary.families['2Shell'] ?? 0, summary.families['2Shell'] ? 'bad' : ''),
+        tile('*-4Shell findings', summary.families['4Shell'] ?? 0, summary.families['4Shell'] ? 'bad' : '')] : []));
     const rows = $('twoshell-rows');
     const results = job.result?.results;
     if (results) {
@@ -152,17 +154,19 @@
     $('twoshell-download-json').disabled = !done; $('twoshell-download-md').disabled = !done;
   }
   function worst(result) { return Math.min(...(result.findings || []).map(finding => rank[finding.severity] ?? 9), 9); }
-  function emptyRow(message) { const row = node('tr'); const cell = node('td', message, 'subtle'); cell.colSpan = 5; row.append(cell); return row; }
+  function emptyRow(message) { const row = node('tr'); const cell = node('td', message, 'subtle'); cell.colSpan = 6; row.append(cell); return row; }
   function resultRow(result) {
     const row = node('tr', undefined, `two-shell-row status-${result.status}`);
     const findings = [...(result.findings || [])].sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9));
     const top = findings[0];
     const repo = [result.project, result.repository].filter(Boolean).join(' / ') || result.repository || '—';
     const severity = node('td'); if (top) severity.append(node('span', top.severity, `severity-badge severity-${top.severity}`)); else severity.textContent = '—';
+    const families = [...new Set(findings.map(finding => finding.family).filter(Boolean))].sort();
+    const family = node('td'); if (families.length) family.append(...families.map(name => node('span', `*-${name}`, 'two-shell-family'))); else family.textContent = '—';
     const fix = node('td', top ? `${top.package}@${top.version} → ${top.fixedIn || 'move to a supported line'}` : (result.status === 'error' ? (result.error || 'Could not be read') : '—'));
     if (findings.length > 1) fix.append(node('small', ` +${findings.length - 1} more`, 'subtle'));
     row.append(node('td', `${result.provider === 'azure-devops' ? 'Azure DevOps' : 'GitHub'} · ${repo}`), node('td', result.branch || '—'),
-      node('td', STATUS_LABEL[result.status] || result.status), severity, fix);
+      node('td', STATUS_LABEL[result.status] || result.status), family, severity, fix);
     return row;
   }
 
@@ -177,7 +181,7 @@
         const s = job.summary || {};
         status(s.vulnerable ? `${s.vulnerable} repository branch${s.vulnerable === 1 ? '' : 'es'} need${s.vulnerable === 1 ? 's' : ''} an upgrade. Highest severity: ${job.topSeverity || 'see results'}.`
           : s.errors ? `No affected versions found, but ${s.errors} branch${s.errors === 1 ? '' : 'es'} could not be scanned. This is not a clean result.`
-            : 'No React2Shell-affected versions found in the scanned branches.', s.vulnerable ? 'error' : '');
+            : 'No *-2Shell or *-4Shell affected versions found in the scanned branches.', s.vulnerable ? 'error' : '');
       } else status(job.error || `Scan ${job.status}.`, 'error');
     } catch (error) { clearInterval(state.timer); state.timer = null; status(error.message, 'error'); }
     controls();

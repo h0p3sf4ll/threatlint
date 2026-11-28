@@ -367,3 +367,138 @@ def test_invalid_credentials_rejected():
     with pytest.raises(fleet.FleetError):
         fleet.load_connections({fleet.CREDENTIALS_ENV: json.dumps({"connections": [
             {"provider": "github", "token": "x", "apiBase": "http://insecure.example"}]})})
+
+
+# ─── *-4Shell (Java) ─────────────────────────────────────────────────────────
+
+def test_maven_style_versions_parse_and_order():
+    assert parse("2.0-beta9") < parse("2.0-rc1") < parse("2.0") < parse("2.0.1")
+    assert str(parse("5.2.19.RELEASE")) == "5.2.19.RELEASE" and parse("5.2.19.RELEASE") < parse("5.2.20")
+    assert parse("1.9") < parse("1.10.0")
+    assert parse("${log4j.version}") is None
+
+
+@pytest.mark.parametrize("key,version,affected", [
+    ("log4shell-rce", "2.0-beta8", False), ("log4shell-rce", "2.0-beta9", True), ("log4shell-rce", "2.3", True),
+    ("log4shell-rce", "2.3.1", False), ("log4shell-rce", "2.12.1", True), ("log4shell-rce", "2.12.2", False),
+    ("log4shell-rce", "2.14.1", True), ("log4shell-rce", "2.15.0", False),
+    ("log4j-context-lookup-rce", "2.15.0", True), ("log4j-context-lookup-rce", "2.16.0", False),
+    ("log4j-followups", "2.16.0", True), ("log4j-followups", "2.17.0", False), ("log4j-followups", "2.12.3", False),
+    ("spring4shell-rce", "5.3.17", True), ("spring4shell-rce", "5.3.18", False), ("spring4shell-rce", "5.2.19.RELEASE", True),
+    ("spring4shell-rce", "5.2.20.RELEASE", False), ("spring4shell-rce", "4.3.30.RELEASE", True),
+    ("spring-boot-spring4shell", "2.6.5", True), ("spring-boot-spring4shell", "2.6.6", False),
+    ("spring-boot-spring4shell", "2.5.11", True), ("spring-boot-spring4shell", "2.5.12", False),
+    ("text4shell-rce", "1.4", False), ("text4shell-rce", "1.5", True), ("text4shell-rce", "1.9", True),
+    ("text4shell-rce", "1.10.0", False),
+])
+def test_4shell_versions(key, version, affected):
+    assert bool(scanner.matching_line(adv(key), parse(version))) is affected
+
+
+def test_every_advisory_has_a_family():
+    assert {a.family for a in advisories.ADVISORIES} == {"2Shell", "4Shell"}
+
+
+POM = """<project>
+  <!-- <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.0</version></dependency> -->
+  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>2.6.3</version></parent>
+  <packaging>war</packaging>
+  <properties><log4j2.version>2.14.1</log4j2.version><text.version>[1.8,2.0)</text.version></properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <version>${log4j2.version}</version>
+    </dependency>
+    <dependency><groupId>org.springframework</groupId><artifactId>spring-webmvc</artifactId><version>5.3.15</version></dependency>
+    <dependency><groupId>org.apache.commons</groupId><artifactId>commons-text</artifactId><version>${text.version}</version></dependency>
+    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-api</artifactId><version>2.14.1</version></dependency>
+  </dependencies>
+</project>
+"""
+
+
+def test_maven_pom_findings_and_exposure(tmp_path):
+    write(tmp_path, {"pom.xml": POM})
+    result = scanner.scan_path(str(tmp_path))
+    by_pkg = {f["package"]: f for f in result.findings}
+    log4j = by_pkg[advisories.LOG4J_CORE]
+    assert (log4j["severity"], log4j["confidence"], log4j["family"]) == ("CRITICAL", "CONFIRMED", "4Shell")
+    assert log4j["version"] == "2.14.1" and log4j["fixedIn"] == "2.17.0" and log4j["line"] == 7
+    assert {"CVE-2021-44228", "CVE-2021-45046", "CVE-2021-45105"} <= set(log4j["cves"])
+    spring = by_pkg["org.springframework:spring-webmvc"]
+    assert spring["confidence"] == "CONFIRMED" and "WAR packaging found" in spring["exposure"]
+    assert by_pkg[advisories.SPRING_BOOT]["confidence"] == "PLAUSIBLE"
+    text = by_pkg[advisories.COMMONS_TEXT]
+    assert text["confidence"] == "PLAUSIBLE" and "StringSubstitutor" in text["exposure"]
+    assert "org.apache.logging.log4j:log4j-api" not in by_pkg  # log4j-api alone is not affected
+    assert all(f["version"] != "2.0" for f in result.findings)  # commented-out dependency ignored
+
+
+def test_spring_without_war_is_softened(tmp_path):
+    write(tmp_path, {"pom.xml": "<project><dependencies><dependency><groupId>org.springframework</groupId>"
+                                "<artifactId>spring-beans</artifactId><version>5.3.10</version></dependency>"
+                                "</dependencies></project>"})
+    finding = scanner.scan_path(str(tmp_path)).findings[0]
+    assert finding["confidence"] == "PLAUSIBLE" and "executable jars are not vulnerable" in finding["exposure"]
+
+
+def test_gradle_build_catalog_lockfile_and_jars(tmp_path):
+    write(tmp_path, {
+        "app/build.gradle": "plugins {\n  id 'war'\n  id 'org.springframework.boot' version '2.5.10'\n}\n"
+                            "ext.log4jVersion = '2.13.3'\ndependencies {\n"
+                            "  implementation \"org.apache.logging.log4j:log4j-core:$log4jVersion\"\n"
+                            "  implementation group: 'org.apache.commons', name: 'commons-text', version: '1.9'\n}\n",
+        "svc/build.gradle.kts": "dependencies { implementation(\"org.apache.logging.log4j:log4j-core:2.11.0\") }\n",
+        "svc/gradle.lockfile": "org.apache.logging.log4j:log4j-core:2.17.1=compileClasspath,runtimeClasspath\nempty=\n",
+        "gradle/libs.versions.toml": "[versions]\nlog4j = \"2.14.0\"\n[libraries]\n"
+                                     "log4j-core = { module = \"org.apache.logging.log4j:log4j-core\", version.ref = \"log4j\" }\n",
+        "legacy/lib/log4j-core-2.8.2.jar": "binary",
+        "legacy/lib/log4j-core-2.8.2-sources.jar": "binary",
+        "legacy/lib/spring-beans-5.3.17.jar": "binary",
+    })
+    result = scanner.scan_path(str(tmp_path))
+    found = {(f["file"], f["package"], f["version"], f["confidence"]) for f in result.findings}
+    assert ("app/build.gradle", advisories.LOG4J_CORE, "2.13.3", "PLAUSIBLE") in found
+    assert ("app/build.gradle", advisories.COMMONS_TEXT, "1.9", "PLAUSIBLE") in found
+    assert ("app/build.gradle", advisories.SPRING_BOOT, "2.5.10", "PLAUSIBLE") in found
+    assert ("gradle/libs.versions.toml", advisories.LOG4J_CORE, "2.14.0", "PLAUSIBLE") in found
+    assert ("legacy/lib/log4j-core-2.8.2.jar", advisories.LOG4J_CORE, "2.8.2", "CONFIRMED") in found
+    assert ("legacy/lib/spring-beans-5.3.17.jar", "org.springframework:spring-beans", "5.3.17", "PLAUSIBLE") in found
+    # svc/: the lockfile pins a patched log4j, so the older declaration in the build file is not reported.
+    assert not any(f["file"].startswith("svc/") for f in result.findings)
+    assert not any("sources" in f["file"] for f in result.findings)
+
+
+def test_report_names_both_families(tmp_path):
+    write(tmp_path, {"pom.xml": POM, "package.json": {"dependencies": {"next": "15.1.0"}},
+                     "package-lock.json": NPM_V3, "app/page.js": ""})
+    doc = document([target_result(scanner.scan_path(str(tmp_path)), repository="mixed")], scope="mixed")
+    assert doc["summary"]["families"]["2Shell"] >= 1 and doc["summary"]["families"]["4Shell"] >= 3
+    text = markdown(doc)
+    assert "# *-2Shell / *-4Shell Exposure Scan" in text and "CVE-2021-44228" in text and "CVE-2022-22965" in text
+    ids = [f.id for f in load_script("gate_report").parse_findings(text)]
+    assert ids and len(ids) == len(set(ids))
+
+
+def test_detect_4shell_alias_and_lowercase_fail_on():
+    from threatlint.cli import build_parser
+    args = build_parser().parse_args(["detect-4shell", "scan", "--path", ".", "--fail-on", "critical"])
+    assert args.integration_handler is cmd_detect_2shell and args.fail_on == "CRITICAL"
+
+
+def test_fleet_downloads_java_manifests_but_not_jars():
+    routes = github_routes()
+    routes[f"{GH}/repos/acme/web/git/trees/"] = lambda r: FakeResponse({"tree": [
+        {"path": "pom.xml", "type": "blob", "size": 900}, {"path": "lib/log4j-core-2.14.1.jar", "type": "blob", "size": 9},
+        {"path": "src/Main.java", "type": "blob", "size": 9}]})
+    routes[f"{GH}/repos/acme/web/contents/pom.xml"] = lambda r: FakeResponse(POM.encode())
+    opener = FakeOpener(routes)
+    connection = fleet.load_connections(gh_env())[0]
+    doc = fleet.run_fleet({"connections": [{"connection": "gh1", "repositories": ["acme/web"]}]}, environ=gh_env(),
+                          clients={"gh1": fleet.client(connection, opener, sleep=lambda s: None)})
+    [web] = doc["results"]
+    assert web["status"] == "vulnerable" and {f["family"] for f in web["findings"]} == {"4Shell"}
+    assert any(f["file"].endswith(".jar") for f in web["findings"])
+    fetched = [r.full_url for r in opener.requests if "/contents/" in r.full_url]
+    assert fetched == [f"{GH}/repos/acme/web/contents/pom.xml?ref={'a' * 40}"]

@@ -1212,7 +1212,7 @@ Apply a reviewed supported fix to its bound source snapshot, then rescan. Explic
 
 ### `start_2shell_scan`
 
-Scan many repositories for React2Shell-family exposure (CVE-2025-55182, CVE-2025-66478 and RSC follow-ups) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles through provider APIs without cloning; poll get_2shell_scan.
+Scan many repositories for *-2Shell and *-4Shell exposures (React2Shell / Next.js CVE-2025-55182, CVE-2025-66478 and RSC follow-ups; Log4Shell CVE-2021-44228, Spring4Shell CVE-2022-22965, Text4Shell CVE-2022-42889) using connected GitHub and Azure DevOps sources. Choose all repositories or named ones, and the default branch, all branches, or named branches/wildcards per source. Reads lockfiles and Maven/Gradle build files through provider APIs without cloning; poll get_2shell_scan.
 
 **MCP annotations:** `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=true`.
 

@@ -126,29 +126,30 @@ function markdownReport(job) {
   const where = target => [target.provider, target.organization, target.project, target.repository].filter(Boolean).join(' / ');
   const cell = value => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
   const lines = [
-    '# detect-2shell fleet scan', '',
+    '# *-2Shell / *-4Shell Exposure Scan (fleet)', '',
     `**Date**: ${new Date(job.finishedAt || Date.now()).toISOString().slice(0, 10)}`,
     `**Scope**: ${summary.targets ?? 0} repository branches across ${job.selection.length} source connection(s)`,
     '**Reviewed by**: detect-2shell (Threatlint Workbench)', '', '---', '',
-    '## TIER 1 — EXECUTIVE SUMMARY', '', '### 2Shell Exposure Level', '', `**${level}**`, '',
-    findings.length ? `${summary.vulnerable ?? 0} branch(es) resolve a React Server Components version affected by React2Shell or its follow-up advisories.`
+    '## TIER 1 — EXECUTIVE SUMMARY', '', '### *-2Shell / *-4Shell Risk Level', '', `**${level}**`, '',
+    findings.length ? `${summary.vulnerable ?? 0} branch(es) resolve a version affected by the *-2Shell (React2Shell, Next.js) or *-4Shell (Log4Shell, Spring4Shell, Text4Shell) advisories${summary.families ? ` (*-2Shell: ${summary.families['2Shell'] ?? 0} finding(s), *-4Shell: ${summary.families['4Shell'] ?? 0})` : ''}.`
       : summary.errors ? 'No affected versions were found in the branches that could be read, but some branches could not be scanned; this is not a clean result.'
-        : 'No affected React Server Components versions were found in the scanned branches.', '',
+        : 'No *-2Shell or *-4Shell affected versions were found in the scanned branches.', '',
     '| Targets | Scanned | Vulnerable | Clean | Not applicable | Errors | Critical | High | Medium |',
     '|---|---|---|---|---|---|---|---|---|',
     `| ${summary.targets ?? 0} | ${summary.scanned ?? 0} | ${summary.vulnerable ?? 0} | ${summary.clean ?? 0} | ${summary.notApplicable ?? 0} | ${summary.errors ?? 0} | ${summary.critical ?? 0} | ${summary.high ?? 0} | ${summary.medium ?? 0} |`, '',
     '### Recommended Immediate Action', '',
-    findings.length ? 'Upgrade the affected `next` / `react-server-dom-*` packages to the patched release on their line, redeploy, and rotate secrets for any affected app that was internet-facing and unpatched.'
-      : 'Keep this scan scheduled; re-run it when dependency lockfiles change.', '', '---', '',
+    findings.length ? 'Upgrade each affected package (`next` / `react-server-dom-*`, `log4j-core`, Spring Framework or Boot, `commons-text`) to the patched release on its line, redeploy, hunt logs for `${jndi:` and `class.module` payloads, and rotate secrets for any affected app that was internet-facing and unpatched.'
+      : 'Keep this scan scheduled; re-run it when lockfiles, Maven/Gradle builds or vendored jars change.', '', '---', '',
     '## TIER 2 — TECHNICAL SCAN RESULTS', '', '### Findings', '',
   ];
   let index = 0;
   for (const { target, finding } of findings) {
     index += 1;
     const id = `TS-${String(index).padStart(3, '0')}`;
-    lines.push(`#### [${id}] — ${cell(finding.title || finding.advisory || 'Affected React Server Components version')}`, '',
+    lines.push(`#### [${id}] — ${cell(finding.title || finding.advisory || 'Affected framework version')}`, '',
       `**Severity**: ${finding.severity || 'HIGH'}`, `**Confidence**: ${finding.confidence || 'PLAUSIBLE'}`, '',
       '| Field | Detail |', '|-------|--------|',
+      `| Family | ${finding.family ? `*-${cell(finding.family)}` : '—'} |`,
       `| Repository | ${cell(where(target))} |`,
       `| Branch | ${cell(target.branch)}${target.commit ? ` @ ${cell(String(target.commit).slice(0, 12))}` : ''} |`,
       `| Package | ${cell(finding.package)}@${cell(finding.version)} → ${cell(finding.fixedIn || 'move to a supported line')} |`,
@@ -164,7 +165,7 @@ function markdownReport(job) {
     for (const target of errors.slice(0, 500)) lines.push(`| ${cell(where(target))} | ${cell(target.branch)} | ${cell(target.error || 'Could not be scanned')} |`);
     lines.push('');
   }
-  lines.push('### Residual Risk', '', 'detect-2shell reads declared and resolved dependency versions. It does not prove a deployed build matches the branch, and it does not probe live hosts. Version-only findings are PLAUSIBLE until App Router / Server Function use is confirmed.', '');
+  lines.push('### Residual Risk', '', 'detect-2shell reads declared and resolved dependency versions (npm lockfiles, Maven, Gradle, vendored jars). It does not prove a deployed build matches the branch, and it does not probe live hosts. Version-only findings stay PLAUSIBLE until exposure is confirmed (App Router / Server Functions, WAR on a servlet container, StringSubstitutor interpolation).', '');
   return lines.join('\n');
 }
 

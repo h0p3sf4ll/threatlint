@@ -174,7 +174,7 @@ Set `uploadSarif: true` to publish `CodeAnalysisLogs`; viewing it requires the
 appropriate SARIF viewer or Advanced Security setup. These options default to
 **true** in the generic templates, so the starter explicitly disables them.
 
-## React2Shell (2Shell) exposure scans
+## \*-2Shell and \*-4Shell exposure scans
 
 Add `appsec-2shell-detector` to the `agents` input (GitHub) or list (Azure) to review the
 caller's repository like any other specialist. For a deterministic gate with no model, and
@@ -182,10 +182,10 @@ for scans across many repositories, use the dedicated templates:
 
 | Platform | Template | What it does |
 | --- | --- | --- |
-| GitHub Actions | [`appsec-detect-2shell.yml`](../.github/workflows/appsec-detect-2shell.yml) | On lockfile changes, weekly, or on demand: runs `threatlint detect-2shell scan`, then the agent verifies the findings. Run it manually with `fleet: true` to scan the repositories and branches the fleet credentials can reach in GitHub and Azure DevOps: leave `targets` empty for every repository's default branch, or pass a `targets` JSON to pick connections, repositories, and branches. |
+| GitHub Actions | [`appsec-detect-2shell.yml`](../.github/workflows/appsec-detect-2shell.yml) | Covers React2Shell / Next.js and Log4Shell, Spring4Shell, Text4Shell. On lockfile, Maven/Gradle build or jar changes, weekly, or on demand: runs `threatlint detect-2shell scan`, then the agent verifies the findings. Run it manually with `fleet: true` to scan the repositories and branches the fleet credentials can reach in GitHub and Azure DevOps: leave `targets` empty for every repository's default branch, or pass a `targets` JSON to pick connections, repositories, and branches. |
 | Azure Pipelines | [`azure-pipelines/detect-2shell.yml`](../azure-pipelines/detect-2shell.yml) | The same repository scan as a job template; `provider: none` keeps it deterministic. |
 
-Fleet scans read lockfiles through the SCM APIs and never clone. Give them read-only
+Fleet scans read lockfiles and Maven/Gradle build files through the SCM APIs (jars are recognised by name from the file tree) and never clone. Give them read-only
 credentials: `THREATLINT_FLEET_GITHUB_TOKEN` (contents and metadata read, or a GitHub App
 installation token), `THREATLINT_FLEET_ADO_PAT` (Code read), and the
 `THREATLINT_FLEET_ADO_ORG` variable.

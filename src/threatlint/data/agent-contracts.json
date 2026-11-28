@@ -135,8 +135,8 @@
     },
     "appsec-2shell-detector": {
       "evidenceMode": "source",
-      "inputs": "Manifests, resolved lockfiles, RSC/App Router usage, deploy configuration, and optional deterministic detector output.",
-      "outputs": "Package-root exposure inventory; CVE-mapped TS findings; minimal same-line upgrades; rotation triggers.",
+      "inputs": "npm lockfiles and manifests, Maven/Gradle builds, gradle.lockfile, vendored jars, App Router/RSC, WAR packaging and StringSubstitutor usage, deploy configuration, and optional deterministic detector output.",
+      "outputs": "*-2Shell and *-4Shell package-root exposure inventory; CVE-mapped TS findings; minimal same-line upgrades; log-hunting and rotation triggers.",
       "boundaries": "Do not probe live hosts, run exploit payloads, install packages, or report flaws absent from verified advisory data."
     }
   }

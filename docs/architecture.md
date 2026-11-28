@@ -193,7 +193,7 @@ plus its specialist skills. Assignments come from
 - **Design and attack paths:** [Threat Modeler](#appsec-threat-modeler) · [Attack Tree](#appsec-attack-tree) · [Red Team](#appsec-red-team)
 - **Change review:** [Code Reviewer](#appsec-code-reviewer) · [Secure Codegen Reviewer](#appsec-secure-codegen-reviewer)
 - **Domain deep dives:** [API Security Reviewer](#appsec-api-security-reviewer) · [Auth Reviewer](#appsec-auth-reviewer) · [Business Logic Reviewer](#appsec-business-logic-reviewer) · [Client Security Reviewer](#appsec-client-security-reviewer) · [Crypto Reviewer](#appsec-crypto-reviewer) · [AI Security Reviewer](#appsec-ai-security-reviewer) · [Privacy Reviewer](#appsec-privacy-reviewer)
-- **Supply chain and platform:** [Dependency Auditor](#appsec-dependency-auditor) · [2Shell Detector](#appsec-2shell-detector) · [Secrets Scanner](#appsec-secrets-scanner) · [IaC Reviewer](#appsec-iac-reviewer) · [CI/CD Auditor](#appsec-cicd-auditor)
+- **Supply chain and platform:** [Dependency Auditor](#appsec-dependency-auditor) · [2Shell / 4Shell Detector](#appsec-2shell-detector) · [Secrets Scanner](#appsec-secrets-scanner) · [IaC Reviewer](#appsec-iac-reviewer) · [CI/CD Auditor](#appsec-cicd-auditor)
 - **Triage and lifecycle:** [Finding Triager](#appsec-fp-reviewer) · [Verify Fix](#appsec-verify-fix) · [Threat Delta](#appsec-threat-delta) · [Compliance Checker](#appsec-compliance-checker)
 - **Runtime and testing:** [Runtime Reviewer](#appsec-runtime-reviewer) · [Security Test Planner](#appsec-security-test-planner)
 
@@ -392,19 +392,19 @@ plus its specialist skills. Assignments come from
 | **Skills** | Shared + [Dependency audit](#threatlint-dependency-audit) |
 | **Guardrails** | Never installs or runs dependency code. Unverified advisories are labeled as such. |
 
-### 2Shell Detector
+### 2Shell / 4Shell Detector
 
 <a id="appsec-2shell-detector"></a>`appsec-2shell-detector` · Supply chain and platform
 
-**Finds React2Shell and Next.js App Router RCE exposure from resolved versions, across one repo or a fleet.**
+**Finds \*-2Shell (React2Shell, Next.js App Router) and \*-4Shell (Log4Shell, Spring4Shell, Text4Shell) exposures from resolved versions, across one repo or a fleet.**
 
 | | |
 | --- | --- |
-| **Use it when** | A new 2Shell-family advisory lands, before a release, or to sweep every repository and branch your SCM connections can reach. |
-| **Give it** | Lockfiles, manifests, App Router or RSC usage, deploy configuration; optional `threatlint detect-2shell` output. |
-| **You get** | TS-NNN findings: package root, resolved vulnerable version, CVEs, exposure, same-line fixed version, rotation trigger. |
-| **Run it** | `/detect-2shell` (add `-local` for LM Studio); deterministic `threatlint detect-2shell scan` / `fleet` |
-| **Skills** | Shared + [2Shell detection](#threatlint-2shell-detection) |
+| **Use it when** | A new \*-2Shell or \*-4Shell advisory lands, before a release, or to sweep every repository and branch your SCM connections can reach. |
+| **Give it** | npm lockfiles and manifests, Maven/Gradle builds, `gradle.lockfile`, vendored jars, App Router/RSC, WAR packaging, deploy configuration; optional `threatlint detect-2shell` output. |
+| **You get** | TS-NNN findings labelled \*-2Shell or \*-4Shell: package root, resolved vulnerable version, CVEs, exposure, same-line fixed version, log-hunting and rotation triggers. |
+| **Run it** | `/detect-2shell` (add `-local` for LM Studio); deterministic `threatlint detect-2shell scan` / `fleet` (alias `detect-4shell`) |
+| **Skills** | Shared + [2Shell / 4Shell detection](#threatlint-2shell-detection) |
 | **Guardrails** | No live probes or exploit payloads. Reports only flaws with verified advisory data; others are coverage gaps. |
 
 ### Secrets Scanner
@@ -614,16 +614,16 @@ same rules apply in Claude Code, Copilot, Codex, the CLI, and the Workbench. Ful
 **Produces:** DA findings with the smallest safe upgrade and rollback.  
 **Used by:** [Dependency Auditor](#appsec-dependency-auditor)
 
-### 2Shell detection
+### 2Shell / 4Shell detection
 
-<a id="threatlint-2shell-detection"></a>`threatlint-2shell-detection`: React2Shell and RSC remote-code-execution exposure.
+<a id="threatlint-2shell-detection"></a>`threatlint-2shell-detection`: \*-2Shell (React2Shell, Next.js RSC) and \*-4Shell (Log4Shell, Spring4Shell, Text4Shell) remote-code-execution exposure.
 
-- Resolve `next` and `react-server-dom-*` from the lockfile and map them to the verified advisory catalog.
-- Establish exposure: App Router, Server Functions, RSC frameworks, internet-facing deployment.
-- Recommend the smallest same-line upgrade and flag secret rotation after 2025-12-04.
+- Resolve `next` and `react-server-dom-*` from npm lockfiles, and `log4j-core`, Spring Framework/Boot and `commons-text` from Maven, Gradle and vendored jars; map them to the verified advisory catalog.
+- Establish exposure: App Router, Server Functions, RSC frameworks; logging of request data, WAR on a servlet container, StringSubstitutor interpolation; internet-facing deployment.
+- Recommend the smallest same-line upgrade, log hunting for `${jndi:` and `class.module` payloads, and secret rotation where exposed.
 
 **Produces:** TS findings with lockfile evidence, CVEs and fixed versions.  
-**Used by:** [2Shell Detector](#appsec-2shell-detector)
+**Used by:** [2Shell / 4Shell Detector](#appsec-2shell-detector)
 
 ### Secrets triage
 

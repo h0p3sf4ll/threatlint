@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07131b">
-  <meta name="description" content="React2Shell (CVE-2025-55182) is a CVSS 10 remote code execution flaw in React Server Components and Next.js. ThreatLint now finds it across every repository and branch your GitHub and Azure DevOps credentials can read.">
+  <meta name="description" content="React2Shell, Log4Shell, Spring4Shell and Text4Shell are critical remote code execution flaws. ThreatLint now finds every *-2Shell and *-4Shell exposure across the repositories and branches your GitHub and Azure DevOps credentials can read.">
   <meta name="author" content="Amelio Wright, MBA">
   <meta property="og:type" content="article">
-  <meta property="og:title" content="Find every React2Shell exposure across your repositories in one scan">
-  <meta property="og:description" content="What leaders need to know about CVE-2025-55182, and how to scan all repositories and branches with ThreatLint detect-2shell.">
+  <meta property="og:title" content="Find every *-2Shell and *-4Shell exposure across your repositories in one scan">
+  <meta property="og:description" content="What leaders need to know about React2Shell and the Log4Shell family, and how to scan all repositories and branches with ThreatLint.">
   <meta property="og:url" content="https://threatlint.dev/blog/react2shell-fleet-scanning/">
   <meta property="og:site_name" content="ThreatLint">
   <meta property="article:published_time" content="2026-11-28">
@@ -17,7 +17,7 @@
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/blog/blog.css">
-  <title>Find every React2Shell exposure in one scan — ThreatLint</title>
+  <title>Find every *-2Shell and *-4Shell exposure in one scan — ThreatLint</title>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -42,24 +42,24 @@
     <article>
       <header class="post-header">
         <a class="post-back" href="/blog/"><span aria-hidden="true">←</span> All posts</a>
-        <div class="section-kicker">SECURITY BRIEFING · REACT2SHELL</div>
-        <h1>Find every React2Shell exposure across your repositories in one scan.</h1>
-        <p class="post-dek">A CVSS 10 flaw lets anyone on the internet run code on servers that use React Server Components. The fix is a version bump. The hard part is knowing every repository and branch that still needs it. ThreatLint now answers that in one scan.</p>
+        <div class="section-kicker">SECURITY BRIEFING · *-2SHELL &amp; *-4SHELL</div>
+        <h1>Find every *-2Shell and *-4Shell exposure across your repositories in one scan.</h1>
+        <p class="post-dek">React2Shell lets anyone on the internet run code on servers that use React Server Components, just as Log4Shell, Spring4Shell and Text4Shell did for Java. Each fix is a version bump. The hard part is knowing every repository and branch that still needs it. ThreatLint now answers that in one scan.</p>
         <div class="byline">
           <a class="byline-author" href="https://www.linkedin.com/in/ameliowright" target="_blank" rel="noopener noreferrer author">
             <img src="/assets/authors/amelio-wright.jpg" width="56" height="56" alt="Amelio Wright">
             <span><strong>Amelio Wright, MBA</strong><span>Connect on LinkedIn <span aria-hidden="true">↗</span></span></span>
           </a>
-          <span class="byline-meta"><time datetime="2026-11-28">November 28, 2026</time> · 6 min read</span>
+          <span class="byline-meta"><time datetime="2026-11-28">November 28, 2026</time> · 7 min read</span>
         </div>
       </header>
 
       <section class="tldr" aria-labelledby="tldr-title">
         <h2 id="tldr-title">For leadership: the two-minute version</h2>
         <ul>
-          <li><strong>The risk.</strong> React2Shell (CVE-2025-55182, and CVE-2025-66478 in Next.js) lets an unauthenticated attacker take over a server with one HTTP request. It scores the maximum CVSS 10.0.</li>
-          <li><strong>Why it is still open.</strong> Patches shipped in December 2025, but old versions linger in release branches, forks, side projects and apps nobody owns any more. Each one is a full server compromise waiting to happen.</li>
-          <li><strong>What changed.</strong> ThreatLint's new <code>detect-2shell</code> scan checks every repository and branch your GitHub and Azure DevOps access covers. It is read-only, needs no clones, and returns a list of exactly what to upgrade and to which version.</li>
+          <li><strong>The risk.</strong> React2Shell (CVE-2025-55182, and CVE-2025-66478 in Next.js) lets an unauthenticated attacker take over a server with one HTTP request, scoring the maximum CVSS 10.0. The Java *-4Shell family (Log4Shell, Spring4Shell, Text4Shell) does the same and still lingers years later.</li>
+          <li><strong>Why it is still open.</strong> Patches shipped long ago (December 2025 for React2Shell, 2021–2022 for the *-4Shell flaws), but old versions linger in release branches, forks, side projects and apps nobody owns any more. Each one is a full server compromise waiting to happen.</li>
+          <li><strong>What changed.</strong> ThreatLint's new <code>detect-2shell</code> scan finds *-2Shell and *-4Shell exposures in every repository and branch your GitHub and Azure DevOps access covers. It is read-only, needs no clones, and returns a list of exactly what to upgrade and to which version.</li>
           <li><strong>What to ask your team for.</strong> One fleet scan this week, every CRITICAL item upgraded and redeployed, secrets rotated where an exposed app was online, and the scan scheduled weekly.</li>
         </ul>
       </section>
@@ -85,19 +85,35 @@
         <p class="callout-note">Not affected by the RCE: Next.js Pages Router apps, the Edge Runtime, and Next.js 13.x/14.x stable. Frameworks that use React Server Components (Waku, React Router RSC, RedwoodSDK, Parcel and Vite RSC plugins) are affected through the packages above. Sources: <a href="https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components" target="_blank" rel="noopener noreferrer">React</a>, <a href="https://react.dev/blog/2025/12/11/denial-of-service-and-source-code-exposure-in-react-server-components" target="_blank" rel="noopener noreferrer">React follow-up</a>, <a href="https://nextjs.org/blog/CVE-2025-66478" target="_blank" rel="noopener noreferrer">Next.js</a>.</p>
       </div>
 
+      <h2>The *-4Shell family: same pattern, older and still out there</h2>
+      <p>React2Shell joins a family of Java flaws that taught the industry this lesson first. Log4Shell (2021) turned any logged string into code execution through Log4j. Spring4Shell (2022) did the same through Spring's request data binding, and Text4Shell through Apache Commons Text. Years later they still turn up in vendored jars, legacy services and long-lived release branches, so the same scan now checks for them too.</p>
+      <div class="callout">
+        <h3>*-4Shell: who is affected</h3>
+        <table>
+          <caption class="sr-only">Affected Java packages and the first safe versions</caption>
+          <thead><tr><th scope="col">Flaw</th><th scope="col">Package</th><th scope="col">Affected</th><th scope="col">Upgrade to</th></tr></thead>
+          <tbody>
+            <tr><td>Log4Shell<br>CVE-2021-44228 (+45046, 45105, 44832)</td><td><code>log4j-core</code></td><td>2.0-beta9 – 2.16.0</td><td>2.17.0+ (Java 8) · 2.12.3 (Java 7) · 2.3.1 (Java 6)</td></tr>
+            <tr><td>Spring4Shell<br>CVE-2022-22965</td><td>Spring Framework (<code>spring-beans</code>, <code>-webmvc</code>, <code>-webflux</code>)</td><td>5.3.0 – 5.3.17, 5.2.19 and earlier</td><td>5.3.18 · 5.2.20 (Spring Boot 2.6.6 · 2.5.12)</td></tr>
+            <tr><td>Text4Shell<br>CVE-2022-42889</td><td><code>commons-text</code></td><td>1.5 – 1.9</td><td>1.10.0</td></tr>
+          </tbody>
+        </table>
+        <p class="callout-note"><code>log4j-api</code> alone is not affected. Spring4Shell's known exploit needs JDK 9+ and a WAR in a servlet container such as Tomcat; Spring Boot executable jars are not vulnerable to it. Text4Shell needs untrusted input to reach <code>StringSubstitutor</code> interpolation. Sources: <a href="https://logging.apache.org/security.html" target="_blank" rel="noopener noreferrer">Apache Log4j</a>, <a href="https://spring.io/security/cve-2022-22965" target="_blank" rel="noopener noreferrer">Spring</a>, <a href="https://commons.apache.org/proper/commons-text/security.html" target="_blank" rel="noopener noreferrer">Apache Commons Text</a>.</p>
+      </div>
+
       <h2>Why one dashboard is not enough</h2>
       <p>Most teams patched their flagship app within days. The exposure that remains sits where nobody is looking: a <code>release/2025.11</code> branch that still deploys, a marketing microsite built on a starter template, a fork in a different organization, an Azure DevOps project from an acquisition. Dependency alerts usually watch default branches of repositories someone enrolled. Attackers do not limit themselves the same way.</p>
 
       <h2>What ThreatLint now does</h2>
-      <p><code>detect-2shell</code> is a new ThreatLint scan with two parts. A <strong>deterministic detector</strong> reads lockfiles and compares resolved versions with a vendor-verified advisory catalog, so the same input always gives the same answer. A <strong>specialist agent</strong>, <code>appsec-2shell-detector</code>, then confirms the result in source code and writes the remediation plan.</p>
+      <p><code>detect-2shell</code> is a new ThreatLint scan with two parts. A <strong>deterministic detector</strong> reads JavaScript lockfiles and Maven and Gradle builds and compares resolved versions with a vendor-verified advisory catalog, so the same input always gives the same answer. A <strong>specialist agent</strong>, <code>appsec-2shell-detector</code>, then confirms the result in source code and writes the remediation plan.</p>
       <figure class="post-figure">
-        <img src="/assets/blog/detect-2shell-fleet-flow.svg" width="960" height="420" alt="Diagram: select connected sources, repositories and branches; ThreatLint enumerates them through the GitHub and Azure DevOps APIs; reads only package manifests and lockfiles without cloning; matches against a verified catalog and produces an executive summary, per-repository fix versions, SARIF and issues; then the appsec-2shell-detector agent verifies exposure in source.">
-        <figcaption>Fleet scanning reads only manifests and lockfiles through the SCM API. No clones, no source downloads, nothing written back.</figcaption>
+        <img src="/assets/blog/detect-2shell-fleet-flow.svg" width="960" height="420" alt="Diagram: select connected sources, repositories and branches; ThreatLint enumerates them through the GitHub and Azure DevOps APIs; reads only package manifests, lockfiles and Java build files without cloning; matches against a verified catalog and produces an executive summary, per-repository fix versions, SARIF and issues; then the appsec-2shell-detector agent verifies exposure in source.">
+        <figcaption>Fleet scanning reads only manifests, lockfiles and build files through the SCM API. No clones, no source downloads, nothing written back.</figcaption>
       </figure>
       <ul class="checks">
         <li><strong>Your whole estate or a slice of it.</strong> Every source you have connected, every repository those credentials can read, and the default branch, all branches, or patterns such as <code>release/*</code>.</li>
-        <li><strong>Fast and light.</strong> The scanner lists the file tree and downloads only <code>package.json</code> files and npm, Yarn, pnpm or Bun lockfiles. Thousands of branches are practical.</li>
-        <li><strong>Honest confidence.</strong> A version pinned in a lockfile is <em>Confirmed</em>. A range with no lockfile is <em>Plausible</em>. An affected Next.js version with no App Router is <em>Theoretical</em>: still upgrade it, but it is not reachable as built.</li>
+        <li><strong>Fast and light.</strong> The scanner lists the file tree and downloads only <code>package.json</code>, npm/Yarn/pnpm/Bun lockfiles, <code>pom.xml</code> and Gradle files. Vendored jars such as <code>log4j-core-2.14.1.jar</code> are spotted by name without downloading them. Thousands of branches are practical.</li>
+        <li><strong>Honest confidence.</strong> A version pinned in a lockfile, a vendored jar or a direct Maven dependency is <em>Confirmed</em>. An unpinned range, or a missing exploit precondition such as Spring without WAR packaging, is <em>Plausible</em>. An affected Next.js version with no App Router is <em>Theoretical</em>: still upgrade it, but it is not reachable as built.</li>
         <li><strong>Fits existing workflows.</strong> Reports use the standard ThreatLint format, so CI gates, SARIF code scanning and issue creation work unchanged.</li>
       </ul>
 
@@ -107,12 +123,12 @@
       <ol class="run-steps">
         <li>
           <h3>In the ThreatLint Workbench</h3>
-          <p>Open <a href="https://app.threatlint.dev">app.threatlint.dev</a>, then go to <strong>Test → 2Shell exposure</strong>.</p>
+          <p>Open <a href="https://app.threatlint.dev">app.threatlint.dev</a>, then go to <strong>Test → 2Shell &amp; 4Shell exposure</strong>.</p>
           <ol class="ui-steps">
             <li>Tick the connected sources to include, or <strong>All connected sources</strong>.</li>
             <li>Choose <strong>All repositories this credential can access</strong>, or search and select specific ones.</li>
             <li>Choose <strong>Default branch</strong>, <strong>All branches</strong>, or list branches such as <code>main, release/*</code>.</li>
-            <li>Select <strong>Scan for 2Shell exposure</strong>. Progress and results stream in; download the JSON or Markdown report when it finishes.</li>
+            <li>Start the scan. Progress and results stream in, each labelled 2Shell or 4Shell; download the JSON or Markdown report when it finishes.</li>
           </ol>
         </li>
         <li>
@@ -126,13 +142,13 @@ threatlint detect-2shell fleet --all --branches all --output 2shell-report.md
 # A subset: wildcards work for repositories and branches
 threatlint detect-2shell fleet --repo "acme/*" --repo "Payments/checkout-web" --branches "main,release/*"
 
-# Fail a pipeline on confirmed critical exposure
-threatlint detect-2shell scan --path . --fail-on CRITICAL</code></pre>
+# Fail a pipeline on confirmed critical exposure (detect-4shell is the same command)
+threatlint detect-4shell scan --path . --fail-on CRITICAL</code></pre>
           <p>Credentials come from your existing logins: <code>threatlint github login</code> (or <code>GH_TOKEN</code>) and <code>threatlint ado login</code>.</p>
         </li>
         <li>
           <h3>In CI</h3>
-          <p>The <strong>AppSec Detect 2Shell</strong> GitHub Actions workflow (and its Azure Pipelines twin) runs on lockfile changes and weekly. To sweep the fleet, open <strong>Actions → AppSec Detect 2Shell → Run workflow</strong> and set <strong>fleet</strong> to true.</p>
+          <p>The <strong>AppSec Detect 2Shell</strong> GitHub Actions workflow (and its Azure Pipelines twin) runs when lockfiles, Maven or Gradle builds, or vendored jars change, and weekly. To sweep the fleet, open <strong>Actions → AppSec Detect 2Shell → Run workflow</strong> and set <strong>fleet</strong> to true.</p>
         </li>
         <li>
           <h3>From an AI assistant over MCP</h3>
@@ -147,7 +163,7 @@ threatlint detect-2shell scan --path . --fail-on CRITICAL</code></pre>
           <caption class="sr-only">How to act on each result</caption>
           <thead><tr><th scope="col">Result</th><th scope="col">What it means</th><th scope="col">Action</th></tr></thead>
           <tbody>
-            <tr><td><span class="pill pill-critical">Critical · Confirmed</span></td><td>An affected version is installed and reachable.</td><td>Upgrade, redeploy, rotate secrets if it was online after Dec 4, 2025, and review logs.</td></tr>
+            <tr><td><span class="pill pill-critical">Critical · Confirmed</span></td><td>An affected version is installed and reachable.</td><td>Upgrade, redeploy, rotate secrets the app can read, and review logs for exploit attempts.</td></tr>
             <tr><td><span class="pill pill-high">High</span></td><td>Denial-of-service or source-exposure follow-ups remain.</td><td>Upgrade in the next release.</td></tr>
             <tr><td><span class="pill">Theoretical</span></td><td>Affected version, but not reachable as built.</td><td>Upgrade with normal maintenance.</td></tr>
             <tr><td><span class="pill">Error</span></td><td>The scanner could not read that target.</td><td>Not a clean result. Fix access and rescan.</td></tr>
@@ -158,13 +174,13 @@ threatlint detect-2shell scan --path . --fail-on CRITICAL</code></pre>
       <h2>Questions leaders should ask this week</h2>
       <ol class="questions">
         <li>Have we scanned <em>every</em> repository and branch we deploy from, including acquired and archived-but-live apps?</li>
-        <li>Which internet-facing apps ran an affected version after December 4, 2025, and have their secrets been rotated?</li>
+        <li>Which internet-facing apps ran an affected version while it was public (React2Shell since December 2025; the *-4Shell flaws since 2021–2022), and have their secrets been rotated?</li>
         <li>Is the scan scheduled, so new repositories and branches are checked without anyone remembering to?</li>
       </ol>
 
       <section class="trust-note" aria-labelledby="data-title">
         <h2 id="data-title">How your data is handled</h2>
-        <p>The scan is read-only. It uses the credentials you have already connected, downloads only package manifests and lockfiles, never clones or stores source code, and never sends traffic to your live applications. Tokens stay in memory and are never logged or returned. To measure the program, the ThreatLint server keeps aggregate counts only (scans run and exposures found, with no repository names, paths or credentials). That data is never exposed through the app, and operators can turn it off.</p>
+        <p>The scan is read-only. It uses the credentials you have already connected, downloads only package manifests, lockfiles and build files, never clones or stores source code, and never sends traffic to your live applications. Tokens stay in memory and are never logged or returned. To measure the program, the ThreatLint server keeps aggregate counts only (scans run and exposures found, with no repository names, paths or credentials). That data is never exposed through the app, and operators can turn it off.</p>
       </section>
 
       <section class="post-cta">
