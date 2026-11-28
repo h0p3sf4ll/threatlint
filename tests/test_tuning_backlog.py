@@ -21,7 +21,8 @@ def test_record_appends_one_private_entry_with_the_finding_and_proposed_rule(cap
         "python.example.rule", "svc", "main", "app/db.py", "349")
     assert entry["tuned_rule"].startswith("rules:\n  - id: python.example.rule.tuned")
     assert entry["report_attachment"] == "AVIT000000000000001-threatlint-fp-review.docx"
-    assert oct(os.stat(tuning_backlog.path()).st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows has no POSIX permission bits; it always reports 0o666
+        assert oct(os.stat(tuning_backlog.path()).st_mode & 0o777) == "0o600"
     assert "Logged for Semgrep triage and repair later (tuning)" in capsys.readouterr().out
 
 

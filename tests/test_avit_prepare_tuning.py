@@ -1,6 +1,7 @@
 """The Workbench preflight validates the exact draft before external write-back."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -43,7 +44,7 @@ def check(tmp_path, monkeypatch, capsys):
     def run(markdown=HEADER + RULE, *, live=False, omit_base=False, **target_fields):
         base.write_text(("# Tuning base: live tuned rule org.demo.literal.tuned" if live else "# Tuning base: original rule demo.literal")
                         + "\nrules:\n  - id: demo.literal\n")
-        report.write_text(markdown)
+        report.write_text(markdown, encoding="utf-8")  # reports are UTF-8; Windows' default is cp1252
         target.write_text(json.dumps({"avit": AVIT, "kind": "sast", "rule": "demo.literal",
                                      "line": "1", "file_path": "src.py", **target_fields}))
         params = ["avit", "prepare-tuning", AVIT, "--report", str(report), "--checkout", str(tmp_path),
@@ -73,7 +74,7 @@ def test_preflight_requires_executed_proof(check, monkeypatch):
     assert check(HEADER + RULE + FIXTURES)["status"] == "ready"
     (rule, original, source, line, fixtures, token), = checked
     assert original == "demo.literal" and "demo.literal.tuned" in rule
-    assert line == 1 and source.endswith("/src.py") and token == "test"
+    assert line == 1 and Path(source).name == "src.py" and token == "test"
     assert "# ok: demo.literal.tuned" in fixtures
 
     def unavailable(*_args, **_kwargs):
